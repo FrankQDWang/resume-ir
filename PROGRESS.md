@@ -19,7 +19,7 @@ This file tracks long-running Goal execution against
 | S2 | Complete | Domain models, typed IDs, error model, and runtime profiles added; slice tests and workspace tests passed. | None |
 | S3 | Complete | SQLite schema v1, idempotent migrations, document visibility, resume versions, and retryable ingest jobs added. | None |
 | S4 | Complete | `resume-cli status/import/search` skeleton and daemon foreground lifecycle added; smoke commands passed. | None |
-| S5 | Not started |  |  |
+| S5 | Complete | `fs-crawler` crate added with recursive scanning, path normalization, extension/temp filtering, fingerprints, and unreachable error status. | None |
 | S6 | Not started |  |  |
 | S7 | Not started |  |  |
 | S8 | Not started |  |  |
@@ -104,6 +104,31 @@ Output summary:
 - `cargo test -p config`: passed profile default tests and skeleton tests.
 - `cargo fmt --check`: passed after formatting.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --workspace`: passed all workspace tests.
+
+### S5
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p fs-crawler
+```
+
+Red output summary:
+
+- Initial S5 tests failed with unresolved imports for scan APIs, path normalization, extension filtering, and error kinds.
+- This confirmed tests covered missing crawler behavior before implementation.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p fs-crawler
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+```
+
+Output summary:
+
+- `cargo test -p fs-crawler`: passed Chinese path scanning, duplicate file names in different directories, temp/unsupported filtering, missing root error mapping, Windows separator normalization, and doc tests.
+- `cargo fmt --check`: passed after formatting.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed after tightening a test assertion.
 - `cargo test --workspace`: passed all workspace tests.
 
 ### S4

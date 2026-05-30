@@ -2,6 +2,7 @@
 members = [
     "crates/core-domain",
     "crates/config",
+    "crates/fs-crawler",
     "crates/meta-store",
     "crates/daemon",
     "crates/cli",
