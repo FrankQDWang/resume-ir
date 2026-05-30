@@ -144,3 +144,55 @@ fn search_filters_persisted_snapshot_by_degree() {
     assert!(!search_stdout.contains("file_name: java_backend.docx"));
     assert!(search_stderr.is_empty());
 }
+
+#[test]
+fn doctor_reports_query_smoke_and_fault_simulation() {
+    let state_dir = unique_state_dir("doctor");
+
+    let (code, stdout, stderr) = run_cli_with_state(&["resume-cli", "doctor"], &state_dir);
+
+    assert_eq!(code, 0);
+    assert!(stdout.contains("doctor: ok"));
+    assert!(stdout.contains("snapshot: missing"));
+    assert!(stdout.contains("query_smoke: ok"));
+    assert!(stdout.contains("daemon_recovery_smoke: simulated_not_running"));
+    assert!(stdout.contains("disk_space_low_simulation: available"));
+    assert!(stderr.is_empty());
+}
+
+#[test]
+fn doctor_reports_corrupt_snapshot_without_panic() {
+    let state_dir = unique_state_dir("doctor_corrupt");
+    std::fs::write(state_dir.join("cli-index.tsv"), "broken\tline\n").expect("write corrupt");
+
+    let (code, stdout, stderr) = run_cli_with_state(&["resume-cli", "doctor"], &state_dir);
+
+    assert_eq!(code, 0);
+    assert!(stdout.contains("snapshot: corrupt"));
+    assert!(stderr.is_empty());
+}
+
+#[test]
+fn export_diagnostics_requires_redaction_and_hides_resume_content() {
+    let root = fixture_path("tests/fixtures/resumes");
+    let state_dir = unique_state_dir("diagnostics");
+    let (import_code, _import_stdout, import_stderr) =
+        run_cli_with_state(&["resume-cli", "import", "--root", &root], &state_dir);
+    assert_eq!(import_code, 0);
+    assert!(import_stderr.is_empty());
+
+    let (code, stdout, stderr) = run_cli_with_state(
+        &["resume-cli", "export-diagnostics", "--redact"],
+        &state_dir,
+    );
+
+    assert_eq!(code, 0);
+    assert!(stdout.contains("diagnostics: redacted"));
+    assert!(stdout.contains("indexed_documents: 2"));
+    assert!(stdout.contains("paths: [redacted]"));
+    assert!(stdout.contains("resume_text: [redacted]"));
+    assert!(!stdout.contains("Java payment gateway"));
+    assert!(!stdout.contains("tests/fixtures"));
+    assert!(!stdout.contains("Zhejiang University"));
+    assert!(stderr.is_empty());
+}

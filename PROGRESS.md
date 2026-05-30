@@ -27,7 +27,7 @@ This file tracks long-running Goal execution against
 | S10 | Complete | MVP field extraction and field filters added; `rank-fusion` crate covers degree/skill/experience filters and soft dedupe skeleton; CLI degree filter works on imported synthetic snapshot. | None |
 | S11 | Complete | Semantic retrieval skeleton added with model-free fake embedder, in-memory vector index, and RRF hybrid fusion tests. | None |
 | S12 | Complete | OCR client and ingest scheduler skeletons added; OCR_REQUIRED pages queue with page timeout/cache keys/cancellation while default client skips heavy OCR. | None |
-| S13 | Not started |  |  |
+| S13 | Complete | CLI doctor and redacted diagnostics export added with query smoke, corrupt snapshot handling, daemon/disk fault simulation markers, and redaction checks. | None |
 
 ## Command Log
 
@@ -231,6 +231,33 @@ Output summary:
 - `cargo fmt --check`: passed after rustfmt.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
 - `cargo test --workspace`: passed all workspace tests.
+
+### S13
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test commands
+```
+
+Red output summary:
+
+- New diagnostics tests failed because `doctor` and `export-diagnostics --redact` were not implemented.
+- Failure covered doctor query/fault smoke, corrupt snapshot reporting, and redacted diagnostics export.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- doctor
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- export-diagnostics --redact
+```
+
+Output summary:
+
+- `cargo fmt --check`: passed after rustfmt.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --workspace`: passed all workspace tests, including 9 CLI command tests.
+- `doctor`: reported `doctor: ok`, `snapshot: ok`, `indexed_documents: 2`, `query_smoke: ok`, corrupt snapshot handling, daemon recovery smoke, and disk-space-low simulation markers.
+- `export-diagnostics --redact`: reported redacted diagnostics with document counts and `[redacted]` placeholders for paths, resume text, and contact fields.
 
 ### S8
 
