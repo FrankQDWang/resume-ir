@@ -27,6 +27,13 @@ Each completed slice must:
 
 ## Common Commands
 
+Rust was bootstrapped locally with rustup. If `cargo` is not already on the
+current shell `PATH`, source Cargo's environment first:
+
+```bash
+. "$HOME/.cargo/env"
+```
+
 Before Rust workspace creation:
 
 ```bash

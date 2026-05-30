@@ -15,7 +15,7 @@ This file tracks long-running Goal execution against
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
 | S0 | Complete | Git initialized; initial design baseline committed as `43e3d1c`; acceptance showed only S0 files pending before commit. | None |
-| S1 | Not started |  |  |
+| S1 | Complete | Rust workspace scaffolded with five crates; red/green tests run; metadata, fmt, test, and clippy passed. | None |
 | S2 | Not started |  |  |
 | S3 | Not started |  |  |
 | S4 | Not started |  |  |
@@ -53,3 +53,28 @@ Output summary:
 
 - `git status --short`: `.gitignore`, `PROGRESS.md`, and `README.md` were the only untracked files before the S0 commit.
 - `git log --oneline -3`: `43e3d1c docs: commit initial design baseline`.
+
+### S1
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test
+```
+
+Red output summary:
+
+- Initial scaffold tests failed with `E0425` because `crate_name` and `binary_name` were not implemented yet.
+- This confirmed the skeleton tests were checking missing crate exports before implementation.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo metadata --no-deps
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+```
+
+Output summary:
+
+- `cargo metadata --no-deps`: succeeded and listed workspace members `core-domain`, `config`, `meta-store`, `daemon`, and `resume-cli`; Cargo 1.96 emitted a compatibility warning requesting explicit `--format-version`.
+- `cargo fmt --check`: passed with no output.
+- `cargo test`: passed all scaffold tests across the five workspace crates.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
