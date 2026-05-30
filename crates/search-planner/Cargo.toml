@@ -1,0 +1,15 @@
+[package]
+name = "search-planner"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "search_planner"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

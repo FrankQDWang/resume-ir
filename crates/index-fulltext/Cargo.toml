@@ -1,0 +1,18 @@
+[package]
+name = "index-fulltext"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "index_fulltext"
+path = "src/lib.rs"
+
+[dependencies]
+tantivy = "0.25.0"
+
+[lints]
+workspace = true

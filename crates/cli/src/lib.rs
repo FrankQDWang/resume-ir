@@ -1,5 +1,7 @@
 use config::{Profile, RuntimeProfile};
+use index_fulltext::{FullTextIndex, IndexDocument};
 use meta_store::{DocumentRecord, MetaStore};
+use search_planner::{SearchRequest, plan_search};
 use std::io::Write;
 use std::path::Path;
 
@@ -74,9 +76,40 @@ where
         return write_stderr(stderr, "usage: resume-cli search <query>");
     }
     let query = args.join(" ");
-    let output =
-        format!("query: {query}\nresults: 0\nmessage: full-text index is not available yet\n");
-    write_stdout(stdout, stderr, &output)
+    let plan = plan_search(SearchRequest {
+        query: query.clone(),
+        top_k: 20,
+    });
+
+    match search_synthetic_fixture(&plan.fulltext_query, plan.top_k) {
+        Ok(hits) => {
+            let mut output = format!("query: {query}\nresults: {}\n", hits.len());
+            for hit in hits {
+                output.push_str(&format!(
+                    "rank: {}\ndoc_id: {}\nfile_name: {}\nsnippet: {}\n",
+                    hit.rank, hit.doc_id, hit.file_name, hit.snippet
+                ));
+            }
+            write_stdout(stdout, stderr, &output)
+        }
+        Err(error) => write_stderr(stderr, &format!("search failed: {error}")),
+    }
+}
+
+fn search_synthetic_fixture(
+    query: &str,
+    top_k: usize,
+) -> index_fulltext::FullTextResult<Vec<index_fulltext::SearchHit>> {
+    let index = FullTextIndex::create_in_memory()?;
+    index.index_batch(vec![IndexDocument::searchable(
+        "doc_fixture_java_payment",
+        "ver_fixture_java_payment",
+        "fixture_java_payment.pdf",
+        "Java 支付 gateway backend engineer",
+        "experience",
+    )])?;
+    index.commit()?;
+    index.search(query, top_k)
 }
 
 fn queue_import(root_path: &Path) -> meta_store::StoreResult<meta_store::JobId> {

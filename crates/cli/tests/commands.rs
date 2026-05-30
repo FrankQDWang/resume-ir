@@ -51,11 +51,13 @@ fn import_root_reports_missing_directory_without_panic() {
 }
 
 #[test]
-fn search_returns_clear_empty_result_before_index_exists() {
+fn search_returns_ranked_hits_with_snippets() {
     let (code, stdout, stderr) = run_cli(&["resume-cli", "search", "Java"]);
 
     assert_eq!(code, 0);
-    assert!(stdout.contains("results: 0"));
-    assert!(stdout.contains("full-text index is not available"));
+    assert!(stdout.contains("rank: 1"));
+    assert!(stdout.contains("doc_id:"));
+    assert!(stdout.contains("file_name:"));
+    assert!(stdout.contains("snippet:"));
     assert!(stderr.is_empty());
 }

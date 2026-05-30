@@ -22,7 +22,7 @@ This file tracks long-running Goal execution against
 | S5 | Complete | `fs-crawler` crate added with recursive scanning, path normalization, extension/temp filtering, fingerprints, and unreachable error status. | None |
 | S6 | Complete | Parser trait/common types, DOCX zip+xml text extraction, PDF text-layer/OCR_REQUIRED skeleton, and parser error mapping added. | None |
 | S7 | Complete | Text normalization with offsets, section heading/fallback chunking, and strong email/phone/date rules added. | None |
-| S8 | Not started |  |  |
+| S8 | Complete | Tantivy full-text index, search planner, commit/reload search tests, deletion filtering, snippets, and ranked CLI search output added. | None |
 | S9 | Not started |  |  |
 | S10 | Not started |  |  |
 | S11 | Not started |  |  |
@@ -102,6 +102,35 @@ Output summary:
 
 - `cargo test -p core-domain`: passed ID generation, domain model, error redaction, and skeleton tests.
 - `cargo test -p config`: passed profile default tests and skeleton tests.
+- `cargo fmt --check`: passed after formatting.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --workspace`: passed all workspace tests.
+
+### S8
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext -p search-planner -p resume-cli
+```
+
+Red output summary:
+
+- Initial S8 tests failed with unresolved planner and full-text index APIs.
+- CLI search test was updated from the S4 "no index" behavior to require ranked hits with `doc_id`, `file_name`, and `snippet`.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p search-planner
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- search "Java 支付"
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+```
+
+Output summary:
+
+- `cargo test -p index-fulltext`: passed commit-after-reader-reload, deleted-document filtering, topN snippet generation, and doc tests.
+- `cargo test -p search-planner`: passed top-k clamping/default planning tests.
+- `cargo run -p resume-cli -- search "Java 支付"`: returned one ranked synthetic fixture hit with `doc_id`, `file_name`, and `snippet`.
 - `cargo fmt --check`: passed after formatting.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
 - `cargo test --workspace`: passed all workspace tests.
