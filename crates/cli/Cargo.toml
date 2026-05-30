@@ -17,9 +17,13 @@ path = "src/main.rs"
 
 [dependencies]
 config = { path = "../config" }
+fs-crawler = { path = "../fs-crawler" }
 index-fulltext = { path = "../index-fulltext" }
-meta-store = { path = "../meta-store" }
+parser-common = { path = "../parser-common" }
+parser-docx = { path = "../parser-docx" }
+parser-pdf = { path = "../parser-pdf" }
 search-planner = { path = "../search-planner" }
+text-normalizer = { path = "../text-normalizer" }
 
 [lints]
 workspace = true

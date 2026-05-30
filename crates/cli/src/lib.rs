@@ -1,11 +1,35 @@
 use config::{Profile, RuntimeProfile};
+use fs_crawler::scan_directory;
 use index_fulltext::{FullTextIndex, IndexDocument};
-use meta_store::{DocumentRecord, MetaStore};
+use parser_common::{ParseInput, ParseStatus, Parser, ResourceBudget};
+use parser_docx::DocxParser;
+use parser_pdf::PdfParser;
 use search_planner::{SearchRequest, plan_search};
-use std::io::Write;
-use std::path::Path;
+use std::fs;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use text_normalizer::normalize_text;
+
+const DEFAULT_STATE_DIR: &str = "local-data";
+const SNAPSHOT_FILE: &str = "cli-index.tsv";
 
 pub fn run<I, S, W, E>(args: I, stdout: &mut W, stderr: &mut E) -> i32
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+    W: Write,
+    E: Write,
+{
+    run_with_state_dir(args, stdout, stderr, Path::new(DEFAULT_STATE_DIR))
+}
+
+pub fn run_with_state_dir<I, S, W, E>(
+    args: I,
+    stdout: &mut W,
+    stderr: &mut E,
+    state_dir: &Path,
+) -> i32
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -21,9 +45,9 @@ where
     };
 
     match command {
-        "status" => status(stdout, stderr),
-        "import" => import_root(&args[2..], stdout, stderr),
-        "search" => search(&args[2..], stdout, stderr),
+        "status" => status(state_dir, stdout, stderr),
+        "import" => import_root(&args[2..], state_dir, stdout, stderr),
+        "search" => search(&args[2..], state_dir, stdout, stderr),
         _ => write_stderr(
             stderr,
             "unknown command; expected status, import, or search",
@@ -31,20 +55,36 @@ where
     }
 }
 
-fn status<W, E>(stdout: &mut W, stderr: &mut E) -> i32
+fn status<W, E>(state_dir: &Path, stdout: &mut W, stderr: &mut E) -> i32
 where
     W: Write,
     E: Write,
 {
     let profile = RuntimeProfile::default();
-    let output = format!(
-        "health: ok\nindexed_documents: 0\nsearchable_documents: 0\nactive_profile: {}\n",
-        profile_name(profile.profile)
-    );
-    write_stdout(stdout, stderr, &output)
+    match load_snapshot(state_dir) {
+        Ok(records) => {
+            let searchable = records
+                .iter()
+                .filter(|record| record.status == SnapshotStatus::Searchable)
+                .count();
+            let ocr_required = records
+                .iter()
+                .filter(|record| record.status == SnapshotStatus::OcrRequired)
+                .count();
+            let output = format!(
+                "health: ok\nindexed_documents: {}\nsearchable_documents: {}\nocr_required_documents: {}\nactive_profile: {}\n",
+                records.len(),
+                searchable,
+                ocr_required,
+                profile_name(profile.profile)
+            );
+            write_stdout(stdout, stderr, &output)
+        }
+        Err(error) => write_stderr(stderr, &format!("failed to read status: {error}")),
+    }
 }
 
-fn import_root<W, E>(args: &[String], stdout: &mut W, stderr: &mut E) -> i32
+fn import_root<W, E>(args: &[String], state_dir: &Path, stdout: &mut W, stderr: &mut E) -> i32
 where
     W: Write,
     E: Write,
@@ -57,17 +97,22 @@ where
         return write_stderr(stderr, "root is not a readable directory");
     }
 
-    let result = queue_import(root_path);
+    let result = import_to_snapshot(root_path, state_dir);
     match result {
-        Ok(job_id) => {
-            let output = format!("import_job: queued\njob_id: {}\n", job_id.as_str());
+        Ok(summary) => {
+            let output = format!(
+                "import_job: completed\nindexed_documents: {}\nsearchable_documents: {}\nocr_required_documents: {}\n",
+                summary.indexed_documents,
+                summary.searchable_documents,
+                summary.ocr_required_documents
+            );
             write_stdout(stdout, stderr, &output)
         }
         Err(error) => write_stderr(stderr, &format!("failed to queue import job: {error}")),
     }
 }
 
-fn search<W, E>(args: &[String], stdout: &mut W, stderr: &mut E) -> i32
+fn search<W, E>(args: &[String], state_dir: &Path, stdout: &mut W, stderr: &mut E) -> i32
 where
     W: Write,
     E: Write,
@@ -81,7 +126,7 @@ where
         top_k: 20,
     });
 
-    match search_synthetic_fixture(&plan.fulltext_query, plan.top_k) {
+    match search_snapshot_or_synthetic(state_dir, &plan.fulltext_query, plan.top_k) {
         Ok(hits) => {
             let mut output = format!("query: {query}\nresults: {}\n", hits.len());
             for hit in hits {
@@ -94,6 +139,132 @@ where
         }
         Err(error) => write_stderr(stderr, &format!("search failed: {error}")),
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotStatus {
+    Searchable,
+    OcrRequired,
+}
+
+impl SnapshotStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Searchable => "SEARCHABLE",
+            Self::OcrRequired => "OCR_REQUIRED",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "SEARCHABLE" => Some(Self::Searchable),
+            "OCR_REQUIRED" => Some(Self::OcrRequired),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SnapshotRecord {
+    doc_id: String,
+    version_id: String,
+    file_name: String,
+    clean_text: String,
+    status: SnapshotStatus,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ImportSummary {
+    indexed_documents: usize,
+    searchable_documents: usize,
+    ocr_required_documents: usize,
+}
+
+fn import_to_snapshot(root_path: &Path, state_dir: &Path) -> Result<ImportSummary, String> {
+    let entries = scan_directory(root_path).map_err(|error| error.message)?;
+    let mut records = Vec::new();
+
+    for entry in entries {
+        let bytes = fs::read(&entry.path).map_err(|error| error.to_string())?;
+        let parse_output = match entry.extension.as_str() {
+            "docx" => DocxParser
+                .parse(
+                    ParseInput {
+                        path: entry.path.clone(),
+                        bytes,
+                    },
+                    ResourceBudget::new(Duration::from_secs(10)),
+                )
+                .map_err(|error| error.user_message().to_owned())?,
+            "pdf" => PdfParser
+                .parse(
+                    ParseInput {
+                        path: entry.path.clone(),
+                        bytes,
+                    },
+                    ResourceBudget::new(Duration::from_secs(10)),
+                )
+                .map_err(|error| error.user_message().to_owned())?,
+            _ => continue,
+        };
+        let status = match parse_output.status {
+            ParseStatus::Parsed => SnapshotStatus::Searchable,
+            ParseStatus::OcrRequired => SnapshotStatus::OcrRequired,
+        };
+        let clean_text = if status == SnapshotStatus::Searchable {
+            normalize_text(&parse_output.text).text
+        } else {
+            String::new()
+        };
+        records.push(SnapshotRecord {
+            doc_id: format!("doc_{:016x}", entry.fingerprint.sample_hash),
+            version_id: format!("ver_{:016x}", entry.fingerprint.sample_hash),
+            file_name: entry.file_name,
+            clean_text,
+            status,
+        });
+    }
+
+    write_snapshot(state_dir, &records).map_err(|error| error.to_string())?;
+    Ok(ImportSummary {
+        indexed_documents: records.len(),
+        searchable_documents: records
+            .iter()
+            .filter(|record| record.status == SnapshotStatus::Searchable)
+            .count(),
+        ocr_required_documents: records
+            .iter()
+            .filter(|record| record.status == SnapshotStatus::OcrRequired)
+            .count(),
+    })
+}
+
+fn search_snapshot_or_synthetic(
+    state_dir: &Path,
+    query: &str,
+    top_k: usize,
+) -> index_fulltext::FullTextResult<Vec<index_fulltext::SearchHit>> {
+    let records = load_snapshot(state_dir).unwrap_or_default();
+    if records.is_empty() {
+        return search_synthetic_fixture(query, top_k);
+    }
+    let docs: Vec<IndexDocument> = records
+        .into_iter()
+        .filter(|record| record.status == SnapshotStatus::Searchable)
+        .map(|record| {
+            IndexDocument::searchable(
+                record.doc_id,
+                record.version_id,
+                record.file_name,
+                record.clean_text,
+                "document",
+            )
+        })
+        .collect();
+    let index = FullTextIndex::create_in_memory()?;
+    index.index_batch(docs)?;
+    index.commit()?;
+    index.search(query, top_k)
 }
 
 fn search_synthetic_fixture(
@@ -112,28 +283,82 @@ fn search_synthetic_fixture(
     index.search(query, top_k)
 }
 
-fn queue_import(root_path: &Path) -> meta_store::StoreResult<meta_store::JobId> {
-    let store = MetaStore::open_in_memory()?;
-    store.apply_migrations()?;
+fn snapshot_path(state_dir: &Path) -> PathBuf {
+    state_dir.join(SNAPSHOT_FILE)
+}
 
-    let normalized_path = root_path.to_string_lossy().into_owned();
-    let file_name = root_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("root")
-        .to_owned();
+fn write_snapshot(state_dir: &Path, records: &[SnapshotRecord]) -> io::Result<()> {
+    fs::create_dir_all(state_dir)?;
+    let path = snapshot_path(state_dir);
+    let temp_path = state_dir.join(format!("{SNAPSHOT_FILE}.tmp"));
+    let mut contents = String::new();
+    for record in records {
+        contents.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            escape_field(&record.doc_id),
+            escape_field(&record.version_id),
+            escape_field(&record.file_name),
+            escape_field(record.status.as_str()),
+            escape_field(&record.clean_text)
+        ));
+    }
+    fs::write(&temp_path, contents)?;
+    fs::rename(temp_path, path)
+}
 
-    store.upsert_document(&DocumentRecord {
-        doc_id: "doc_import_root".to_owned(),
-        source_uri: normalized_path.clone(),
-        normalized_path,
-        file_name,
-        extension: "directory".to_owned(),
-        byte_size: 0,
-        mtime_unix_ms: 0,
-        is_deleted: false,
-    })?;
-    store.create_ingest_job("doc_import_root", 3)
+fn load_snapshot(state_dir: &Path) -> io::Result<Vec<SnapshotRecord>> {
+    let path = snapshot_path(state_dir);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let contents = fs::read_to_string(path)?;
+    let mut records = Vec::new();
+    for line in contents.lines() {
+        let fields: Vec<String> = line.split('\t').map(unescape_field).collect();
+        if fields.len() != 5 {
+            continue;
+        }
+        let Some(status) = SnapshotStatus::parse(&fields[3]) else {
+            continue;
+        };
+        records.push(SnapshotRecord {
+            doc_id: fields[0].clone(),
+            version_id: fields[1].clone(),
+            file_name: fields[2].clone(),
+            status,
+            clean_text: fields[4].clone(),
+        });
+    }
+    Ok(records)
+}
+
+fn escape_field(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+}
+
+fn unescape_field(value: &str) -> String {
+    let mut output = String::new();
+    let mut chars = value.chars();
+    while let Some(char) = chars.next() {
+        if char == '\\' {
+            match chars.next() {
+                Some('t') => output.push('\t'),
+                Some('n') => output.push('\n'),
+                Some('\\') => output.push('\\'),
+                Some(other) => {
+                    output.push('\\');
+                    output.push(other);
+                }
+                None => output.push('\\'),
+            }
+        } else {
+            output.push(char);
+        }
+    }
+    output
 }
 
 fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {

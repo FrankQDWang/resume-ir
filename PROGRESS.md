@@ -23,7 +23,7 @@ This file tracks long-running Goal execution against
 | S6 | Complete | Parser trait/common types, DOCX zip+xml text extraction, PDF text-layer/OCR_REQUIRED skeleton, and parser error mapping added. | None |
 | S7 | Complete | Text normalization with offsets, section heading/fallback chunking, and strong email/phone/date rules added. | None |
 | S8 | Complete | Tantivy full-text index, search planner, commit/reload search tests, deletion filtering, snippets, and ranked CLI search output added. | None |
-| S9 | Not started |  |  |
+| S9 | Complete | CLI import-to-search snapshot loop added for synthetic DOCX/PDF fixtures; status/search read committed snapshot across processes. | None |
 | S10 | Not started |  |  |
 | S11 | Not started |  |  |
 | S12 | Not started |  |  |
@@ -105,6 +105,37 @@ Output summary:
 - `cargo fmt --check`: passed after formatting.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
 - `cargo test --workspace`: passed all workspace tests.
+
+### S9
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test commands
+```
+
+Red output summary:
+
+- Initial S9 test failed because `resume_cli::run_with_state_dir` did not exist.
+- This confirmed tests covered state-dir-injected import/status/search before the persistent snapshot implementation.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- import --root tests/fixtures/resumes
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- status
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- search Java
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+```
+
+Output summary:
+
+- `cargo test --workspace`: passed all workspace tests.
+- `import --root tests/fixtures/resumes`: imported 2 synthetic fixture documents, both `SEARCHABLE`.
+- `status`: reported `indexed_documents: 2`, `searchable_documents: 2`, `ocr_required_documents: 0`, active profile `balanced`.
+- `search Java`: returned 2 ranked hits, `java_backend.docx` and `java_payment_text.pdf`, each with a snippet.
+- Snapshot recovery smoke: `status` and `search` were run as separate CLI processes after import and read the committed `local-data/cli-index.tsv` snapshot.
+- Incomplete/retryable job recovery remains covered by the S3 `retryable_job_query_recovers_interrupted_work` test.
+- `cargo fmt --check`: passed after formatting.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
 
 ### S8
 

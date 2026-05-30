@@ -10,6 +10,19 @@ fn run_cli(args: &[&str]) -> (i32, String, String) {
     )
 }
 
+fn run_cli_with_state(args: &[&str], state_dir: &std::path::Path) -> (i32, String, String) {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let code =
+        resume_cli::run_with_state_dir(args.iter().copied(), &mut stdout, &mut stderr, state_dir);
+
+    (
+        code,
+        String::from_utf8(stdout).expect("stdout utf8"),
+        String::from_utf8(stderr).expect("stderr utf8"),
+    )
+}
+
 fn fixture_path(path: &str) -> String {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest_dir
@@ -17,6 +30,16 @@ fn fixture_path(path: &str) -> String {
         .join(path)
         .to_string_lossy()
         .into_owned()
+}
+
+fn unique_state_dir(name: &str) -> std::path::PathBuf {
+    let dir =
+        std::env::temp_dir().join(format!("resume_ir_cli_state_{name}_{}", std::process::id()));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).expect("clean state dir");
+    }
+    std::fs::create_dir_all(&dir).expect("create state dir");
+    dir
 }
 
 #[test]
@@ -30,13 +53,15 @@ fn status_prints_user_readable_health() {
 }
 
 #[test]
-fn import_root_queues_a_skeleton_job() {
+fn import_root_writes_snapshot_summary() {
     let root = fixture_path("tests/fixtures/empty");
-    let (code, stdout, stderr) = run_cli(&["resume-cli", "import", "--root", &root]);
+    let state_dir = unique_state_dir("empty_import");
+    let (code, stdout, stderr) =
+        run_cli_with_state(&["resume-cli", "import", "--root", &root], &state_dir);
 
     assert_eq!(code, 0);
-    assert!(stdout.contains("import_job: queued"));
-    assert!(stdout.contains("job_"));
+    assert!(stdout.contains("import_job: completed"));
+    assert!(stdout.contains("indexed_documents: 0"));
     assert!(stderr.is_empty());
 }
 
@@ -60,4 +85,31 @@ fn search_returns_ranked_hits_with_snippets() {
     assert!(stdout.contains("file_name:"));
     assert!(stdout.contains("snippet:"));
     assert!(stderr.is_empty());
+}
+
+#[test]
+fn import_status_and_search_use_persisted_snapshot() {
+    let root = fixture_path("tests/fixtures/resumes");
+    let state_dir = unique_state_dir("snapshot");
+
+    let (import_code, import_stdout, import_stderr) =
+        run_cli_with_state(&["resume-cli", "import", "--root", &root], &state_dir);
+    assert_eq!(import_code, 0);
+    assert!(import_stdout.contains("searchable_documents:"));
+    assert!(import_stderr.is_empty());
+
+    let (status_code, status_stdout, status_stderr) =
+        run_cli_with_state(&["resume-cli", "status"], &state_dir);
+    assert_eq!(status_code, 0);
+    assert!(status_stdout.contains("indexed_documents:"));
+    assert!(status_stdout.contains("searchable_documents:"));
+    assert!(status_stderr.is_empty());
+
+    let (search_code, search_stdout, search_stderr) =
+        run_cli_with_state(&["resume-cli", "search", "Java"], &state_dir);
+    assert_eq!(search_code, 0);
+    assert!(search_stdout.contains("rank: 1"));
+    assert!(search_stdout.contains("doc_id:"));
+    assert!(search_stdout.contains("snippet:"));
+    assert!(search_stderr.is_empty());
 }
