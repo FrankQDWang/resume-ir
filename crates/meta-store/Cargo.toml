@@ -11,5 +11,8 @@ publish = false
 name = "meta_store"
 path = "src/lib.rs"
 
+[dependencies]
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+
 [lints]
 workspace = true
