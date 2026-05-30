@@ -18,7 +18,7 @@ This file tracks long-running Goal execution against
 | S1 | Complete | Rust workspace scaffolded with five crates; red/green tests run; metadata, fmt, test, and clippy passed. | None |
 | S2 | Complete | Domain models, typed IDs, error model, and runtime profiles added; slice tests and workspace tests passed. | None |
 | S3 | Complete | SQLite schema v1, idempotent migrations, document visibility, resume versions, and retryable ingest jobs added. | None |
-| S4 | Not started |  |  |
+| S4 | Complete | `resume-cli status/import/search` skeleton and daemon foreground lifecycle added; smoke commands passed. | None |
 | S5 | Not started |  |  |
 | S6 | Not started |  |  |
 | S7 | Not started |  |  |
@@ -102,6 +102,35 @@ Output summary:
 
 - `cargo test -p core-domain`: passed ID generation, domain model, error redaction, and skeleton tests.
 - `cargo test -p config`: passed profile default tests and skeleton tests.
+- `cargo fmt --check`: passed after formatting.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --workspace`: passed all workspace tests.
+
+### S4
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli -p daemon
+```
+
+Red output summary:
+
+- Initial S4 tests failed because `resume_cli::run` and `daemon::run_foreground_once` did not exist.
+- A follow-up import test exposed a fixture path issue in Cargo's crate-local test cwd; the test was corrected to use the repository fixture path.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- status
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- import --root tests/fixtures/empty
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- search Java
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+```
+
+Output summary:
+
+- `status`: printed `health: ok`, zero indexed/searchable documents, and active profile `balanced`.
+- `import --root tests/fixtures/empty`: printed `import_job: queued` with a local skeleton job id.
+- `search Java`: printed `results: 0` with the message that the full-text index is not available yet.
 - `cargo fmt --check`: passed after formatting.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
 - `cargo test --workspace`: passed all workspace tests.
