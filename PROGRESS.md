@@ -24,7 +24,7 @@ This file tracks long-running Goal execution against
 | S7 | Complete | Text normalization with offsets, section heading/fallback chunking, and strong email/phone/date rules added. | None |
 | S8 | Complete | Tantivy full-text index, search planner, commit/reload search tests, deletion filtering, snippets, and ranked CLI search output added. | None |
 | S9 | Complete | CLI import-to-search snapshot loop added for synthetic DOCX/PDF fixtures; status/search read committed snapshot across processes. | None |
-| S10 | Not started |  |  |
+| S10 | Complete | MVP field extraction and field filters added; `rank-fusion` crate covers degree/skill/experience filters and soft dedupe skeleton; CLI degree filter works on imported synthetic snapshot. | None |
 | S11 | Not started |  |  |
 | S12 | Not started |  |  |
 | S13 | Not started |  |  |
@@ -136,6 +136,40 @@ Output summary:
 - Incomplete/retryable job recovery remains covered by the S3 `retryable_job_query_recovers_interrupted_work` test.
 - `cargo fmt --check`: passed after formatting.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+
+### S10
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p extractor-rules
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p rank-fusion
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test commands search_filters_persisted_snapshot_by_degree
+```
+
+Red output summary:
+
+- `extractor-rules` failed because `extract_resume_fields`, field `evidence`, and `EntityType::Degree` were missing.
+- `rank-fusion` failed because the new filter/dedupe APIs were missing.
+- The focused CLI degree-filter test initially failed with nonzero search status before search option parsing and field filtering existed.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p extractor-rules
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p rank-fusion
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- import --root tests/fixtures/resumes
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo run -p resume-cli -- search "Java" --degree bachelor --top-k 20
+```
+
+Output summary:
+
+- `cargo test -p extractor-rules`: passed 3 rule tests covering contact/date evidence plus school, degree, skill, and date-range extraction.
+- `cargo test -p rank-fusion`: passed 3 tests covering degree/skill/experience filters and non-contact soft dedupe skeleton.
+- `cargo fmt --check`: passed after rustfmt.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --workspace`: passed all workspace tests.
+- Snapshot refresh import: imported 2 synthetic fixture documents, both `SEARCHABLE`.
+- `search "Java" --degree bachelor --top-k 20`: returned 1 ranked hit, `java_payment_text.pdf`.
 
 ### S8
 

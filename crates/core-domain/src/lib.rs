@@ -137,6 +137,7 @@ pub enum EntityType {
     Email,
     Phone,
     School,
+    Degree,
     Company,
     Title,
     Skill,

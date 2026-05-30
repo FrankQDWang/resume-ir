@@ -22,6 +22,8 @@ index-fulltext = { path = "../index-fulltext" }
 parser-common = { path = "../parser-common" }
 parser-docx = { path = "../parser-docx" }
 parser-pdf = { path = "../parser-pdf" }
+extractor-rules = { path = "../extractor-rules" }
+rank-fusion = { path = "../rank-fusion" }
 search-planner = { path = "../search-planner" }
 text-normalizer = { path = "../text-normalizer" }
 

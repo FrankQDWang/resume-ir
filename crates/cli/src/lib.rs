@@ -1,10 +1,13 @@
 use config::{Profile, RuntimeProfile};
+use extractor_rules::extract_resume_fields;
 use fs_crawler::scan_directory;
-use index_fulltext::{FullTextIndex, IndexDocument};
+use index_fulltext::{FullTextIndex, IndexDocument, SearchHit};
 use parser_common::{ParseInput, ParseStatus, Parser, ResourceBudget};
 use parser_docx::DocxParser;
 use parser_pdf::PdfParser;
+use rank_fusion::{CandidateProfile, DegreeLevel, FieldFilter, filter_candidates};
 use search_planner::{SearchRequest, plan_search};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -120,15 +123,23 @@ where
     if args.is_empty() {
         return write_stderr(stderr, "usage: resume-cli search <query>");
     }
-    let query = args.join(" ");
+    let search_args = match parse_search_args(args) {
+        Ok(search_args) => search_args,
+        Err(error) => return write_stderr(stderr, &error),
+    };
     let plan = plan_search(SearchRequest {
-        query: query.clone(),
-        top_k: 20,
+        query: search_args.query.clone(),
+        top_k: search_args.top_k,
     });
 
-    match search_snapshot_or_synthetic(state_dir, &plan.fulltext_query, plan.top_k) {
+    match search_snapshot_or_synthetic(
+        state_dir,
+        &plan.fulltext_query,
+        plan.top_k,
+        &search_args.filters,
+    ) {
         Ok(hits) => {
-            let mut output = format!("query: {query}\nresults: {}\n", hits.len());
+            let mut output = format!("query: {}\nresults: {}\n", search_args.query, hits.len());
             for hit in hits {
                 output.push_str(&format!(
                     "rank: {}\ndoc_id: {}\nfile_name: {}\nsnippet: {}\n",
@@ -178,6 +189,13 @@ struct ImportSummary {
     indexed_documents: usize,
     searchable_documents: usize,
     ocr_required_documents: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct SearchArguments {
+    query: String,
+    top_k: usize,
+    filters: FieldFilter,
 }
 
 fn import_to_snapshot(root_path: &Path, state_dir: &Path) -> Result<ImportSummary, String> {
@@ -243,20 +261,30 @@ fn search_snapshot_or_synthetic(
     state_dir: &Path,
     query: &str,
     top_k: usize,
-) -> index_fulltext::FullTextResult<Vec<index_fulltext::SearchHit>> {
+    filters: &FieldFilter,
+) -> index_fulltext::FullTextResult<Vec<SearchHit>> {
     let records = load_snapshot(state_dir).unwrap_or_default();
     if records.is_empty() {
-        return search_synthetic_fixture(query, top_k);
+        return search_synthetic_fixture(query, top_k, filters);
     }
+    search_records(records, query, top_k, filters)
+}
+
+fn search_records(
+    records: Vec<SnapshotRecord>,
+    query: &str,
+    top_k: usize,
+    filters: &FieldFilter,
+) -> index_fulltext::FullTextResult<Vec<SearchHit>> {
     let docs: Vec<IndexDocument> = records
-        .into_iter()
+        .iter()
         .filter(|record| record.status == SnapshotStatus::Searchable)
         .map(|record| {
             IndexDocument::searchable(
-                record.doc_id,
-                record.version_id,
-                record.file_name,
-                record.clean_text,
+                record.doc_id.clone(),
+                record.version_id.clone(),
+                record.file_name.clone(),
+                record.clean_text.clone(),
                 "document",
             )
         })
@@ -264,13 +292,20 @@ fn search_snapshot_or_synthetic(
     let index = FullTextIndex::create_in_memory()?;
     index.index_batch(docs)?;
     index.commit()?;
-    index.search(query, top_k)
+    let candidate_limit = if filters.is_empty() {
+        top_k
+    } else {
+        top_k.saturating_mul(8).clamp(top_k, 100)
+    };
+    let hits = index.search(query, candidate_limit)?;
+    Ok(apply_filters(hits, &records, filters, top_k))
 }
 
 fn search_synthetic_fixture(
     query: &str,
     top_k: usize,
-) -> index_fulltext::FullTextResult<Vec<index_fulltext::SearchHit>> {
+    filters: &FieldFilter,
+) -> index_fulltext::FullTextResult<Vec<SearchHit>> {
     let index = FullTextIndex::create_in_memory()?;
     index.index_batch(vec![IndexDocument::searchable(
         "doc_fixture_java_payment",
@@ -280,7 +315,45 @@ fn search_synthetic_fixture(
         "experience",
     )])?;
     index.commit()?;
-    index.search(query, top_k)
+    let hits = index.search(query, top_k)?;
+    Ok(apply_filters(hits, &[], filters, top_k))
+}
+
+fn apply_filters(
+    hits: Vec<SearchHit>,
+    records: &[SnapshotRecord],
+    filters: &FieldFilter,
+    top_k: usize,
+) -> Vec<SearchHit> {
+    if filters.is_empty() {
+        return hits.into_iter().take(top_k).collect();
+    }
+    let records_by_doc: HashMap<&str, &SnapshotRecord> = records
+        .iter()
+        .map(|record| (record.doc_id.as_str(), record))
+        .collect();
+    let profiles: Vec<CandidateProfile> = hits
+        .iter()
+        .filter_map(|hit| {
+            let record = records_by_doc.get(hit.doc_id.as_str())?;
+            Some(CandidateProfile {
+                doc_id: hit.doc_id.clone(),
+                fields: extract_resume_fields(&record.clean_text),
+            })
+        })
+        .collect();
+    let kept = filter_candidates(&profiles, filters);
+    let mut filtered = Vec::new();
+    for mut hit in hits {
+        if kept.contains(&hit.doc_id) {
+            hit.rank = filtered.len() + 1;
+            filtered.push(hit);
+        }
+        if filtered.len() == top_k {
+            break;
+        }
+    }
+    filtered
 }
 
 fn snapshot_path(state_dir: &Path) -> PathBuf {
@@ -365,6 +438,82 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.windows(2)
         .find(|window| window[0] == flag)
         .map(|window| window[1].as_str())
+}
+
+fn parse_search_args(args: &[String]) -> Result<SearchArguments, String> {
+    let mut query_terms = Vec::new();
+    let mut top_k = 20;
+    let mut filters = FieldFilter::default();
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--top-k" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("usage: resume-cli search <query> [--top-k <n>]".to_owned());
+                };
+                top_k = value
+                    .parse::<usize>()
+                    .map_err(|_| "top-k must be a positive integer".to_owned())?;
+                index += 2;
+            }
+            "--degree" | "--degree-min" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("usage: resume-cli search <query> [--degree <level>]".to_owned());
+                };
+                filters.degree_min = DegreeLevel::parse(value);
+                if filters.degree_min.is_none() {
+                    return Err("degree must be bachelor, master, or doctorate".to_owned());
+                }
+                index += 2;
+            }
+            "--skills-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(
+                        "usage: resume-cli search <query> [--skills-any <skill,...>]".to_owned(),
+                    );
+                };
+                filters.skills_any = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|skill| !skill.is_empty())
+                    .map(str::to_ascii_lowercase)
+                    .collect();
+                index += 2;
+            }
+            "--years-experience-min" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(
+                        "usage: resume-cli search <query> [--years-experience-min <years>]"
+                            .to_owned(),
+                    );
+                };
+                filters.years_experience_min = Some(
+                    value
+                        .parse::<f32>()
+                        .map_err(|_| "years-experience-min must be a number".to_owned())?,
+                );
+                index += 2;
+            }
+            value if value.starts_with("--") => {
+                return Err(format!("unknown search option: {value}"));
+            }
+            value => {
+                query_terms.push(value.to_owned());
+                index += 1;
+            }
+        }
+    }
+
+    if query_terms.is_empty() {
+        return Err("usage: resume-cli search <query>".to_owned());
+    }
+
+    Ok(SearchArguments {
+        query: query_terms.join(" "),
+        top_k,
+        filters,
+    })
 }
 
 fn profile_name(profile: Profile) -> &'static str {

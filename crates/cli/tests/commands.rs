@@ -113,3 +113,34 @@ fn import_status_and_search_use_persisted_snapshot() {
     assert!(search_stdout.contains("snippet:"));
     assert!(search_stderr.is_empty());
 }
+
+#[test]
+fn search_filters_persisted_snapshot_by_degree() {
+    let root = fixture_path("tests/fixtures/resumes");
+    let state_dir = unique_state_dir("degree_filter");
+
+    let (import_code, _import_stdout, import_stderr) =
+        run_cli_with_state(&["resume-cli", "import", "--root", &root], &state_dir);
+    assert_eq!(import_code, 0);
+    assert!(import_stderr.is_empty());
+
+    let (search_code, search_stdout, search_stderr) = run_cli_with_state(
+        &[
+            "resume-cli",
+            "search",
+            "Java",
+            "--degree",
+            "bachelor",
+            "--top-k",
+            "20",
+        ],
+        &state_dir,
+    );
+
+    assert_eq!(search_code, 0);
+    assert!(search_stdout.contains("query: Java"));
+    assert!(search_stdout.contains("results: 1"));
+    assert!(search_stdout.contains("file_name: java_payment_text.pdf"));
+    assert!(!search_stdout.contains("file_name: java_backend.docx"));
+    assert!(search_stderr.is_empty());
+}
