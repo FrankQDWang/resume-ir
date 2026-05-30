@@ -4,6 +4,9 @@ members = [
     "crates/config",
     "crates/fs-crawler",
     "crates/meta-store",
+    "crates/parser-common",
+    "crates/parser-docx",
+    "crates/parser-pdf",
     "crates/daemon",
     "crates/cli",
 ]

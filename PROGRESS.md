@@ -20,7 +20,7 @@ This file tracks long-running Goal execution against
 | S3 | Complete | SQLite schema v1, idempotent migrations, document visibility, resume versions, and retryable ingest jobs added. | None |
 | S4 | Complete | `resume-cli status/import/search` skeleton and daemon foreground lifecycle added; smoke commands passed. | None |
 | S5 | Complete | `fs-crawler` crate added with recursive scanning, path normalization, extension/temp filtering, fingerprints, and unreachable error status. | None |
-| S6 | Not started |  |  |
+| S6 | Complete | Parser trait/common types, DOCX zip+xml text extraction, PDF text-layer/OCR_REQUIRED skeleton, and parser error mapping added. | None |
 | S7 | Not started |  |  |
 | S8 | Not started |  |  |
 | S9 | Not started |  |  |
@@ -129,6 +129,35 @@ Output summary:
 - `cargo test -p fs-crawler`: passed Chinese path scanning, duplicate file names in different directories, temp/unsupported filtering, missing root error mapping, Windows separator normalization, and doc tests.
 - `cargo fmt --check`: passed after formatting.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed after tightening a test assertion.
+- `cargo test --workspace`: passed all workspace tests.
+
+### S6
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p parser-common -p parser-docx -p parser-pdf
+```
+
+Red output summary:
+
+- Initial S6 tests failed with unresolved parser-common contract types and missing `DocxParser`/`PdfParser`.
+- This confirmed tests covered parser traits, parser error mapping, DOCX extraction, corrupt DOCX handling, text-layer PDF parsing, and OCR_REQUIRED routing before implementation.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p parser-common
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p parser-docx
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p parser-pdf
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+```
+
+Output summary:
+
+- `cargo test -p parser-common`: passed parser trait contract and timeout-to-core-error mapping tests.
+- `cargo test -p parser-docx`: passed basic `.docx` text extraction, corrupt zip error handling, support detection, and doc tests.
+- `cargo test -p parser-pdf`: passed text-layer PDF parsing, scanned PDF `OCR_REQUIRED`, support detection, and doc tests.
+- `cargo fmt --check`: passed after formatting.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
 - `cargo test --workspace`: passed all workspace tests.
 
 ### S4
