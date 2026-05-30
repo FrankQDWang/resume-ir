@@ -1,0 +1,26 @@
+# Rust
+/target/
+
+# Local worktrees
+/.worktrees/
+/worktrees/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Local runtime data
+/data/
+/local-data/
+/indexes/
+/logs/
+/diagnostics/
+
+# Test and benchmark outputs
+/tmp/
+/test-output/
+/bench-output/
+*.profraw
