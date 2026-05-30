@@ -1,0 +1,19 @@
+[package]
+name = "extractor-rules"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "extractor_rules"
+path = "src/lib.rs"
+
+[dependencies]
+core-domain = { path = "../core-domain" }
+regex = "1.12.2"
+
+[lints]
+workspace = true

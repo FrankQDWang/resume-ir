@@ -21,7 +21,7 @@ This file tracks long-running Goal execution against
 | S4 | Complete | `resume-cli status/import/search` skeleton and daemon foreground lifecycle added; smoke commands passed. | None |
 | S5 | Complete | `fs-crawler` crate added with recursive scanning, path normalization, extension/temp filtering, fingerprints, and unreachable error status. | None |
 | S6 | Complete | Parser trait/common types, DOCX zip+xml text extraction, PDF text-layer/OCR_REQUIRED skeleton, and parser error mapping added. | None |
-| S7 | Not started |  |  |
+| S7 | Complete | Text normalization with offsets, section heading/fallback chunking, and strong email/phone/date rules added. | None |
 | S8 | Not started |  |  |
 | S9 | Not started |  |  |
 | S10 | Not started |  |  |
@@ -102,6 +102,35 @@ Output summary:
 
 - `cargo test -p core-domain`: passed ID generation, domain model, error redaction, and skeleton tests.
 - `cargo test -p config`: passed profile default tests and skeleton tests.
+- `cargo fmt --check`: passed after formatting.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --workspace`: passed all workspace tests.
+
+### S7
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p text-normalizer -p sectionizer -p extractor-rules
+```
+
+Red output summary:
+
+- Initial S7 tests failed with unresolved imports for text normalization, sectionization, and extractor-rules APIs.
+- This confirmed tests covered the missing cleaning, offset mapping, fallback chunking, and strong field extraction behavior before implementation.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p text-normalizer
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p sectionizer
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p extractor-rules
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+```
+
+Output summary:
+
+- `cargo test -p text-normalizer`: passed whitespace/header/footer cleanup, Chinese/English mixed text, offset mapping, and doc tests.
+- `cargo test -p sectionizer`: passed heading recognition and paragraph/length fallback chunking.
+- `cargo test -p extractor-rules`: passed strong email, phone, date-range extraction and low-confidence exclusion.
 - `cargo fmt --check`: passed after formatting.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
 - `cargo test --workspace`: passed all workspace tests.

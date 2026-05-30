@@ -7,6 +7,9 @@ members = [
     "crates/parser-common",
     "crates/parser-docx",
     "crates/parser-pdf",
+    "crates/text-normalizer",
+    "crates/sectionizer",
+    "crates/extractor-rules",
     "crates/daemon",
     "crates/cli",
 ]
