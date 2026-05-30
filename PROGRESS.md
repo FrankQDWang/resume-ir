@@ -26,7 +26,7 @@ This file tracks long-running Goal execution against
 | S9 | Complete | CLI import-to-search snapshot loop added for synthetic DOCX/PDF fixtures; status/search read committed snapshot across processes. | None |
 | S10 | Complete | MVP field extraction and field filters added; `rank-fusion` crate covers degree/skill/experience filters and soft dedupe skeleton; CLI degree filter works on imported synthetic snapshot. | None |
 | S11 | Complete | Semantic retrieval skeleton added with model-free fake embedder, in-memory vector index, and RRF hybrid fusion tests. | None |
-| S12 | Not started |  |  |
+| S12 | Complete | OCR client and ingest scheduler skeletons added; OCR_REQUIRED pages queue with page timeout/cache keys/cancellation while default client skips heavy OCR. | None |
 | S13 | Not started |  |  |
 
 ## Command Log
@@ -200,6 +200,34 @@ Output summary:
 - `cargo test -p embedder`: passed 2 tests for deterministic, model-free fake embeddings.
 - `cargo test -p index-vector`: passed 2 tests for in-memory nearest-neighbor search and vector replacement.
 - `cargo test -p rank-fusion`: passed field-filter tests plus 3 RRF/hybrid tests for explicit hybrid fusion, rank fusion, and top-k truncation.
+- `cargo fmt --check`: passed after rustfmt.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --workspace`: passed all workspace tests.
+
+### S12
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p ocr-client
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p ingest-scheduler
+```
+
+Red output summary:
+
+- `ocr-client` failed because `NoopOcrClient`, `OcrClient`, `OcrCacheKey`, request, and status types were missing.
+- `ingest-scheduler` failed because `IngestScheduler`, `IngestVisibility`, and `PageImage` were missing.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p ocr-client
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p ingest-scheduler
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+```
+
+Output summary:
+
+- `cargo test -p ocr-client`: passed 2 tests covering default skipped OCR, timeout, cancellation, and cache key propagation.
+- `cargo test -p ingest-scheduler`: passed 3 tests covering OCR_REQUIRED queueing, parsed-document non-queueing, and cancelled job skipping.
 - `cargo fmt --check`: passed after rustfmt.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
 - `cargo test --workspace`: passed all workspace tests.
