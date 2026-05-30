@@ -16,7 +16,7 @@ This file tracks long-running Goal execution against
 |---|---|---|---|
 | S0 | Complete | Git initialized; initial design baseline committed as `43e3d1c`; acceptance showed only S0 files pending before commit. | None |
 | S1 | Complete | Rust workspace scaffolded with five crates; red/green tests run; metadata, fmt, test, and clippy passed. | None |
-| S2 | Not started |  |  |
+| S2 | Complete | Domain models, typed IDs, error model, and runtime profiles added; slice tests and workspace tests passed. | None |
 | S3 | Not started |  |  |
 | S4 | Not started |  |  |
 | S5 | Not started |  |  |
@@ -78,3 +78,30 @@ Output summary:
 - `cargo fmt --check`: passed with no output.
 - `cargo test`: passed all scaffold tests across the five workspace crates.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+
+### S2
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p core-domain -p config
+```
+
+Red output summary:
+
+- Initial S2 tests failed with unresolved imports for domain models, typed IDs, error model types, `Profile`, and `RuntimeProfile`.
+- This confirmed tests covered the required missing behavior before implementation.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p core-domain
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p config
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+```
+
+Output summary:
+
+- `cargo test -p core-domain`: passed ID generation, domain model, error redaction, and skeleton tests.
+- `cargo test -p config`: passed profile default tests and skeleton tests.
+- `cargo fmt --check`: passed after formatting.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --workspace`: passed all workspace tests.
