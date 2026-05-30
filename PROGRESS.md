@@ -25,7 +25,7 @@ This file tracks long-running Goal execution against
 | S8 | Complete | Tantivy full-text index, search planner, commit/reload search tests, deletion filtering, snippets, and ranked CLI search output added. | None |
 | S9 | Complete | CLI import-to-search snapshot loop added for synthetic DOCX/PDF fixtures; status/search read committed snapshot across processes. | None |
 | S10 | Complete | MVP field extraction and field filters added; `rank-fusion` crate covers degree/skill/experience filters and soft dedupe skeleton; CLI degree filter works on imported synthetic snapshot. | None |
-| S11 | Not started |  |  |
+| S11 | Complete | Semantic retrieval skeleton added with model-free fake embedder, in-memory vector index, and RRF hybrid fusion tests. | None |
 | S12 | Not started |  |  |
 | S13 | Not started |  |  |
 
@@ -170,6 +170,39 @@ Output summary:
 - `cargo test --workspace`: passed all workspace tests.
 - Snapshot refresh import: imported 2 synthetic fixture documents, both `SEARCHABLE`.
 - `search "Java" --degree bachelor --top-k 20`: returned 1 ranked hit, `java_payment_text.pdf`.
+
+### S11
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p embedder
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-vector
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p rank-fusion --test rrf
+```
+
+Red output summary:
+
+- `embedder` failed because `Embedder` and `FakeEmbedder` were missing.
+- `index-vector` failed because `VectorIndex`, `VectorDocument`, and `InMemoryVectorIndex` were missing.
+- `rank-fusion --test rrf` failed because `RankedHit` and `reciprocal_rank_fusion` were missing.
+- A follow-up hybrid-interface red test failed because `HybridRankInput` and `fuse_hybrid_results` were missing.
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p embedder
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-vector
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p rank-fusion
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy --all-targets --all-features -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test --workspace
+```
+
+Output summary:
+
+- `cargo test -p embedder`: passed 2 tests for deterministic, model-free fake embeddings.
+- `cargo test -p index-vector`: passed 2 tests for in-memory nearest-neighbor search and vector replacement.
+- `cargo test -p rank-fusion`: passed field-filter tests plus 3 RRF/hybrid tests for explicit hybrid fusion, rank fusion, and top-k truncation.
+- `cargo fmt --check`: passed after rustfmt.
+- `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --workspace`: passed all workspace tests.
 
 ### S8
 

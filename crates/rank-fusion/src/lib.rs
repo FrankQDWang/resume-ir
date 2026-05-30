@@ -1,5 +1,7 @@
 use core_domain::EntityType;
 use extractor_rules::ExtractedField;
+use std::cmp::Ordering;
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum DegreeLevel {
@@ -51,6 +53,36 @@ pub struct CandidateProfile {
     pub fields: Vec<ExtractedField>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RankedHit {
+    pub doc_id: String,
+    pub rank: usize,
+}
+
+impl RankedHit {
+    #[must_use]
+    pub fn new(doc_id: impl Into<String>, rank: usize) -> Self {
+        Self {
+            doc_id: doc_id.into(),
+            rank,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FusedHit {
+    pub rank: usize,
+    pub doc_id: String,
+    pub score: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HybridRankInput {
+    pub fulltext: Vec<RankedHit>,
+    pub vector: Vec<RankedHit>,
+    pub top_k: usize,
+}
+
 #[must_use]
 pub fn filter_candidates(candidates: &[CandidateProfile], filters: &FieldFilter) -> Vec<String> {
     candidates
@@ -58,6 +90,45 @@ pub fn filter_candidates(candidates: &[CandidateProfile], filters: &FieldFilter)
         .filter(|candidate| passes_field_filters(candidate, filters))
         .map(|candidate| candidate.doc_id.clone())
         .collect()
+}
+
+#[must_use]
+pub fn fuse_hybrid_results(input: HybridRankInput) -> Vec<FusedHit> {
+    reciprocal_rank_fusion(&[input.fulltext, input.vector], input.top_k)
+}
+
+#[must_use]
+pub fn reciprocal_rank_fusion(lists: &[Vec<RankedHit>], top_k: usize) -> Vec<FusedHit> {
+    const RRF_K: f32 = 60.0;
+
+    let mut scores: HashMap<String, f32> = HashMap::new();
+    for list in lists {
+        for hit in list {
+            let score = 1.0 / (RRF_K + hit.rank as f32);
+            *scores.entry(hit.doc_id.clone()).or_default() += score;
+        }
+    }
+
+    let mut fused: Vec<FusedHit> = scores
+        .into_iter()
+        .map(|(doc_id, score)| FusedHit {
+            rank: 0,
+            doc_id,
+            score,
+        })
+        .collect();
+    fused.sort_by(|left, right| {
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| left.doc_id.cmp(&right.doc_id))
+    });
+    fused.truncate(top_k);
+    for (index, hit) in fused.iter_mut().enumerate() {
+        hit.rank = index + 1;
+    }
+    fused
 }
 
 #[must_use]

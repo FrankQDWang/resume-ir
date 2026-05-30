@@ -10,6 +10,8 @@ members = [
     "crates/text-normalizer",
     "crates/sectionizer",
     "crates/extractor-rules",
+    "crates/embedder",
+    "crates/index-vector",
     "crates/rank-fusion",
     "crates/index-fulltext",
     "crates/search-planner",
