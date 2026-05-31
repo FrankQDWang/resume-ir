@@ -17,6 +17,8 @@ members = [
     "crates/index-vector",
     "crates/search-planner",
     "crates/rank-fusion",
+    "crates/ocr-client",
+    "crates/ingest-scheduler",
 ]
 resolver = "2"
 
@@ -41,6 +43,8 @@ embedder = { path = "crates/embedder" }
 index-vector = { path = "crates/index-vector" }
 search-planner = { path = "crates/search-planner" }
 rank-fusion = { path = "crates/rank-fusion" }
+ocr-client = { path = "crates/ocr-client" }
+ingest-scheduler = { path = "crates/ingest-scheduler" }
 serde = { version = "1.0", features = ["derive"] }
 regex = "1.10"
 sha2 = "0.10"

@@ -21,7 +21,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, and S9 synthetic import-to-search smoke exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, and benchmark remain absent. |
 | P2 fields and dedupe | In progress | S10 smoke/MVP adds deterministic school, degree, and skill extraction on top of email/phone/date ranges; `rank-fusion` adds field summaries, `degree_min`, `skills_any`, `years_experience_min`, and hashed soft-dedupe skeleton tests; CLI search accepts `--degree bachelor --top-k 20`. | Dictionary coverage is intentionally tiny and synthetic; field filters are computed at query time from persisted clean text, not indexed fast fields; no evaluation harness or production candidate merge workflow exists. |
 | P3 semantic retrieval | In progress | S11 adds dependency-light `embedder` and `index-vector` crates with fake/test-only implementations plus `rank-fusion` RRF hybrid fusion tests. | This is only a fake-interface skeleton. Real embedding model choice/license/checksums/distribution, batch inference, production vector engine, hybrid integration, and recall benchmarks remain blockers. |
-| P4 OCR | Blocked for real OCR execution | OCR design exists; local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs and scanned synthetic corpus absent. |
+| P4 OCR | Blocked for real OCR execution | OCR design exists; S12 adds typed `ocr-client` interfaces and deterministic `ingest-scheduler` OCR-required queue primitives without running OCR. Local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs, real OCR worker integration, and scanned synthetic corpus absent. |
 | P5 packaging | Blocked on binaries and signing inputs | Packaging design only. | Windows/macOS certs, secrets, runners, signing/notarization approval. |
 | P6 performance and stability | Not started | Benchmark/fault-injection design only. | 100k/1M corpus, query set, platform runners absent. |
 
@@ -41,7 +41,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S9 | Complete | `resume-cli import --root tests/fixtures/resumes` crawls synthetic DOCX/PDF fixtures, extracts DOCX and simple text-layer PDF text, routes image-only PDF to `OCR_REQUIRED`, persists metadata/state plus real Tantivy index files under `local-data/indexes/fulltext`, and `resume-cli search "Java"` finds the imported fixtures after reopening the index. | None |
 | S10 | Complete | MVP deterministic extraction for email, phone, school, degree, skills, and date ranges; field confidence/evidence preserved by `StrongEntity`; `rank-fusion` field filters and hashed candidate soft-dedupe skeleton; CLI `search "Java" --degree bachelor --top-k 20` parses and filters returned hits by persisted clean text. Acceptance commands passed locally on 2026-05-31. | None |
 | S11 | Complete | Added workspace crates `embedder` and `index-vector`; `embedder` exposes typed embedding request/response/vector APIs, `Embedder`, and deterministic nonzero `FakeEmbedder`; `index-vector` exposes `VectorIndex`, cosine/dot search, upsert, deletion filtering, and deterministic in-memory tests; `rank-fusion` adds RRF hybrid fusion with configurable `k`, deterministic doc-id tie-breaking, and redacted source contribution debug output. Acceptance commands passed locally on 2026-05-31. | Production P3 remains blocked on real model license/manifest/checksums, batch inference, production vector engine, hybrid retrieval integration, and recall benchmarks. |
-| S12 | Not started |  |  |
+| S12 | Complete | Added workspace crates `ocr-client` and `ingest-scheduler`; `ocr-client` exposes typed page request/response/cache-key/options/timeout/cancellation APIs plus a disabled client that returns deferred/cancelled/timed-out output without OCR text; `ingest-scheduler` exposes a deterministic in-memory OCR_REQUIRED queue with priority/resource-policy claiming, cancellation, and defer/retry state. Acceptance commands passed locally on 2026-05-31. | Real P4 OCR execution remains blocked on OCR engine/language packs, worker integration, and scanned synthetic corpus. |
 | S13 | Not started |  |  |
 
 ## Command Log
@@ -343,3 +343,35 @@ Review summary:
 - No ONNX Runtime, HNSW, FAISS, or other real vector-engine dependency was added.
 - The fake embedder and in-memory vector index are deterministic synthetic-test interfaces only; they are not production semantic search.
 - `Debug` output redacts embedding inputs, vector payloads, and source-list scores/contribution details.
+
+### S12
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client
+/Users/frankqdwang/.cargo/bin/cargo test -p ingest-scheduler
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client
+/Users/frankqdwang/.cargo/bin/cargo test -p ingest-scheduler
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+git diff --check
+```
+
+Output summary:
+
+- Baseline `cargo test --workspace` before S12 edits succeeded.
+- TDD red runs for `cargo test -p ocr-client` and `cargo test -p ingest-scheduler` failed on the expected unresolved S12 APIs before implementation.
+- Final `cargo fmt --check`: succeeded.
+- Final `cargo test -p ocr-client`: succeeded with 3 tests covering deterministic cache keys, path/text hash rejection, cancellation/timeout handling, disabled-client deferred output, no fake OCR text, and redacted page bytes/cache hash debug output.
+- Final `cargo test -p ingest-scheduler`: succeeded with 2 tests covering OCR_REQUIRED enqueueing, query-path policy claiming no background OCR, priority/resource-policy claiming, defer/retry state, cancellation, and redacted task/queue debug output.
+- Final `cargo test --workspace`: succeeded across all crates, including the new `ocr-client` and `ingest-scheduler` crates.
+- Final `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+- `git diff --check`: succeeded.
+
+Review summary:
+
+- S12 is a skeleton-only P4 slice. It does not invoke Tesseract, OCRmyPDF, or any OCR engine, and it does not add an OCR engine dependency.
+- `DisabledOcrWorkerClient` returns typed non-execution statuses and never fabricates OCR text.
+- OCR-required work is represented as deterministic background queue state; `OcrClaimPolicy::query_path()` claims no background OCR task, keeping scanned documents off the query hot path.
+- P4 remains blocked for real OCR execution until OCR engines/language packs, worker isolation, page cache persistence, and scanned synthetic fixtures are available.
