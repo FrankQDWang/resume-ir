@@ -16,6 +16,7 @@ publish = false
 [workspace.dependencies]
 core-domain = { path = "crates/core-domain" }
 config = { path = "crates/config" }
+meta-store = { path = "crates/meta-store" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 uuid = { version = "1.8", features = ["v4", "serde"] }

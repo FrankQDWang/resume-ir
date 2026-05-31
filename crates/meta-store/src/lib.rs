@@ -142,6 +142,42 @@ impl fmt::Debug for IngestJobRow {
     }
 }
 
+/// Non-sensitive local status summary for operator-facing commands.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoreStatus {
+    /// SQLite schema version currently installed.
+    pub schema_version: u32,
+    /// Number of visible document metadata rows.
+    pub visible_document_count: u64,
+    /// Number of queued import-root tasks.
+    pub queued_import_task_count: u64,
+    /// Number of known index state rows.
+    pub index_state_count: u64,
+}
+
+/// Import-root task row selected by local orchestration.
+#[derive(Clone, Eq, PartialEq)]
+pub struct ImportTaskRow {
+    /// Store-assigned import task identifier.
+    pub task_id: i64,
+    /// Current task state.
+    pub state: JobState,
+    /// First enqueue timestamp.
+    pub created_at: String,
+}
+
+impl fmt::Debug for ImportTaskRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportTaskRow")
+            .field("task_id", &self.task_id)
+            .field("state", &self.state)
+            .field("root_path", &"<redacted>")
+            .field("created_at", &self.created_at)
+            .finish()
+    }
+}
+
 impl MetadataStore {
     /// Opens a metadata store at `path`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -164,18 +200,19 @@ impl MetadataStore {
     /// Applies all schema migrations. Safe to call repeatedly.
     pub fn run_migrations(&self) -> Result<()> {
         let current_version = self.schema_version()?;
-        if current_version > 1 {
+        if current_version > 2 {
             return Err(storage_diagnostic(format!(
                 "newer metadata schema version {current_version} is not supported by this binary"
             )));
         }
-        if current_version == 1 {
+        if current_version == 2 {
             return Ok(());
         }
 
-        self.connection
-            .execute_batch(
-                r"
+        if current_version == 0 {
+            self.connection
+                .execute_batch(
+                    r"
                 BEGIN;
 
                 CREATE TABLE IF NOT EXISTS document (
@@ -247,7 +284,61 @@ impl MetadataStore {
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
-                PRAGMA user_version = 1;
+                CREATE TABLE IF NOT EXISTS import_task (
+                    task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    root_path TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (
+                        state IN (
+                            'queued',
+                            'running',
+                            'failed',
+                            'completed',
+                            'cancelled',
+                            'permanent_failed'
+                        )
+                    ),
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_import_task_state
+                    ON import_task(state, task_id);
+
+                PRAGMA user_version = 2;
+
+                COMMIT;
+                ",
+                )
+                .map_err(storage_error)?;
+            return Ok(());
+        }
+
+        self.connection
+            .execute_batch(
+                r"
+                BEGIN;
+
+                CREATE TABLE IF NOT EXISTS import_task (
+                    task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    root_path TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (
+                        state IN (
+                            'queued',
+                            'running',
+                            'failed',
+                            'completed',
+                            'cancelled',
+                            'permanent_failed'
+                        )
+                    ),
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_import_task_state
+                    ON import_task(state, task_id);
+
+                PRAGMA user_version = 2;
 
                 COMMIT;
                 ",
@@ -433,6 +524,67 @@ impl MetadataStore {
             .map(|_| ())
             .map_err(storage_error)
     }
+
+    /// Inserts an import-root task and returns its store-assigned identifier.
+    pub fn enqueue_import_root(&self, root_path: &Path) -> Result<i64> {
+        self.connection
+            .execute(
+                r"
+                INSERT INTO import_task (root_path, state)
+                VALUES (?1, ?2)
+                ",
+                params![
+                    root_path.to_string_lossy().as_ref(),
+                    JobState::Queued.as_str()
+                ],
+            )
+            .map_err(storage_error)?;
+        Ok(self.connection.last_insert_rowid())
+    }
+
+    /// Returns queued import-root tasks without exposing local root paths.
+    pub fn queued_import_tasks(&self) -> Result<Vec<ImportTaskRow>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                r"
+                SELECT task_id, state, created_at
+                FROM import_task
+                WHERE state = 'queued'
+                ORDER BY task_id
+                ",
+            )
+            .map_err(storage_error)?;
+
+        let rows = statement
+            .query_map([], import_task_row_from_sql)
+            .map_err(storage_error)?;
+        let mut tasks = Vec::new();
+        for row in rows {
+            tasks.push(row.map_err(storage_error)?);
+        }
+        Ok(tasks)
+    }
+
+    /// Returns a concise status summary for local operator commands.
+    pub fn status(&self) -> Result<StoreStatus> {
+        Ok(StoreStatus {
+            schema_version: self.schema_version()?,
+            visible_document_count: self.count_rows("document", Some("is_deleted = 0"))?,
+            queued_import_task_count: self.count_rows("import_task", Some("state = 'queued'"))?,
+            index_state_count: self.count_rows("index_state", None)?,
+        })
+    }
+
+    fn count_rows(&self, table_name: &str, where_clause: Option<&str>) -> Result<u64> {
+        let sql = match where_clause {
+            Some(clause) => format!("SELECT COUNT(*) FROM {table_name} WHERE {clause}"),
+            None => format!("SELECT COUNT(*) FROM {table_name}"),
+        };
+        self.connection
+            .query_row(&sql, [], |row| row.get::<_, u64>(0))
+            .map_err(storage_error)
+    }
 }
 
 /// Returns the crate name for smoke tests and workspace metadata.
@@ -474,6 +626,21 @@ fn ingest_job_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<IngestJo
         max_attempts: row.get(4)?,
         attempt_count: row.get(5)?,
         last_error: row.get(6)?,
+    })
+}
+
+fn import_task_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<ImportTaskRow> {
+    let state = row.get::<_, String>(1)?;
+    Ok(ImportTaskRow {
+        task_id: row.get(0)?,
+        state: JobState::try_from(state.as_str()).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
+            )
+        })?,
+        created_at: row.get(2)?,
     })
 }
 
@@ -540,7 +707,7 @@ mod tests {
         store.run_migrations()?;
         store.run_migrations()?;
 
-        assert_eq!(store.schema_version()?, 1);
+        assert_eq!(store.schema_version()?, 2);
         Ok(())
     }
 
@@ -549,7 +716,7 @@ mod tests {
         let store = MetadataStore::open_in_memory()?;
         store
             .connection
-            .execute_batch("PRAGMA user_version = 2;")
+            .execute_batch("PRAGMA user_version = 3;")
             .map_err(storage_error)?;
 
         let Err(error) = store.run_migrations() else {
@@ -558,10 +725,46 @@ mod tests {
             ));
         };
 
-        assert_eq!(store.schema_version()?, 2);
+        assert_eq!(store.schema_version()?, 3);
         assert!(error
             .local_diagnostic_message()
             .contains("newer metadata schema version"));
+        Ok(())
+    }
+
+    #[test]
+    fn status_counts_visible_documents_import_tasks_and_indexes() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let document = test_document(false);
+
+        store.upsert_document(&document)?;
+        store.enqueue_import_root(Path::new("/local/redacted/import-root"))?;
+        store.upsert_index_state("tantivy", None, "missing", None)?;
+
+        let status = store.status()?;
+
+        assert_eq!(status.schema_version, 2);
+        assert_eq!(status.visible_document_count, 1);
+        assert_eq!(status.queued_import_task_count, 1);
+        assert_eq!(status.index_state_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn import_task_debug_redacts_root_path() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+
+        let task_id = store.enqueue_import_root(Path::new("/synthetic/private/root"))?;
+        let tasks = store.queued_import_tasks()?;
+
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task_id, task_id);
+        assert_eq!(tasks[0].state, JobState::Queued);
+        let debug = format!("{:?}", tasks[0]);
+        assert!(debug.contains("root_path: \"<redacted>\""));
+        assert!(!debug.contains("/synthetic/private/root"));
         Ok(())
     }
 

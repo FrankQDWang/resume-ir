@@ -17,7 +17,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S3 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; daemon/CLI commands, IPC, diagnostics, and CI remain unfinished. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S4 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, and CI remain unfinished. |
 | P1 text import and full-text search | Not started | Design docs only. | Synthetic large corpus and parser/index implementation absent. |
 | P2 fields and dedupe | Not started | Design docs only. | Field-labeled synthetic/desensitized evaluation set and dictionaries absent. |
 | P3 semantic retrieval | Not started | Design docs only. | Model choice, license, checksums, and distribution approval require human confirmation. |
@@ -33,7 +33,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S1 | Complete | Root Rust workspace plus `core-domain`, `config`, `meta-store`, `resume-daemon`, and `resume-cli`; acceptance passed with `cargo metadata --no-deps --format-version 1`, `cargo fmt --check`, and `cargo test`. | None |
 | S2 | Complete | Domain/config types and tests for typed IDs, redacted errors, redacted debug output, and profile defaults; acceptance passed with `cargo test -p core-domain` and `cargo test -p config`. | None |
 | S3 | Complete | SQLite schema v1, migration runner, document/resume_version/ingest_job/index_state tables, job state updates, retry recovery query, future-version guard, typed job states, and deletion visibility tests; acceptance passed with `cargo test -p meta-store`. | None |
-| S4 | Not started |  |  |
+| S4 | Complete | `resume-cli status`, `resume-cli import --root`, `resume-cli search <query>`, and `resume-daemon --foreground` run without panic; import queues a root task in SQLite and search returns a clear no-index message without fake results. | None |
 | S5 | Not started |  |  |
 | S6 | Not started |  |  |
 | S7 | Not started |  |  |
@@ -118,3 +118,31 @@ Review summary:
 - Sub-agent spec compliance review approved S3 scope.
 - Sub-agent code quality review found four issues: debug leaks, normalized-path conflict handling, future schema downgrade risk, and stringly job state. Fixes were applied and re-reviewed as approved.
 - PII pattern scan over current code/docs found no email-like, phone-like, or user-home-shaped synthetic fixture strings.
+
+### S4
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- status
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- import --root tests/fixtures/empty
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- search "Java"
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-daemon -- --foreground
+```
+
+Output summary:
+
+- `cargo fmt --check`: succeeded.
+- `cargo test --workspace`: succeeded; `meta-store` has 10 tests, `resume-cli` has 4 tests, and `resume-daemon` has 2 tests.
+- `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+- `resume-cli status`: succeeded and printed metadata schema/counts only.
+- `resume-cli import --root tests/fixtures/empty`: succeeded and queued an import task without printing the root path.
+- `resume-cli search "Java"`: succeeded with a clear no-index message and no fake results.
+- `resume-daemon --foreground`: succeeded, initialized the local metadata store, and exited via the foreground skeleton path.
+
+Review summary:
+
+- Sub-agent spec compliance review initially found that `resume-daemon --foreground` required `--once`; a foreground skeleton path was added and re-reviewed as approved.
+- Sub-agent code quality review approved privacy, migration, local data side effects, and scope control.
+- Runtime smoke commands created `local-data/metadata.sqlite`; `local-data/` is ignored and not staged.

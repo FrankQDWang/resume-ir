@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 config.workspace = true
 core-domain.workspace = true
+meta-store.workspace = true
 
 [lints]
 workspace = true
