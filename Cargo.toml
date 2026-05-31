@@ -6,6 +6,9 @@ members = [
     "crates/daemon",
     "crates/cli",
     "crates/fs-crawler",
+    "crates/parser-common",
+    "crates/parser-docx",
+    "crates/parser-pdf",
 ]
 resolver = "2"
 

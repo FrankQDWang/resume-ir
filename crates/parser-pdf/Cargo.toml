@@ -1,0 +1,18 @@
+[package]
+name = "parser-pdf"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+parser-common = { path = "../parser-common" }
+
+[dev-dependencies]
+core-domain = { path = "../core-domain" }
+
+[lints]
+workspace = true

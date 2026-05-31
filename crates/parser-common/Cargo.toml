@@ -1,0 +1,15 @@
+[package]
+name = "parser-common"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+core-domain = { path = "../core-domain" }
+
+[lints]
+workspace = true

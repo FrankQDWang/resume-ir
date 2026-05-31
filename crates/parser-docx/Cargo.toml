@@ -1,0 +1,17 @@
+[package]
+name = "parser-docx"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+parser-common = { path = "../parser-common" }
+quick-xml = "0.31"
+zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true

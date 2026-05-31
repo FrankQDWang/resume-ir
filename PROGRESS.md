@@ -20,7 +20,7 @@ This file tracks long-running Goal execution against
 | S3 | Complete | `cargo fmt --check`, `cargo test -p meta-store`, and `cargo clippy -p meta-store --all-targets -- -D warnings` passed. | None |
 | S4 | Complete | `cargo fmt --check`, `cargo test -p meta-store`, `cargo test -p resume-cli`, `cargo test -p resume-daemon`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, and the S4 CLI/daemon smoke commands passed. | None for the S4 slice; product search, indexing, OCR, embeddings, IPC, diagnostics, and cross-platform verification remain not complete. |
 | S5 | Slice complete | `cargo fmt --check`, `cargo test -p fs-crawler`, and `cargo clippy -p fs-crawler --all-targets -- -D warnings` passed. | None for the S5 slice; product import execution, document parsing, indexing, OCR, and query closure remain not complete. |
-| S6 | Not started |  |  |
+| S6 | Slice complete | `cargo fmt --check`, `cargo test -p parser-common`, `cargo test -p parser-docx`, `cargo test -p parser-pdf`, and `cargo clippy -p parser-common -p parser-docx -p parser-pdf --all-targets -- -D warnings` passed. | None for the S6 slice; OCR execution, text cleaning, indexing, search, and S7+ remain not complete. |
 | S7 | Not started |  |  |
 | S8 | Not started |  |  |
 | S9 | Not started |  |  |
@@ -285,3 +285,67 @@ Coverage summary:
 Scope note:
 
 - S5 is only a file discovery slice. It does not perform product import execution, document parsing, full-text/vector indexing, OCR, or search-query closure.
+
+### S6
+
+TDD red checks:
+
+```bash
+cargo test -p parser-common
+cargo test -p parser-docx
+cargo test -p parser-pdf
+```
+
+Output summary:
+
+- `parser-common` failed before implementation because the parser trait, probe/input/output, budget, support level, and parser error mapping APIs were missing.
+- `parser-docx` failed before implementation because `DocxParser` and the shared parser APIs were missing.
+- `parser-pdf` failed before implementation because `PdfParser`, shared parser APIs, and the dev test dependency on `core-domain` were missing.
+
+Implementation checks:
+
+```bash
+cargo test -p parser-common
+cargo test -p parser-docx
+cargo test -p parser-pdf
+```
+
+Output summary:
+
+- `cargo test -p parser-common`: exit 0; 7 S6 tests passed, covering file probes, support ordering, zero and nonzero timeout mapping, corrupted/OCR_REQUIRED parser error mapping, and redacted parse output debug.
+- `cargo test -p parser-docx`: exit 0; 6 S6 tests passed, covering synthetic zip+xml `.docx` paragraph extraction, XML entity unescape, corrupted archive handling, missing `word/document.xml` handling, input byte budget enforcement, and excessive zip entry rejection.
+- `cargo test -p parser-pdf`: exit 0; 7 S6 tests passed, covering synthetic text-layer PDF extraction/status, scanned/image PDF `ParseStatus::OcrRequired`, corrupted PDF handling, input byte budget enforcement, runtime timeout enforcement for text-layer and no-text-layer scans, deadline-aware PDF scans, and redacted parse output debug.
+
+Acceptance:
+
+```bash
+cargo fmt --check
+cargo test -p parser-common
+cargo test -p parser-docx
+cargo test -p parser-pdf
+cargo clippy -p parser-common -p parser-docx -p parser-pdf --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0 after formatting.
+- `cargo test -p parser-common`: exit 0; 7 tests passed.
+- `cargo test -p parser-docx`: exit 0; 6 tests passed.
+- `cargo test -p parser-pdf`: exit 0; 7 tests passed.
+- `cargo clippy -p parser-common -p parser-docx -p parser-pdf --all-targets -- -D warnings`: exit 0.
+
+Scope note:
+
+- S6 is only the parser skeleton/docx/PDF text-layer slice. It does not implement OCR execution, indexing, full-text search, text cleaning, extraction, or S7+ behavior.
+
+Additional workspace regression:
+
+```bash
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+```
+
+Output summary:
+
+- `cargo test --workspace`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
