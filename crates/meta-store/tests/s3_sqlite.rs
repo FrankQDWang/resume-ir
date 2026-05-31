@@ -70,6 +70,38 @@ fn visible_document_query_excludes_deleted_documents_by_default() {
 }
 
 #[test]
+fn mark_document_deleted_sets_tombstone_hides_versions_and_status_counts() {
+    let store = migrated_store();
+    let now = UnixTimestamp::from_unix_seconds(1_800_000_500);
+    let visible = document("soft-delete-placeholder", false, DocumentStatus::Searchable);
+    let version = resume_version("soft-delete-version-placeholder", visible.id.clone());
+
+    store.upsert_document(&visible).unwrap();
+    store.upsert_resume_version(&version).unwrap();
+    assert_eq!(store.status_summary().unwrap().searchable_documents, 1);
+
+    let deleted = store
+        .mark_document_deleted(&visible.id, now)
+        .unwrap()
+        .expect("document exists");
+
+    assert_eq!(deleted.id, visible.id);
+    assert!(deleted.is_deleted);
+    assert_eq!(deleted.status, DocumentStatus::Deleted);
+    assert_eq!(deleted.updated_at, now);
+    assert!(store.visible_documents().unwrap().is_empty());
+    assert_eq!(store.status_summary().unwrap().searchable_documents, 0);
+    assert_eq!(
+        store
+            .resume_version_by_id(&version.id)
+            .unwrap()
+            .unwrap()
+            .visibility,
+        ResumeVisibility::Hidden
+    );
+}
+
+#[test]
 fn recovery_query_returns_interrupted_running_and_retryable_failed_jobs_only() {
     let store = migrated_store();
     let document = document(

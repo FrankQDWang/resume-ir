@@ -28,6 +28,7 @@ This file tracks long-running Goal execution against
 | S11 | Slice complete | `cargo test -p embedder`, `cargo test -p index-vector`, `cargo test -p rank-fusion`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` passed. | None for the S11 skeleton; deterministic embedder and in-memory vector index are test-only scaffolding, not product semantic search or performance claims. |
 | S12 | Slice complete | `cargo test -p ocr-client`, `cargo test -p ingest-scheduler`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` passed. | None for the S12 skeleton; OCR remains disabled by default and no real OCR worker, DB page queue, or query-path OCR was added. |
 | S13 | Slice complete | `cargo test --workspace`, `cargo run -p resume-cli -- doctor`, and `cargo run -p resume-cli -- export-diagnostics --redact` passed. | None for the S13 skeleton; query smoke is a small current-run measurement only, and fault handling is simulated/diagnostic rather than a destructive daemon kill or disk-fill exercise. |
+| S14 | Product slice complete | `cargo fmt --check`, `cargo test -p meta-store`, `cargo test -p import-pipeline`, `cargo test -p resume-cli --test s8_search_cli`, `cargo test -p resume-cli --test s14_delete_search`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, and the S14 import/search/delete/search CLI smoke passed. | None for this soft-delete/default-search slice; physical deletion, vector-index deletion, queue cancellation, atomic snapshot rollback, and complete audit retention remain not complete. |
 
 ## Command Log
 
@@ -539,6 +540,67 @@ Review notes:
 Scope note:
 
 - S13 is a small diagnostics and smoke slice. It does not claim production benchmark results, P95 latency, destructive fault injection, complete diagnostic bundles, or release readiness.
+
+### S14
+
+Sub-agent read-only audit:
+
+- Deletion/recovery explorer identified that deleted documents were modeled but not propagated through import rescans, and that default no-filter search trusted the full-text index without metadata visibility hydration.
+- Parser/OCR explorer identified OCR handoff as a future high-value slice, but it remains separate because this slice targets the stable-blocking deletion behavior without requiring external OCR/model dependencies.
+
+TDD red checks:
+
+```bash
+cargo test -p meta-store mark_document_deleted_sets_tombstone_hides_versions_and_status_counts
+cargo test -p resume-cli --test s14_delete_search
+```
+
+Output summary:
+
+- `meta-store` failed before implementation because `MetaStore::mark_document_deleted` did not exist.
+- `resume-cli --test s14_delete_search` failed before implementation because `resume-cli delete` was not a recognized command.
+
+Implementation and acceptance:
+
+```bash
+cargo fmt --check
+cargo test -p meta-store
+cargo test -p import-pipeline
+cargo test -p resume-cli --test s8_search_cli
+cargo test -p resume-cli --test s14_delete_search
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `cargo test -p meta-store`: exit 0; 18 S3 tests passed, including the new soft-delete tombstone and hidden-version test.
+- `cargo test -p import-pipeline`: exit 0.
+- `cargo test -p resume-cli --test s8_search_cli`: exit 0 after upgrading the test to seed matching synthetic metadata for default visibility hydration.
+- `cargo test -p resume-cli --test s14_delete_search`: exit 0; 3 tests passed, covering explicit CLI soft delete, import-rescan deletion propagation, and stale-index metadata filtering.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+CLI smoke:
+
+```bash
+cargo run -p resume-cli -- --data-dir "$tmp/data" import --root tests/fixtures/resumes
+cargo run -p resume-cli -- --data-dir "$tmp/data" search Java
+cargo run -p resume-cli -- --data-dir "$tmp/data" delete --doc-id "$doc_id"
+cargo run -p resume-cli -- --data-dir "$tmp/data" search Java
+```
+
+Output summary:
+
+- Import completed for 3 synthetic files with 2 searchable documents, 1 OCR-required document, 0 failed documents, and 0 deleted documents.
+- Search before delete returned 2 synthetic Java results.
+- `delete --doc-id` returned `status: deleted`, `index rebuilt: true`, and `indexed documents: 1`.
+- Search after delete returned 1 synthetic Java result and did not return the deleted DOCX fixture.
+
+Scope note:
+
+- S14 implements soft tombstones and default-search metadata visibility filtering for full-text search. Import-rescan deletion propagation only runs after a clean crawl with no scan errors. It does not physically delete user files, cancel OCR/vector work, delete vector-index records, implement staging snapshot pointer swaps, or claim complete audit/retention policy.
 
 ### S9
 

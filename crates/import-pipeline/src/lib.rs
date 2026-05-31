@@ -74,9 +74,16 @@ fn run_import(
         searchable_documents: 0,
         ocr_required_documents: 0,
         failed_documents: 0,
+        deleted_documents: 0,
     };
     let mut pending_index_documents = Vec::new();
     let sectionizer = Sectionizer::default();
+    let can_propagate_deletions = report.errors.is_empty();
+    let discovered_doc_ids = report
+        .files
+        .iter()
+        .map(|file| file.document_id.as_str().to_string())
+        .collect::<BTreeSet<_>>();
 
     for file in report.files {
         match process_file(store, &file, &sectionizer, now)? {
@@ -95,6 +102,10 @@ fn run_import(
         }
     }
 
+    if can_propagate_deletions {
+        summary.deleted_documents =
+            mark_missing_documents_deleted(store, root, &discovered_doc_ids, now)?;
+    }
     let pending_doc_ids = pending_index_documents
         .iter()
         .map(|(document, _)| document.id.as_str().to_string())
@@ -105,13 +116,8 @@ fn run_import(
             .iter()
             .map(|(_, index_document)| index_document.clone()),
     );
-    let index = FullTextIndex::open_or_create(&data_dir.join("search-index"))
-        .map_err(ImportPipelineError::index)?;
-    index
-        .replace_documents(index_documents)
-        .map_err(ImportPipelineError::index)?;
-    index.commit().map_err(ImportPipelineError::index)?;
-    drop(index);
+    let indexed_document_count = index_documents.len();
+    write_full_text_index(data_dir, index_documents)?;
 
     for (mut document, _) in pending_index_documents {
         document.status = DocumentStatus::Searchable;
@@ -122,21 +128,98 @@ fn run_import(
         summary.searchable_documents += 1;
     }
 
+    update_index_state(
+        store,
+        now,
+        indexed_document_count,
+        summary.ocr_required_documents,
+        summary.deleted_documents,
+    )?;
+
+    Ok(summary)
+}
+
+pub fn rebuild_full_text_index(
+    data_dir: &Path,
+    store: &MetaStore,
+    now: UnixTimestamp,
+) -> Result<IndexRebuildSummary> {
+    let sectionizer = Sectionizer::default();
+    let index_documents = persisted_index_documents(store, &sectionizer, &BTreeSet::new())?;
+    let indexed_documents = index_documents.len();
+    write_full_text_index(data_dir, index_documents)?;
+    update_index_state(store, now, indexed_documents, 0, 0)?;
+
+    Ok(IndexRebuildSummary { indexed_documents })
+}
+
+fn write_full_text_index(data_dir: &Path, index_documents: Vec<IndexDocument>) -> Result<()> {
+    let index = FullTextIndex::open_or_create(&data_dir.join("search-index"))
+        .map_err(ImportPipelineError::index)?;
+    index
+        .replace_documents(index_documents)
+        .map_err(ImportPipelineError::index)?;
+    index.commit().map_err(ImportPipelineError::index)?;
+    drop(index);
+
+    Ok(())
+}
+
+fn update_index_state(
+    store: &MetaStore,
+    now: UnixTimestamp,
+    indexed_documents: usize,
+    ocr_required_documents: usize,
+    deleted_documents: usize,
+) -> Result<()> {
     store
         .upsert_index_state(&IndexState {
             manifest_version: INDEX_MANIFEST_VERSION.to_string(),
             snapshot_token: Some(format!(
-                "snapshot:{}:{}:{}",
+                "snapshot:{}:{}:{}:{}",
                 now.as_unix_seconds(),
-                summary.searchable_documents,
-                summary.ocr_required_documents
+                indexed_documents,
+                ocr_required_documents,
+                deleted_documents
             )),
             status: IndexStateStatus::Ready,
             updated_at: now,
         })
-        .map_err(ImportPipelineError::store)?;
+        .map_err(ImportPipelineError::store)
+}
 
-    Ok(summary)
+fn mark_missing_documents_deleted(
+    store: &MetaStore,
+    root: &Path,
+    discovered_doc_ids: &BTreeSet<String>,
+    now: UnixTimestamp,
+) -> Result<usize> {
+    let documents = store
+        .visible_documents()
+        .map_err(ImportPipelineError::store)?;
+    let mut deleted_count = 0_usize;
+
+    for document in documents {
+        if !document_path_is_under_root(&document.normalized_path, root) {
+            continue;
+        }
+        if discovered_doc_ids.contains(document.id.as_str()) {
+            continue;
+        }
+        if store
+            .mark_document_deleted(&document.id, now)
+            .map_err(ImportPipelineError::store)?
+            .is_some()
+        {
+            deleted_count += 1;
+        }
+    }
+
+    Ok(deleted_count)
+}
+
+fn document_path_is_under_root(document_path: &str, root: &Path) -> bool {
+    Path::new(document_path).starts_with(root)
 }
 
 fn persisted_index_documents(
@@ -419,6 +502,12 @@ pub struct ImportSummary {
     pub searchable_documents: usize,
     pub ocr_required_documents: usize,
     pub failed_documents: usize,
+    pub deleted_documents: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IndexRebuildSummary {
+    pub indexed_documents: usize,
 }
 
 #[derive(Clone, PartialEq, Eq)]

@@ -239,6 +239,64 @@ impl MetaStore {
         Ok(documents)
     }
 
+    pub fn mark_document_deleted(
+        &self,
+        id: &DocumentId,
+        updated_at: UnixTimestamp,
+    ) -> Result<Option<Document>> {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let current_document = {
+            let sql = format!("SELECT {DOCUMENT_COLUMNS} FROM document WHERE id = ?1");
+            let mut statement = transaction.prepare(&sql).map_err(MetaStoreError::storage)?;
+            let mut rows = statement
+                .query(params![id.as_str()])
+                .map_err(MetaStoreError::storage)?;
+
+            match rows.next().map_err(MetaStoreError::storage)? {
+                Some(row) => Some(read_document(row)?),
+                None => None,
+            }
+        };
+
+        let Some(mut document) = current_document else {
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(None);
+        };
+
+        transaction
+            .execute(
+                "\
+                UPDATE document
+                SET is_deleted = 1, status = ?1, updated_at_seconds = ?2
+                WHERE id = ?3",
+                params![
+                    document_status_to_storage(DocumentStatus::Deleted),
+                    updated_at.as_unix_seconds(),
+                    id.as_str(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction
+            .execute(
+                "\
+                UPDATE resume_version
+                SET visibility = ?1
+                WHERE document_id = ?2",
+                params![
+                    resume_visibility_to_storage(ResumeVisibility::Hidden),
+                    id.as_str()
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+
+        document.is_deleted = true;
+        document.status = DocumentStatus::Deleted;
+        document.updated_at = updated_at;
+        Ok(Some(document))
+    }
+
     pub fn upsert_resume_version(&self, version: &ResumeVersion) -> Result<()> {
         let language_set_json = serde_json::to_string(&version.language_set)
             .map_err(|_| MetaStoreError::invalid_value("resume_version.language_set"))?;

@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use extractor_rules::{extract_strong_fields, FieldType};
-use import_pipeline::import_root;
+use import_pipeline::{import_root, rebuild_full_text_index};
 use index_fulltext::{FullTextIndex, SearchHit, SearchQuery};
 use meta_store::{
     DocumentId, DocumentStatus, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus,
@@ -32,7 +32,7 @@ fn run() -> Result<()> {
     let data_dir = take_data_dir(&mut args)?;
     let Some(command) = args.first().map(String::as_str) else {
         return Err(CliError::usage(
-            "expected command: status, import, search, doctor, or export-diagnostics",
+            "expected command: status, import, search, delete, doctor, or export-diagnostics",
         ));
     };
 
@@ -45,6 +45,7 @@ fn run() -> Result<()> {
         }
         "import" => import_command(&data_dir, &args[1..]),
         "search" => search_command(&data_dir, &args[1..]),
+        "delete" => delete_command(&data_dir, &args[1..]),
         "doctor" => {
             if args.len() != 1 {
                 return Err(CliError::usage("usage: resume-cli doctor"));
@@ -53,7 +54,7 @@ fn run() -> Result<()> {
         }
         "export-diagnostics" => export_diagnostics_command(&data_dir, &args[1..]),
         _ => Err(CliError::usage(
-            "expected command: status, import, search, doctor, or export-diagnostics",
+            "expected command: status, import, search, delete, doctor, or export-diagnostics",
         )),
     }
 }
@@ -154,6 +155,7 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr required documents: {}", summary.ocr_required_documents);
     println!("failed documents: {}", summary.failed_documents);
+    println!("deleted documents: {}", summary.deleted_documents);
     println!("scan errors: {}", summary.scan_errors);
 
     Ok(())
@@ -190,24 +192,20 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    let candidate_limit = if search_args.filters.is_empty() {
-        search_args.top_k
-    } else {
-        search_args
-            .top_k
-            .saturating_mul(5)
-            .clamp(search_args.top_k, 100)
-    };
+    let candidate_limit = search_args
+        .top_k
+        .saturating_mul(5)
+        .clamp(search_args.top_k, 100);
     let plan = plan_search(&search_args.query, candidate_limit)
         .map_err(|_| CliError::user("search query is empty"))?;
     let index = FullTextIndex::open(&index_dir).map_err(CliError::fulltext)?;
     let hits = index
         .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
         .map_err(CliError::fulltext)?;
+    let store = open_store(data_dir)?;
     let hits = if search_args.filters.is_empty() {
-        limit_and_rerank_hits(hits, search_args.top_k)
+        visible_hits(&store, hits, search_args.top_k)?
     } else {
-        let store = open_store(data_dir)?;
         filter_hits(&store, hits, &search_args.filters, search_args.top_k)?
     };
 
@@ -219,6 +217,34 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         println!("file_name: {}", hit.file_name);
         println!("snippet: {}", hit.snippet);
     }
+
+    Ok(())
+}
+
+fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    if args.len() != 2 || args.first().map(String::as_str) != Some("--doc-id") {
+        return Err(CliError::usage(
+            "usage: resume-cli delete --doc-id <doc_id>",
+        ));
+    }
+
+    let document_id =
+        DocumentId::from_str(&args[1]).map_err(|_| CliError::user("delete doc id is invalid"))?;
+    let store = open_store(data_dir)?;
+    let now = current_timestamp()?;
+    let Some(deleted_document) = store
+        .mark_document_deleted(&document_id, now)
+        .map_err(CliError::store)?
+    else {
+        return Err(CliError::user("delete document was not found"));
+    };
+    let rebuild = rebuild_full_text_index(data_dir, &store, now).map_err(CliError::import)?;
+
+    println!("delete completed");
+    println!("doc_id: {}", deleted_document.id);
+    println!("status: deleted");
+    println!("index rebuilt: true");
+    println!("indexed documents: {}", rebuild.indexed_documents);
 
     Ok(())
 }
@@ -362,15 +388,23 @@ fn search_usage() -> &'static str {
     "usage: resume-cli search <query> [--degree <level>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
 }
 
-fn limit_and_rerank_hits(hits: Vec<SearchHit>, top_k: usize) -> Vec<SearchHit> {
-    hits.into_iter()
-        .take(top_k)
-        .enumerate()
-        .map(|(index, mut hit)| {
-            hit.rank = index + 1;
-            hit
-        })
-        .collect()
+fn visible_hits(store: &MetaStore, hits: Vec<SearchHit>, top_k: usize) -> Result<Vec<SearchHit>> {
+    let mut visible = Vec::new();
+
+    for hit in hits {
+        if hydrate_visible_version(store, &hit)?.is_none() {
+            continue;
+        }
+
+        let mut hit = hit;
+        hit.rank = visible.len() + 1;
+        visible.push(hit);
+        if visible.len() == top_k {
+            break;
+        }
+    }
+
+    Ok(visible)
 }
 
 fn filter_hits(
