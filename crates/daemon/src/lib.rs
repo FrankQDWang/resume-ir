@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const IMPORT_LEASE_MS: i64 = 5 * 60 * 1_000;
+const DEBUG_IMPORT_LEASE_MS_ENV: &str = "RESUME_DAEMON_DEBUG_IMPORT_LEASE_MS";
+const DEBUG_PAUSE_AFTER_CLAIM_FILE_ENV: &str = "RESUME_DAEMON_DEBUG_PAUSE_AFTER_CLAIM_FILE";
 const IMPORT_FAILURE_DIAGNOSTIC: &str = "local import worker failed";
 const STALE_IMPORT_CLAIM_ERROR: &str = "Import task claim was no longer current.";
 
@@ -72,10 +74,9 @@ where
     W: Write,
     F: FnMut(&MetadataStore, &Path, &Path) -> Result<ImportSummary, String>,
 {
-    let now_ms = current_time_ms()?;
-    let lease_expires_at_ms = import_lease_expires_at_ms(now_ms);
+    let snapshot_now_ms = current_time_ms()?;
     let queued_tasks = store
-        .queued_import_tasks()
+        .claimable_import_tasks(snapshot_now_ms)
         .map_err(|error| error.user_message().to_string())?
         .into_iter()
         .map(|task| task.task_id)
@@ -92,6 +93,8 @@ where
     let mut run_summary = ImportSummary::default();
 
     for task_id in queued_tasks {
+        let now_ms = current_time_ms()?;
+        let lease_expires_at_ms = import_lease_expires_at_ms(now_ms)?;
         let claim_token = local_import_claim_token(now_ms, task_id);
         let Some(claim) = store
             .claim_import_task(task_id, &claim_token, now_ms, lease_expires_at_ms)
@@ -101,6 +104,7 @@ where
         };
 
         claimed_imports += 1;
+        pause_after_import_claim_if_requested()?;
         match worker(store, data_dir, Path::new(claim.root_path.as_str())) {
             Ok(summary) => {
                 complete_current_import_claim(store, claim.task_id, claim.claim_token.as_str())?;
@@ -186,8 +190,38 @@ fn current_time_ms() -> Result<i64, String> {
     i64::try_from(elapsed).map_err(|_| "System clock timestamp is too large.".to_string())
 }
 
-fn import_lease_expires_at_ms(now_ms: i64) -> i64 {
-    now_ms.saturating_add(IMPORT_LEASE_MS)
+fn import_lease_expires_at_ms(now_ms: i64) -> Result<i64, String> {
+    Ok(now_ms.saturating_add(import_lease_ms()?))
+}
+
+fn import_lease_ms() -> Result<i64, String> {
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(value) = std::env::var(DEBUG_IMPORT_LEASE_MS_ENV) {
+            let lease_ms = value.parse::<i64>().map_err(|_| {
+                "Debug import lease override must be a positive integer.".to_string()
+            })?;
+            if lease_ms <= 0 {
+                return Err("Debug import lease override must be a positive integer.".to_string());
+            }
+            return Ok(lease_ms);
+        }
+    }
+    Ok(IMPORT_LEASE_MS)
+}
+
+fn pause_after_import_claim_if_requested() -> Result<(), String> {
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(path) = std::env::var(DEBUG_PAUSE_AFTER_CLAIM_FILE_ENV) {
+            fs::write(path, b"claimed\n")
+                .map_err(|_| "Could not write daemon debug pause marker.".to_string())?;
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(60));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn local_import_claim_token(now_ms: i64, task_id: i64) -> String {
@@ -253,13 +287,19 @@ fn open_store(data_dir: &Path) -> Result<MetadataStore, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        complete_current_import_claim, fail_current_import_claim,
-        run_once_import_drain_with_worker, run_with_args, STALE_IMPORT_CLAIM_ERROR,
+        complete_current_import_claim, current_time_ms, fail_current_import_claim,
+        run_once_import_drain_with_worker, run_with_args, DEBUG_IMPORT_LEASE_MS_ENV,
+        STALE_IMPORT_CLAIM_ERROR,
     };
     use import_worker::ImportSummary;
     use meta_store::MetadataStore;
     use std::fs;
+    use std::sync::{Mutex, MutexGuard};
+    use std::thread;
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static DEBUG_IMPORT_LEASE_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn foreground_once_initializes_store_and_exits() -> Result<(), String> {
@@ -422,6 +462,54 @@ mod tests {
         assert_eq!(status.queued_import_task_count, 0);
         assert_eq!(status.searchable_document_count, 2);
         assert_eq!(status.ocr_required_document_count, 0);
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn each_import_claim_gets_a_fresh_lease_during_one_drain() -> Result<(), String> {
+        let _lease_env_guard = DebugImportLeaseEnvGuard::set("100")?;
+        let data_dir = unique_data_dir("daemon-fresh-lease")?;
+        let first_root = data_dir.join("first-private-root");
+        let second_root = data_dir.join("second-private-root");
+        fs::create_dir_all(first_root.as_ref()).map_err(|error| error.to_string())?;
+        fs::create_dir_all(second_root.as_ref()).map_err(|error| error.to_string())?;
+        let store = open_test_store(&data_dir)?;
+        store
+            .enqueue_import_root(first_root.as_ref())
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .enqueue_import_root(second_root.as_ref())
+            .map_err(|error| error.user_message().to_string())?;
+        let mut output = Vec::new();
+        let mut worker_calls = 0usize;
+
+        run_once_import_drain_with_worker(
+            &store,
+            data_dir.as_ref(),
+            &mut output,
+            |store, _data_dir, _root| {
+                worker_calls += 1;
+                if worker_calls == 1 {
+                    thread::sleep(Duration::from_millis(150));
+                } else {
+                    let now_ms = current_time_ms()?;
+                    let stolen = store
+                        .claim_next_import_task(
+                            "fresh-lease-takeover-token",
+                            now_ms,
+                            now_ms.saturating_add(1_000),
+                        )
+                        .map_err(|error| error.user_message().to_string())?;
+                    if stolen.is_some() {
+                        return Err("second import claim was immediately stale".to_string());
+                    }
+                }
+                Ok(ImportSummary::default())
+            },
+        )?;
+
+        assert_eq!(worker_calls, 2);
         fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -618,6 +706,35 @@ endobj
     }
 
     struct TestPath(std::path::PathBuf);
+
+    struct DebugImportLeaseEnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        previous: Option<String>,
+    }
+
+    impl DebugImportLeaseEnvGuard {
+        fn set(value: &str) -> Result<Self, String> {
+            let lock = DEBUG_IMPORT_LEASE_ENV_LOCK
+                .lock()
+                .map_err(|_| "debug import lease env lock poisoned".to_string())?;
+            let previous = std::env::var(DEBUG_IMPORT_LEASE_MS_ENV).ok();
+            std::env::set_var(DEBUG_IMPORT_LEASE_MS_ENV, value);
+            Ok(Self {
+                _lock: lock,
+                previous,
+            })
+        }
+    }
+
+    impl Drop for DebugImportLeaseEnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.as_ref() {
+                std::env::set_var(DEBUG_IMPORT_LEASE_MS_ENV, value);
+            } else {
+                std::env::remove_var(DEBUG_IMPORT_LEASE_MS_ENV);
+            }
+        }
+    }
 
     impl TestPath {
         fn join(&self, path: &str) -> Self {

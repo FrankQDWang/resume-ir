@@ -909,6 +909,37 @@ impl MetadataStore {
         Ok(tasks)
     }
 
+    /// Returns import-root tasks that are eligible at the start of one daemon drain.
+    ///
+    /// Expired running leases are first moved into retryable or permanent-failed state.
+    /// Returned rows do not expose local root paths.
+    pub fn claimable_import_tasks(&self, now_ms: i64) -> Result<Vec<ImportTaskRow>> {
+        self.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(storage_error)?;
+
+        let result = (|| {
+            self.expire_stale_import_task_leases(now_ms)?;
+            let mut statement = self.connection.prepare(
+                r"
+                SELECT task_id, state, created_at
+                FROM import_task
+                WHERE state IN ('queued', 'failed')
+                  AND attempt_count < max_attempts
+                ORDER BY task_id
+                ",
+            )?;
+            let rows = statement.query_map([], import_task_row_from_sql)?;
+            let mut tasks = Vec::new();
+            for row in rows {
+                tasks.push(row?);
+            }
+            Ok(tasks)
+        })();
+
+        self.finish_transaction(result)
+    }
+
     /// Updates an import-root task state.
     pub fn update_import_task_state(&self, task_id: i64, state: JobState) -> Result<()> {
         self.connection
@@ -1507,6 +1538,33 @@ mod tests {
 
         assert_eq!(reclaimed.task_id, running);
         assert_eq!(reclaimed.attempt_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn claimable_import_tasks_expire_stale_running_leases_without_paths() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let expired = store.enqueue_import_root(Path::new("/synthetic/private/expired"))?;
+        let running = store.enqueue_import_root(Path::new("/synthetic/private/running"))?;
+        let queued = store.enqueue_import_root(Path::new("/synthetic/private/queued"))?;
+
+        store.claim_import_task(expired, "expired_token", 1_000, 2_000)?;
+        store.claim_import_task(running, "running_token", 1_000, 5_000)?;
+
+        let claimable = store.claimable_import_tasks(2_001)?;
+        let ids = claimable
+            .iter()
+            .map(|task| task.task_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec![expired, queued]);
+        assert_eq!(import_task_state(&store, expired)?, JobState::Failed);
+        assert_eq!(import_task_state(&store, running)?, JobState::Running);
+        let debug = format!("{claimable:?}");
+        assert!(!debug.contains("/synthetic/private"));
+        assert!(!debug.contains("expired_token"));
+        assert!(!debug.contains("running_token"));
         Ok(())
     }
 
