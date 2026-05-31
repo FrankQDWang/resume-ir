@@ -8,18 +8,13 @@ publish.workspace = true
 [dependencies]
 config.workspace = true
 core-domain.workspace = true
-fs-crawler.workspace = true
 index-fulltext.workspace = true
+import-worker.workspace = true
 meta-store.workspace = true
-parser-common.workspace = true
-parser-docx.workspace = true
-parser-pdf.workspace = true
 extractor-rules.workspace = true
 rank-fusion.workspace = true
 search-planner.workspace = true
-sectionizer.workspace = true
 sha2.workspace = true
-text-normalizer.workspace = true
 
 [dev-dependencies]
 zip = { version = "0.6", default-features = false, features = ["deflate"] }

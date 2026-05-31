@@ -19,6 +19,7 @@ members = [
     "crates/rank-fusion",
     "crates/ocr-client",
     "crates/ingest-scheduler",
+    "crates/import-worker",
 ]
 resolver = "2"
 
@@ -45,6 +46,7 @@ search-planner = { path = "crates/search-planner" }
 rank-fusion = { path = "crates/rank-fusion" }
 ocr-client = { path = "crates/ocr-client" }
 ingest-scheduler = { path = "crates/ingest-scheduler" }
+import-worker = { path = "crates/import-worker" }
 serde = { version = "1.0", features = ["derive"] }
 regex = "1.10"
 sha2 = "0.10"
