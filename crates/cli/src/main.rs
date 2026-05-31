@@ -1,13 +1,17 @@
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use extractor_rules::{extract_strong_fields, FieldType};
 use import_pipeline::import_root;
-use index_fulltext::{FullTextIndex, SearchQuery};
+use index_fulltext::{FullTextIndex, SearchHit, SearchQuery};
 use meta_store::{
-    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, MetaStore, UnixTimestamp,
+    DocumentId, DocumentStatus, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus,
+    MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
+use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
 
 fn main() {
@@ -170,9 +174,7 @@ fn pending_import_task(
 }
 
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    if args.len() != 1 {
-        return Err(CliError::usage("usage: resume-cli search <query>"));
-    }
+    let search_args = parse_search_args(args)?;
 
     let index_dir = data_dir.join("search-index");
     if !index_dir.join("meta.json").exists() {
@@ -181,11 +183,26 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    let plan = plan_search(&args[0], 10).map_err(|_| CliError::user("search query is empty"))?;
+    let candidate_limit = if search_args.filters.is_empty() {
+        search_args.top_k
+    } else {
+        search_args
+            .top_k
+            .saturating_mul(5)
+            .clamp(search_args.top_k, 100)
+    };
+    let plan = plan_search(&search_args.query, candidate_limit)
+        .map_err(|_| CliError::user("search query is empty"))?;
     let index = FullTextIndex::open(&index_dir).map_err(CliError::fulltext)?;
     let hits = index
         .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
         .map_err(CliError::fulltext)?;
+    let hits = if search_args.filters.is_empty() {
+        limit_and_rerank_hits(hits, search_args.top_k)
+    } else {
+        let store = open_store(data_dir)?;
+        filter_hits(&store, hits, &search_args.filters, search_args.top_k)?
+    };
 
     println!("results: {}", hits.len());
     for hit in hits {
@@ -197,6 +214,192 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
+    let Some(query) = args.first() else {
+        return Err(CliError::usage(search_usage()));
+    };
+
+    let mut top_k = 10_usize;
+    let mut filters = SearchFilters::default();
+    let mut index = 1_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--degree" | "--degree-min" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let degree = DegreeLevel::parse(value)
+                    .ok_or_else(|| CliError::user("search degree filter is invalid"))?;
+                filters = filters.with_degree_min(degree);
+                index += 2;
+            }
+            "--skills-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                filters = filters.with_skills_any(
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|skill| !skill.is_empty()),
+                );
+                index += 2;
+            }
+            "--years-experience-min" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let years = value
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|years| years.is_finite() && *years >= 0.0)
+                    .ok_or_else(|| CliError::user("search years filter is invalid"))?;
+                filters = filters.with_years_experience_min(years);
+                index += 2;
+            }
+            "--top-k" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                top_k = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .map(|value| value.min(100))
+                    .ok_or_else(|| CliError::user("search top-k is invalid"))?;
+                index += 2;
+            }
+            _ => return Err(CliError::usage(search_usage())),
+        }
+    }
+
+    Ok(SearchArgs {
+        query: query.clone(),
+        top_k,
+        filters,
+    })
+}
+
+fn search_usage() -> &'static str {
+    "usage: resume-cli search <query> [--degree <level>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+}
+
+fn limit_and_rerank_hits(hits: Vec<SearchHit>, top_k: usize) -> Vec<SearchHit> {
+    hits.into_iter()
+        .take(top_k)
+        .enumerate()
+        .map(|(index, mut hit)| {
+            hit.rank = index + 1;
+            hit
+        })
+        .collect()
+}
+
+fn filter_hits(
+    store: &MetaStore,
+    hits: Vec<SearchHit>,
+    filters: &SearchFilters,
+    top_k: usize,
+) -> Result<Vec<SearchHit>> {
+    let mut filtered = Vec::new();
+
+    for hit in hits {
+        let Some(version) = hydrate_visible_version(store, &hit)? else {
+            continue;
+        };
+        let Some(clean_text) = version.clean_text.as_deref() else {
+            continue;
+        };
+        let profile = extracted_profile(&hit.doc_id, clean_text);
+        if !filters.matches(&profile) {
+            continue;
+        }
+
+        let mut hit = hit;
+        hit.rank = filtered.len() + 1;
+        filtered.push(hit);
+        if filtered.len() == top_k {
+            break;
+        }
+    }
+
+    Ok(filtered)
+}
+
+fn hydrate_visible_version(store: &MetaStore, hit: &SearchHit) -> Result<Option<ResumeVersion>> {
+    let Ok(document_id) = DocumentId::from_str(&hit.doc_id) else {
+        return Ok(None);
+    };
+    let Some(document) = store
+        .document_by_id(&document_id)
+        .map_err(CliError::store)?
+    else {
+        return Ok(None);
+    };
+    if document.is_deleted
+        || !matches!(
+            document.status,
+            DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+        )
+    {
+        return Ok(None);
+    }
+
+    let Ok(version_id) = ResumeVersionId::from_str(&hit.version_id) else {
+        return Ok(None);
+    };
+    let Some(version) = store
+        .resume_version_by_id(&version_id)
+        .map_err(CliError::store)?
+    else {
+        return Ok(None);
+    };
+    if version.document_id != document_id {
+        return Ok(None);
+    }
+    if version.visibility != ResumeVisibility::Searchable {
+        return Ok(None);
+    }
+
+    Ok(Some(version))
+}
+
+fn extracted_profile(doc_id: &str, clean_text: &str) -> ResumeProfile {
+    let fields = extract_strong_fields(clean_text);
+    let degree = fields
+        .iter()
+        .filter(|field| field.field_type == FieldType::Degree && field.confidence >= 0.75)
+        .filter_map(|field| DegreeLevel::parse(field.normalized_value.as_deref()?))
+        .max();
+    let skills = fields
+        .iter()
+        .filter(|field| field.field_type == FieldType::Skill && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let years_experience = fields
+        .iter()
+        .filter(|field| field.field_type == FieldType::YearsExperience && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref()?.parse::<f32>().ok())
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut profile = ResumeProfile::new(doc_id).with_skills(skills);
+    if let Some(degree) = degree {
+        profile = profile.with_degree(degree);
+    }
+    if let Some(years_experience) = years_experience {
+        profile = profile.with_years_experience(years_experience);
+    }
+    profile
+}
+
+#[derive(Clone)]
+struct SearchArgs {
+    query: String,
+    top_k: usize,
+    filters: SearchFilters,
 }
 
 fn open_store(data_dir: &Path) -> Result<MetaStore> {

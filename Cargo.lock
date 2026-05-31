@@ -875,6 +875,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rank-fusion"
+version = "0.1.0"
+
+[[package]]
 name = "rayon"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -927,9 +931,11 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 name = "resume-cli"
 version = "0.1.0"
 dependencies = [
+ "extractor-rules",
  "import-pipeline",
  "index-fulltext",
  "meta-store",
+ "rank-fusion",
  "search-planner",
 ]
 

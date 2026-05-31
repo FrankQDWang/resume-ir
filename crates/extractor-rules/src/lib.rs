@@ -2,6 +2,7 @@ pub fn crate_name() -> &'static str {
     "extractor-rules"
 }
 
+use std::collections::BTreeSet;
 use std::fmt;
 
 use regex::Regex;
@@ -11,6 +12,10 @@ pub enum FieldType {
     Email,
     Phone,
     DateRange,
+    School,
+    Degree,
+    Skill,
+    YearsExperience,
 }
 
 #[derive(Clone, PartialEq)]
@@ -46,6 +51,10 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     extract_phones(text, &mut matches);
     extract_numeric_date_ranges(text, &mut matches);
     extract_named_month_date_ranges(text, &mut matches);
+    derive_years_experience(text, &mut matches);
+    extract_schools(text, &mut matches);
+    extract_degrees(text, &mut matches);
+    extract_skills(text, &mut matches);
     matches.sort_by_key(|field| field.span_start);
     matches
 }
@@ -163,6 +172,194 @@ fn extract_named_month_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
         );
         matches.push(date_range_match(found, normalized));
     }
+}
+
+fn derive_years_experience(text: &str, matches: &mut Vec<RuleMatch>) {
+    let date_ranges = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::DateRange)
+        .filter_map(|field| {
+            let normalized = field.normalized_value.as_deref()?;
+            let months = months_in_normalized_range(normalized)?;
+            Some((field.span_start, field.span_end, months))
+        })
+        .collect::<Vec<_>>();
+
+    if date_ranges.is_empty() {
+        return;
+    }
+
+    let total_months = date_ranges
+        .iter()
+        .map(|(_, _, months)| *months)
+        .sum::<i32>();
+    if total_months < 1 {
+        return;
+    }
+
+    let span_start = date_ranges
+        .iter()
+        .map(|(span_start, _, _)| *span_start)
+        .min()
+        .unwrap();
+    let span_end = date_ranges
+        .iter()
+        .map(|(_, span_end, _)| *span_end)
+        .max()
+        .unwrap();
+
+    matches.push(RuleMatch {
+        field_type: FieldType::YearsExperience,
+        raw_value: text[span_start..span_end].to_string(),
+        normalized_value: Some(format!("{:.1}", total_months as f32 / 12.0)),
+        span_start,
+        span_end,
+        confidence: 0.82,
+    });
+}
+
+fn months_in_normalized_range(normalized: &str) -> Option<i32> {
+    let (start, end) = normalized.split_once('/')?;
+    let (start_year, start_month) = parse_year_month(start)?;
+    let (end_year, end_month) = parse_year_month(end)?;
+    let months = (end_year - start_year) * 12 + (end_month - start_month);
+    (months >= 0).then_some(months.max(1))
+}
+
+fn parse_year_month(value: &str) -> Option<(i32, i32)> {
+    let (year, month) = value.split_once('-')?;
+    Some((year.parse().ok()?, month.parse().ok()?))
+}
+
+fn extract_schools(text: &str, matches: &mut Vec<RuleMatch>) {
+    for (line_start, line) in indexed_lines(text) {
+        let trimmed = line.trim();
+        if trimmed.len() > 120 || !looks_like_school(trimmed) {
+            continue;
+        }
+
+        let leading = line.len() - line.trim_start().len();
+        let span_start = line_start + leading;
+        let span_end = span_start + trimmed.len();
+        matches.push(RuleMatch {
+            field_type: FieldType::School,
+            raw_value: trimmed.to_string(),
+            normalized_value: Some(trimmed.to_lowercase()),
+            span_start,
+            span_end,
+            confidence: 0.84,
+        });
+    }
+}
+
+fn looks_like_school(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    ["university", "college", "institute", "大学", "学院"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+fn extract_degrees(text: &str, matches: &mut Vec<RuleMatch>) {
+    for (normalized, confidence, pattern) in [
+        (
+            "doctor",
+            0.96,
+            r"(?i)\b(?:ph\.?d\.?|doctor(?:ate)?(?:\s+of\s+[A-Za-z ]+)?)\b|博士",
+        ),
+        (
+            "master",
+            0.95,
+            r"(?i)\b(?:master(?:'s)?(?:\s+of\s+[A-Za-z ]+)?|m\.?s\.?|m\.?a\.?|mba)\b|硕士|研究生",
+        ),
+        (
+            "bachelor",
+            0.95,
+            r"(?i)\b(?:bachelor(?:'s)?(?:\s+of\s+[A-Za-z ]+)?|b\.?s\.?|b\.?a\.?|beng)\b|本科|学士",
+        ),
+        (
+            "associate",
+            0.9,
+            r"(?i)\bassociate(?:\s+degree)?\b|大专|专科",
+        ),
+        ("high_school", 0.9, r"(?i)\bhigh\s+school\b|高中"),
+    ] {
+        let regex = Regex::new(pattern).unwrap();
+        for found in regex.find_iter(text) {
+            matches.push(RuleMatch {
+                field_type: FieldType::Degree,
+                raw_value: found.as_str().to_string(),
+                normalized_value: Some(normalized.to_string()),
+                span_start: found.start(),
+                span_end: found.end(),
+                confidence,
+            });
+        }
+    }
+}
+
+fn extract_skills(text: &str, matches: &mut Vec<RuleMatch>) {
+    let mut seen = BTreeSet::new();
+    for (line_start, line) in indexed_lines(text) {
+        if !looks_like_skill_line(line) {
+            continue;
+        }
+
+        for (canonical, pattern) in [
+            ("Spring Cloud", r"(?i)\bspring\s+cloud\b"),
+            ("JavaScript", r"(?i)\b(?:java\s*script|javascript|js)\b"),
+            ("SQLite", r"(?i)\bsqlite\b"),
+            ("Tantivy", r"(?i)\btantivy\b"),
+            ("MySQL", r"(?i)\bmysql\b"),
+            ("Kubernetes", r"(?i)\bkubernetes\b"),
+            ("Docker", r"(?i)\bdocker\b"),
+            ("Python", r"(?i)\bpython\b"),
+            ("Rust", r"(?i)\brust\b"),
+            ("Java", r"(?i)\bjava\b"),
+            ("SQL", r"(?i)\bsql\b"),
+        ] {
+            let regex = Regex::new(pattern).unwrap();
+            for found in regex.find_iter(line) {
+                if !seen.insert(canonical.to_string()) {
+                    continue;
+                }
+
+                matches.push(RuleMatch {
+                    field_type: FieldType::Skill,
+                    raw_value: found.as_str().to_string(),
+                    normalized_value: Some(canonical.to_string()),
+                    span_start: line_start + found.start(),
+                    span_end: line_start + found.end(),
+                    confidence: 0.91,
+                });
+            }
+        }
+    }
+}
+
+fn looks_like_skill_line(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.contains("skill")
+        || lower.contains("technical stack")
+        || lower.contains("技术栈")
+        || lower.contains("技能")
+}
+
+fn indexed_lines(text: &str) -> Vec<(usize, &str)> {
+    let mut lines = Vec::new();
+    let mut cursor = 0_usize;
+
+    for line in text.split_inclusive('\n') {
+        let raw_end = cursor + line.len();
+        let line_end = raw_end - usize::from(line.ends_with('\n'));
+        lines.push((cursor, &text[cursor..line_end]));
+        cursor = raw_end;
+    }
+
+    if cursor < text.len() || text.is_empty() {
+        lines.push((cursor, &text[cursor..]));
+    }
+
+    lines
 }
 
 fn date_range_match(found: regex::Match<'_>, normalized: String) -> RuleMatch {

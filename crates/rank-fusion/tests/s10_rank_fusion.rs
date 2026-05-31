@@ -1,0 +1,68 @@
+use rank_fusion::{
+    fold_by_candidate, reciprocal_rank_fusion, DegreeLevel, RankedHit, ResumeProfile, SearchFilters,
+};
+
+#[test]
+fn exposes_rank_fusion_crate_identity() {
+    assert_eq!(rank_fusion::crate_name(), "rank-fusion");
+}
+
+#[test]
+fn field_filters_require_degree_skill_and_year_thresholds() {
+    let filters = SearchFilters::default()
+        .with_degree_min(DegreeLevel::Bachelor)
+        .with_skills_any(["java", "spring cloud"])
+        .with_years_experience_min(3.0);
+
+    let matching = ResumeProfile::new("doc_java")
+        .with_degree(DegreeLevel::Master)
+        .with_skills(["Rust", "Java"])
+        .with_years_experience(4.2);
+    let low_degree = ResumeProfile::new("doc_low_degree")
+        .with_degree(DegreeLevel::Associate)
+        .with_skills(["Java"])
+        .with_years_experience(8.0);
+    let missing_skill = ResumeProfile::new("doc_missing_skill")
+        .with_degree(DegreeLevel::Bachelor)
+        .with_skills(["Python"])
+        .with_years_experience(5.0);
+    let junior = ResumeProfile::new("doc_junior")
+        .with_degree(DegreeLevel::Bachelor)
+        .with_skills(["Java"])
+        .with_years_experience(1.5);
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&low_degree));
+    assert!(!filters.matches(&missing_skill));
+    assert!(!filters.matches(&junior));
+}
+
+#[test]
+fn candidate_fold_keeps_best_ranked_version_per_candidate() {
+    let hits = vec![
+        RankedHit::new("doc_old", 1, 9.5).with_candidate_key("cand_same"),
+        RankedHit::new("doc_new", 2, 8.5).with_candidate_key("cand_same"),
+        RankedHit::new("doc_other", 3, 7.0).with_candidate_key("cand_other"),
+    ];
+
+    let folded = fold_by_candidate(hits);
+
+    assert_eq!(
+        folded.iter().map(|hit| hit.doc_id()).collect::<Vec<_>>(),
+        vec!["doc_old", "doc_other"]
+    );
+}
+
+#[test]
+fn reciprocal_rank_fusion_combines_independent_channels() {
+    let fused = reciprocal_rank_fusion(
+        [
+            vec!["doc_a".to_string(), "doc_b".to_string()],
+            vec!["doc_b".to_string(), "doc_c".to_string()],
+        ],
+        60.0,
+    );
+
+    assert_eq!(fused[0].doc_id(), "doc_b");
+    assert!(fused[0].score() > fused[1].score());
+}

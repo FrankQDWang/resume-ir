@@ -10,9 +10,11 @@ name = "resume-cli"
 path = "src/main.rs"
 
 [dependencies]
+extractor-rules = { path = "../extractor-rules" }
 import-pipeline = { path = "../import-pipeline" }
 index-fulltext = { path = "../index-fulltext" }
 meta-store = { path = "../meta-store" }
+rank-fusion = { path = "../rank-fusion" }
 search-planner = { path = "../search-planner" }
 
 [lints]

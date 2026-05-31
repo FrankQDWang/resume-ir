@@ -14,6 +14,7 @@ members = [
     "crates/extractor-rules",
     "crates/index-fulltext",
     "crates/import-pipeline",
+    "crates/rank-fusion",
     "crates/search-planner",
 ]
 resolver = "2"

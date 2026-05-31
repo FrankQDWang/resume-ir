@@ -24,7 +24,7 @@ This file tracks long-running Goal execution against
 | S7 | Slice complete | `cargo fmt --check`, `cargo test -p text-normalizer`, `cargo test -p sectionizer`, `cargo test -p extractor-rules`, and `cargo clippy -p text-normalizer -p sectionizer -p extractor-rules --all-targets -- -D warnings` passed. | None for the S7 slice; import execution, indexing, search, OCR execution, embeddings, and S8+ remain not complete. |
 | S8 | Slice complete | `cargo fmt --check`, `cargo test -p index-fulltext`, `cargo test -p search-planner`, `cargo run -p resume-cli -- search "Java 支付"`, and `cargo clippy -p index-fulltext -p search-planner -p resume-cli --all-targets -- -D warnings` passed. | None for the S8 slice; import execution, OCR execution, embeddings, vector search, and S9+ remain not complete. |
 | S9 | Slice complete | `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, and the S9 import/status/search smoke commands passed. | None for the S9 slice; OCR execution, embeddings, field filtering, packaging, and production-scale performance remain not complete. |
-| S10 | Not started |  |  |
+| S10 | Slice complete | `cargo fmt --check`, `cargo test -p extractor-rules`, `cargo test -p rank-fusion`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, and the S10 filtered search smoke command passed. | None for the S10 slice; filters are recall-then-filter over the top full-text candidates, and OCR/embeddings/production-scale performance remain not complete. |
 | S11 | Not started |  |  |
 | S12 | Not started |  |  |
 | S13 | Not started |  |  |
@@ -349,6 +349,68 @@ Output summary:
 
 - `cargo test --workspace`: exit 0.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+
+### S10
+
+TDD red checks:
+
+```bash
+cargo test -p extractor-rules --test s10_fields
+cargo test -p rank-fusion
+cargo test -p resume-cli --test s10_search_filters
+```
+
+Output summary:
+
+- `extractor-rules --test s10_fields` failed before implementation because the S10 field variants and extraction behavior were not present.
+- `rank-fusion` failed before implementation because the filter, fusion, and candidate-fold APIs were not present.
+- `resume-cli --test s10_search_filters` failed before implementation because `resume-cli search` only accepted a bare query and rejected field-filter arguments.
+
+Implementation checks:
+
+```bash
+cargo fmt --check
+cargo test -p extractor-rules
+cargo test -p rank-fusion
+cargo test -p resume-cli --test s10_search_filters
+cargo test -p resume-cli --test s9_import_search
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0 after formatting.
+- `cargo test -p extractor-rules`: exit 0; S7 coverage plus 2 S10 tests passed, covering school, degree, skill, date-range-derived years, field confidence, original evidence offsets, and Debug redaction.
+- `cargo test -p rank-fusion`: exit 0; 4 S10 tests passed, covering degree/skill/year filters, case-insensitive skill matching, candidate fold skeleton, and reciprocal-rank fusion.
+- `cargo test -p resume-cli --test s10_search_filters`: exit 0; filtered synthetic search passed for degree, top-k, lower-case skill, and years-experience filters without query-label echo.
+- `cargo test -p resume-cli --test s9_import_search`: exit 0; S9 import/search behavior still passed after fixture enrichment.
+
+Acceptance:
+
+```bash
+cargo test -p extractor-rules
+cargo test -p rank-fusion
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+cargo run -p resume-cli -- import --root tests/fixtures/resumes
+cargo run -p resume-cli -- search "Java" --degree bachelor --top-k 20
+```
+
+Output summary:
+
+- `cargo test -p extractor-rules`: exit 0.
+- `cargo test -p rank-fusion`: exit 0.
+- `cargo fmt --check`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+- `resume-cli import --root tests/fixtures/resumes`: exit 0; completed an import task for 3 synthetic files, with 2 searchable documents, 1 OCR-required document, 0 failed documents, and 0 scan errors.
+- `resume-cli search "Java" --degree bachelor --top-k 20`: exit 0; returned 2 synthetic results, `synthetic-java-platform.pdf` and `synthetic-java-engineer.docx`.
+
+Scope note:
+
+- S10 implements MVP field filtering by overfetching full-text results and filtering in memory. It is not a persistent field index and can miss matches outside the overfetch window.
+- Candidate soft dedupe is a pure `rank-fusion` skeleton and is not yet wired into CLI search output.
+- S10 does not run OCR, generate embeddings, claim production-scale filtering, or package/release the app.
 
 ### S9
 
