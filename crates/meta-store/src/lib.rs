@@ -295,6 +295,31 @@ impl MetaStore {
         }
     }
 
+    pub fn resume_versions_for_document(
+        &self,
+        document_id: &DocumentId,
+    ) -> Result<Vec<ResumeVersion>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {RESUME_VERSION_COLUMNS}
+            FROM resume_version
+            WHERE document_id = ?1
+            ORDER BY id"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![document_id.as_str()])
+            .map_err(MetaStoreError::storage)?;
+        let mut versions = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            versions.push(read_resume_version(row)?);
+        }
+
+        Ok(versions)
+    }
+
     pub fn insert_ingest_job(&self, job: &IngestJob) -> Result<()> {
         let connection = self.connection.borrow();
         connection
@@ -598,6 +623,103 @@ impl MetaStore {
         }
     }
 
+    pub fn pending_import_task_by_root(&self, root_path: &str) -> Result<Option<ImportTask>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {IMPORT_TASK_COLUMNS}
+            FROM import_task
+            WHERE root_path = ?1 AND status IN (?2, ?3, ?4)
+            ORDER BY CASE WHEN status = ?3 THEN 0 ELSE 1 END, queued_at_seconds, rowid
+            LIMIT 1"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                root_path,
+                import_task_status_to_storage(ImportTaskStatus::Queued),
+                import_task_status_to_storage(ImportTaskStatus::Running),
+                import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
+            ])
+            .map_err(MetaStoreError::storage)?;
+
+        match rows.next().map_err(MetaStoreError::storage)? {
+            Some(row) => Ok(Some(read_import_task(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn update_import_task_status(
+        &self,
+        id: &ImportTaskId,
+        status: ImportTaskStatus,
+        updated_at: UnixTimestamp,
+    ) -> Result<()> {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let current_task = {
+            let sql = format!("SELECT {IMPORT_TASK_COLUMNS} FROM import_task WHERE id = ?1");
+            let mut statement = transaction.prepare(&sql).map_err(MetaStoreError::storage)?;
+            let mut rows = statement
+                .query(params![id.as_str()])
+                .map_err(MetaStoreError::storage)?;
+
+            match rows.next().map_err(MetaStoreError::storage)? {
+                Some(row) => read_import_task(row)?,
+                None => return Err(MetaStoreError::not_found("import_task")),
+            }
+        };
+        let current_status = current_task.status;
+
+        if updated_at.as_unix_seconds() < current_task.updated_at.as_unix_seconds() {
+            return Err(MetaStoreError::invalid_value("import_task.timestamps"));
+        }
+
+        if !import_task_status_transition_allowed(current_status, status) {
+            return Err(MetaStoreError::invalid_transition());
+        }
+        let next_task = next_import_task_state(&current_task, status, updated_at);
+        validate_import_task(&next_task)?;
+
+        let updated_at_seconds = updated_at.as_unix_seconds();
+        let changed = transaction
+            .execute(
+                "\
+                UPDATE import_task
+                SET
+                    status = ?1,
+                    started_at_seconds = CASE
+                        WHEN ?1 = ?2 THEN ?5
+                        ELSE started_at_seconds
+                    END,
+                    finished_at_seconds = CASE
+                        WHEN ?1 = ?2 THEN NULL
+                        WHEN ?1 IN (?3, ?4, ?6) THEN ?5
+                        ELSE finished_at_seconds
+                    END,
+                    updated_at_seconds = ?5
+                WHERE id = ?7 AND status = ?8",
+                params![
+                    import_task_status_to_storage(status),
+                    import_task_status_to_storage(ImportTaskStatus::Running),
+                    import_task_status_to_storage(ImportTaskStatus::Completed),
+                    import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
+                    updated_at_seconds,
+                    import_task_status_to_storage(ImportTaskStatus::FailedPermanent),
+                    id.as_str(),
+                    import_task_status_to_storage(current_status),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+
+        if changed == 0 {
+            return Err(MetaStoreError::invalid_transition());
+        }
+
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(())
+    }
+
     pub fn status_summary(&self) -> Result<StoreStatusSummary> {
         let connection = self.connection.borrow();
         let document_counts = connection
@@ -649,6 +771,16 @@ impl MetaStore {
                 |row| row.get::<_, i64>(0),
             )
             .map_err(MetaStoreError::storage)?;
+        let import_tasks_recoverable = connection
+            .query_row(
+                "SELECT COUNT(*) FROM import_task WHERE status IN (?1, ?2)",
+                params![
+                    import_task_status_to_storage(ImportTaskStatus::Running),
+                    import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?;
         let index_state = connection
             .query_row(
                 "\
@@ -695,6 +827,10 @@ impl MetaStore {
             )?,
             recovery_queue_depth: i64_to_u64(recovery_queue_depth, "status.recovery_queue_depth")?,
             import_tasks_queued: i64_to_u64(import_tasks_queued, "status.import_tasks_queued")?,
+            import_tasks_recoverable: i64_to_u64(
+                import_tasks_recoverable,
+                "status.import_tasks_recoverable",
+            )?,
             index_health,
             last_snapshot_id,
         })
@@ -799,6 +935,7 @@ pub struct StoreStatusSummary {
     pub embedding_queue_depth: u64,
     pub recovery_queue_depth: u64,
     pub import_tasks_queued: u64,
+    pub import_tasks_recoverable: u64,
     pub index_health: IndexStateStatus,
     pub last_snapshot_id: Option<String>,
 }
@@ -1450,6 +1587,49 @@ fn job_status_transition_allowed(current: IngestJobStatus, next: IngestJobStatus
         IngestJobStatus::Completed => matches!(next, IngestJobStatus::Completed),
         IngestJobStatus::FailedPermanent => matches!(next, IngestJobStatus::FailedPermanent),
     }
+}
+
+fn import_task_status_transition_allowed(
+    current: ImportTaskStatus,
+    next: ImportTaskStatus,
+) -> bool {
+    match current {
+        ImportTaskStatus::Queued => matches!(next, ImportTaskStatus::Running),
+        ImportTaskStatus::Running => matches!(
+            next,
+            ImportTaskStatus::Completed
+                | ImportTaskStatus::FailedRetryable
+                | ImportTaskStatus::FailedPermanent
+        ),
+        ImportTaskStatus::FailedRetryable => matches!(next, ImportTaskStatus::Running),
+        ImportTaskStatus::Completed | ImportTaskStatus::FailedPermanent => false,
+    }
+}
+
+fn next_import_task_state(
+    current: &ImportTask,
+    status: ImportTaskStatus,
+    updated_at: UnixTimestamp,
+) -> ImportTask {
+    let mut next = current.clone();
+    next.status = status;
+    next.updated_at = updated_at;
+    match status {
+        ImportTaskStatus::Running => {
+            next.started_at = Some(updated_at);
+            next.finished_at = None;
+        }
+        ImportTaskStatus::Completed
+        | ImportTaskStatus::FailedRetryable
+        | ImportTaskStatus::FailedPermanent => {
+            if next.started_at.is_none() {
+                next.started_at = Some(updated_at);
+            }
+            next.finished_at = Some(updated_at);
+        }
+        ImportTaskStatus::Queued => {}
+    }
+    next
 }
 
 fn index_state_status_to_storage(status: IndexStateStatus) -> &'static str {

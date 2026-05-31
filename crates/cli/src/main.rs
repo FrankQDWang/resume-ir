@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use import_pipeline::import_root;
 use index_fulltext::{FullTextIndex, SearchQuery};
 use meta_store::{
     ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, MetaStore, UnixTimestamp,
@@ -76,6 +77,10 @@ fn status_command(data_dir: &Path) -> Result<()> {
     println!("ocr queue: {}", summary.ocr_queue_depth);
     println!("embedding queue: {}", summary.embedding_queue_depth);
     println!("import tasks queued: {}", summary.import_tasks_queued);
+    println!(
+        "import tasks recoverable: {}",
+        summary.import_tasks_recoverable
+    );
     println!("active profile: balanced");
     println!("index health: {}", index_health_label(summary.index_health));
     println!(
@@ -96,32 +101,72 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Err(CliError::usage("usage: resume-cli import --root <path>"));
     }
 
-    let root = PathBuf::from(&args[1]);
-    let metadata = fs::metadata(&root)
+    let requested_root = PathBuf::from(&args[1]);
+    let requested_root_path = requested_root.as_os_str().to_string_lossy().into_owned();
+    let metadata = fs::metadata(&requested_root)
         .map_err(|_| CliError::user("import root must exist and be a directory"))?;
     if !metadata.is_dir() {
         return Err(CliError::user("import root must exist and be a directory"));
     }
+    let root = fs::canonicalize(&requested_root)
+        .map_err(|_| CliError::user("import root must exist and be a directory"))?;
 
     let store = open_store(data_dir)?;
     let now = current_timestamp()?;
-    let task = ImportTask {
-        id: new_import_task_id()?,
-        root_path: root.as_os_str().to_string_lossy().into_owned(),
-        status: ImportTaskStatus::Queued,
-        queued_at: now,
-        started_at: None,
-        finished_at: None,
-        updated_at: now,
+    let root_path = root.as_os_str().to_string_lossy().into_owned();
+    let task = match pending_import_task(&store, &root_path, &requested_root_path)? {
+        Some(task) if task.status == ImportTaskStatus::Running => {
+            return Err(CliError::user("import task is already running"));
+        }
+        Some(task) => task,
+        None => {
+            let task = ImportTask {
+                id: new_import_task_id()?,
+                root_path,
+                status: ImportTaskStatus::Queued,
+                queued_at: now,
+                started_at: None,
+                finished_at: None,
+                updated_at: now,
+            };
+            store.insert_import_task(&task).map_err(CliError::store)?;
+            task
+        }
     };
 
-    store.insert_import_task(&task).map_err(CliError::store)?;
+    let summary = import_root(data_dir, &store, &task, &root, now).map_err(CliError::import)?;
 
     println!("import task submitted");
     println!("task id: {}", task.id);
-    println!("status: queued");
+    println!("status: completed");
+    println!("files discovered: {}", summary.files_discovered);
+    println!("searchable documents: {}", summary.searchable_documents);
+    println!("ocr required documents: {}", summary.ocr_required_documents);
+    println!("failed documents: {}", summary.failed_documents);
+    println!("scan errors: {}", summary.scan_errors);
 
     Ok(())
+}
+
+fn pending_import_task(
+    store: &MetaStore,
+    canonical_root_path: &str,
+    requested_root_path: &str,
+) -> Result<Option<ImportTask>> {
+    if let Some(task) = store
+        .pending_import_task_by_root(canonical_root_path)
+        .map_err(CliError::store)?
+    {
+        return Ok(Some(task));
+    }
+
+    if requested_root_path == canonical_root_path {
+        return Ok(None);
+    }
+
+    store
+        .pending_import_task_by_root(requested_root_path)
+        .map_err(CliError::store)
 }
 
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -225,6 +270,13 @@ impl CliError {
     }
 
     fn fulltext(error: index_fulltext::FullTextError) -> Self {
+        Self {
+            message: error.to_string(),
+            exit_code: 1,
+        }
+    }
+
+    fn import(error: import_pipeline::ImportPipelineError) -> Self {
         Self {
             message: error.to_string(),
             exit_code: 1,

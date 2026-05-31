@@ -23,7 +23,7 @@ This file tracks long-running Goal execution against
 | S6 | Slice complete | `cargo fmt --check`, `cargo test -p parser-common`, `cargo test -p parser-docx`, `cargo test -p parser-pdf`, and `cargo clippy -p parser-common -p parser-docx -p parser-pdf --all-targets -- -D warnings` passed. | None for the S6 slice; OCR execution, text cleaning, indexing, search, and S7+ remain not complete. |
 | S7 | Slice complete | `cargo fmt --check`, `cargo test -p text-normalizer`, `cargo test -p sectionizer`, `cargo test -p extractor-rules`, and `cargo clippy -p text-normalizer -p sectionizer -p extractor-rules --all-targets -- -D warnings` passed. | None for the S7 slice; import execution, indexing, search, OCR execution, embeddings, and S8+ remain not complete. |
 | S8 | Slice complete | `cargo fmt --check`, `cargo test -p index-fulltext`, `cargo test -p search-planner`, `cargo run -p resume-cli -- search "Java 支付"`, and `cargo clippy -p index-fulltext -p search-planner -p resume-cli --all-targets -- -D warnings` passed. | None for the S8 slice; import execution, OCR execution, embeddings, vector search, and S9+ remain not complete. |
-| S9 | Not started |  |  |
+| S9 | Slice complete | `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, and the S9 import/status/search smoke commands passed. | None for the S9 slice; OCR execution, embeddings, field filtering, packaging, and production-scale performance remain not complete. |
 | S10 | Not started |  |  |
 | S11 | Not started |  |  |
 | S12 | Not started |  |  |
@@ -349,6 +349,66 @@ Output summary:
 
 - `cargo test --workspace`: exit 0.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+
+### S9
+
+TDD red checks:
+
+```bash
+cargo test -p meta-store import_task_status_updates_support_completion_and_retry
+cargo test -p resume-cli --test s9_import_search
+```
+
+Output summary:
+
+- `meta-store` failed before implementation because `MetaStore::update_import_task_status` did not exist.
+- `resume-cli --test s9_import_search` failed before implementation because `import` still left tasks queued and did not build a search index.
+
+Implementation and review checks:
+
+```bash
+cargo test -p meta-store
+cargo test -p resume-cli --test s4_cli
+cargo test -p resume-cli --test s8_search_cli
+cargo test -p resume-cli --test s9_import_search
+```
+
+Output summary:
+
+- `cargo test -p meta-store`: exit 0; 17 tests passed, including import task completion/retry lifecycle, root-based pending task lookup, timestamp lifecycle rejection, resume version lookup by document, and existing SQLite recovery tests.
+- `cargo test -p resume-cli --test s4_cli`: exit 0; S4 no-index behavior and no-path-leak import behavior still passed after synchronous import execution.
+- `cargo test -p resume-cli --test s8_search_cli`: exit 0; CLI search still read an existing full-text index.
+- `cargo test -p resume-cli --test s9_import_search`: exit 0; 3 S9 tests passed, covering synthetic docx/PDF import, OCR_REQUIRED scanned PDF, reopened full-text snapshot search, failed-retryable task retry, live running task non-takeover, and empty-root import preserving prior searchable documents.
+
+Acceptance:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+cargo run -p resume-cli -- import --root tests/fixtures/resumes
+cargo run -p resume-cli -- status
+cargo run -p resume-cli -- search "Java"
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests, including the 3 S9 CLI smoke tests, passed.
+- `resume-cli import --root tests/fixtures/resumes`: exit 0; completed an import task for 3 synthetic files, with 2 searchable documents, 1 OCR-required document, 0 failed documents, and 0 scan errors.
+- `resume-cli status`: exit 0; reported `indexed documents: 2`, `searchable documents: 2`, `ocr queue: 1`, `import tasks queued: 0`, `import tasks recoverable: 0`, `index health: ready`, and full-text index available.
+- `resume-cli search "Java"`: exit 0; returned 2 results: `synthetic-java-engineer.docx` and `synthetic-java-platform.pdf`, with snippets from synthetic fixture text.
+
+Review notes:
+
+- Sub-agent spec review found no P0 issues and identified missing PROGRESS evidence plus missing retry smoke; both were fixed.
+- Sub-agent code-quality review found one P1 around empty-root import clearing the Tantivy index while SQLite still counted searchable documents; the pipeline now rebuilds the full-text index from persisted searchable/partial documents plus newly imported documents, and the S9 CLI test covers this.
+- Remaining non-blocking P2: scan errors are counted but not yet persisted as recoverable import diagnostics. This is left for later diagnostics/fault-injection slices.
+
+Scope note:
+
+- S9 completes a synthetic import-to-search smoke loop only. It does not run OCR, generate embeddings, implement field-filter search, claim production-scale performance, or package/release the app.
 
 ### S8
 

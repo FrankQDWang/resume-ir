@@ -538,6 +538,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
+name = "import-pipeline"
+version = "0.1.0"
+dependencies = [
+ "core-domain",
+ "fs-crawler",
+ "index-fulltext",
+ "meta-store",
+ "parser-common",
+ "parser-docx",
+ "parser-pdf",
+ "sectionizer",
+ "text-normalizer",
+]
+
+[[package]]
 name = "index-fulltext"
 version = "0.1.0"
 dependencies = [
@@ -912,6 +927,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 name = "resume-cli"
 version = "0.1.0"
 dependencies = [
+ "import-pipeline",
  "index-fulltext",
  "meta-store",
  "search-planner",

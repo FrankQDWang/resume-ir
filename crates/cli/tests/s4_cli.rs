@@ -43,6 +43,8 @@ fn import_root_submits_persistent_task_without_path_leak() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("import task submitted"));
     assert!(stdout.contains("task id: imp_"));
+    assert!(stdout.contains("status: completed"));
+    assert!(stdout.contains("files discovered: 0"));
     assert!(!stdout.contains(path_str(&root_dir)));
 
     let status = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -51,7 +53,7 @@ fn import_root_submits_persistent_task_without_path_leak() {
         .expect("run resume-cli status after import");
     assert!(status.status.success());
     let status_stdout = String::from_utf8_lossy(&status.stdout);
-    assert!(status_stdout.contains("import tasks queued: 1"));
+    assert!(status_stdout.contains("import tasks queued: 0"));
 
     remove_dir(&data_dir);
     remove_dir(&root_dir);

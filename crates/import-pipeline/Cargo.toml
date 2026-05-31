@@ -1,0 +1,20 @@
+[package]
+name = "import-pipeline"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+core-domain = { path = "../core-domain" }
+fs-crawler = { path = "../fs-crawler" }
+index-fulltext = { path = "../index-fulltext" }
+meta-store = { path = "../meta-store" }
+parser-common = { path = "../parser-common" }
+parser-docx = { path = "../parser-docx" }
+parser-pdf = { path = "../parser-pdf" }
+sectionizer = { path = "../sectionizer" }
+text-normalizer = { path = "../text-normalizer" }
+
+[lints]
+workspace = true

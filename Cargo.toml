@@ -13,6 +13,7 @@ members = [
     "crates/sectionizer",
     "crates/extractor-rules",
     "crates/index-fulltext",
+    "crates/import-pipeline",
     "crates/search-planner",
 ]
 resolver = "2"

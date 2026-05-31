@@ -61,7 +61,11 @@ fn visible_document_query_excludes_deleted_documents_by_default() {
     );
     assert_eq!(
         store.resume_version_by_id(&visible_version.id).unwrap(),
-        Some(visible_version)
+        Some(visible_version.clone())
+    );
+    assert_eq!(
+        store.resume_versions_for_document(&visible.id).unwrap(),
+        vec![visible_version]
     );
 }
 
@@ -445,6 +449,7 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
     assert_eq!(summary.embedding_queue_depth, 1);
     assert_eq!(summary.recovery_queue_depth, 1);
     assert_eq!(summary.import_tasks_queued, 1);
+    assert_eq!(summary.import_tasks_recoverable, 0);
     assert_eq!(summary.index_health, IndexStateStatus::Building);
     assert_eq!(summary.last_snapshot_id.as_deref(), Some("snapshot-v1"));
 }
@@ -477,6 +482,91 @@ fn import_tasks_persist_without_document_foreign_key() {
     }
 
     remove_temp_db(&db_path);
+}
+
+#[test]
+fn import_task_status_updates_support_completion_and_retry() {
+    let store = migrated_store();
+    let task = import_task(
+        "import-status-update-placeholder",
+        "synthetic/import/root",
+        ImportTaskStatus::Queued,
+    );
+    store.insert_import_task(&task).unwrap();
+
+    let started_at = UnixTimestamp::from_unix_seconds(1_800_000_010);
+    store
+        .update_import_task_status(&task.id, ImportTaskStatus::Running, started_at)
+        .unwrap();
+    let running = store.import_task_by_id(&task.id).unwrap().unwrap();
+    assert_eq!(running.status, ImportTaskStatus::Running);
+    assert_eq!(running.started_at, Some(started_at));
+    assert_eq!(running.finished_at, None);
+    let running_summary = store.status_summary().unwrap();
+    assert_eq!(running_summary.import_tasks_queued, 0);
+    assert_eq!(running_summary.import_tasks_recoverable, 1);
+    assert_eq!(
+        store.pending_import_task_by_root(&task.root_path).unwrap(),
+        Some(running)
+    );
+
+    let retry_at = UnixTimestamp::from_unix_seconds(1_800_000_020);
+    store
+        .update_import_task_status(&task.id, ImportTaskStatus::FailedRetryable, retry_at)
+        .unwrap();
+    let retryable = store.import_task_by_id(&task.id).unwrap().unwrap();
+    assert_eq!(retryable.status, ImportTaskStatus::FailedRetryable);
+    assert_eq!(retryable.started_at, Some(started_at));
+    assert_eq!(retryable.finished_at, Some(retry_at));
+    assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 1);
+
+    let restarted_at = UnixTimestamp::from_unix_seconds(1_800_000_030);
+    store
+        .update_import_task_status(&task.id, ImportTaskStatus::Running, restarted_at)
+        .unwrap();
+    let restarted = store.import_task_by_id(&task.id).unwrap().unwrap();
+    assert_eq!(restarted.status, ImportTaskStatus::Running);
+    assert_eq!(restarted.started_at, Some(restarted_at));
+    assert_eq!(restarted.finished_at, None);
+
+    let completed_at = UnixTimestamp::from_unix_seconds(1_800_000_040);
+    store
+        .update_import_task_status(&task.id, ImportTaskStatus::Completed, completed_at)
+        .unwrap();
+    let completed = store.import_task_by_id(&task.id).unwrap().unwrap();
+    assert_eq!(completed.status, ImportTaskStatus::Completed);
+    assert_eq!(completed.started_at, Some(restarted_at));
+    assert_eq!(completed.finished_at, Some(completed_at));
+    assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 0);
+    assert_eq!(
+        store.pending_import_task_by_root(&task.root_path).unwrap(),
+        None
+    );
+
+    let completed_to_running =
+        store.update_import_task_status(&task.id, ImportTaskStatus::Running, completed_at);
+    assert_redacted_store_error(completed_to_running.unwrap_err());
+
+    let time_travel_task = import_task(
+        "import-status-time-travel-placeholder",
+        "synthetic/import/root",
+        ImportTaskStatus::Queued,
+    );
+    store.insert_import_task(&time_travel_task).unwrap();
+    let before_queue = UnixTimestamp::from_unix_seconds(1_799_999_999);
+    assert_redacted_store_error(
+        store
+            .update_import_task_status(
+                &time_travel_task.id,
+                ImportTaskStatus::Running,
+                before_queue,
+            )
+            .unwrap_err(),
+    );
+
+    let retryable_to_running_backwards =
+        store.update_import_task_status(&task.id, ImportTaskStatus::Running, retry_at);
+    assert_redacted_store_error(retryable_to_running_backwards.unwrap_err());
 }
 
 #[test]
