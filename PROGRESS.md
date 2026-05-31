@@ -17,8 +17,8 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S5 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, parser, and index integration remain unfinished. |
-| P1 text import and full-text search | Not started | Design docs only. | Synthetic large corpus and parser/index implementation absent. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S6 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, and index integration remain unfinished. |
+| P1 text import and full-text search | In progress | S5 crawler and S6 parser crates exist with synthetic acceptance tests. | Parser integration, text cleaning/sectioning, Tantivy index/search, synthetic large corpus, and benchmark remain absent. |
 | P2 fields and dedupe | Not started | Design docs only. | Field-labeled synthetic/desensitized evaluation set and dictionaries absent. |
 | P3 semantic retrieval | Not started | Design docs only. | Model choice, license, checksums, and distribution approval require human confirmation. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs and scanned synthetic corpus absent. |
@@ -35,7 +35,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S3 | Complete | SQLite schema v1, migration runner, document/resume_version/ingest_job/index_state tables, job state updates, retry recovery query, future-version guard, typed job states, and deletion visibility tests; acceptance passed with `cargo test -p meta-store`. | None |
 | S4 | Complete | `resume-cli status`, `resume-cli import --root`, `resume-cli search <query>`, and `resume-daemon --foreground` run without panic; import queues a root task in SQLite and search returns a clear no-index message without fake results. | None |
 | S5 | Complete | `fs-crawler` scans supported files, filters temp/unsupported files, normalizes Unicode and Windows/macOS-style separators, builds fast fingerprints, and reports locked/permission/unreachable errors through deterministic tests. | None |
-| S6 | Not started |  |  |
+| S6 | Complete | `parser-common`, `parser-docx`, and `parser-pdf` implement parser contracts, basic DOCX text extraction, lightweight PDF text-layer/image-only/unknown classification, elapsed-budget timeout mapping, and redacted parser debug/errors; acceptance passed with parser crate tests. | None |
 | S7 | Not started |  |  |
 | S8 | Not started |  |  |
 | S9 | Not started |  |  |
@@ -170,3 +170,30 @@ Review summary:
 - Sub-agent spec compliance review approved S5 scope.
 - Sub-agent code quality review found debug hash leakage, PII-like fixture labels, Windows-style temp filtering order, and fast-fingerprint sampling documentation gaps. Fixes were applied and re-reviewed as approved.
 - PII pattern scan over current code/docs found no email-like, phone-like, common placeholder-name, or user-home-shaped fixture strings.
+
+### S6
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-common
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-docx
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-pdf
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-common -p parser-docx -p parser-pdf
+/Users/frankqdwang/.cargo/bin/cargo clippy -p parser-common -p parser-docx -p parser-pdf --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: succeeded.
+- `cargo test -p parser-common`: succeeded with 5 tests covering elapsed-budget timeout mapping and redacted parser input/output/error debug behavior.
+- `cargo test -p parser-docx`: succeeded with 2 tests covering synthetic DOCX text extraction and corrupt DOCX error mapping.
+- `cargo test -p parser-pdf`: succeeded with 3 tests covering text-layer detection without fake extraction, image-only OCR-required classification, and encoded-stream unknown classification.
+- Combined parser crate tests, workspace `cargo test --workspace`, and workspace `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+
+Review summary:
+
+- Sub-agent spec compliance review approved S6 scope.
+- Sub-agent code quality review found two issues: PDF negative detection over-claimed OCR-required and parser timeout documentation implied hard cancellation. Fixes added `SupportLevel::Unknown`, narrowed OCR-required to image-only evidence, and documented timeout as elapsed-budget accounting; re-review approved.
+- PII pattern scan over parser crates found no local paths, emails, phone-like strings, common placeholder names, output macros, or unsafe panic/unwrap/expect usage.
