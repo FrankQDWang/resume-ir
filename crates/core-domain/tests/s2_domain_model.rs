@@ -52,6 +52,8 @@ fn contact_hash_only_hydrates_external_keyed_digests() {
     let hash = ContactHash::from_keyed_digest(digest).unwrap();
 
     assert_eq!(hash.as_str(), digest);
+    assert_eq!(hash.to_string(), "<redacted>");
+    assert!(!hash.to_string().contains(digest));
     assert_eq!(ContactHash::try_from(digest.to_string()).unwrap(), hash);
     assert!(ContactHash::from_keyed_digest("0123").is_err());
     assert!(ContactHash::from_keyed_digest(

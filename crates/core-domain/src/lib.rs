@@ -75,6 +75,7 @@ stable_id_type!(CandidateId, "cand_");
 stable_id_type!(SectionId, "sec_");
 stable_id_type!(EntityMentionId, "ent_");
 stable_id_type!(VectorRecordId, "vec_");
+stable_id_type!(IngestJobId, "job_");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IdParseError {
@@ -202,7 +203,7 @@ impl TryFrom<String> for ContactHash {
 
 impl fmt::Display for ContactHash {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
+        formatter.write_str("<redacted>")
     }
 }
 
@@ -359,6 +360,34 @@ pub enum DocumentStatus {
     FailedRetryable,
     FailedPermanent,
     Deleted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IngestJobKind {
+    DiscoverDocument,
+    FingerprintDocument,
+    ParseDocument,
+    CleanText,
+    ExtractFields,
+    UpdateIndex,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IngestJobStatus {
+    Queued,
+    Running,
+    Interrupted,
+    Completed,
+    FailedRetryable,
+    FailedPermanent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexStateStatus {
+    Empty,
+    Building,
+    Ready,
+    Stale,
 }
 
 #[derive(Clone, PartialEq)]

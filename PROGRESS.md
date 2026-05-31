@@ -17,7 +17,7 @@ This file tracks long-running Goal execution against
 | S0 | Complete | Git initialized; initial design baseline committed as `43e3d1c`; acceptance showed only S0 files pending before commit. | None |
 | S1 | Complete | `cargo metadata --no-deps`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` passed. | None |
 | S2 | Complete | `cargo fmt --check`, `cargo test -p core-domain`, `cargo test -p config`, and `cargo clippy -p core-domain -p config --all-targets -- -D warnings` passed after review-fix changes. | None |
-| S3 | Not started |  |  |
+| S3 | Complete | `cargo fmt --check`, `cargo test -p meta-store`, and `cargo clippy -p meta-store --all-targets -- -D warnings` passed. | None |
 | S4 | Not started |  |  |
 | S5 | Not started |  |  |
 | S6 | Not started |  |  |
@@ -134,3 +134,66 @@ Output summary:
 - `core-domain`: exit 0; identity test plus 7 S2 tests passed, covering design-aligned fields, full lifecycle states, exact error kinds, diagnostic redaction, redacted domain debug output, validated ID hydration, golden opaque ID generation, and `ContactHash` hydration.
 - `config`: exit 0; identity test plus 2 S2 tests passed, covering default Balanced profile and deterministic Economy/Balanced/Turbo resource tiers.
 - `cargo clippy -p core-domain -p config --all-targets -- -D warnings`: exit 0.
+
+### S3
+
+Baseline check:
+
+```bash
+cargo test -p meta-store
+```
+
+Output summary:
+
+- Passed before S3 work with only the existing meta-store identity test.
+
+TDD red check:
+
+```bash
+cargo test -p meta-store
+```
+
+Output summary:
+
+- Failed before implementation because the S3 tests imported missing SQLite store APIs, migration reporting, task queue types, and index state persistence types.
+
+Implementation check:
+
+```bash
+cargo test -p meta-store
+```
+
+Output summary:
+
+- First implementation run passed migration idempotency, visible-document filtering, and index-state persistence tests, then failed the recovery query because the internal job query SQL was malformed.
+- After fixing the query template and adding the file-backed open path, exit 0; identity plus 5 S3 tests passed.
+
+Acceptance:
+
+```bash
+cargo fmt --check
+cargo test -p meta-store
+cargo clippy -p meta-store --all-targets -- -D warnings
+```
+
+Output summary:
+
+- Initial `cargo fmt --check` reported formatting diffs; after `cargo fmt`, `cargo fmt --check` exited 0.
+- `cargo test -p meta-store`: exit 0; identity test plus 5 S3 tests passed, covering migration idempotency/schema version/table existence, hidden deleted documents, recovery query filtering, job status update, resume version persistence, index state upsert/query, and file-backed SQLite reopen behavior.
+- `cargo clippy -p meta-store --all-targets -- -D warnings`: exit 0.
+
+Review-fix:
+
+```bash
+cargo test -p core-domain
+cargo test -p meta-store
+cargo fmt --check
+cargo clippy -p core-domain -p meta-store --all-targets -- -D warnings
+```
+
+Output summary:
+
+- Red checks failed before the review fix because `ContactHash` display exposed the full digest and `meta-store` lacked claim-next-job, job lookup, and file-backed PRAGMA APIs.
+- After the review fix, `core-domain` tests passed with `ContactHash` display redacted while `.as_str()` still exposes explicit persistence material.
+- After the review fix, `meta-store` tests passed with 12 S3 integration tests covering queue/recovery separation, atomic claim semantics, timestamp transitions, invalid transition errors, schema CHECK constraints, file-backed PRAGMA setup, FK rejection/cascade, file-backed reopen recovery, and SQLite metadata/task persistence.
+- This remains plaintext SQLite metadata/task persistence only; no SQLCipher or production data encryption claim is made.

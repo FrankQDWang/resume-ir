@@ -8,5 +8,10 @@ publish.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[dependencies]
+core-domain = { path = "../core-domain" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde_json = "1"
+
 [lints]
 workspace = true

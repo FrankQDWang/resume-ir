@@ -1,0 +1,748 @@
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use meta_store::{
+    Document, DocumentId, DocumentStatus, FileExtension, IndexState, IndexStateStatus, IngestJob,
+    IngestJobId, IngestJobKind, IngestJobStatus, MetaStore, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, UnixTimestamp,
+};
+use rusqlite::{params, Connection};
+
+#[test]
+fn migrations_are_idempotent_and_schema_v1_is_queryable() {
+    let store = MetaStore::open_in_memory().unwrap();
+
+    assert!(store.foreign_keys_enabled().unwrap());
+
+    let first = store.run_migrations().unwrap();
+    assert_eq!(first.applied_versions(), &[1]);
+    assert_eq!(store.schema_version().unwrap(), 1);
+
+    for table_name in ["document", "resume_version", "ingest_job", "index_state"] {
+        assert!(store.schema_table_exists(table_name).unwrap());
+    }
+
+    let second = store.run_migrations().unwrap();
+    assert!(second.applied_versions().is_empty());
+    assert_eq!(store.schema_version().unwrap(), 1);
+}
+
+#[test]
+fn visible_document_query_excludes_deleted_documents_by_default() {
+    let store = migrated_store();
+    let visible = document("visible-placeholder", false, DocumentStatus::Discovered);
+    let deleted = document("deleted-placeholder", true, DocumentStatus::Deleted);
+
+    store.upsert_document(&visible).unwrap();
+    store.upsert_document(&deleted).unwrap();
+    let visible_version = resume_version("visible-version-placeholder", visible.id.clone());
+    store.upsert_resume_version(&visible_version).unwrap();
+
+    let visible_documents = store.visible_documents().unwrap();
+    let visible_ids = visible_documents
+        .iter()
+        .map(|document| document.id.clone())
+        .collect::<Vec<_>>();
+
+    assert_eq!(visible_ids, vec![visible.id.clone()]);
+    assert!(
+        store
+            .document_by_id(&deleted.id)
+            .unwrap()
+            .unwrap()
+            .is_deleted
+    );
+    assert_eq!(
+        store.resume_version_by_id(&visible_version.id).unwrap(),
+        Some(visible_version)
+    );
+}
+
+#[test]
+fn recovery_query_returns_interrupted_running_and_retryable_failed_jobs_only() {
+    let store = migrated_store();
+    let document = document(
+        "job-document-placeholder",
+        false,
+        DocumentStatus::ParseQueued,
+    );
+    store.upsert_document(&document).unwrap();
+
+    let running = job(
+        "running-placeholder",
+        &document.id,
+        IngestJobStatus::Queued,
+        0,
+        3,
+    );
+    let interrupted = job(
+        "interrupted-placeholder",
+        &document.id,
+        IngestJobStatus::Interrupted,
+        1,
+        3,
+    );
+    let retryable_failed = job(
+        "retryable-failed-placeholder",
+        &document.id,
+        IngestJobStatus::FailedRetryable,
+        2,
+        3,
+    );
+    let exhausted_retryable = job(
+        "exhausted-retryable-placeholder",
+        &document.id,
+        IngestJobStatus::FailedRetryable,
+        3,
+        3,
+    );
+    let completed = job(
+        "completed-placeholder",
+        &document.id,
+        IngestJobStatus::Completed,
+        1,
+        3,
+    );
+    let permanent_failed = job(
+        "permanent-failed-placeholder",
+        &document.id,
+        IngestJobStatus::FailedPermanent,
+        1,
+        3,
+    );
+
+    for ingest_job in [
+        running.clone(),
+        interrupted.clone(),
+        retryable_failed.clone(),
+        exhausted_retryable,
+        completed,
+        permanent_failed,
+    ] {
+        store.insert_ingest_job(&ingest_job).unwrap();
+    }
+
+    store
+        .update_job_status(
+            &running.id,
+            IngestJobStatus::Running,
+            UnixTimestamp::from_unix_seconds(1_800_000_050),
+        )
+        .unwrap();
+
+    let recovery_ids = store
+        .jobs_requiring_recovery()
+        .unwrap()
+        .into_iter()
+        .map(|ingest_job| ingest_job.id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        recovery_ids,
+        vec![running.id, interrupted.id, retryable_failed.id]
+    );
+}
+
+#[test]
+fn retryable_queue_excludes_live_running_jobs() {
+    let store = migrated_store();
+    let document = document(
+        "retryable-document-placeholder",
+        false,
+        DocumentStatus::ParseQueued,
+    );
+    store.upsert_document(&document).unwrap();
+
+    let queued = job(
+        "retryable-queued-placeholder",
+        &document.id,
+        IngestJobStatus::Queued,
+        0,
+        3,
+    );
+    let running = job(
+        "retryable-running-placeholder",
+        &document.id,
+        IngestJobStatus::Running,
+        1,
+        3,
+    )
+    .started_at(UnixTimestamp::from_unix_seconds(1_800_000_010));
+    let interrupted = job(
+        "retryable-interrupted-placeholder",
+        &document.id,
+        IngestJobStatus::Interrupted,
+        1,
+        3,
+    );
+    let failed_retryable = job(
+        "retryable-failed-placeholder",
+        &document.id,
+        IngestJobStatus::FailedRetryable,
+        1,
+        3,
+    )
+    .finished_at(UnixTimestamp::from_unix_seconds(1_800_000_020));
+    let exhausted = job(
+        "retryable-exhausted-placeholder",
+        &document.id,
+        IngestJobStatus::FailedRetryable,
+        3,
+        3,
+    );
+
+    for ingest_job in [
+        queued.clone(),
+        running,
+        interrupted.clone(),
+        failed_retryable.clone(),
+        exhausted,
+    ] {
+        store.insert_ingest_job(&ingest_job).unwrap();
+    }
+
+    let retryable_ids = store
+        .retryable_jobs()
+        .unwrap()
+        .into_iter()
+        .map(|ingest_job| ingest_job.id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        retryable_ids,
+        vec![queued.id, interrupted.id, failed_retryable.id]
+    );
+}
+
+#[test]
+fn claim_next_job_marks_one_retryable_job_running_with_attempt_increment() {
+    let store = migrated_store();
+    let document = document(
+        "claim-document-placeholder",
+        false,
+        DocumentStatus::ParseQueued,
+    );
+    store.upsert_document(&document).unwrap();
+
+    let failed_retryable = job(
+        "claim-failed-placeholder",
+        &document.id,
+        IngestJobStatus::FailedRetryable,
+        1,
+        3,
+    )
+    .finished_at(UnixTimestamp::from_unix_seconds(1_800_000_020));
+    let live_running = job(
+        "claim-live-running-placeholder",
+        &document.id,
+        IngestJobStatus::Running,
+        1,
+        3,
+    )
+    .started_at(UnixTimestamp::from_unix_seconds(1_800_000_030));
+    let claim_time = UnixTimestamp::from_unix_seconds(1_800_000_090);
+
+    store.insert_ingest_job(&failed_retryable).unwrap();
+    store.insert_ingest_job(&live_running).unwrap();
+
+    let claimed = store.claim_next_job(claim_time).unwrap().unwrap();
+    assert_eq!(claimed.id, failed_retryable.id);
+    assert_eq!(claimed.status, IngestJobStatus::Running);
+    assert_eq!(claimed.attempt_count, 2);
+    assert_eq!(claimed.started_at, Some(claim_time));
+    assert_eq!(claimed.updated_at, claim_time);
+    assert_eq!(claimed.finished_at, None);
+
+    assert_eq!(store.claim_next_job(claim_time).unwrap(), None);
+}
+
+#[test]
+fn job_status_updates_set_timestamps_and_reject_terminal_transitions() {
+    let store = migrated_store();
+    let document = document(
+        "transition-document-placeholder",
+        false,
+        DocumentStatus::ParseQueued,
+    );
+    store.upsert_document(&document).unwrap();
+
+    let retrying = job(
+        "transition-retrying-placeholder",
+        &document.id,
+        IngestJobStatus::FailedRetryable,
+        1,
+        3,
+    )
+    .finished_at(UnixTimestamp::from_unix_seconds(1_800_000_010));
+    let completed = job(
+        "transition-completed-placeholder",
+        &document.id,
+        IngestJobStatus::Completed,
+        1,
+        3,
+    )
+    .finished_at(UnixTimestamp::from_unix_seconds(1_800_000_020));
+
+    store.insert_ingest_job(&retrying).unwrap();
+    store.insert_ingest_job(&completed).unwrap();
+
+    let running_at = UnixTimestamp::from_unix_seconds(1_800_000_100);
+    store
+        .update_job_status(&retrying.id, IngestJobStatus::Running, running_at)
+        .unwrap();
+    let running = store.ingest_job_by_id(&retrying.id).unwrap().unwrap();
+    assert_eq!(running.status, IngestJobStatus::Running);
+    assert_eq!(running.started_at, Some(running_at));
+    assert_eq!(running.finished_at, None);
+    assert_eq!(running.updated_at, running_at);
+
+    let failed_at = UnixTimestamp::from_unix_seconds(1_800_000_130);
+    store
+        .update_job_status(&retrying.id, IngestJobStatus::FailedRetryable, failed_at)
+        .unwrap();
+    let failed = store.ingest_job_by_id(&retrying.id).unwrap().unwrap();
+    assert_eq!(failed.status, IngestJobStatus::FailedRetryable);
+    assert_eq!(failed.started_at, Some(running_at));
+    assert_eq!(failed.finished_at, Some(failed_at));
+    assert_eq!(failed.updated_at, failed_at);
+
+    let completed_to_running = store.update_job_status(
+        &completed.id,
+        IngestJobStatus::Running,
+        UnixTimestamp::from_unix_seconds(1_800_000_160),
+    );
+    assert_redacted_store_error(completed_to_running.unwrap_err());
+
+    let missing = store.update_job_status(
+        &IngestJobId::from_non_secret_parts(&["missing-transition-placeholder"]),
+        IngestJobStatus::Running,
+        UnixTimestamp::from_unix_seconds(1_800_000_170),
+    );
+    assert_redacted_store_error(missing.unwrap_err());
+}
+
+#[test]
+fn index_state_persists_and_upserts_snapshot_status() {
+    let store = migrated_store();
+
+    assert_eq!(store.index_state().unwrap(), None);
+
+    let ready = IndexState {
+        manifest_version: "manifest-v1".to_string(),
+        snapshot_token: Some("snapshot-token-v1".to_string()),
+        status: IndexStateStatus::Ready,
+        updated_at: UnixTimestamp::from_unix_seconds(1_800_000_060),
+    };
+    let stale = IndexState {
+        manifest_version: "manifest-v2".to_string(),
+        snapshot_token: Some("snapshot-token-v2".to_string()),
+        status: IndexStateStatus::Stale,
+        updated_at: UnixTimestamp::from_unix_seconds(1_800_000_120),
+    };
+
+    store.upsert_index_state(&ready).unwrap();
+    assert_eq!(store.index_state().unwrap(), Some(ready));
+
+    store.upsert_index_state(&stale).unwrap();
+    assert_eq!(store.index_state().unwrap(), Some(stale));
+}
+
+#[test]
+fn file_backed_store_reopens_schema_and_index_state() {
+    let db_path = temp_db_path("file-backed-placeholder");
+    let state = IndexState {
+        manifest_version: "manifest-file-v1".to_string(),
+        snapshot_token: Some("snapshot-file-token-v1".to_string()),
+        status: IndexStateStatus::Ready,
+        updated_at: UnixTimestamp::from_unix_seconds(1_800_000_180),
+    };
+
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+        store.upsert_index_state(&state).unwrap();
+    }
+
+    {
+        let reopened = MetaStore::open(&db_path).unwrap();
+        assert!(reopened.foreign_keys_enabled().unwrap());
+        assert_eq!(reopened.schema_version().unwrap(), 1);
+        assert_eq!(reopened.index_state().unwrap(), Some(state));
+    }
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
+fn file_backed_connection_sets_pragmas() {
+    let db_path = temp_db_path("pragma-placeholder");
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+
+        assert!(store.foreign_keys_enabled().unwrap());
+        assert_eq!(store.busy_timeout_millis().unwrap(), 5_000);
+        assert_eq!(store.journal_mode().unwrap(), "wal");
+    }
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
+fn raw_sql_invalid_enum_and_quality_values_are_rejected() {
+    let db_path = temp_db_path("checks-placeholder");
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+        let document = document(
+            "checks-document-placeholder",
+            false,
+            DocumentStatus::Discovered,
+        );
+        store.upsert_document(&document).unwrap();
+    }
+
+    {
+        let connection = open_raw_connection(&db_path);
+        let valid_document_id =
+            DocumentId::from_non_secret_parts(&["s3", "checks-document-placeholder"]);
+        let valid_version_id =
+            ResumeVersionId::from_non_secret_parts(&["s3", "checks-version-valid"]);
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO document (
+                id, source_uri, normalized_path, file_name, extension, byte_size, mtime_seconds,
+                is_deleted, created_at_seconds, updated_at_seconds, status
+            )
+            VALUES (?1, 'synthetic://invalid', 'synthetic/invalid.txt', 'invalid.txt', 'txt',
+                1, 1, 0, 1, 1, 'not_a_status')",
+            params![DocumentId::from_non_secret_parts(&["s3", "invalid-document"]).as_str()],
+        ));
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO resume_version (
+                id, document_id, parse_version, schema_version, language_set_json,
+                quality_score, visibility
+            )
+            VALUES (?1, ?2, 'parser-v1', 'schema-v1', '[]', 1.5, 'searchable')",
+            params![valid_version_id.as_str(), valid_document_id.as_str()],
+        ));
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO resume_version (
+                id, document_id, parse_version, schema_version, language_set_json, visibility
+            )
+            VALUES (?1, ?2, 'parser-v1', 'schema-v1', '[]', 'not_visibility')",
+            params![
+                ResumeVersionId::from_non_secret_parts(&["s3", "invalid-visibility"]).as_str(),
+                valid_document_id.as_str(),
+            ],
+        ));
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO ingest_job (
+                id, document_id, kind, status, attempt_count, max_attempts,
+                queued_at_seconds, updated_at_seconds
+            )
+            VALUES (?1, ?2, 'not_kind', 'queued', 0, 3, 1, 1)",
+            params![
+                IngestJobId::from_non_secret_parts(&["s3", "invalid-kind"]).as_str(),
+                valid_document_id.as_str(),
+            ],
+        ));
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO ingest_job (
+                id, document_id, kind, status, attempt_count, max_attempts,
+                queued_at_seconds, updated_at_seconds
+            )
+            VALUES (?1, ?2, 'parse_document', 'not_status', 0, 3, 1, 1)",
+            params![
+                IngestJobId::from_non_secret_parts(&["s3", "invalid-job-status"]).as_str(),
+                valid_document_id.as_str(),
+            ],
+        ));
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO index_state (state_key, manifest_version, status, updated_at_seconds)
+            VALUES ('default', 'manifest-invalid', 'not_index_status', 1)",
+            [],
+        ));
+    }
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
+fn foreign_keys_reject_missing_parents_and_delete_cascades_children() {
+    let db_path = temp_db_path("fk-placeholder");
+    let document = document("fk-document-placeholder", false, DocumentStatus::Discovered);
+    let version = resume_version("fk-version-placeholder", document.id.clone());
+    let ingest_job = job(
+        "fk-job-placeholder",
+        &document.id,
+        IngestJobStatus::Queued,
+        0,
+        3,
+    )
+    .resume_version_id(version.id.clone());
+
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+        let missing_parent = resume_version(
+            "fk-missing-parent-placeholder",
+            DocumentId::from_non_secret_parts(&["s3", "missing-parent"]),
+        );
+        assert_redacted_store_error(store.upsert_resume_version(&missing_parent).unwrap_err());
+
+        store.upsert_document(&document).unwrap();
+        store.upsert_resume_version(&version).unwrap();
+        store.insert_ingest_job(&ingest_job).unwrap();
+    }
+
+    {
+        let connection = open_raw_connection(&db_path);
+        connection
+            .execute(
+                "DELETE FROM document WHERE id = ?1",
+                params![document.id.as_str()],
+            )
+            .unwrap();
+    }
+
+    {
+        let reopened = MetaStore::open(&db_path).unwrap();
+        assert_eq!(reopened.document_by_id(&document.id).unwrap(), None);
+        assert_eq!(reopened.resume_version_by_id(&version.id).unwrap(), None);
+        assert_eq!(reopened.ingest_job_by_id(&ingest_job.id).unwrap(), None);
+    }
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
+fn file_backed_store_recovers_unfinished_jobs_after_reopen() {
+    let db_path = temp_db_path("recovery-reopen-placeholder");
+    let document = document(
+        "recovery-reopen-document-placeholder",
+        false,
+        DocumentStatus::ParseQueued,
+    );
+    let version = resume_version("recovery-reopen-version-placeholder", document.id.clone());
+    let running = job(
+        "recovery-reopen-running-placeholder",
+        &document.id,
+        IngestJobStatus::Running,
+        1,
+        3,
+    )
+    .resume_version_id(version.id.clone())
+    .started_at(UnixTimestamp::from_unix_seconds(1_800_000_040));
+    let interrupted = job(
+        "recovery-reopen-interrupted-placeholder",
+        &document.id,
+        IngestJobStatus::Interrupted,
+        1,
+        3,
+    )
+    .resume_version_id(version.id.clone());
+    let retryable_failed = job(
+        "recovery-reopen-failed-placeholder",
+        &document.id,
+        IngestJobStatus::FailedRetryable,
+        1,
+        3,
+    )
+    .resume_version_id(version.id.clone())
+    .finished_at(UnixTimestamp::from_unix_seconds(1_800_000_050));
+    let completed = job(
+        "recovery-reopen-completed-placeholder",
+        &document.id,
+        IngestJobStatus::Completed,
+        1,
+        3,
+    )
+    .resume_version_id(version.id.clone())
+    .finished_at(UnixTimestamp::from_unix_seconds(1_800_000_060));
+
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+        store.upsert_document(&document).unwrap();
+        store.upsert_resume_version(&version).unwrap();
+        for ingest_job in [
+            running.clone(),
+            interrupted.clone(),
+            retryable_failed.clone(),
+            completed,
+        ] {
+            store.insert_ingest_job(&ingest_job).unwrap();
+        }
+    }
+
+    {
+        let reopened = MetaStore::open(&db_path).unwrap();
+        assert_eq!(
+            reopened.document_by_id(&document.id).unwrap(),
+            Some(document)
+        );
+        assert_eq!(
+            reopened.resume_version_by_id(&version.id).unwrap(),
+            Some(version)
+        );
+        let recovery_ids = reopened
+            .jobs_requiring_recovery()
+            .unwrap()
+            .into_iter()
+            .map(|ingest_job| ingest_job.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            recovery_ids,
+            vec![running.id, interrupted.id, retryable_failed.id]
+        );
+    }
+
+    remove_temp_db(&db_path);
+}
+
+fn migrated_store() -> MetaStore {
+    let store = MetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    store
+}
+
+fn temp_db_path(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+
+    std::env::temp_dir().join(format!("resume-ir-s3-{label}-{unique}.sqlite3"))
+}
+
+fn remove_temp_db(db_path: &PathBuf) {
+    let _ = fs::remove_file(db_path);
+    let _ = fs::remove_file(format!("{}-wal", db_path.display()));
+    let _ = fs::remove_file(format!("{}-shm", db_path.display()));
+}
+
+fn document(label: &str, is_deleted: bool, status: DocumentStatus) -> Document {
+    let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let id = DocumentId::from_non_secret_parts(&["s3", label]);
+
+    Document {
+        id,
+        source_uri: format!("synthetic://document/{label}"),
+        normalized_path: format!("synthetic/root/{label}.txt"),
+        file_name: format!("{label}.txt"),
+        extension: FileExtension::Txt,
+        byte_size: 128,
+        mtime: now,
+        content_hash: Some(format!("sha256:SYNTHETIC_CONTENT_HASH_{label}")),
+        text_hash: Some(format!("sha256:SYNTHETIC_TEXT_HASH_{label}")),
+        is_deleted,
+        created_at: now,
+        updated_at: now,
+        status,
+    }
+}
+
+fn resume_version(label: &str, document_id: DocumentId) -> ResumeVersion {
+    ResumeVersion {
+        id: ResumeVersionId::from_non_secret_parts(&["s3", label]),
+        document_id,
+        candidate_id: None,
+        parse_version: "parser-v1".to_string(),
+        schema_version: "schema-v1".to_string(),
+        language_set: vec!["en".to_string()],
+        page_count: Some(1),
+        raw_text: Some("SYNTHETIC RAW TEXT".to_string()),
+        clean_text: Some("SYNTHETIC CLEAN TEXT".to_string()),
+        quality_score: Some(0.8),
+        visibility: ResumeVisibility::Searchable,
+    }
+}
+
+fn job(
+    label: &str,
+    document_id: &DocumentId,
+    status: IngestJobStatus,
+    attempt_count: u32,
+    max_attempts: u32,
+) -> IngestJob {
+    let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
+
+    IngestJob {
+        id: IngestJobId::from_non_secret_parts(&["s3", label]),
+        document_id: document_id.clone(),
+        resume_version_id: None,
+        kind: IngestJobKind::ParseDocument,
+        status,
+        attempt_count,
+        max_attempts,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    }
+}
+
+trait IngestJobTestExt {
+    fn started_at(self, timestamp: UnixTimestamp) -> Self;
+    fn finished_at(self, timestamp: UnixTimestamp) -> Self;
+    fn resume_version_id(self, id: ResumeVersionId) -> Self;
+}
+
+impl IngestJobTestExt for IngestJob {
+    fn started_at(mut self, timestamp: UnixTimestamp) -> Self {
+        self.started_at = Some(timestamp);
+        self
+    }
+
+    fn finished_at(mut self, timestamp: UnixTimestamp) -> Self {
+        self.finished_at = Some(timestamp);
+        self
+    }
+
+    fn resume_version_id(mut self, id: ResumeVersionId) -> Self {
+        self.resume_version_id = Some(id);
+        self
+    }
+}
+
+fn open_raw_connection(db_path: &PathBuf) -> Connection {
+    let connection = Connection::open(db_path).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .unwrap();
+    connection
+}
+
+fn expect_raw_rejection(result: rusqlite::Result<usize>) {
+    assert!(result.is_err());
+}
+
+fn assert_redacted_store_error(error: meta_store::MetaStoreError) {
+    let display = error.to_string();
+    let debug = format!("{error:?}");
+
+    for leaked in [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "synthetic/root",
+        "synthetic://",
+        ".sqlite",
+    ] {
+        assert!(!display.contains(leaked), "display leaked {leaked}");
+        assert!(!debug.contains(leaked), "debug leaked {leaked}");
+    }
+}
