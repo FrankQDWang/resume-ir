@@ -17,7 +17,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1/S2 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; SQLite schema, daemon/CLI commands, IPC, diagnostics, and CI remain unfinished. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S3 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; daemon/CLI commands, IPC, diagnostics, and CI remain unfinished. |
 | P1 text import and full-text search | Not started | Design docs only. | Synthetic large corpus and parser/index implementation absent. |
 | P2 fields and dedupe | Not started | Design docs only. | Field-labeled synthetic/desensitized evaluation set and dictionaries absent. |
 | P3 semantic retrieval | Not started | Design docs only. | Model choice, license, checksums, and distribution approval require human confirmation. |
@@ -32,7 +32,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S0 | Complete | Git initialized; initial design baseline committed as `43e3d1c`; acceptance showed only S0 files pending before commit. | None |
 | S1 | Complete | Root Rust workspace plus `core-domain`, `config`, `meta-store`, `resume-daemon`, and `resume-cli`; acceptance passed with `cargo metadata --no-deps --format-version 1`, `cargo fmt --check`, and `cargo test`. | None |
 | S2 | Complete | Domain/config types and tests for typed IDs, redacted errors, redacted debug output, and profile defaults; acceptance passed with `cargo test -p core-domain` and `cargo test -p config`. | None |
-| S3 | Not started |  |  |
+| S3 | Complete | SQLite schema v1, migration runner, document/resume_version/ingest_job/index_state tables, job state updates, retry recovery query, future-version guard, typed job states, and deletion visibility tests; acceptance passed with `cargo test -p meta-store`. | None |
 | S4 | Not started |  |  |
 | S5 | Not started |  |  |
 | S6 | Not started |  |  |
@@ -94,3 +94,27 @@ Review summary:
 - Sub-agent spec compliance review approved S1/S2 scope.
 - Sub-agent code quality review found privacy issues in `Debug`/diagnostic accessors; fixes were applied and re-reviewed as approved.
 - PII pattern scan over current code/docs found no email-like or phone-like synthetic strings.
+
+### S3
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: succeeded.
+- `cargo test -p meta-store`: succeeded with 8 tests covering migration idempotence, future schema rejection, deleted-document invisibility, normalized-path rediscovery, typed job-state recovery, invalid-state schema rejection, and redacted debug output.
+- `cargo clippy -p meta-store --all-targets -- -D warnings`: succeeded.
+- Workspace `cargo test`: succeeded.
+- Workspace `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+
+Review summary:
+
+- Sub-agent spec compliance review approved S3 scope.
+- Sub-agent code quality review found four issues: debug leaks, normalized-path conflict handling, future schema downgrade risk, and stringly job state. Fixes were applied and re-reviewed as approved.
+- PII pattern scan over current code/docs found no email-like, phone-like, or user-home-shaped synthetic fixture strings.
