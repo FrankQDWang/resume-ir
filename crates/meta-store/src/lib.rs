@@ -474,6 +474,36 @@ impl MetadataStore {
         }
     }
 
+    /// Returns the latest searchable clean text for a document.
+    ///
+    /// This returns local resume text to in-process callers only. Do not include
+    /// the returned value in debug output or diagnostics.
+    pub fn clean_text_by_doc_id(&self, doc_id: &str) -> Result<Option<String>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                r"
+                SELECT clean_text
+                FROM resume_version
+                WHERE doc_id = ?1
+                  AND visibility = 'SEARCHABLE'
+                  AND clean_text IS NOT NULL
+                ORDER BY updated_at DESC, rowid DESC
+                LIMIT 1
+                ",
+            )
+            .map_err(storage_error)?;
+
+        let mut rows = statement
+            .query_map([doc_id], |row| row.get::<_, String>(0))
+            .map_err(storage_error)?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row.map_err(storage_error)?)),
+            None => Ok(None),
+        }
+    }
+
     /// Inserts or updates a parsed resume-version record.
     pub fn upsert_resume_version(&self, record: ParsedResumeRecord<'_>) -> Result<()> {
         self.connection
@@ -1017,6 +1047,41 @@ mod tests {
 
         assert_eq!(document_ids, vec![visible_id.as_str()]);
         assert!(!document_ids.contains(&deleted_id.as_str()));
+        Ok(())
+    }
+
+    #[test]
+    fn clean_text_lookup_returns_latest_searchable_text_for_doc_id() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let document = test_document(false);
+        let doc_id = document.doc_id.to_string();
+
+        store.upsert_document(&document)?;
+        store.upsert_resume_version(ParsedResumeRecord {
+            version_id: "ver_old",
+            doc_id: &doc_id,
+            parse_version: "test",
+            schema_version: "test",
+            raw_text: Some("old raw"),
+            clean_text: Some("old Java associate text"),
+            visibility: "SEARCHABLE",
+        })?;
+        store.upsert_resume_version(ParsedResumeRecord {
+            version_id: "ver_new",
+            doc_id: &doc_id,
+            parse_version: "test",
+            schema_version: "test",
+            raw_text: Some("new raw"),
+            clean_text: Some("new Java bachelor text"),
+            visibility: "SEARCHABLE",
+        })?;
+
+        assert_eq!(
+            store.clean_text_by_doc_id(&doc_id)?,
+            Some("new Java bachelor text".to_string())
+        );
+        assert_eq!(store.clean_text_by_doc_id("missing-doc")?, None);
         Ok(())
     }
 }

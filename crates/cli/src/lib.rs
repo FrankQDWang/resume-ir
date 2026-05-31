@@ -1,12 +1,16 @@
 //! Command-line interface skeleton for local resume indexing.
 
 use core_domain::{Document, DocumentExtension, DocumentId};
+use extractor_rules::extract_strong_entities;
 use fs_crawler::{Crawler, DiscoveredFile, SupportedExtension};
-use index_fulltext::{FullTextError, FullTextIndexReader, FullTextIndexWriter, IndexDocument};
+use index_fulltext::{
+    FullTextError, FullTextIndexReader, FullTextIndexWriter, IndexDocument, SearchHit,
+};
 use meta_store::{JobState, MetadataStore, ParsedResumeRecord};
 use parser_common::{ParseInput, Parser, SupportLevel};
 use parser_docx::DocxParser;
 use parser_pdf::PdfParser;
+use rank_fusion::{DegreeLevel, FieldEvidence, FieldFilters, FieldSummary};
 use search_planner::SearchOptions;
 use sectionizer::sectionize;
 use sha2::{Digest, Sha256};
@@ -106,7 +110,11 @@ where
                 }
             }
         }
-        Command::Search { query } => {
+        Command::Search {
+            query,
+            filters,
+            top_k,
+        } => {
             let trimmed = query.trim();
             if trimmed.is_empty() {
                 return Err("Search query must not be empty.".to_string());
@@ -129,9 +137,18 @@ where
                 }
                 Err(error) => return Err(error.to_string()),
             };
+            let search_options = SearchOptions {
+                top_k: retrieval_limit(top_k, filters.has_constraints()),
+                ..SearchOptions::default()
+            };
             let hits = reader
-                .search(trimmed, SearchOptions::default())
+                .search(trimmed, search_options)
                 .map_err(|error| error.to_string())?;
+            let hits = if filters.has_constraints() {
+                filter_hits_by_fields(hits, &options.data_dir, &filters, top_k)?
+            } else {
+                hits.into_iter().take(top_k).collect()
+            };
             if hits.is_empty() {
                 writeln!(output, "no search results").map_err(|error| error.to_string())?;
                 return Ok(());
@@ -159,8 +176,14 @@ struct CliOptions {
 
 enum Command {
     Status,
-    Import { root: PathBuf },
-    Search { query: String },
+    Import {
+        root: PathBuf,
+    },
+    Search {
+        query: String,
+        filters: FieldFilters,
+        top_k: usize,
+    },
 }
 
 impl CliOptions {
@@ -198,12 +221,97 @@ fn parse_command(parts: &[String]) -> Result<Command, String> {
     match command.as_str() {
         "status" if parts.len() == 1 => Ok(Command::Status),
         "import" => parse_import_command(parts),
-        "search" if parts.len() >= 2 => Ok(Command::Search {
-            query: parts[1..].join(" "),
-        }),
+        "search" if parts.len() >= 2 => parse_search_command(parts),
         "search" => Err("Usage: resume-cli search <query>".to_string()),
         _ => Err("Unknown command. Use status, import, or search.".to_string()),
     }
+}
+
+fn parse_search_command(parts: &[String]) -> Result<Command, String> {
+    let mut query_parts = Vec::new();
+    let mut filters = FieldFilters::default();
+    let mut top_k = SearchOptions::default().top_k;
+    let mut index = 1;
+
+    while index < parts.len() {
+        match parts[index].as_str() {
+            "--degree" | "--degree-min" => {
+                let Some(value) = parts.get(index + 1) else {
+                    return Err("Missing value for --degree.".to_string());
+                };
+                filters.degree_min = Some(
+                    value
+                        .parse::<DegreeLevel>()
+                        .map_err(|_| "Unknown degree filter value.".to_string())?,
+                );
+                index += 2;
+            }
+            "--skill" | "--skills-any" => {
+                let Some(value) = parts.get(index + 1) else {
+                    return Err("Missing value for --skill.".to_string());
+                };
+                filters.skills_any.extend(
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|skill| !skill.is_empty())
+                        .map(ToString::to_string),
+                );
+                index += 2;
+            }
+            "--years-experience-min" => {
+                let Some(value) = parts.get(index + 1) else {
+                    return Err("Missing value for --years-experience-min.".to_string());
+                };
+                filters.years_experience_min = Some(parse_years_filter(value)?);
+                index += 2;
+            }
+            "--top-k" => {
+                let Some(value) = parts.get(index + 1) else {
+                    return Err("Missing value for --top-k.".to_string());
+                };
+                top_k = parse_top_k(value)?;
+                index += 2;
+            }
+            value if value.starts_with("--") => {
+                return Err(format!("Unknown search option: {value}"));
+            }
+            value => {
+                query_parts.push(value.to_string());
+                index += 1;
+            }
+        }
+    }
+
+    if query_parts.is_empty() {
+        return Err("Usage: resume-cli search <query>".to_string());
+    }
+
+    Ok(Command::Search {
+        query: query_parts.join(" "),
+        filters,
+        top_k,
+    })
+}
+
+fn parse_years_filter(value: &str) -> Result<f32, String> {
+    let parsed = value
+        .parse::<f32>()
+        .map_err(|_| "Invalid years experience filter value.".to_string())?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        return Err("Invalid years experience filter value.".to_string());
+    }
+    Ok(parsed)
+}
+
+fn parse_top_k(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| "Invalid --top-k value.".to_string())?;
+    if !(1..=1000).contains(&parsed) {
+        return Err("Invalid --top-k value.".to_string());
+    }
+    Ok(parsed)
 }
 
 fn parse_import_command(parts: &[String]) -> Result<Command, String> {
@@ -228,6 +336,59 @@ fn open_store(data_dir: &Path) -> Result<MetadataStore, String> {
 
 fn fulltext_index_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("indexes").join("fulltext")
+}
+
+fn retrieval_limit(top_k: usize, has_filters: bool) -> usize {
+    if has_filters {
+        top_k.saturating_mul(5).min(top_k.max(100))
+    } else {
+        top_k
+    }
+}
+
+fn filter_hits_by_fields(
+    hits: Vec<SearchHit>,
+    data_dir: &Path,
+    filters: &FieldFilters,
+    top_k: usize,
+) -> Result<Vec<SearchHit>, String> {
+    let store = open_store(data_dir)?;
+    let mut filtered = Vec::new();
+
+    for mut hit in hits {
+        let Some(clean_text) = store
+            .clean_text_by_doc_id(&hit.doc_id)
+            .map_err(|error| error.user_message().to_string())?
+        else {
+            continue;
+        };
+
+        if field_summary_from_text(&clean_text).matches(filters) {
+            hit.rank = filtered.len() + 1;
+            filtered.push(hit);
+        }
+
+        if filtered.len() >= top_k {
+            break;
+        }
+    }
+
+    Ok(filtered)
+}
+
+fn field_summary_from_text(text: &str) -> FieldSummary {
+    let evidence = extract_strong_entities(text)
+        .into_iter()
+        .map(|entity| {
+            FieldEvidence::new(
+                entity.entity_type(),
+                entity.raw_value(),
+                entity.normalized_value(),
+                entity.confidence(),
+            )
+        })
+        .collect::<Vec<_>>();
+    FieldSummary::from_evidence(&evidence)
 }
 
 #[derive(Default)]
@@ -644,6 +805,81 @@ mod tests {
     }
 
     #[test]
+    fn search_accepts_degree_filter_and_top_k_after_query() -> Result<(), String> {
+        let data_dir = unique_data_dir("search-degree")?;
+        let index_dir = data_dir.join("indexes").join("fulltext");
+        seed_search_document(
+            data_dir.as_ref(),
+            index_dir.as_ref(),
+            "doc-associate",
+            "synthetic-associate.pdf",
+            "Synthetic Java engineer Associate Degree Skills Java",
+        )?;
+        seed_search_document(
+            data_dir.as_ref(),
+            index_dir.as_ref(),
+            "doc-bachelor",
+            "synthetic-bachelor.pdf",
+            "Synthetic Java engineer Bachelor of Science Skills Java Spring Cloud",
+        )?;
+        let mut output = Vec::new();
+
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "search",
+                "Java",
+                "--degree",
+                "bachelor",
+                "--top-k",
+                "20",
+            ],
+            &mut output,
+        )?;
+
+        let text = String::from_utf8(output).map_err(|error| error.to_string())?;
+        assert!(text.contains("file_name=synthetic-bachelor.pdf"));
+        assert!(!text.contains("synthetic-associate.pdf"));
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn search_rejects_invalid_numeric_filter_values() -> Result<(), String> {
+        for args in [
+            [
+                "resume-cli",
+                "search",
+                "Java",
+                "--years-experience-min",
+                "NaN",
+            ],
+            [
+                "resume-cli",
+                "search",
+                "Java",
+                "--years-experience-min",
+                "-1",
+            ],
+            ["resume-cli", "search", "Java", "--top-k", "0"],
+            ["resume-cli", "search", "Java", "--top-k", "10001"],
+        ] {
+            let mut output = Vec::new();
+            let error = run_with_args(args, &mut output)
+                .err()
+                .ok_or_else(|| "invalid numeric filter should fail".to_string())?;
+            assert!(
+                error.contains("Invalid years experience filter value")
+                    || error.contains("Invalid --top-k value")
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn import_indexes_synthetic_docx_and_pdf_then_search_survives_reopen() -> Result<(), String> {
         let data_dir = unique_data_dir("import-search")?;
         let import_root = data_dir.join("root");
@@ -941,6 +1177,66 @@ mod tests {
         fn as_ref(&self) -> &std::path::Path {
             &self.0
         }
+    }
+
+    fn seed_search_document(
+        data_dir: &std::path::Path,
+        index_dir: &std::path::Path,
+        doc_id: &str,
+        file_name: &str,
+        clean_text: &str,
+    ) -> Result<(), String> {
+        use core_domain::{Document, DocumentExtension, DocumentId};
+        use meta_store::{MetadataStore, ParsedResumeRecord};
+
+        let store = MetadataStore::open(data_dir.join("metadata.sqlite"))
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .run_migrations()
+            .map_err(|error| error.user_message().to_string())?;
+        let document = Document {
+            doc_id: DocumentId::new(),
+            source_uri: format!("local://synthetic/{file_name}"),
+            normalized_path: format!("/synthetic/{file_name}"),
+            file_name: file_name.to_string(),
+            extension: DocumentExtension::Pdf,
+            byte_size: 128,
+            mtime: "2026-01-01T00:00:00Z".to_string(),
+            content_hash: Some(format!("{doc_id}-content")),
+            text_hash: Some(format!("{doc_id}-text")),
+            is_deleted: false,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let stored_doc_id = document.doc_id.to_string();
+        store
+            .upsert_document(&document)
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .upsert_resume_version(ParsedResumeRecord {
+                version_id: &format!("ver-{doc_id}"),
+                doc_id: &stored_doc_id,
+                parse_version: "test",
+                schema_version: "test",
+                raw_text: Some(clean_text),
+                clean_text: Some(clean_text),
+                visibility: "SEARCHABLE",
+            })
+            .map_err(|error| error.user_message().to_string())?;
+
+        let mut writer = FullTextIndexWriter::open_or_create(index_dir)
+            .map_err(|error| format!("could not create synthetic full-text test index: {error}"))?;
+        writer
+            .add_document(IndexDocument {
+                doc_id: stored_doc_id,
+                version_id: format!("ver-{doc_id}"),
+                file_name: file_name.to_string(),
+                clean_text: clean_text.to_string(),
+                section_type: "experience".to_string(),
+                is_deleted: false,
+            })
+            .map_err(|error| error.to_string())?;
+        writer.commit().map_err(|error| error.to_string())
     }
 
     fn text_layer_pdf_bytes() -> Vec<u8> {

@@ -17,9 +17,9 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S9 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, production async import orchestration, and diagnostics remain unfinished. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S10 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, production async import orchestration, and diagnostics remain unfinished. |
 | P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, and S9 synthetic import-to-search smoke exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, and benchmark remain absent. |
-| P2 fields and dedupe | Not started | S7 strong-rule extraction for email, phone, and date ranges exists with synthetic tests; broader P2 design docs only. | Field-labeled synthetic/desensitized evaluation set, dedupe, dictionaries, and confidence harness remain absent. |
+| P2 fields and dedupe | In progress | S10 smoke/MVP adds deterministic school, degree, and skill extraction on top of email/phone/date ranges; `rank-fusion` adds field summaries, `degree_min`, `skills_any`, `years_experience_min`, and hashed soft-dedupe skeleton tests; CLI search accepts `--degree bachelor --top-k 20`. | Dictionary coverage is intentionally tiny and synthetic; field filters are computed at query time from persisted clean text, not indexed fast fields; no evaluation harness or production candidate merge workflow exists. |
 | P3 semantic retrieval | Not started | Design docs only. | Model choice, license, checksums, and distribution approval require human confirmation. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs and scanned synthetic corpus absent. |
 | P5 packaging | Blocked on binaries and signing inputs | Packaging design only. | Windows/macOS certs, secrets, runners, signing/notarization approval. |
@@ -39,7 +39,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S7 | Complete | `text-normalizer`, `sectionizer`, and `extractor-rules` crates implement basic cleanup, offset mapping, heading/fallback sectioning, and strong email/phone/date-range rules with synthetic mixed Chinese/English, table-linearized, offset, redaction, and low-confidence exclusion tests; acceptance passed locally. | None |
 | S8 | Complete | `index-fulltext` and `search-planner` implement a real Tantivy full-text schema, separate writer/reader APIs with reader reload, deleted-marker filtering, top-N snippet planning, and CLI search over an existing local index; standalone CLI search still reports no-index when no local index exists rather than fabricating results. | None |
 | S9 | Complete | `resume-cli import --root tests/fixtures/resumes` crawls synthetic DOCX/PDF fixtures, extracts DOCX and simple text-layer PDF text, routes image-only PDF to `OCR_REQUIRED`, persists metadata/state plus real Tantivy index files under `local-data/indexes/fulltext`, and `resume-cli search "Java"` finds the imported fixtures after reopening the index. | None |
-| S10 | Not started |  |  |
+| S10 | Complete | MVP deterministic extraction for email, phone, school, degree, skills, and date ranges; field confidence/evidence preserved by `StrongEntity`; `rank-fusion` field filters and hashed candidate soft-dedupe skeleton; CLI `search "Java" --degree bachelor --top-k 20` parses and filters returned hits by persisted clean text. Acceptance commands passed locally on 2026-05-31. | None |
 | S11 | Not started |  |  |
 | S12 | Not started |  |  |
 | S13 | Not started |  |  |
@@ -281,3 +281,35 @@ Review summary:
 - Import writes real local SQLite metadata and a real Tantivy full-text index under the default `local-data/indexes/fulltext`; search does not use an in-memory fake.
 - The S9 CLI importer is intentionally synchronous and narrow. It does not run OCR, embeddings, field filters, packaging, or benchmarks.
 - The checked-in acceptance fixture directory contains one synthetic DOCX fixture, one synthetic text-layer PDF fixture, and one synthetic image-only PDF fixture.
+
+### S10
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- import --root tests/fixtures/resumes
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- search "Java" --degree bachelor --top-k 20
+```
+
+Output summary:
+
+- Baseline `cargo test --workspace` before S10 edits succeeded.
+- `cargo test -p extractor-rules`: succeeded with 6 tests, including school, degree, skill evidence/confidence and JavaScript-not-Java skill-boundary coverage.
+- `cargo test -p rank-fusion`: succeeded with 3 tests covering `degree_min`, `skills_any`, `years_experience_min`, deterministic open-ended date ranges, and redacted hashed soft-dedupe grouping.
+- `cargo test -p resume-cli`: succeeded with 11 tests, including `search "Java" --degree bachelor --top-k 20` over synthetic indexed metadata and invalid numeric search filter rejection.
+- Final `cargo fmt --check`: succeeded.
+- Final `cargo test --workspace`: succeeded across all crates, including the new `rank-fusion` crate.
+- Final `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+- `resume-cli import --root tests/fixtures/resumes`: succeeded; queued import task `13`, discovered 3 synthetic fixtures, advanced 2 to `SEARCHABLE`, advanced 1 to `OCR_REQUIRED`, skipped 0.
+- `resume-cli search "Java" --degree bachelor --top-k 20`: succeeded and returned `rank=1`, `file_name=synthetic-java-text-layer.pdf`, and snippet `Synthetic Java Bachelor of Science backend engineer resume fixture`.
+
+Review summary:
+
+- S10 remains a smoke/MVP slice: no embeddings, OCR, packaging, external dictionaries, real corpora, or real resumes were added.
+- Field filters are applied by extracting deterministic fields from persisted SQLite clean text for returned Tantivy hits; the Tantivy schema was not expanded for indexed fast-field filtering.
+- `rank-fusion` debug output redacts raw evidence and hashed dedupe keys; contact-based dedupe keys are hashed with local evidence-safe labels.

@@ -13,13 +13,14 @@ checklist: a slice can pass while the full product is still incomplete.
   `Cargo.lock`, and the first `crates/` workspace members now exist with local
   acceptance evidence, including SQLite metadata schema, queue recovery, and
   CLI/daemon lifecycle skeletons, filesystem crawling, and parser skeletons for
-  DOCX/PDF classification, text normalization, section fallback, and strong
-  email/phone/date-range rules, plus a real Tantivy full-text index/search
-  layer and a synchronous synthetic import-to-search smoke path.
+  DOCX/PDF classification, text normalization, section fallback, strong
+  email/phone/date-range/school/degree/skill rules, a real Tantivy full-text
+  index/search layer, a synchronous synthetic import-to-search smoke path, and
+  an S10 query-time field-filter/dedupe skeleton.
 - `.github/` is absent. `tests/fixtures/` contains the empty CLI smoke fixture
   plus synthetic DOCX/PDF fixtures for S9 text-layer import and OCR-required routing.
   Runtime data remains local-only and ignored.
-- `PROGRESS.md` records S0 through S9 as complete while P0/P1 remain incomplete.
+- `PROGRESS.md` records S0 through S10 as complete while P0/P1/P2 remain incomplete.
 - No repo-local `AGENTS.md` exists. The in-thread workflow instructions remain active.
 - Rust is available at `/Users/frankqdwang/.cargo/bin`, but not on the default shell `PATH`.
 - `sqlite3` is available. `tesseract` and `ocrmypdf` are not currently available on `PATH`.
@@ -28,9 +29,9 @@ checklist: a slice can pass while the full product is still incomplete.
 
 | Phase | Complete | Incomplete | Must Rebuild | External Blockers |
 |---|---|---|---|---|
-| P0 architecture skeleton | Design baseline, Git repo, README, PROGRESS, `.gitignore`; S1-S9 workspace/domain/config/SQLite metadata/CLI/daemon/fs-crawler/parser/text-processing/fulltext/import-smoke foundation has local acceptance evidence. | IPC, logs/diagnostics, CI, production async import/index orchestration, and deeper kill-recovery smoke. | Previous skeleton code was deleted and must not count as product progress; future code must carry fresh verification evidence. | Rust must be invoked with the user cargo path unless shell PATH is fixed; local CI/branch protection cannot be fully verified without remote setup. |
+| P0 architecture skeleton | Design baseline, Git repo, README, PROGRESS, `.gitignore`; S1-S10 workspace/domain/config/SQLite metadata/CLI/daemon/fs-crawler/parser/text-processing/fulltext/import-smoke/field-filter foundation has local acceptance evidence. | IPC, logs/diagnostics, CI, production async import/index orchestration, and deeper kill-recovery smoke. | Previous skeleton code was deleted and must not count as product progress; future code must carry fresh verification evidence. | Rust must be invoked with the user cargo path unless shell PATH is fixed; local CI/branch protection cannot be fully verified without remote setup. |
 | P1 text import and full-text search | Product design for docx/PDF text, normalization, sectioning, Tantivy, snippets; S5 filesystem crawler exists with synthetic tests; S6 adds parser contracts, basic DOCX extraction, and honest PDF text-layer/image-only/unknown classification; S7 adds basic text cleanup, offset mapping, and heading/fallback sectioning; S8 adds real Tantivy indexing/search and CLI search over an existing index; S9 adds a synchronous synthetic DOCX/PDF fixture import loop that persists metadata/index state and searches after reader reopen. | Production import worker, broader PDF text extraction, durable worker claiming/lease semantics, 100k text import benchmark. | The S9 importer is a narrow smoke path, not the final asynchronous import worker. | Large synthetic or desensitized corpora are not present. |
-| P2 fields and dedupe | Field model and confidence rules are specified; S7 adds strong email/phone/date-range rules with low-confidence exclusion tests. | Broader extractors, dictionaries, confidence evidence, field filters, candidate/version folding, quality harness. | Any prior skeleton field logic is gone and cannot be reused as completion evidence; S7 strong rules are not full P2 field extraction or dedupe. | Field-labeled desensitized evaluation set and dictionary/license decisions are not present. |
+| P2 fields and dedupe | Field model and confidence rules are specified; S10 adds deterministic synthetic email/phone/date-range/school/degree/skill extraction, original evidence/confidence on `StrongEntity`, `rank-fusion` field summaries and `degree_min`/`skills_any`/`years_experience_min` tests, hashed soft-dedupe skeleton, and CLI `--degree`/`--top-k` smoke wiring. | Production dictionaries, field-index fast fields, candidate/version merge workflow, quality harness, field-labeled evaluation set, and broad multilingual extraction. | S10 is query-time MVP filtering over returned Tantivy hits, not production field indexing or complete P2 dedupe. | Field-labeled desensitized evaluation set and dictionary/license decisions are not present. |
 | P3 semantic retrieval | ONNX/vector/RRF architecture is specified. | Embedder, model manifest, batch inference, vector index, hybrid retrieval, recall benchmark. | Fake embedders may only support interface tests; they cannot satisfy production semantic search. | Model choice, license, checksums, and distribution approval require human confirmation. |
 | P4 OCR | OCR routing, cache, worker isolation, and degradation design are specified; S6 can classify simple unencoded image-only PDFs as OCR-required. | OCR client/worker, robust scan detection, page cache, timeout/cancel, language profiles, recovery tests. | Noop OCR cannot satisfy production OCR. The OCR path must remain off the query hot path. | `tesseract`/`ocrmypdf` and language packs are absent on PATH; scanned test corpus is absent. |
 | P5 packaging | Packaging, signing, install, upgrade, uninstall design exists. | Windows MSI, macOS pkg/dmg, signing/notarization, user-mode daemon install, rollback tests. | Packaging cannot start until binaries exist. | Windows signing certs, Apple Developer credentials, secrets, and platform runners require external setup. |

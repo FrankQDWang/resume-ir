@@ -82,7 +82,7 @@ impl fmt::Debug for StrongEntity {
     }
 }
 
-/// Extracts strong email, phone, and date-range entities only.
+/// Extracts deterministic strong-rule entities for the S10 field MVP.
 #[must_use]
 pub fn extract_strong_entities(text: &str) -> Vec<StrongEntity> {
     let mut entities = Vec::new();
@@ -153,8 +153,244 @@ pub fn extract_strong_entities(text: &str) -> Vec<StrongEntity> {
         }
     }
 
+    push_dictionary_entities(
+        &mut entities,
+        text,
+        EntityType::School,
+        SCHOOL_RULES,
+        0.88,
+        "strong-school-dictionary",
+    );
+    push_dictionary_entities(
+        &mut entities,
+        text,
+        EntityType::Other("degree".to_string()),
+        DEGREE_RULES,
+        0.96,
+        "strong-degree-dictionary",
+    );
+    push_dictionary_entities(
+        &mut entities,
+        text,
+        EntityType::Skill,
+        SKILL_RULES,
+        0.90,
+        "strong-skill-dictionary",
+    );
+
     entities.sort_by_key(|entity| entity.span_start);
     entities
+}
+
+struct DictionaryRule {
+    evidence: &'static str,
+    normalized: &'static str,
+}
+
+const SCHOOL_RULES: &[DictionaryRule] = &[
+    DictionaryRule {
+        evidence: "Massachusetts Institute of Technology",
+        normalized: "massachusetts institute of technology",
+    },
+    DictionaryRule {
+        evidence: "Synthetic State University",
+        normalized: "synthetic state university",
+    },
+    DictionaryRule {
+        evidence: "Stanford University",
+        normalized: "stanford university",
+    },
+    DictionaryRule {
+        evidence: "Tsinghua University",
+        normalized: "tsinghua university",
+    },
+    DictionaryRule {
+        evidence: "Peking University",
+        normalized: "peking university",
+    },
+    DictionaryRule {
+        evidence: "清华大学",
+        normalized: "清华大学",
+    },
+    DictionaryRule {
+        evidence: "北京大学",
+        normalized: "北京大学",
+    },
+    DictionaryRule {
+        evidence: "MIT",
+        normalized: "massachusetts institute of technology",
+    },
+];
+
+const DEGREE_RULES: &[DictionaryRule] = &[
+    DictionaryRule {
+        evidence: "Doctor of Philosophy",
+        normalized: "doctor",
+    },
+    DictionaryRule {
+        evidence: "Ph.D.",
+        normalized: "doctor",
+    },
+    DictionaryRule {
+        evidence: "PhD",
+        normalized: "doctor",
+    },
+    DictionaryRule {
+        evidence: "博士",
+        normalized: "doctor",
+    },
+    DictionaryRule {
+        evidence: "Master of Science",
+        normalized: "master",
+    },
+    DictionaryRule {
+        evidence: "Master's Degree",
+        normalized: "master",
+    },
+    DictionaryRule {
+        evidence: "Master",
+        normalized: "master",
+    },
+    DictionaryRule {
+        evidence: "硕士",
+        normalized: "master",
+    },
+    DictionaryRule {
+        evidence: "Bachelor of Science",
+        normalized: "bachelor",
+    },
+    DictionaryRule {
+        evidence: "Bachelor's Degree",
+        normalized: "bachelor",
+    },
+    DictionaryRule {
+        evidence: "Bachelor",
+        normalized: "bachelor",
+    },
+    DictionaryRule {
+        evidence: "本科",
+        normalized: "bachelor",
+    },
+    DictionaryRule {
+        evidence: "Associate Degree",
+        normalized: "associate",
+    },
+    DictionaryRule {
+        evidence: "Associate",
+        normalized: "associate",
+    },
+    DictionaryRule {
+        evidence: "大专",
+        normalized: "associate",
+    },
+    DictionaryRule {
+        evidence: "High School",
+        normalized: "high_school",
+    },
+    DictionaryRule {
+        evidence: "高中",
+        normalized: "high_school",
+    },
+];
+
+const SKILL_RULES: &[DictionaryRule] = &[
+    DictionaryRule {
+        evidence: "Spring Cloud",
+        normalized: "spring cloud",
+    },
+    DictionaryRule {
+        evidence: "TypeScript",
+        normalized: "typescript",
+    },
+    DictionaryRule {
+        evidence: "JavaScript",
+        normalized: "javascript",
+    },
+    DictionaryRule {
+        evidence: "Kubernetes",
+        normalized: "kubernetes",
+    },
+    DictionaryRule {
+        evidence: "TensorFlow",
+        normalized: "tensorflow",
+    },
+    DictionaryRule {
+        evidence: "PostgreSQL",
+        normalized: "postgresql",
+    },
+    DictionaryRule {
+        evidence: "Python",
+        normalized: "python",
+    },
+    DictionaryRule {
+        evidence: "Docker",
+        normalized: "docker",
+    },
+    DictionaryRule {
+        evidence: "Spark",
+        normalized: "spark",
+    },
+    DictionaryRule {
+        evidence: "MySQL",
+        normalized: "mysql",
+    },
+    DictionaryRule {
+        evidence: "Rust",
+        normalized: "rust",
+    },
+    DictionaryRule {
+        evidence: "Java",
+        normalized: "java",
+    },
+    DictionaryRule {
+        evidence: "SQL",
+        normalized: "sql",
+    },
+    DictionaryRule {
+        evidence: "AWS",
+        normalized: "aws",
+    },
+    DictionaryRule {
+        evidence: "Go",
+        normalized: "go",
+    },
+];
+
+fn push_dictionary_entities(
+    entities: &mut Vec<StrongEntity>,
+    text: &str,
+    entity_type: EntityType,
+    rules: &[DictionaryRule],
+    confidence: f32,
+    extractor: &'static str,
+) {
+    let lower_text = text.to_ascii_lowercase();
+
+    for rule in rules {
+        let needle = rule.evidence.to_ascii_lowercase();
+        let mut search_start = 0;
+        while let Some(relative_start) = lower_text[search_start..].find(&needle) {
+            let start = search_start + relative_start;
+            let end = start + needle.len();
+            search_start = end;
+
+            if !has_token_boundaries(text, start, end)
+                || overlaps_existing(entities, text, start, end)
+            {
+                continue;
+            }
+
+            entities.push(entity(
+                text,
+                entity_type.clone(),
+                start,
+                end,
+                Some(rule.normalized.to_string()),
+                confidence,
+                extractor,
+            ));
+        }
+    }
 }
 
 fn entity(
@@ -193,6 +429,34 @@ fn overlaps_existing(
 
 fn normalize_spaces(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn has_token_boundaries(text: &str, byte_start: usize, byte_end: usize) -> bool {
+    is_token_boundary_before(text, byte_start) && is_token_boundary_after(text, byte_end)
+}
+
+fn is_token_boundary_before(text: &str, byte_start: usize) -> bool {
+    if byte_start == 0 {
+        return true;
+    }
+    text[..byte_start]
+        .chars()
+        .next_back()
+        .is_none_or(is_boundary_character)
+}
+
+fn is_token_boundary_after(text: &str, byte_end: usize) -> bool {
+    if byte_end >= text.len() {
+        return true;
+    }
+    text[byte_end..]
+        .chars()
+        .next()
+        .is_none_or(is_boundary_character)
+}
+
+fn is_boundary_character(character: char) -> bool {
+    !character.is_ascii_alphanumeric()
 }
 
 fn byte_to_char_index(text: &str, byte_offset: usize) -> usize {

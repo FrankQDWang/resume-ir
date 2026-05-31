@@ -890,6 +890,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rank-fusion"
+version = "0.1.0"
+dependencies = [
+ "core-domain",
+ "sha2",
+]
+
+[[package]]
 name = "rayon"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -944,12 +952,14 @@ version = "0.1.0"
 dependencies = [
  "config",
  "core-domain",
+ "extractor-rules",
  "fs-crawler",
  "index-fulltext",
  "meta-store",
  "parser-common",
  "parser-docx",
  "parser-pdf",
+ "rank-fusion",
  "search-planner",
  "sectionizer",
  "sha2",

@@ -15,6 +15,7 @@ Thumbs.db
 # Local runtime data
 /data/
 /local-data/
+**/local-data/
 /indexes/
 /logs/
 /diagnostics/

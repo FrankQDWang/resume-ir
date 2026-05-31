@@ -28,6 +28,46 @@ fn extracts_email_phone_and_date_ranges_from_mixed_text() {
 }
 
 #[test]
+fn extracts_school_degree_and_skills_with_evidence_and_confidence() {
+    let text = "Education: Synthetic State University, Bachelor of Science\nSkills: Java, Spring Cloud, MySQL";
+
+    let entities = extract_strong_entities(text);
+
+    assert!(entities.iter().any(|entity| {
+        entity.entity_type() == EntityType::School
+            && entity.raw_value() == "Synthetic State University"
+            && entity.normalized_value() == Some("synthetic state university")
+            && entity.confidence() >= 0.85
+    }));
+    assert!(entities.iter().any(|entity| {
+        entity.entity_type() == EntityType::Other("degree".to_string())
+            && entity.raw_value() == "Bachelor of Science"
+            && entity.normalized_value() == Some("bachelor")
+            && entity.confidence() >= 0.90
+    }));
+    assert!(entities.iter().any(|entity| {
+        entity.entity_type() == EntityType::Skill
+            && entity.raw_value() == "Spring Cloud"
+            && entity.normalized_value() == Some("spring cloud")
+            && entity.confidence() >= 0.85
+    }));
+}
+
+#[test]
+fn skill_rules_do_not_split_javascript_into_java() {
+    let text = "Skills: JavaScript, TypeScript";
+
+    let entities = extract_strong_entities(text);
+    let skills = entities
+        .iter()
+        .filter(|entity| entity.entity_type() == EntityType::Skill)
+        .filter_map(|entity| entity.normalized_value())
+        .collect::<Vec<_>>();
+
+    assert_eq!(skills, vec!["javascript", "typescript"]);
+}
+
+#[test]
 fn extracts_from_table_linearized_text_with_offsets() {
     let text = "Field | Value\nEmail | ops@example.test\nPhone | +99 000 1111 2222\nRange | 2019/06 - present";
 

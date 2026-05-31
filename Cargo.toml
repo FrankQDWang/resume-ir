@@ -14,6 +14,7 @@ members = [
     "crates/extractor-rules",
     "crates/index-fulltext",
     "crates/search-planner",
+    "crates/rank-fusion",
 ]
 resolver = "2"
 
@@ -35,6 +36,7 @@ sectionizer = { path = "crates/sectionizer" }
 extractor-rules = { path = "crates/extractor-rules" }
 index-fulltext = { path = "crates/index-fulltext" }
 search-planner = { path = "crates/search-planner" }
+rank-fusion = { path = "crates/rank-fusion" }
 serde = { version = "1.0", features = ["derive"] }
 regex = "1.10"
 sha2 = "0.10"
