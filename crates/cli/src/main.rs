@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -396,9 +397,13 @@ fn search_usage() -> &'static str {
 
 fn visible_hits(store: &MetaStore, hits: Vec<SearchHit>, top_k: usize) -> Result<Vec<SearchHit>> {
     let mut visible = Vec::new();
+    let mut seen_candidate_keys = BTreeSet::new();
 
     for hit in hits {
-        if hydrate_visible_version(store, &hit)?.is_none() {
+        let Some(version) = hydrate_visible_version(store, &hit)? else {
+            continue;
+        };
+        if !seen_candidate_keys.insert(candidate_fold_key(&version)) {
             continue;
         }
 
@@ -420,6 +425,7 @@ fn filter_hits(
     top_k: usize,
 ) -> Result<Vec<SearchHit>> {
     let mut filtered = Vec::new();
+    let mut seen_candidate_keys = BTreeSet::new();
 
     for hit in hits {
         let Some(version) = hydrate_visible_version(store, &hit)? else {
@@ -427,6 +433,9 @@ fn filter_hits(
         };
         let profile = persisted_profile(store, &hit.doc_id, &version)?;
         if !filters.matches(&profile) {
+            continue;
+        }
+        if !seen_candidate_keys.insert(candidate_fold_key(&version)) {
             continue;
         }
 
@@ -439,6 +448,14 @@ fn filter_hits(
     }
 
     Ok(filtered)
+}
+
+fn candidate_fold_key(version: &ResumeVersion) -> String {
+    version
+        .candidate_id
+        .as_ref()
+        .map(|candidate_id| format!("candidate:{}", candidate_id.as_str()))
+        .unwrap_or_else(|| format!("doc:{}", version.document_id.as_str()))
 }
 
 fn hydrate_visible_version(store: &MetaStore, hit: &SearchHit) -> Result<Option<ResumeVersion>> {
