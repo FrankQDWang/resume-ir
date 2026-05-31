@@ -1,0 +1,13 @@
+[package]
+name = "resume-daemon"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "resume-daemon"
+path = "src/main.rs"
+
+[lints]
+workspace = true

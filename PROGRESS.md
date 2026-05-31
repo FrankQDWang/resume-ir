@@ -15,7 +15,7 @@ This file tracks long-running Goal execution against
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
 | S0 | Complete | Git initialized; initial design baseline committed as `43e3d1c`; acceptance showed only S0 files pending before commit. | None |
-| S1 | Not started |  |  |
+| S1 | Complete | `cargo metadata --no-deps`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` passed. | None |
 | S2 | Not started |  |  |
 | S3 | Not started |  |  |
 | S4 | Not started |  |  |
@@ -53,3 +53,44 @@ Output summary:
 
 - `git status --short`: `.gitignore`, `PROGRESS.md`, and `README.md` were the only untracked files before the S0 commit.
 - `git log --oneline -3`: `43e3d1c docs: commit initial design baseline`.
+
+### S1
+
+Baseline red check:
+
+```bash
+cargo metadata --no-deps
+```
+
+Output summary:
+
+- Failed before implementation with `could not find Cargo.toml`.
+
+TDD checks:
+
+```bash
+cargo test
+cargo test -p resume-daemon --test identity
+```
+
+Output summary:
+
+- First test run failed because `core-domain`, `config`, and `meta-store` did not expose `crate_name()`.
+- After adding library identities, `resume-cli --identity` failed because the binary produced no stdout.
+- After adding the CLI identity output, `resume-daemon --identity` failed because the binary produced no stdout.
+
+Acceptance:
+
+```bash
+cargo metadata --no-deps
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+```
+
+Output summary:
+
+- `cargo metadata --no-deps`: exit 0; workspace contains `core-domain`, `config`, `meta-store`, `resume-daemon`, and `resume-cli` with edition 2021. Cargo emitted the expected compatibility warning about omitting `--format-version`.
+- `cargo fmt --check`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.

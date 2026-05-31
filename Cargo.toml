@@ -1,0 +1,27 @@
+[workspace]
+members = [
+    "crates/core-domain",
+    "crates/config",
+    "crates/meta-store",
+    "crates/daemon",
+    "crates/cli",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "UNLICENSED"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.metadata.resume_ir.local_ci]
+commands = [
+    "cargo metadata --no-deps",
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo test --workspace",
+]

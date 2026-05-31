@@ -12,6 +12,21 @@ Thumbs.db
 *.swo
 *~
 
+# Local secrets and sensitive runtime artifacts
+.env
+.env.*
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+*.log.*
+diagnostics*.zip
+diagnostics*.tar
+diagnostics*.tar.gz
+
 # Local runtime data
 /data/
 /local-data/
