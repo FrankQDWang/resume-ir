@@ -13,6 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 const SCHEMA_VERSION_V1: u32 = 1;
 const SCHEMA_VERSION_V2: u32 = 2;
+const SCHEMA_VERSION_V3: u32 = 3;
 const INDEX_STATE_KEY: &str = "default";
 const DOCUMENT_COLUMNS: &str = "\
     id, source_uri, normalized_path, file_name, extension, byte_size, mtime_seconds, \
@@ -83,6 +84,7 @@ impl MetaStore {
         for (version, schema) in [
             (SCHEMA_VERSION_V1, SCHEMA_V1),
             (SCHEMA_VERSION_V2, SCHEMA_V2),
+            (SCHEMA_VERSION_V3, SCHEMA_V3),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -421,6 +423,115 @@ impl MetaStore {
         }
     }
 
+    pub fn enqueue_ocr_job_for_document(
+        &self,
+        document_id: &DocumentId,
+        queued_at: UnixTimestamp,
+    ) -> Result<EnqueuedIngestJob> {
+        let id = IngestJobId::from_non_secret_parts(&["ocr-document", document_id.as_str()]);
+        let job = IngestJob {
+            id,
+            document_id: document_id.clone(),
+            resume_version_id: None,
+            kind: IngestJobKind::OcrDocument,
+            status: IngestJobStatus::Queued,
+            attempt_count: 0,
+            max_attempts: 3,
+            queued_at,
+            started_at: None,
+            finished_at: None,
+            updated_at: queued_at,
+        };
+        let inserted = {
+            let mut connection = self.connection.borrow_mut();
+            let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+            let existing_id = {
+                let mut statement = transaction
+                    .prepare(
+                        "\
+                        SELECT id
+                        FROM ingest_job
+                        WHERE document_id = ?1 AND kind = ?2
+                        ORDER BY rowid
+                        LIMIT 1",
+                    )
+                    .map_err(MetaStoreError::storage)?;
+                let mut rows = statement
+                    .query(params![
+                        document_id.as_str(),
+                        ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                    ])
+                    .map_err(MetaStoreError::storage)?;
+
+                match rows.next().map_err(MetaStoreError::storage)? {
+                    Some(row) => Some(read_string(row, 0)?),
+                    None => None,
+                }
+            };
+
+            if existing_id.is_some() {
+                transaction.commit().map_err(MetaStoreError::storage)?;
+                false
+            } else {
+                transaction
+                    .execute(
+                        "\
+                        INSERT INTO ingest_job (
+                            id, document_id, resume_version_id, kind, status, attempt_count,
+                            max_attempts, queued_at_seconds, started_at_seconds,
+                            finished_at_seconds, updated_at_seconds
+                        )
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                        params![
+                            job.id.as_str(),
+                            job.document_id.as_str(),
+                            job.resume_version_id.as_ref().map(ResumeVersionId::as_str),
+                            ingest_job_kind_to_storage(job.kind),
+                            ingest_job_status_to_storage(job.status),
+                            u32_to_i64(job.attempt_count),
+                            u32_to_i64(job.max_attempts),
+                            job.queued_at.as_unix_seconds(),
+                            job.started_at.map(UnixTimestamp::as_unix_seconds),
+                            job.finished_at.map(UnixTimestamp::as_unix_seconds),
+                            job.updated_at.as_unix_seconds(),
+                        ],
+                    )
+                    .map_err(MetaStoreError::storage)?;
+                transaction.commit().map_err(MetaStoreError::storage)?;
+                true
+            }
+        };
+
+        let job = self
+            .ocr_job_for_document(document_id)?
+            .ok_or_else(|| MetaStoreError::not_found("ingest_job"))?;
+        Ok(EnqueuedIngestJob { job, inserted })
+    }
+
+    fn ocr_job_for_document(&self, document_id: &DocumentId) -> Result<Option<IngestJob>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {INGEST_JOB_COLUMNS}
+            FROM ingest_job
+            WHERE document_id = ?1 AND kind = ?2
+            ORDER BY rowid
+            LIMIT 1"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                document_id.as_str(),
+                ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+            ])
+            .map_err(MetaStoreError::storage)?;
+
+        match rows.next().map_err(MetaStoreError::storage)? {
+            Some(row) => Ok(Some(read_ingest_job(row)?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn update_job_status(
         &self,
         id: &IngestJobId,
@@ -487,6 +598,23 @@ impl MetaStore {
     }
 
     pub fn claim_next_job(&self, now: UnixTimestamp) -> Result<Option<IngestJob>> {
+        self.claim_next_job_matching(None, now)
+    }
+
+    pub fn claim_next_job_by_kind(
+        &self,
+        kind: IngestJobKind,
+        now: UnixTimestamp,
+    ) -> Result<Option<IngestJob>> {
+        self.claim_next_job_matching(Some(kind), now)
+    }
+
+    fn claim_next_job_matching(
+        &self,
+        kind: Option<IngestJobKind>,
+        now: UnixTimestamp,
+    ) -> Result<Option<IngestJob>> {
+        let kind_filter = kind.map(ingest_job_kind_to_storage);
         let claimed_id = {
             let mut connection = self.connection.borrow_mut();
             let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
@@ -496,8 +624,11 @@ impl MetaStore {
                         "\
                         SELECT id
                         FROM ingest_job
-                        WHERE status IN (?1, ?2)
-                            OR (status = ?3 AND attempt_count < max_attempts)
+                        WHERE (
+                                status IN (?1, ?2)
+                                OR (status = ?3 AND attempt_count < max_attempts)
+                            )
+                            AND (?4 IS NULL OR kind = ?4)
                         ORDER BY queued_at_seconds, rowid
                         LIMIT 1",
                     )
@@ -507,6 +638,7 @@ impl MetaStore {
                         ingest_job_status_to_storage(IngestJobStatus::Queued),
                         ingest_job_status_to_storage(IngestJobStatus::Interrupted),
                         ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                        kind_filter,
                     ])
                     .map_err(MetaStoreError::storage)?;
 
@@ -536,7 +668,8 @@ impl MetaStore {
                         AND (
                             status IN (?4, ?5)
                             OR (status = ?6 AND attempt_count < max_attempts)
-                        )",
+                        )
+                        AND (?7 IS NULL OR kind = ?7)",
                     params![
                         ingest_job_status_to_storage(IngestJobStatus::Running),
                         now_seconds,
@@ -544,6 +677,7 @@ impl MetaStore {
                         ingest_job_status_to_storage(IngestJobStatus::Queued),
                         ingest_job_status_to_storage(IngestJobStatus::Interrupted),
                         ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                        kind_filter,
                     ],
                 )
                 .map_err(MetaStoreError::storage)?;
@@ -822,6 +956,25 @@ impl MetaStore {
                 |row| row.get::<_, i64>(0),
             )
             .map_err(MetaStoreError::storage)?;
+        let ocr_jobs_queued = connection
+            .query_row(
+                "\
+                SELECT COUNT(*)
+                FROM ingest_job
+                WHERE kind = ?1
+                    AND (
+                        status IN (?2, ?3)
+                        OR (status = ?4 AND attempt_count < max_attempts)
+                    )",
+                params![
+                    ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                    ingest_job_status_to_storage(IngestJobStatus::Queued),
+                    ingest_job_status_to_storage(IngestJobStatus::Interrupted),
+                    ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?;
         let import_tasks_queued = connection
             .query_row(
                 "SELECT COUNT(*) FROM import_task WHERE status = ?1",
@@ -889,6 +1042,7 @@ impl MetaStore {
                 import_tasks_recoverable,
                 "status.import_tasks_recoverable",
             )?,
+            ocr_jobs_queued: i64_to_u64(ocr_jobs_queued, "status.ocr_jobs_queued")?,
             index_health,
             last_snapshot_id,
         })
@@ -947,6 +1101,12 @@ pub struct IngestJob {
     pub updated_at: UnixTimestamp,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnqueuedIngestJob {
+    pub job: IngestJob,
+    pub inserted: bool,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct ImportTask {
     pub id: ImportTaskId,
@@ -994,6 +1154,7 @@ pub struct StoreStatusSummary {
     pub recovery_queue_depth: u64,
     pub import_tasks_queued: u64,
     pub import_tasks_recoverable: u64,
+    pub ocr_jobs_queued: u64,
     pub index_health: IndexStateStatus,
     pub last_snapshot_id: Option<String>,
 }
@@ -1277,6 +1438,57 @@ CREATE TABLE import_task (
 
 CREATE INDEX import_task_status_idx
     ON import_task(status, queued_at_seconds);
+"#;
+
+const SCHEMA_V3: &str = r#"
+CREATE TABLE ingest_job_v3 (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    resume_version_id TEXT,
+    kind TEXT NOT NULL CHECK (kind IN (
+        'discover_document',
+        'fingerprint_document',
+        'parse_document',
+        'ocr_document',
+        'clean_text',
+        'extract_fields',
+        'update_index'
+    )),
+    status TEXT NOT NULL CHECK (status IN (
+        'queued',
+        'running',
+        'interrupted',
+        'completed',
+        'failed_retryable',
+        'failed_permanent'
+    )),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts > 0),
+    queued_at_seconds INTEGER NOT NULL,
+    started_at_seconds INTEGER,
+    finished_at_seconds INTEGER,
+    updated_at_seconds INTEGER NOT NULL,
+    FOREIGN KEY (document_id) REFERENCES document(id) ON DELETE CASCADE,
+    FOREIGN KEY (resume_version_id) REFERENCES resume_version(id) ON DELETE SET NULL
+);
+
+INSERT INTO ingest_job_v3 (
+    id, document_id, resume_version_id, kind, status, attempt_count, max_attempts,
+    queued_at_seconds, started_at_seconds, finished_at_seconds, updated_at_seconds
+)
+SELECT
+    id, document_id, resume_version_id, kind, status, attempt_count, max_attempts,
+    queued_at_seconds, started_at_seconds, finished_at_seconds, updated_at_seconds
+FROM ingest_job;
+
+DROP TABLE ingest_job;
+ALTER TABLE ingest_job_v3 RENAME TO ingest_job;
+
+CREATE INDEX ingest_job_recovery_idx
+    ON ingest_job(status, attempt_count, max_attempts);
+CREATE UNIQUE INDEX ingest_job_ocr_document_unique_idx
+    ON ingest_job(document_id, kind)
+    WHERE kind = 'ocr_document';
 "#;
 
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
@@ -1575,6 +1787,7 @@ fn ingest_job_kind_to_storage(kind: IngestJobKind) -> &'static str {
         IngestJobKind::DiscoverDocument => "discover_document",
         IngestJobKind::FingerprintDocument => "fingerprint_document",
         IngestJobKind::ParseDocument => "parse_document",
+        IngestJobKind::OcrDocument => "ocr_document",
         IngestJobKind::CleanText => "clean_text",
         IngestJobKind::ExtractFields => "extract_fields",
         IngestJobKind::UpdateIndex => "update_index",
@@ -1586,6 +1799,7 @@ fn ingest_job_kind_from_storage(value: &str) -> Result<IngestJobKind> {
         "discover_document" => Ok(IngestJobKind::DiscoverDocument),
         "fingerprint_document" => Ok(IngestJobKind::FingerprintDocument),
         "parse_document" => Ok(IngestJobKind::ParseDocument),
+        "ocr_document" => Ok(IngestJobKind::OcrDocument),
         "clean_text" => Ok(IngestJobKind::CleanText),
         "extract_fields" => Ok(IngestJobKind::ExtractFields),
         "update_index" => Ok(IngestJobKind::UpdateIndex),

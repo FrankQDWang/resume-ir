@@ -29,6 +29,7 @@ This file tracks long-running Goal execution against
 | S12 | Slice complete | `cargo test -p ocr-client`, `cargo test -p ingest-scheduler`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` passed. | None for the S12 skeleton; OCR remains disabled by default and no real OCR worker, DB page queue, or query-path OCR was added. |
 | S13 | Slice complete | `cargo test --workspace`, `cargo run -p resume-cli -- doctor`, and `cargo run -p resume-cli -- export-diagnostics --redact` passed. | None for the S13 skeleton; query smoke is a small current-run measurement only, and fault handling is simulated/diagnostic rather than a destructive daemon kill or disk-fill exercise. |
 | S14 | Product slice complete | `cargo fmt --check`, `cargo test -p meta-store`, `cargo test -p import-pipeline`, `cargo test -p resume-cli --test s8_search_cli`, `cargo test -p resume-cli --test s14_delete_search`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, and the S14 import/search/delete/search CLI smoke passed. | None for this soft-delete/default-search slice; physical deletion, vector-index deletion, queue cancellation, atomic snapshot rollback, and complete audit retention remain not complete. |
+| S15 | Product slice complete | `cargo fmt --check`, `cargo test -p meta-store`, `cargo test -p import-pipeline`, `cargo test -p resume-cli --test s15_ocr_handoff`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, and the S15 import/status/doctor/search/export-diagnostics CLI smoke passed. | None for this durable OCR handoff slice; real OCR execution, page rendering/cache, pause/resume worker recovery, searchable OCR text indexing, bbox/confidence persistence, and deleted-document queue cancellation remain not complete. |
 
 ## Command Log
 
@@ -601,6 +602,66 @@ Output summary:
 Scope note:
 
 - S14 implements soft tombstones and default-search metadata visibility filtering for full-text search. Import-rescan deletion propagation only runs after a clean crawl with no scan errors. It does not physically delete user files, cancel OCR/vector work, delete vector-index records, implement staging snapshot pointer swaps, or claim complete audit/retention policy.
+
+### S15
+
+Sub-agent read-only audit:
+
+- The OCR handoff audit recommended reusing the existing `ingest_job` table for a document-level `ocr_document` job instead of adding page-level OCR tasks before a renderer/cache/worker exists.
+- The boundary remains explicit: this slice makes scanned/OCR-required PDFs durable and restart-claimable, but it does not execute OCR, generate OCR text, or mark OCR as complete.
+
+TDD red checks:
+
+```bash
+cargo test -p meta-store ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind
+cargo test -p resume-cli --test s15_ocr_handoff
+```
+
+Output summary:
+
+- `meta-store` failed before implementation because `IngestJobKind::OcrDocument`, `MetaStore::enqueue_ocr_job_for_document`, `MetaStore::claim_next_job_by_kind`, and OCR job queue status counts did not exist.
+- `resume-cli --test s15_ocr_handoff` failed before implementation because imports could persist `DocumentStatus::OcrRequired` without a durable OCR handoff job.
+
+Implementation and acceptance:
+
+```bash
+cargo fmt --check
+cargo test -p meta-store
+cargo test -p import-pipeline
+cargo test -p resume-cli --test s15_ocr_handoff
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `cargo test -p meta-store`: exit 0; 19 S3 tests passed, including durable, idempotent, kind-filtered claim behavior for `ocr_document` jobs and schema V3 migration coverage.
+- `cargo test -p import-pipeline`: exit 0.
+- `cargo test -p resume-cli --test s15_ocr_handoff`: exit 0; 2 tests passed, covering scanned synthetic PDF import into a durable OCR document job, restart claim by kind, no searchable OCR text, and no duplicate OCR job on repeated import.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+CLI smoke:
+
+```bash
+cargo run -p resume-cli -- --data-dir "$tmp/data" import --root tests/fixtures/resumes
+cargo run -p resume-cli -- --data-dir "$tmp/data" status
+cargo run -p resume-cli -- --data-dir "$tmp/data" doctor
+cargo run -p resume-cli -- --data-dir "$tmp/data" search scanned --top-k 20
+cargo run -p resume-cli -- --data-dir "$tmp/data" export-diagnostics --redact
+```
+
+Output summary:
+
+- Import completed for 3 synthetic files with 2 searchable documents, 1 OCR-required document, 1 queued OCR handoff job, 0 failed documents, and 0 scan errors.
+- `status` and `doctor` reported `ocr queue: 1` and `ocr jobs queued: 1`.
+- Searching `scanned` returned `results: 0`, confirming the scanned fixture was not made searchable without OCR.
+- Redacted diagnostics included aggregate `ocr_jobs_queued` and did not include raw paths, queries, or resume text.
+
+Scope note:
+
+- S15 implements a durable document-level OCR handoff queue only. It does not call Tesseract/OCRmyPDF, render PDF pages, persist page-level OCR tasks, write OCR cache files, index OCR output, persist bbox/confidence evidence, or claim worker crash recovery beyond the existing retryable job claim primitive.
 
 ### S9
 

@@ -73,6 +73,7 @@ fn run_import(
         ignored_entries: report.ignored_count,
         searchable_documents: 0,
         ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
         failed_documents: 0,
         deleted_documents: 0,
     };
@@ -93,8 +94,11 @@ fn run_import(
             } => {
                 pending_index_documents.push((*document, *index_document));
             }
-            ProcessedFile::OcrRequired => {
+            ProcessedFile::OcrRequired { ocr_job_queued } => {
                 summary.ocr_required_documents += 1;
+                if ocr_job_queued {
+                    summary.ocr_jobs_queued += 1;
+                }
             }
             ProcessedFile::Failed => {
                 summary.failed_documents += 1;
@@ -336,34 +340,32 @@ fn process_file(
             } else {
                 DocumentStatus::FailedPermanent
             };
-            store
-                .upsert_document(&document)
-                .map_err(ImportPipelineError::store)?;
             return Ok(if document.status == DocumentStatus::OcrRequired {
-                ProcessedFile::OcrRequired
+                ProcessedFile::OcrRequired {
+                    ocr_job_queued: mark_ocr_required_and_enqueue(store, &mut document, now)?,
+                }
             } else {
+                store
+                    .upsert_document(&document)
+                    .map_err(ImportPipelineError::store)?;
                 ProcessedFile::Failed
             });
         }
     };
 
     if parse_output.status() == ParseStatus::OcrRequired {
-        document.status = DocumentStatus::OcrRequired;
-        store
-            .upsert_document(&document)
-            .map_err(ImportPipelineError::store)?;
-        return Ok(ProcessedFile::OcrRequired);
+        return Ok(ProcessedFile::OcrRequired {
+            ocr_job_queued: mark_ocr_required_and_enqueue(store, &mut document, now)?,
+        });
     }
 
     let clean_text = TextNormalizer::normalize(parse_output.text())
         .text()
         .to_string();
     if clean_text.trim().is_empty() {
-        document.status = DocumentStatus::OcrRequired;
-        store
-            .upsert_document(&document)
-            .map_err(ImportPipelineError::store)?;
-        return Ok(ProcessedFile::OcrRequired);
+        return Ok(ProcessedFile::OcrRequired {
+            ocr_job_queued: mark_ocr_required_and_enqueue(store, &mut document, now)?,
+        });
     }
 
     document.status = DocumentStatus::TextCleaned;
@@ -406,6 +408,23 @@ fn process_file(
             is_deleted: false,
         }),
     })
+}
+
+fn mark_ocr_required_and_enqueue(
+    store: &MetaStore,
+    document: &mut Document,
+    now: UnixTimestamp,
+) -> Result<bool> {
+    document.status = DocumentStatus::OcrRequired;
+    document.updated_at = now;
+    store
+        .upsert_document(document)
+        .map_err(ImportPipelineError::store)?;
+    let enqueue = store
+        .enqueue_ocr_job_for_document(&document.id, now)
+        .map_err(ImportPipelineError::store)?;
+
+    Ok(enqueue.inserted)
 }
 
 fn document_from_discovered_file(
@@ -490,7 +509,9 @@ enum ProcessedFile {
         document: Box<Document>,
         index_document: Box<IndexDocument>,
     },
-    OcrRequired,
+    OcrRequired {
+        ocr_job_queued: bool,
+    },
     Failed,
 }
 
@@ -501,6 +522,7 @@ pub struct ImportSummary {
     pub ignored_entries: usize,
     pub searchable_documents: usize,
     pub ocr_required_documents: usize,
+    pub ocr_jobs_queued: usize,
     pub failed_documents: usize,
     pub deleted_documents: usize,
 }

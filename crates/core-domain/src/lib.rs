@@ -368,6 +368,7 @@ pub enum IngestJobKind {
     DiscoverDocument,
     FingerprintDocument,
     ParseDocument,
+    OcrDocument,
     CleanText,
     ExtractFields,
     UpdateIndex,

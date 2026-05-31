@@ -16,8 +16,8 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(first.applied_versions(), &[1, 2]);
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(first.applied_versions(), &[1, 2, 3]);
+    assert_eq!(store.schema_version().unwrap(), 3);
 
     for table_name in [
         "document",
@@ -31,7 +31,7 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(store.schema_version().unwrap(), 3);
 }
 
 #[test]
@@ -255,6 +255,49 @@ fn retryable_queue_excludes_live_running_jobs() {
         retryable_ids,
         vec![queued.id, interrupted.id, failed_retryable.id]
     );
+}
+
+#[test]
+fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
+    let store = migrated_store();
+    let document = document(
+        "ocr-page-document-placeholder",
+        false,
+        DocumentStatus::OcrRequired,
+    );
+    store.upsert_document(&document).unwrap();
+
+    let first = store
+        .enqueue_ocr_job_for_document(
+            &document.id,
+            UnixTimestamp::from_unix_seconds(1_800_000_600),
+        )
+        .unwrap();
+    let second = store
+        .enqueue_ocr_job_for_document(
+            &document.id,
+            UnixTimestamp::from_unix_seconds(1_800_000_601),
+        )
+        .unwrap();
+
+    assert!(first.inserted);
+    assert!(!second.inserted);
+    assert_eq!(first.job.id, second.job.id);
+    assert_eq!(first.job.kind, IngestJobKind::OcrDocument);
+    assert_eq!(store.status_summary().unwrap().ocr_jobs_queued, 1);
+
+    let claimed = store
+        .claim_next_job_by_kind(
+            IngestJobKind::OcrDocument,
+            UnixTimestamp::from_unix_seconds(1_800_000_700),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, first.job.id);
+    assert_eq!(claimed.kind, IngestJobKind::OcrDocument);
+    assert_eq!(claimed.status, IngestJobStatus::Running);
+    assert_eq!(claimed.attempt_count, 1);
+    assert_eq!(store.status_summary().unwrap().ocr_jobs_queued, 0);
 }
 
 #[test]
@@ -508,7 +551,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 2);
+        assert_eq!(reopened.schema_version().unwrap(), 3);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -660,15 +703,21 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
         let connection = open_raw_connection(&db_path);
         connection.execute("DROP TABLE import_task", []).unwrap();
         connection
-            .execute("DELETE FROM schema_migrations WHERE version = 2", [])
+            .execute(
+                "DROP INDEX IF EXISTS ingest_job_ocr_document_unique_idx",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute("DELETE FROM schema_migrations WHERE version IN (2, 3)", [])
             .unwrap();
     }
 
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[2]);
-        assert_eq!(reopened.schema_version().unwrap(), 2);
+        assert_eq!(report.applied_versions(), &[2, 3]);
+        assert_eq!(reopened.schema_version().unwrap(), 3);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -700,7 +749,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 2);
+        assert_eq!(reopened.schema_version().unwrap(), 3);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

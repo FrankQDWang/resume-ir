@@ -87,6 +87,7 @@ fn status_command(data_dir: &Path) -> Result<()> {
     println!("failed permanent: {}", summary.failed_permanent);
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("ocr queue: {}", summary.ocr_queue_depth);
+    println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("embedding queue: {}", summary.embedding_queue_depth);
     println!("import tasks queued: {}", summary.import_tasks_queued);
     println!(
@@ -154,6 +155,7 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("files discovered: {}", summary.files_discovered);
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr required documents: {}", summary.ocr_required_documents);
+    println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("failed documents: {}", summary.failed_documents);
     println!("deleted documents: {}", summary.deleted_documents);
     println!("scan errors: {}", summary.scan_errors);
@@ -259,6 +261,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("indexed documents: {}", summary.indexed_documents);
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr queue: {}", summary.ocr_queue_depth);
+    println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("search index: {}", index_diagnostic.index_label());
     println!("query smoke: {}", index_diagnostic.query_smoke_label());
@@ -293,6 +296,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
         summary.searchable_documents
     );
     println!("    \"ocr_queue_depth\": {},", summary.ocr_queue_depth);
+    println!("    \"ocr_jobs_queued\": {},", summary.ocr_jobs_queued);
     println!(
         "    \"recovery_queue_depth\": {}",
         summary.recovery_queue_depth
