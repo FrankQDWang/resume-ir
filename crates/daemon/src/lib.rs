@@ -127,7 +127,7 @@ mod tests {
 
         let text = String::from_utf8(output).map_err(|error| error.to_string())?;
         assert!(text.contains("daemon foreground started"));
-        assert!(text.contains("metadata schema: 2"));
+        assert!(text.contains("metadata schema: 3"));
         assert!(text.contains("daemon foreground stopped"));
         assert!(data_dir.join("metadata.sqlite").is_file());
         fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;

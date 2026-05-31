@@ -9,7 +9,7 @@ This file tracks long-running Goal execution against
 - Data policy: synthetic fixtures only; no real resumes or PII.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
-- Product rule: S0-S16 slice progress is not the same as full product completion; P0-P6 gates remain authoritative.
+- Product rule: S0-S17 slice progress is not the same as full product completion; P0-P6 gates remain authoritative.
 
 ## Product Gate Status
 
@@ -17,8 +17,8 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S16 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton, S14 deletion-propagation CLI slice, S15 local synthetic benchmark runner with batched metadata seeding, and S16 local redacted diagnostics package generation. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/observability, CI, and production async import orchestration remain unfinished. |
-| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, S9 synthetic import-to-search smoke, S14 CLI `delete --doc-id` propagation, and S15 benchmark search/delete smoke exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, async deletion orchestration, and real benchmark corpus runs remain absent. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S17 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton, S14 deletion-propagation CLI slice, S15 local synthetic benchmark runner with batched metadata seeding, S16 local redacted diagnostics package generation, and S17 durable import-task lease/retry metadata schema v3. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/observability, CI, and production async import orchestration remain unfinished. |
+| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, S9 synthetic import-to-search smoke, S14 CLI `delete --doc-id` propagation, S15 benchmark search/delete smoke, and S17 durable import-task claim/lease/retry primitives exist with acceptance tests. | Production daemon-owned import drain, robust PDF extraction, synthetic large corpus, async deletion orchestration, and real benchmark corpus runs remain absent. |
 | P2 fields and dedupe | In progress | S10 smoke/MVP adds deterministic school, degree, and skill extraction on top of email/phone/date ranges; `rank-fusion` adds field summaries, `degree_min`, `skills_any`, `years_experience_min`, and hashed soft-dedupe skeleton tests; CLI search accepts `--degree bachelor --top-k 20`; S14 prevents deleted docs from being resurrected by query-time clean-text field filtering. | Dictionary coverage is intentionally tiny and synthetic; field filters are computed at query time from persisted clean text, not indexed fast fields; no evaluation harness or production candidate merge workflow exists. |
 | P3 semantic retrieval | In progress | S11 adds dependency-light `embedder` and `index-vector` crates with fake/test-only implementations plus `rank-fusion` RRF hybrid fusion tests. | This is only a fake-interface skeleton. Real embedding model choice/license/checksums/distribution, batch inference, production vector engine, hybrid integration, and recall benchmarks remain blockers. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; S12 adds typed `ocr-client` interfaces and deterministic `ingest-scheduler` OCR-required queue primitives without running OCR. Local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs, real OCR worker integration, and scanned synthetic corpus absent. |
@@ -46,6 +46,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S14 | Complete | Added `resume-cli delete --doc-id <doc_id>`; metadata deletion tombstones document rows without touching source files; rediscovery preserves tombstones; existing Tantivy full-text indexes receive committed doc-id deletions; missing full-text indexes are not created solely for delete; SQLite records `DELETE_PENDING` before full-text mutation and finalizes `DELETED` or `DELETE_ERROR`; malformed `doc_id` values are rejected before storage access; search now metadata-filters every Tantivy hit so stale full-text rows cannot surface tombstoned docs; status/search/field-filter paths hide deleted documents. Acceptance commands passed locally on 2026-05-31. | This is CLI-level local deletion propagation only. Production async orchestration, large-corpus delete benchmarks, vector/field-index deletion propagation, and broader audit/recovery workflows remain incomplete. |
 | S15 | Complete | Added `resume-cli benchmark --synthetic-count <n> --query <query>`; validates `n` as 1..=1,000,000; seeds synthetic metadata and real Tantivy documents into a scratch data area under `--data-dir` using a bulk SQLite transaction; searches through the metadata-gated path; deletes one hit through the existing delete path; verifies the deleted doc is absent from post-delete search; prints aggregate metrics only; reports `large-corpus status: not-run` below 100,000 and `synthetic-only` at/above 100,000; cleans scratch on success and tested failure paths. Acceptance commands passed locally on 2026-05-31. | This is honest local synthetic benchmark tooling/smoke only. It is not a real 100k/1M benchmark result, does not use a real/desensitized corpus, and does not complete P6 performance or stability gates. |
 | S16 | Complete | Added `resume-cli export-diagnostics --redact --output <dir>` while preserving stdout-only `export-diagnostics --redact`; package mode writes through a `diagnostics-package-*.tmp` staging directory, then atomically renames one local `diagnostics-package-*` directory per run containing deterministic `manifest.json`, `status.txt`, and `checks.txt` files with aggregate-only schema/count/fulltext/check metadata; stdout and errors remain redacted and never print the package path. Acceptance commands passed locally on 2026-05-31. | This is local redacted diagnostics package generation only. It is not real production observability, does not exercise real fault injection or soak, and does not complete P6. |
+| S17 | Complete | Upgraded `meta-store` schema to v3 and added durable import-root task `max_attempts`, `attempt_count`, `last_error`, `claim_token`, and `lease_expires_at_ms` fields plus token-gated claim-by-id, claim-next, complete, and fail primitives. Claiming atomically moves queued/failed/expired work to running, increments attempts, sets a lease, redacts root/token/error debug output, stores local failure diagnostics, and converts expired final-attempt leases to `permanent_failed` before future claims. Acceptance commands passed locally on 2026-05-31. | This is the durable lease/retry foundation only. It does not make the daemon drain import tasks, does not add async import orchestration, and does not complete P0 or P1. |
 
 ## Command Log
 
@@ -524,3 +525,38 @@ Review summary:
 - Package files contain aggregate-only schema version, visible/searchable/OCR counts, index-state count, full-text health, redaction-enabled state, local-only/remote-side-effects-none metadata, and simulated diagnostic checks.
 - Tests assert stdout and package files exclude synthetic private paths, output paths, email, phone, raw text, query text, doc ids, and file names.
 - S16 is local redacted diagnostics package generation only. It is not real production observability, does not run real fault injection or soak, and does not complete P6.
+
+### S17
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store migrations_upgrade_v2_import_tasks_to_claim_schema
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store complete_and_fail_claimed_import_task_require_matching_token -- --nocapture
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store expired_final_attempt_import_task_becomes_permanent_before_next_claim -- --nocapture
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+git diff --check
+git status --short --ignored -- local-data
+```
+
+Output summary:
+
+- TDD red run for `migrations_upgrade_v2_import_tasks_to_claim_schema` failed first before import-task claim APIs existed.
+- Spec review found `fail_claimed_import_task` ignored the supplied local diagnostic and only stored a constant. Controller added a persistence assertion; the focused red run failed with `left: Some("import task failed")` and passed after storing the supplied `last_error` while keeping Debug redacted.
+- Quality review found expired final-attempt running leases could remain stuck forever. Controller added a regression test; the focused red run failed with `left: Running` and passed after claim paths began expiring stale leases inside the claim transaction.
+- Final `cargo fmt --check`: succeeded.
+- Final `cargo test -p meta-store`: succeeded with 23 tests covering schema v3 migration, v1/v2 upgrade paths, token-gated claim/complete/fail, lease expiry, permanent failure on exhausted attempts, local last-error persistence, and Debug redaction.
+- Final `cargo test -p resume-cli`: succeeded with 30 tests after schema-version expectations were updated to v3.
+- Final `cargo test -p resume-daemon`: succeeded with 2 tests after schema-version expectations were updated to v3.
+- Final `git diff --check`: succeeded.
+
+Review summary:
+
+- S17 adds durable import-task lease/retry metadata only. It upgrades schema v3 and records `max_attempts`, `attempt_count`, `last_error`, `claim_token`, and `lease_expires_at_ms` for `import_task`.
+- `claim_import_task` and `claim_next_import_task` run under `BEGIN IMMEDIATE`, expire stale leases first, claim only queued/failed retryable work, increment attempt count, set a claim token and lease, and return a row whose Debug redacts root path, last error, and claim token.
+- `complete_claimed_import_task` and `fail_claimed_import_task` require a matching token; fail stores the supplied local diagnostic, clears claim state, and moves exhausted attempts to `permanent_failed`.
+- Expired final-attempt running work is converted to `permanent_failed` before future claims so a crashed worker cannot leave a permanent running row.
+- S17 does not run daemon-owned import draining, does not perform OCR or semantic retrieval, and does not complete P0/P1.

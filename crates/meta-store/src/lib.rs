@@ -1,7 +1,7 @@
 //! SQLite-backed metadata store for local resume indexing state.
 
 use core_domain::{Document, ErrorKind, RedactionLevel, Result, ResumeError, SourceComponent};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::fmt;
 use std::path::Path;
 
@@ -200,6 +200,46 @@ impl fmt::Debug for ImportTaskRow {
     }
 }
 
+/// Import-root task claimed for local execution.
+#[derive(Clone, Eq, PartialEq)]
+pub struct ImportTaskClaimRow {
+    /// Store-assigned import task identifier.
+    pub task_id: i64,
+    /// Local root path. Keep local.
+    pub root_path: String,
+    /// Current task state.
+    pub state: JobState,
+    /// Maximum retry attempts.
+    pub max_attempts: u32,
+    /// Attempts already consumed.
+    pub attempt_count: u32,
+    /// Last local diagnostic error, if any.
+    pub last_error: Option<String>,
+    /// Opaque worker claim token. Keep local.
+    pub claim_token: String,
+    /// Lease expiry timestamp in caller-provided milliseconds.
+    pub lease_expires_at_ms: i64,
+}
+
+impl fmt::Debug for ImportTaskClaimRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportTaskClaimRow")
+            .field("task_id", &self.task_id)
+            .field("root_path", &"<redacted>")
+            .field("state", &self.state)
+            .field("max_attempts", &self.max_attempts)
+            .field("attempt_count", &self.attempt_count)
+            .field(
+                "last_error",
+                &self.last_error.as_ref().map(|_| "<redacted>"),
+            )
+            .field("claim_token", &"<redacted>")
+            .field("lease_expires_at_ms", &self.lease_expires_at_ms)
+            .finish()
+    }
+}
+
 impl MetadataStore {
     /// Opens a metadata store at `path`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -222,12 +262,12 @@ impl MetadataStore {
     /// Applies all schema migrations. Safe to call repeatedly.
     pub fn run_migrations(&self) -> Result<()> {
         let current_version = self.schema_version()?;
-        if current_version > 2 {
+        if current_version > 3 {
             return Err(storage_diagnostic(format!(
                 "newer metadata schema version {current_version} is not supported by this binary"
             )));
         }
-        if current_version == 2 {
+        if current_version == 3 {
             return Ok(());
         }
 
@@ -319,6 +359,13 @@ impl MetadataStore {
                             'permanent_failed'
                         )
                     ),
+                    max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts > 0),
+                    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+                    last_error TEXT,
+                    claim_token TEXT,
+                    lease_expires_at_ms INTEGER CHECK (
+                        lease_expires_at_ms IS NULL OR lease_expires_at_ms >= 0
+                    ),
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
@@ -326,10 +373,41 @@ impl MetadataStore {
                 CREATE INDEX IF NOT EXISTS idx_import_task_state
                     ON import_task(state, task_id);
 
-                PRAGMA user_version = 2;
+                PRAGMA user_version = 3;
 
                 COMMIT;
                 ",
+                )
+                .map_err(storage_error)?;
+            return Ok(());
+        }
+
+        if current_version == 2 {
+            self.connection
+                .execute_batch(
+                    r"
+                    BEGIN;
+
+                    ALTER TABLE import_task
+                        ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts > 0);
+                    ALTER TABLE import_task
+                        ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0);
+                    ALTER TABLE import_task
+                        ADD COLUMN last_error TEXT;
+                    ALTER TABLE import_task
+                        ADD COLUMN claim_token TEXT;
+                    ALTER TABLE import_task
+                        ADD COLUMN lease_expires_at_ms INTEGER CHECK (
+                            lease_expires_at_ms IS NULL OR lease_expires_at_ms >= 0
+                        );
+
+                    CREATE INDEX IF NOT EXISTS idx_import_task_state
+                        ON import_task(state, task_id);
+
+                    PRAGMA user_version = 3;
+
+                    COMMIT;
+                    ",
                 )
                 .map_err(storage_error)?;
             return Ok(());
@@ -353,6 +431,13 @@ impl MetadataStore {
                             'permanent_failed'
                         )
                     ),
+                    max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts > 0),
+                    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+                    last_error TEXT,
+                    claim_token TEXT,
+                    lease_expires_at_ms INTEGER CHECK (
+                        lease_expires_at_ms IS NULL OR lease_expires_at_ms >= 0
+                    ),
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
@@ -360,7 +445,7 @@ impl MetadataStore {
                 CREATE INDEX IF NOT EXISTS idx_import_task_state
                     ON import_task(state, task_id);
 
-                PRAGMA user_version = 2;
+                PRAGMA user_version = 3;
 
                 COMMIT;
                 ",
@@ -840,6 +925,167 @@ impl MetadataStore {
             .map_err(storage_error)
     }
 
+    /// Claims a specific eligible import-root task.
+    pub fn claim_import_task(
+        &self,
+        task_id: i64,
+        claim_token: &str,
+        now_ms: i64,
+        lease_expires_at_ms: i64,
+    ) -> Result<Option<ImportTaskClaimRow>> {
+        self.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(storage_error)?;
+
+        let result = (|| {
+            self.expire_stale_import_task_leases(now_ms)?;
+            let changed = self.connection.execute(
+                r"
+                UPDATE import_task
+                SET state = 'running',
+                    attempt_count = attempt_count + 1,
+                    last_error = NULL,
+                    claim_token = ?2,
+                    lease_expires_at_ms = ?3,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_id = ?1
+                  AND attempt_count < max_attempts
+                  AND state IN ('queued', 'failed')
+                ",
+                params![task_id, claim_token, lease_expires_at_ms],
+            )?;
+            if changed == 0 {
+                return Ok(None);
+            }
+            self.select_import_task_claim(task_id)
+        })();
+
+        self.finish_transaction(result)
+    }
+
+    /// Claims the next eligible import-root task by stable task order.
+    pub fn claim_next_import_task(
+        &self,
+        claim_token: &str,
+        now_ms: i64,
+        lease_expires_at_ms: i64,
+    ) -> Result<Option<ImportTaskClaimRow>> {
+        self.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(storage_error)?;
+
+        let result = (|| {
+            self.expire_stale_import_task_leases(now_ms)?;
+            let task_id = self
+                .connection
+                .query_row(
+                    r"
+                    SELECT task_id
+                    FROM import_task
+                    WHERE attempt_count < max_attempts
+                      AND state IN ('queued', 'failed')
+                    ORDER BY task_id
+                    LIMIT 1
+                    ",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+
+            match task_id {
+                Some(task_id) => {
+                    self.connection.execute(
+                        r"
+                        UPDATE import_task
+                        SET state = 'running',
+                            attempt_count = attempt_count + 1,
+                            last_error = NULL,
+                            claim_token = ?2,
+                            lease_expires_at_ms = ?3,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE task_id = ?1
+                        ",
+                        params![task_id, claim_token, lease_expires_at_ms],
+                    )?;
+                    self.select_import_task_claim(task_id)
+                }
+                None => Ok(None),
+            }
+        })();
+
+        self.finish_transaction(result)
+    }
+
+    fn expire_stale_import_task_leases(&self, now_ms: i64) -> rusqlite::Result<()> {
+        self.connection.execute(
+            r"
+            UPDATE import_task
+            SET state = CASE
+                    WHEN attempt_count >= max_attempts THEN 'permanent_failed'
+                    ELSE 'failed'
+                END,
+                claim_token = NULL,
+                lease_expires_at_ms = NULL,
+                last_error = 'import task lease expired',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE state = 'running'
+              AND IFNULL(lease_expires_at_ms, -1) <= ?1
+            ",
+            [now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Completes a running import-root task only when the claim token matches.
+    pub fn complete_claimed_import_task(&self, task_id: i64, claim_token: &str) -> Result<bool> {
+        self.connection
+            .execute(
+                r"
+                UPDATE import_task
+                SET state = 'completed',
+                    claim_token = NULL,
+                    lease_expires_at_ms = NULL,
+                    last_error = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_id = ?1
+                  AND state = 'running'
+                  AND claim_token = ?2
+                ",
+                params![task_id, claim_token],
+            )
+            .map(|changed| changed > 0)
+            .map_err(storage_error)
+    }
+
+    /// Fails a running import-root task only when the claim token matches.
+    pub fn fail_claimed_import_task(
+        &self,
+        task_id: i64,
+        claim_token: &str,
+        last_error: &str,
+    ) -> Result<bool> {
+        self.connection
+            .execute(
+                r"
+                UPDATE import_task
+                SET state = CASE
+                        WHEN attempt_count >= max_attempts THEN 'permanent_failed'
+                        ELSE 'failed'
+                    END,
+                    claim_token = NULL,
+                    lease_expires_at_ms = NULL,
+                    last_error = ?3,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_id = ?1
+                  AND state = 'running'
+                  AND claim_token = ?2
+                ",
+                params![task_id, claim_token, last_error],
+            )
+            .map(|changed| changed > 0)
+            .map_err(storage_error)
+    }
+
     /// Returns a concise status summary for local operator commands.
     pub fn status(&self) -> Result<StoreStatus> {
         Ok(StoreStatus {
@@ -862,6 +1108,43 @@ impl MetadataStore {
         self.connection
             .query_row(&sql, [], |row| row.get::<_, u64>(0))
             .map_err(storage_error)
+    }
+
+    fn select_import_task_claim(
+        &self,
+        task_id: i64,
+    ) -> rusqlite::Result<Option<ImportTaskClaimRow>> {
+        self.connection
+            .query_row(
+                r"
+                SELECT task_id, root_path, state, max_attempts, attempt_count,
+                       last_error, claim_token, lease_expires_at_ms
+                FROM import_task
+                WHERE task_id = ?1
+                  AND state = 'running'
+                  AND claim_token IS NOT NULL
+                  AND lease_expires_at_ms IS NOT NULL
+                LIMIT 1
+                ",
+                [task_id],
+                import_task_claim_row_from_sql,
+            )
+            .optional()
+    }
+
+    fn finish_transaction<T>(&self, result: rusqlite::Result<T>) -> Result<T> {
+        match result {
+            Ok(value) => {
+                self.connection
+                    .execute_batch("COMMIT")
+                    .map_err(storage_error)?;
+                Ok(value)
+            }
+            Err(error) => {
+                let _ = self.connection.execute_batch("ROLLBACK");
+                Err(storage_error(error))
+            }
+        }
     }
 }
 
@@ -922,6 +1205,26 @@ fn import_task_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<ImportT
     })
 }
 
+fn import_task_claim_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<ImportTaskClaimRow> {
+    let state = row.get::<_, String>(2)?;
+    Ok(ImportTaskClaimRow {
+        task_id: row.get(0)?,
+        root_path: row.get(1)?,
+        state: JobState::try_from(state.as_str()).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                2,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
+            )
+        })?,
+        max_attempts: row.get(3)?,
+        attempt_count: row.get(4)?,
+        last_error: row.get(5)?,
+        claim_token: row.get(6)?,
+        lease_expires_at_ms: row.get(7)?,
+    })
+}
+
 fn document_extension_label(document: &Document) -> String {
     match &document.extension {
         core_domain::DocumentExtension::Docx => "docx".to_string(),
@@ -978,6 +1281,44 @@ mod tests {
         }
     }
 
+    fn import_task_columns(store: &MetadataStore) -> Result<Vec<String>> {
+        let mut statement = store
+            .connection
+            .prepare("PRAGMA table_info(import_task)")
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(storage_error)?;
+        let mut columns = Vec::new();
+        for row in rows {
+            columns.push(row.map_err(storage_error)?);
+        }
+        Ok(columns)
+    }
+
+    fn import_task_state(store: &MetadataStore, task_id: i64) -> Result<JobState> {
+        let state = store
+            .connection
+            .query_row(
+                "SELECT state FROM import_task WHERE task_id = ?1",
+                [task_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(storage_error)?;
+        JobState::try_from(state.as_str()).map_err(storage_diagnostic)
+    }
+
+    fn import_task_last_error(store: &MetadataStore, task_id: i64) -> Result<Option<String>> {
+        store
+            .connection
+            .query_row(
+                "SELECT last_error FROM import_task WHERE task_id = ?1",
+                [task_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .map_err(storage_error)
+    }
+
     #[test]
     fn migrations_are_idempotent_and_record_schema_version() -> Result<()> {
         let store = MetadataStore::open_in_memory()?;
@@ -985,7 +1326,7 @@ mod tests {
         store.run_migrations()?;
         store.run_migrations()?;
 
-        assert_eq!(store.schema_version()?, 2);
+        assert_eq!(store.schema_version()?, 3);
         Ok(())
     }
 
@@ -994,7 +1335,7 @@ mod tests {
         let store = MetadataStore::open_in_memory()?;
         store
             .connection
-            .execute_batch("PRAGMA user_version = 3;")
+            .execute_batch("PRAGMA user_version = 4;")
             .map_err(storage_error)?;
 
         let Err(error) = store.run_migrations() else {
@@ -1003,7 +1344,7 @@ mod tests {
             ));
         };
 
-        assert_eq!(store.schema_version()?, 3);
+        assert_eq!(store.schema_version()?, 4);
         assert!(error
             .local_diagnostic_message()
             .contains("newer metadata schema version"));
@@ -1022,7 +1363,7 @@ mod tests {
 
         let status = store.status()?;
 
-        assert_eq!(status.schema_version, 2);
+        assert_eq!(status.schema_version, 3);
         assert_eq!(status.visible_document_count, 1);
         assert_eq!(status.queued_import_task_count, 1);
         assert_eq!(status.index_state_count, 1);
@@ -1046,6 +1387,244 @@ mod tests {
         assert!(debug.contains("root_path: \"<redacted>\""));
         assert!(!debug.contains("/synthetic/private/root"));
         Ok(())
+    }
+
+    #[test]
+    fn migrations_upgrade_v2_import_tasks_to_claim_schema() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store
+            .connection
+            .execute_batch(
+                r"
+                CREATE TABLE import_task (
+                    task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    root_path TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (
+                        state IN (
+                            'queued',
+                            'running',
+                            'failed',
+                            'completed',
+                            'cancelled',
+                            'permanent_failed'
+                        )
+                    ),
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO import_task (root_path, state)
+                VALUES ('/synthetic/private/root', 'queued');
+                PRAGMA user_version = 2;
+                ",
+            )
+            .map_err(storage_error)?;
+
+        store.run_migrations()?;
+
+        assert_eq!(store.schema_version()?, 3);
+        let columns = import_task_columns(&store)?;
+        for column in [
+            "max_attempts",
+            "attempt_count",
+            "last_error",
+            "claim_token",
+            "lease_expires_at_ms",
+        ] {
+            assert!(columns.contains(&column.to_string()), "missing {column}");
+        }
+        let claim = store.claim_import_task(1, "claim_secret_token", 1_000, 2_000)?;
+        assert_eq!(claim.map(|row| row.task_id), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn migrations_upgrade_v1_by_creating_v3_import_task_schema() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store
+            .connection
+            .execute_batch("PRAGMA user_version = 1;")
+            .map_err(storage_error)?;
+
+        store.run_migrations()?;
+
+        assert_eq!(store.schema_version()?, 3);
+        let columns = import_task_columns(&store)?;
+        for column in [
+            "root_path",
+            "state",
+            "max_attempts",
+            "attempt_count",
+            "last_error",
+            "claim_token",
+            "lease_expires_at_ms",
+        ] {
+            assert!(columns.contains(&column.to_string()), "missing {column}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn claiming_import_task_sets_lease_and_attempt_without_exposing_root_or_token() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let task_id = store.enqueue_import_root(Path::new("/synthetic/private/root"))?;
+
+        let claim = store
+            .claim_import_task(task_id, "claim_secret_token", 1_000, 2_000)?
+            .ok_or_else(|| storage_diagnostic("claim unexpectedly missing".to_string()))?;
+
+        assert_eq!(claim.task_id, task_id);
+        assert_eq!(claim.state, JobState::Running);
+        assert_eq!(claim.max_attempts, 3);
+        assert_eq!(claim.attempt_count, 1);
+        assert_eq!(claim.lease_expires_at_ms, 2_000);
+        let debug = format!("{claim:?}");
+        assert!(debug.contains("root_path: \"<redacted>\""));
+        assert!(debug.contains("claim_token: \"<redacted>\""));
+        assert!(!debug.contains("/synthetic/private/root"));
+        assert!(!debug.contains("claim_secret_token"));
+        Ok(())
+    }
+
+    #[test]
+    fn claim_next_import_task_skips_unexpired_running_and_reclaims_expired_work() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let running = store.enqueue_import_root(Path::new("/synthetic/private/running"))?;
+        let queued = store.enqueue_import_root(Path::new("/synthetic/private/queued"))?;
+
+        store.claim_import_task(running, "first_token", 1_000, 5_000)?;
+        let next = store
+            .claim_next_import_task("next_token", 2_000, 6_000)?
+            .ok_or_else(|| storage_diagnostic("next claim unexpectedly missing".to_string()))?;
+
+        assert_eq!(next.task_id, queued);
+        assert_eq!(next.attempt_count, 1);
+
+        let reclaimed = store
+            .claim_next_import_task("reclaim_token", 5_001, 7_000)?
+            .ok_or_else(|| storage_diagnostic("expired claim unexpectedly missing".to_string()))?;
+
+        assert_eq!(reclaimed.task_id, running);
+        assert_eq!(reclaimed.attempt_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn complete_and_fail_claimed_import_task_require_matching_token() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let complete_id = store.enqueue_import_root(Path::new("/synthetic/private/complete"))?;
+        let fail_id = store.enqueue_import_root(Path::new("/synthetic/private/fail"))?;
+
+        store.claim_import_task(complete_id, "complete_token", 1_000, 2_000)?;
+        assert!(!store.complete_claimed_import_task(complete_id, "wrong_token")?);
+        assert!(store.complete_claimed_import_task(complete_id, "complete_token")?);
+
+        store.claim_import_task(fail_id, "fail_token", 1_000, 2_000)?;
+        assert!(!store.fail_claimed_import_task(fail_id, "wrong_token", "private error")?);
+        let private_error = "private error containing /synthetic/private/fail";
+        assert!(store.fail_claimed_import_task(fail_id, "fail_token", private_error)?);
+        assert_eq!(
+            import_task_last_error(&store, fail_id)?.as_deref(),
+            Some(private_error)
+        );
+
+        let debug = format!(
+            "{:?}",
+            store.claim_import_task(fail_id, "retry", 2_001, 3_000)?
+        );
+        assert!(!debug.contains("private error"));
+        assert!(!debug.contains("/synthetic/private/fail"));
+        Ok(())
+    }
+
+    #[test]
+    fn failed_claim_becomes_permanent_after_attempt_budget_is_exhausted() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let task_id = store.enqueue_import_root(Path::new("/synthetic/private/root"))?;
+
+        store
+            .connection
+            .execute(
+                "UPDATE import_task SET max_attempts = 1 WHERE task_id = ?1",
+                [task_id],
+            )
+            .map_err(storage_error)?;
+        store.claim_import_task(task_id, "claim_token", 1_000, 2_000)?;
+
+        assert!(store.fail_claimed_import_task(
+            task_id,
+            "claim_token",
+            "private exhausted error"
+        )?);
+        assert!(store
+            .claim_import_task(task_id, "retry_token", 2_001, 3_000)?
+            .is_none());
+        assert_eq!(
+            import_task_state(&store, task_id)?,
+            JobState::PermanentFailed
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expired_final_attempt_import_task_becomes_permanent_before_next_claim() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let task_id = store.enqueue_import_root(Path::new("/synthetic/private/root"))?;
+
+        store
+            .connection
+            .execute(
+                "UPDATE import_task SET max_attempts = 1 WHERE task_id = ?1",
+                [task_id],
+            )
+            .map_err(storage_error)?;
+        let claim = store
+            .claim_import_task(task_id, "claim_token", 1_000, 2_000)?
+            .ok_or_else(|| storage_diagnostic("claim unexpectedly missing".to_string()))?;
+        assert_eq!(claim.attempt_count, 1);
+
+        assert!(store
+            .claim_next_import_task("next_token", 2_001, 3_000)?
+            .is_none());
+        assert!(store
+            .claim_import_task(task_id, "retry_token", 2_001, 3_000)?
+            .is_none());
+        assert_eq!(
+            import_task_state(&store, task_id)?,
+            JobState::PermanentFailed
+        );
+        assert_eq!(
+            import_task_last_error(&store, task_id)?.as_deref(),
+            Some("import task lease expired")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn import_task_claim_debug_redacts_root_token_and_last_error() {
+        let row = ImportTaskClaimRow {
+            task_id: 42,
+            root_path: "/synthetic/private/root".to_string(),
+            state: JobState::Running,
+            max_attempts: 3,
+            attempt_count: 1,
+            last_error: Some("private failure under /synthetic/private/root".to_string()),
+            claim_token: "private_claim_token".to_string(),
+            lease_expires_at_ms: 2_000,
+        };
+
+        let debug = format!("{row:?}");
+
+        assert!(debug.contains("root_path: \"<redacted>\""));
+        assert!(debug.contains("last_error: Some(\"<redacted>\")"));
+        assert!(debug.contains("claim_token: \"<redacted>\""));
+        assert!(!debug.contains("/synthetic/private/root"));
+        assert!(!debug.contains("private failure"));
+        assert!(!debug.contains("private_claim_token"));
     }
 
     #[test]

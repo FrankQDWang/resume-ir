@@ -1547,7 +1547,7 @@ mod tests {
         )?;
 
         let text = String::from_utf8(output).map_err(|error| error.to_string())?;
-        assert!(text.contains("metadata schema: 2"));
+        assert!(text.contains("metadata schema: 3"));
         assert!(text.contains("visible documents: 0"));
         assert!(text.contains("queued imports: 0"));
         assert!(data_dir.join("metadata.sqlite").is_file());
@@ -1566,7 +1566,7 @@ mod tests {
         )?;
 
         let text = String::from_utf8(output).map_err(|error| error.to_string())?;
-        assert!(text.contains("metadata schema: 2"));
+        assert!(text.contains("metadata schema: 3"));
         assert!(text.contains("visible documents: 0"));
         assert!(text.contains("fulltext index: missing"));
         assert!(text.contains("query benchmark smoke: skipped"));
@@ -1705,7 +1705,7 @@ mod tests {
 
         let text = String::from_utf8(output).map_err(|error| error.to_string())?;
         assert!(text.contains("diagnostics redaction: enabled"));
-        assert!(text.contains("metadata schema: 2"));
+        assert!(text.contains("metadata schema: 3"));
         assert!(text.contains("visible documents: 1"));
         assert!(text.contains("documents: aggregate-only"));
         assert!(text.contains("paths: redacted"));
@@ -1817,7 +1817,7 @@ mod tests {
 
         let manifest = fs::read_to_string(package_dir.join("manifest.json"))
             .map_err(|error| error.to_string())?;
-        assert!(manifest.contains("\"schema_version\": 2"));
+        assert!(manifest.contains("\"schema_version\": 3"));
         assert!(manifest.contains("\"redaction_enabled\": true"));
         assert!(manifest.contains("\"remote_side_effects\": \"none\""));
         assert!(manifest.contains("\"local_only\": true"));
