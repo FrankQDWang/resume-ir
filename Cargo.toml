@@ -12,6 +12,8 @@ members = [
     "crates/text-normalizer",
     "crates/sectionizer",
     "crates/extractor-rules",
+    "crates/index-fulltext",
+    "crates/search-planner",
 ]
 resolver = "2"
 

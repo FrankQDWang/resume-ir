@@ -3,9 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use index_fulltext::{FullTextIndex, SearchQuery};
 use meta_store::{
     ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, MetaStore, UnixTimestamp,
 };
+use search_planner::plan_search;
 
 fn main() {
     if let Err(error) = run() {
@@ -80,7 +82,11 @@ fn status_command(data_dir: &Path) -> Result<()> {
         "last snapshot: {}",
         summary.last_snapshot_id.as_deref().unwrap_or("none")
     );
-    println!("search index: unavailable (S4 skeleton: no full-text or vector backend)");
+    if data_dir.join("search-index").join("meta.json").exists() {
+        println!("search index: available (full-text)");
+    } else {
+        println!("search index: unavailable (no full-text index snapshot)");
+    }
 
     Ok(())
 }
@@ -118,13 +124,32 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn search_command(_data_dir: &Path, args: &[String]) -> Result<()> {
+fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
     if args.len() != 1 {
         return Err(CliError::usage("usage: resume-cli search <query>"));
     }
 
-    println!("search index not available yet");
-    println!("results: 0");
+    let index_dir = data_dir.join("search-index");
+    if !index_dir.join("meta.json").exists() {
+        println!("search index not available yet");
+        println!("results: 0");
+        return Ok(());
+    }
+
+    let plan = plan_search(&args[0], 10).map_err(|_| CliError::user("search query is empty"))?;
+    let index = FullTextIndex::open(&index_dir).map_err(CliError::fulltext)?;
+    let hits = index
+        .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
+        .map_err(CliError::fulltext)?;
+
+    println!("results: {}", hits.len());
+    for hit in hits {
+        println!("rank: {}", hit.rank);
+        println!("doc_id: {}", hit.doc_id);
+        println!("version_id: {}", hit.version_id);
+        println!("file_name: {}", hit.file_name);
+        println!("snippet: {}", hit.snippet);
+    }
 
     Ok(())
 }
@@ -193,6 +218,13 @@ impl CliError {
     }
 
     fn store(error: meta_store::MetaStoreError) -> Self {
+        Self {
+            message: error.to_string(),
+            exit_code: 1,
+        }
+    }
+
+    fn fulltext(error: index_fulltext::FullTextError) -> Self {
         Self {
             message: error.to_string(),
             exit_code: 1,

@@ -22,7 +22,7 @@ This file tracks long-running Goal execution against
 | S5 | Slice complete | `cargo fmt --check`, `cargo test -p fs-crawler`, and `cargo clippy -p fs-crawler --all-targets -- -D warnings` passed. | None for the S5 slice; product import execution, document parsing, indexing, OCR, and query closure remain not complete. |
 | S6 | Slice complete | `cargo fmt --check`, `cargo test -p parser-common`, `cargo test -p parser-docx`, `cargo test -p parser-pdf`, and `cargo clippy -p parser-common -p parser-docx -p parser-pdf --all-targets -- -D warnings` passed. | None for the S6 slice; OCR execution, text cleaning, indexing, search, and S7+ remain not complete. |
 | S7 | Slice complete | `cargo fmt --check`, `cargo test -p text-normalizer`, `cargo test -p sectionizer`, `cargo test -p extractor-rules`, and `cargo clippy -p text-normalizer -p sectionizer -p extractor-rules --all-targets -- -D warnings` passed. | None for the S7 slice; import execution, indexing, search, OCR execution, embeddings, and S8+ remain not complete. |
-| S8 | Not started |  |  |
+| S8 | Slice complete | `cargo fmt --check`, `cargo test -p index-fulltext`, `cargo test -p search-planner`, `cargo run -p resume-cli -- search "Java 支付"`, and `cargo clippy -p index-fulltext -p search-planner -p resume-cli --all-targets -- -D warnings` passed. | None for the S8 slice; import execution, OCR execution, embeddings, vector search, and S9+ remain not complete. |
 | S9 | Not started |  |  |
 | S10 | Not started |  |  |
 | S11 | Not started |  |  |
@@ -337,6 +337,72 @@ Output summary:
 Scope note:
 
 - S6 is only the parser skeleton/docx/PDF text-layer slice. It does not implement OCR execution, indexing, full-text search, text cleaning, extraction, or S7+ behavior.
+
+Additional workspace regression:
+
+```bash
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+```
+
+Output summary:
+
+- `cargo test --workspace`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+
+### S8
+
+TDD red checks:
+
+```bash
+cargo test -p index-fulltext
+cargo test -p search-planner
+cargo test -p resume-cli --test s8_search_cli
+```
+
+Output summary:
+
+- `index-fulltext` failed before implementation because `FullTextIndex`, `IndexDocument`, `IndexSection`, and `SearchQuery` were unresolved imports.
+- `search-planner` failed before implementation because `plan_search` and `SearchPlan` were unresolved imports.
+- `resume-cli --test s8_search_cli` failed before implementation because CLI tests could not seed or read a full-text index.
+
+Implementation checks:
+
+```bash
+cargo test -p index-fulltext
+cargo test -p search-planner
+cargo test -p resume-cli --test s8_search_cli
+cargo test -p resume-cli --test s4_cli
+```
+
+Output summary:
+
+- `cargo test -p index-fulltext`: exit 0; 7 S8 tests passed, covering committed documents searchable after reload, deleted documents hidden by default, duplicate sections not hiding distinct topN documents, malformed query syntax returning safe results, topN snippets only for returned hits, mixed Chinese-English query matching, and redacted debug output.
+- `cargo test -p search-planner`: exit 0; 4 S8 tests passed, covering mixed query planning, debug redaction, empty/too-broad query rejection, and topN limit clamping.
+- `cargo test -p resume-cli --test s8_search_cli`: exit 0; CLI search read an existing synthetic full-text index and printed rank, doc_id, version_id, file_name, and snippet without a query label.
+- `cargo test -p resume-cli --test s4_cli`: exit 0; no-index search still returned unavailable/results 0 without echoing the query or creating a data directory.
+
+Acceptance:
+
+```bash
+cargo fmt --check
+cargo test -p index-fulltext
+cargo test -p search-planner
+cargo run -p resume-cli -- search "Java 支付"
+cargo clippy -p index-fulltext -p search-planner -p resume-cli --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `cargo test -p index-fulltext`: exit 0; 7 tests passed.
+- `cargo test -p search-planner`: exit 0; 4 tests passed.
+- `cargo run -p resume-cli -- search "Java 支付"`: exit 0; no local full-text index existed, so CLI returned `search index not available yet` and `results: 0` without fake rows.
+- `cargo clippy -p index-fulltext -p search-planner -p resume-cli --all-targets -- -D warnings`: exit 0.
+
+Scope note:
+
+- S8 is only the Tantivy full-text index/search CLI slice. It does not implement import execution, OCR execution, embeddings, vector search, packaging, or S9+ behavior.
 
 Additional workspace regression:
 

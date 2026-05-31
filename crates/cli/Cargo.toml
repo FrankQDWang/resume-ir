@@ -10,7 +10,9 @@ name = "resume-cli"
 path = "src/main.rs"
 
 [dependencies]
+index-fulltext = { path = "../index-fulltext" }
 meta-store = { path = "../meta-store" }
+search-planner = { path = "../search-planner" }
 
 [lints]
 workspace = true
