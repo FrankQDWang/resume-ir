@@ -575,6 +575,25 @@ impl MetadataStore {
         }
     }
 
+    /// Starts a bulk write transaction for callers that need to insert many rows.
+    pub fn begin_bulk_write(&self) -> Result<()> {
+        self.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(storage_error)
+    }
+
+    /// Commits a bulk write transaction started with [`Self::begin_bulk_write`].
+    pub fn commit_bulk_write(&self) -> Result<()> {
+        self.connection
+            .execute_batch("COMMIT")
+            .map_err(storage_error)
+    }
+
+    /// Rolls back a bulk write transaction if one is active.
+    pub fn rollback_bulk_write(&self) {
+        let _ = self.connection.execute_batch("ROLLBACK");
+    }
+
     /// Returns the latest searchable clean text for a document.
     ///
     /// This returns local resume text to in-process callers only. Do not include
@@ -1229,6 +1248,28 @@ mod tests {
             store.document_by_doc_id(&doc_id)?.map(|row| row.is_deleted),
             Some(true)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn bulk_write_commit_and_rollback_control_visibility() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let rolled_back = test_document(false);
+        let committed = test_document(false);
+
+        store.begin_bulk_write()?;
+        store.upsert_document(&rolled_back)?;
+        store.rollback_bulk_write();
+        assert!(store.visible_documents()?.is_empty());
+
+        store.begin_bulk_write()?;
+        store.upsert_document(&committed)?;
+        store.commit_bulk_write()?;
+
+        let visible = store.visible_documents()?;
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].doc_id, committed.doc_id.to_string());
         Ok(())
     }
 

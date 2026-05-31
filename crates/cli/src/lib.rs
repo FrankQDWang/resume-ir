@@ -17,11 +17,13 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const CLI_USAGE: &str =
-    "Usage: resume-cli [--data-dir <path>] <status|import|search|delete|doctor|export-diagnostics>";
+    "Usage: resume-cli [--data-dir <path>] <status|import|search|delete|doctor|export-diagnostics|benchmark>";
 const DIAGNOSTIC_QUERY_TEXT: &str = "diagnostic-smoke-token";
+const LARGE_CORPUS_THRESHOLD: usize = 100_000;
+const MAX_SYNTHETIC_BENCHMARK_COUNT: usize = 1_000_000;
 
 /// Returns the crate name for smoke tests and workspace metadata.
 #[must_use]
@@ -147,6 +149,10 @@ where
             }
             export_diagnostics(&options.data_dir, output)
         }
+        Command::Benchmark {
+            synthetic_count,
+            query,
+        } => run_synthetic_benchmark(&options.data_dir, synthetic_count, &query, output),
     }
 }
 
@@ -171,6 +177,10 @@ enum Command {
     },
     Delete {
         doc_id: String,
+    },
+    Benchmark {
+        synthetic_count: usize,
+        query: String,
     },
 }
 
@@ -214,8 +224,9 @@ fn parse_command(parts: &[String]) -> Result<Command, String> {
         "search" if parts.len() >= 2 => parse_search_command(parts),
         "search" => Err("Usage: resume-cli search <query>".to_string()),
         "delete" => parse_delete_command(parts),
+        "benchmark" => parse_benchmark_command(parts),
         _ => Err(
-            "Unknown command. Use status, import, search, delete, doctor, or export-diagnostics."
+            "Unknown command. Use status, import, search, delete, doctor, export-diagnostics, or benchmark."
                 .to_string(),
         ),
     }
@@ -335,6 +346,70 @@ fn parse_delete_command(parts: &[String]) -> Result<Command, String> {
     })
 }
 
+fn parse_benchmark_command(parts: &[String]) -> Result<Command, String> {
+    if parts.len() < 5 {
+        return Err(
+            "Usage: resume-cli benchmark --synthetic-count <n> --query <query>".to_string(),
+        );
+    }
+
+    let mut synthetic_count = None;
+    let mut query_parts = Vec::new();
+    let mut index = 1;
+    while index < parts.len() {
+        match parts[index].as_str() {
+            "--synthetic-count" => {
+                let Some(value) = parts.get(index + 1) else {
+                    return Err("Missing value for --synthetic-count.".to_string());
+                };
+                synthetic_count = Some(parse_synthetic_count(value)?);
+                index += 2;
+            }
+            "--query" => {
+                let Some(value) = parts.get(index + 1) else {
+                    return Err("Missing value for --query.".to_string());
+                };
+                if value.trim().is_empty() {
+                    return Err("Benchmark query must not be empty.".to_string());
+                }
+                query_parts.push(value.to_string());
+                index += 2;
+                while index < parts.len() {
+                    query_parts.push(parts[index].to_string());
+                    index += 1;
+                }
+            }
+            _ => {
+                return Err(
+                    "Usage: resume-cli benchmark --synthetic-count <n> --query <query>".to_string(),
+                )
+            }
+        }
+    }
+
+    let Some(synthetic_count) = synthetic_count else {
+        return Err("Missing value for --synthetic-count.".to_string());
+    };
+    if query_parts.is_empty() {
+        return Err("Missing value for --query.".to_string());
+    }
+
+    Ok(Command::Benchmark {
+        synthetic_count,
+        query: query_parts.join(" "),
+    })
+}
+
+fn parse_synthetic_count(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| "Synthetic count must be between 1 and 1000000.".to_string())?;
+    if !(1..=MAX_SYNTHETIC_BENCHMARK_COUNT).contains(&parsed) {
+        return Err("Synthetic count must be between 1 and 1000000.".to_string());
+    }
+    Ok(parsed)
+}
+
 fn validate_doc_id(doc_id: &str) -> Result<(), String> {
     let Some(suffix) = doc_id.strip_prefix("doc_") else {
         return Err("Invalid doc_id value.".to_string());
@@ -408,6 +483,263 @@ fn export_diagnostics<W: Write>(data_dir: &Path, output: &mut W) -> Result<(), S
     writeln!(output, "{}", render_diagnostic_check(&disk_check))
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+struct BenchmarkSummary {
+    synthetic_count: usize,
+    indexed_count: usize,
+    search_hits: usize,
+    post_delete_hits: usize,
+    index_elapsed_ms: u128,
+    search_elapsed_ms: u128,
+    delete_elapsed_ms: u128,
+    post_delete_verification: &'static str,
+    large_corpus_status: &'static str,
+}
+
+fn run_synthetic_benchmark<W: Write>(
+    data_dir: &Path,
+    synthetic_count: usize,
+    query: &str,
+    output: &mut W,
+) -> Result<(), String> {
+    if query.trim().is_empty() {
+        return Err("Benchmark query must not be empty.".to_string());
+    }
+    let summary = with_benchmark_scratch(data_dir, |scratch_dir| {
+        run_synthetic_benchmark_in_scratch(scratch_dir, synthetic_count, query)
+            .map_err(|_| "Synthetic benchmark failed.".to_string())
+    })?;
+
+    write_benchmark_summary(output, &summary)
+}
+
+fn with_benchmark_scratch<T>(
+    data_dir: &Path,
+    runner: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
+    fs::create_dir_all(data_dir)
+        .map_err(|_| "Could not create benchmark data area.".to_string())?;
+    let scratch_dir = benchmark_scratch_dir(data_dir)?;
+    fs::create_dir_all(&scratch_dir)
+        .map_err(|_| "Could not create benchmark scratch area.".to_string())?;
+
+    let result = runner(&scratch_dir);
+    let cleanup_result = fs::remove_dir_all(&scratch_dir);
+    match (result, cleanup_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(_)) => Err("Could not clean up benchmark scratch area.".to_string()),
+        (Err(error), Ok(())) => Err(error),
+        (Err(_), Err(_)) => {
+            Err("Synthetic benchmark failed and scratch cleanup failed.".to_string())
+        }
+    }
+}
+
+fn benchmark_scratch_dir(data_dir: &Path) -> Result<PathBuf, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Could not create benchmark scratch area.".to_string())?
+        .as_nanos();
+    Ok(data_dir.join(format!("benchmark-scratch-{}-{stamp}", std::process::id())))
+}
+
+fn run_synthetic_benchmark_in_scratch(
+    scratch_dir: &Path,
+    synthetic_count: usize,
+    query: &str,
+) -> Result<BenchmarkSummary, String> {
+    let store = open_store(scratch_dir)?;
+    let index_dir = fulltext_index_dir(scratch_dir);
+    let mut writer = FullTextIndexWriter::open_or_create(&index_dir)
+        .map_err(|_| "Could not initialize synthetic benchmark index.".to_string())?;
+    let index_started = Instant::now();
+    let indexed_count =
+        seed_synthetic_benchmark_documents(&store, &mut writer, synthetic_count, query.trim())?;
+    writer
+        .commit()
+        .map_err(|_| "Could not commit synthetic benchmark index.".to_string())?;
+    drop(writer);
+    let index_elapsed_ms = index_started.elapsed().as_millis();
+
+    let search_started = Instant::now();
+    let search_hits = benchmark_search(scratch_dir, query.trim(), synthetic_count)?;
+    let search_elapsed_ms = search_started.elapsed().as_millis();
+
+    let delete_started = Instant::now();
+    let (post_delete_hits, post_delete_verification) =
+        if let Some(deleted_doc_id) = search_hits.first().map(|hit| hit.doc_id.clone()) {
+            let mut delete_output = Vec::new();
+            run_delete(scratch_dir, &deleted_doc_id, &mut delete_output)
+                .map_err(|_| "Synthetic benchmark delete failed.".to_string())?;
+            let post_delete_hits = benchmark_search(scratch_dir, query.trim(), synthetic_count)?;
+            if post_delete_hits
+                .iter()
+                .any(|hit| hit.doc_id == deleted_doc_id)
+            {
+                return Err("Synthetic benchmark post-delete verification failed.".to_string());
+            }
+            (post_delete_hits.len(), "removed")
+        } else {
+            (0, "no-hit")
+        };
+    let delete_elapsed_ms = delete_started.elapsed().as_millis();
+
+    Ok(BenchmarkSummary {
+        synthetic_count,
+        indexed_count,
+        search_hits: search_hits.len(),
+        post_delete_hits,
+        index_elapsed_ms,
+        search_elapsed_ms,
+        delete_elapsed_ms,
+        post_delete_verification,
+        large_corpus_status: if synthetic_count >= LARGE_CORPUS_THRESHOLD {
+            "synthetic-only"
+        } else {
+            "not-run"
+        },
+    })
+}
+
+fn seed_synthetic_benchmark_documents(
+    store: &MetadataStore,
+    writer: &mut FullTextIndexWriter,
+    synthetic_count: usize,
+    query: &str,
+) -> Result<usize, String> {
+    let mut indexed_count = 0;
+    store
+        .begin_bulk_write()
+        .map_err(|error| error.user_message().to_string())?;
+    let result = (|| {
+        for index in 0..synthetic_count {
+            let ordinal = index + 1;
+            let file_name = format!("synthetic-benchmark-{ordinal:06}.pdf");
+            let clean_text = format!(
+                "Benchmark synthetic resume {query} Rust Tantivy metadata deletion smoke cohort {}",
+                ordinal % 17
+            );
+            let text_hash = hex_sha256(clean_text.as_bytes());
+            let document = Document {
+                doc_id: DocumentId::new(),
+                source_uri: format!("local://synthetic-benchmark/{file_name}"),
+                normalized_path: format!("/synthetic-benchmark/{file_name}"),
+                file_name: file_name.clone(),
+                extension: DocumentExtension::Pdf,
+                byte_size: clean_text.len() as u64,
+                mtime: "2026-05-31T00:00:00Z".to_string(),
+                content_hash: Some(format!("benchmark-content-{ordinal}")),
+                text_hash: Some(text_hash),
+                is_deleted: false,
+                created_at: "2026-05-31T00:00:00Z".to_string(),
+                updated_at: "2026-05-31T00:00:00Z".to_string(),
+            };
+            let doc_id = document.doc_id.to_string();
+            let version_id = format!("benchmark-version-{ordinal}");
+            store
+                .upsert_document(&document)
+                .map_err(|error| error.user_message().to_string())?;
+            store
+                .upsert_resume_version(ParsedResumeRecord {
+                    version_id: &version_id,
+                    doc_id: &doc_id,
+                    parse_version: "s15-synthetic-benchmark",
+                    schema_version: "s15-synthetic-benchmark",
+                    raw_text: Some(&clean_text),
+                    clean_text: Some(&clean_text),
+                    visibility: "SEARCHABLE",
+                })
+                .map_err(|error| error.user_message().to_string())?;
+            writer
+                .add_document(IndexDocument {
+                    doc_id: doc_id.clone(),
+                    version_id: version_id.clone(),
+                    file_name,
+                    clean_text,
+                    section_type: "experience".to_string(),
+                    is_deleted: false,
+                })
+                .map_err(|error| error.to_string())?;
+            store
+                .upsert_index_state(
+                    &format!("fulltext:{doc_id}"),
+                    Some(&version_id),
+                    "SEARCHABLE",
+                    None,
+                )
+                .map_err(|error| error.user_message().to_string())?;
+            indexed_count += 1;
+        }
+        Ok(indexed_count)
+    })();
+    match result {
+        Ok(indexed_count) => {
+            store
+                .commit_bulk_write()
+                .map_err(|error| error.user_message().to_string())?;
+            Ok(indexed_count)
+        }
+        Err(error) => {
+            store.rollback_bulk_write();
+            Err(error)
+        }
+    }
+}
+
+fn benchmark_search(
+    data_dir: &Path,
+    query: &str,
+    synthetic_count: usize,
+) -> Result<Vec<SearchHit>, String> {
+    let top_k = synthetic_count.min(1000);
+    let reader = FullTextIndexReader::open_existing(fulltext_index_dir(data_dir))
+        .map_err(|_| "Could not open synthetic benchmark index.".to_string())?;
+    let hits = reader
+        .search(
+            query,
+            SearchOptions {
+                top_k,
+                ..SearchOptions::default()
+            },
+        )
+        .map_err(|_| "Synthetic benchmark search failed.".to_string())?;
+    filter_hits_by_metadata(hits, data_dir, &FieldFilters::default(), top_k)
+}
+
+fn write_benchmark_summary<W: Write>(
+    output: &mut W,
+    summary: &BenchmarkSummary,
+) -> Result<(), String> {
+    writeln!(
+        output,
+        "synthetic document count: {}",
+        summary.synthetic_count
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(output, "indexed count: {}", summary.indexed_count)
+        .map_err(|error| error.to_string())?;
+    writeln!(output, "search hits: {}", summary.search_hits).map_err(|error| error.to_string())?;
+    writeln!(output, "post-delete hits: {}", summary.post_delete_hits)
+        .map_err(|error| error.to_string())?;
+    writeln!(
+        output,
+        "post-delete verification: {}",
+        summary.post_delete_verification
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(output, "index elapsed_ms: {}", summary.index_elapsed_ms)
+        .map_err(|error| error.to_string())?;
+    writeln!(output, "search elapsed_ms: {}", summary.search_elapsed_ms)
+        .map_err(|error| error.to_string())?;
+    writeln!(output, "delete elapsed_ms: {}", summary.delete_elapsed_ms)
+        .map_err(|error| error.to_string())?;
+    writeln!(
+        output,
+        "large-corpus status: {}",
+        summary.large_corpus_status
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn write_status_counts<W: Write>(
@@ -1000,7 +1332,7 @@ fn single_line(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::run_with_args;
+    use super::{run_with_args, with_benchmark_scratch};
     use index_fulltext::{FullTextIndexWriter, IndexDocument};
     use std::fs;
     use std::io::Write;
@@ -1188,6 +1520,122 @@ mod tests {
         assert!(!text.contains(&synthetic_raw_text));
         assert!(!text.contains("synthetic-private-export.pdf"));
         assert!(!text.contains("diagnostic-smoke-token"));
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn benchmark_small_synthetic_run_outputs_aggregate_only_and_cleans_scratch(
+    ) -> Result<(), String> {
+        let data_dir = unique_data_dir("benchmark-small")?;
+        let query = "BenchmarkPrivateNeedle";
+        let local_payload = "synthetic-benchmark-000001.pdf";
+        let scratch_payload = "benchmark-scratch";
+        let mut output = Vec::new();
+
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "benchmark",
+                "--synthetic-count",
+                "3",
+                "--query",
+                query,
+            ],
+            &mut output,
+        )?;
+
+        let text = String::from_utf8(output).map_err(|error| error.to_string())?;
+        assert!(text.contains("synthetic document count: 3"));
+        assert!(text.contains("indexed count: 3"));
+        assert!(text.contains("search hits: 3"));
+        assert!(text.contains("post-delete hits: 2"));
+        assert!(text.contains("post-delete verification: removed"));
+        assert!(text.contains("index elapsed_ms: "));
+        assert!(text.contains("search elapsed_ms: "));
+        assert!(text.contains("delete elapsed_ms: "));
+        assert!(text.contains("large-corpus status: not-run"));
+        assert!(!text.contains(query));
+        assert!(!text.contains(data_dir.as_str()));
+        assert!(!text.contains(local_payload));
+        assert!(!text.contains(scratch_payload));
+        assert!(!text.contains("doc_"));
+        assert!(!text.contains("Benchmark synthetic resume"));
+        let scratch_entries = fs::read_dir(data_dir.as_ref())
+            .map_err(|error| error.to_string())?
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(scratch_payload)
+            })
+            .count();
+        assert_eq!(scratch_entries, 0);
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn benchmark_rejects_invalid_count_without_echoing_query() -> Result<(), String> {
+        let data_dir = unique_data_dir("benchmark-invalid")?;
+        let query = "SensitiveInvalidBenchmarkQuery";
+        let mut output = Vec::new();
+
+        let error = run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "benchmark",
+                "--synthetic-count",
+                "0",
+                "--query",
+                query,
+            ],
+            &mut output,
+        )
+        .err()
+        .ok_or_else(|| "invalid synthetic count should fail".to_string())?;
+
+        assert!(error.contains("Synthetic count must be between 1 and 1000000."));
+        assert!(!error.contains(query));
+        assert!(!error.contains(data_dir.as_str()));
+        assert!(output.is_empty());
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn benchmark_cleans_scratch_after_failed_run_without_echoing_payload() -> Result<(), String> {
+        let data_dir = unique_data_dir("benchmark-failure-cleanup")?;
+        let sensitive_payload = "SensitiveBenchmarkFailureQuery";
+
+        let error = with_benchmark_scratch(data_dir.as_ref(), |scratch_dir| {
+            fs::write(scratch_dir.join("payload.txt"), sensitive_payload)
+                .map_err(|error| error.to_string())?;
+            Err::<(), String>("Synthetic benchmark failed.".to_string())
+        })
+        .err()
+        .ok_or_else(|| "failed benchmark should return an error".to_string())?;
+
+        assert!(error.contains("Synthetic benchmark failed"));
+        assert!(!error.contains(sensitive_payload));
+        assert!(!error.contains(data_dir.as_str()));
+        let scratch_entries = fs::read_dir(data_dir.as_ref())
+            .map_err(|error| error.to_string())?
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("benchmark-scratch")
+            })
+            .count();
+        assert_eq!(scratch_entries, 0);
+
         fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
         Ok(())
     }

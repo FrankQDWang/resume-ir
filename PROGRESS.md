@@ -17,13 +17,13 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S14 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton and S14 deletion-propagation CLI slice. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/diagnostics packaging, CI, and production async import orchestration remain unfinished. |
-| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, S9 synthetic import-to-search smoke, and S14 CLI `delete --doc-id` propagation exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, async deletion orchestration, and benchmark remain absent. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S15 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton, S14 deletion-propagation CLI slice, and S15 local synthetic benchmark runner with batched metadata seeding. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/diagnostics packaging, CI, and production async import orchestration remain unfinished. |
+| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, S9 synthetic import-to-search smoke, S14 CLI `delete --doc-id` propagation, and S15 benchmark search/delete smoke exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, async deletion orchestration, and real benchmark corpus runs remain absent. |
 | P2 fields and dedupe | In progress | S10 smoke/MVP adds deterministic school, degree, and skill extraction on top of email/phone/date ranges; `rank-fusion` adds field summaries, `degree_min`, `skills_any`, `years_experience_min`, and hashed soft-dedupe skeleton tests; CLI search accepts `--degree bachelor --top-k 20`; S14 prevents deleted docs from being resurrected by query-time clean-text field filtering. | Dictionary coverage is intentionally tiny and synthetic; field filters are computed at query time from persisted clean text, not indexed fast fields; no evaluation harness or production candidate merge workflow exists. |
 | P3 semantic retrieval | In progress | S11 adds dependency-light `embedder` and `index-vector` crates with fake/test-only implementations plus `rank-fusion` RRF hybrid fusion tests. | This is only a fake-interface skeleton. Real embedding model choice/license/checksums/distribution, batch inference, production vector engine, hybrid integration, and recall benchmarks remain blockers. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; S12 adds typed `ocr-client` interfaces and deterministic `ingest-scheduler` OCR-required queue primitives without running OCR. Local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs, real OCR worker integration, and scanned synthetic corpus absent. |
 | P5 packaging | Blocked on binaries and signing inputs | Packaging design only. | Windows/macOS certs, secrets, runners, signing/notarization approval. |
-| P6 performance and stability | In progress (smoke/skeleton only) | S13 adds a one-query small-data doctor smoke, redacted missing/corrupt full-text index status, helper-level simulated daemon-kill/disk-full diagnostics tests, and a redacted `export-diagnostics` skeleton. | Real 100k/1M benchmarks, real fault injection, restart/recovery soak, diagnostics packaging, corpus, query set, and platform runners remain absent. |
+| P6 performance and stability | In progress (synthetic smoke/scale tooling only) | S13 adds a one-query small-data doctor smoke, redacted missing/corrupt full-text index status, helper-level simulated daemon-kill/disk-full diagnostics tests, and a redacted `export-diagnostics` skeleton. S15 adds `resume-cli benchmark --synthetic-count <n> --query <query>` for local synthetic metadata/Tantivy indexing with batched SQLite writes, metadata-gated search, existing delete-path verification, aggregate metrics, and scratch cleanup on success and handled failure paths. | No real 100k/1M benchmark result has been run or claimed here. Real fault injection, restart/recovery soak, diagnostics packaging, corpus, query set, and platform runners remain absent. |
 
 ## Slice Status
 
@@ -44,6 +44,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S12 | Complete | Added workspace crates `ocr-client` and `ingest-scheduler`; `ocr-client` exposes typed page request/response/cache-key/options/timeout/cancellation APIs plus a disabled client that returns deferred/cancelled/timed-out output without OCR text; `ingest-scheduler` exposes a deterministic in-memory OCR_REQUIRED queue with priority/resource-policy claiming, cancellation, and defer/retry state. Acceptance commands passed locally on 2026-05-31. | Real P4 OCR execution remains blocked on OCR engine/language packs, worker integration, and scanned synthetic corpus. |
 | S13 | Complete | Added `resume-cli doctor`, `resume-cli export-diagnostics --redact`, redacted full-text index health reporting, a one-query small-data benchmark smoke, corrupt-index handling, helper-level daemon-kill/disk-full simulations, and redaction tests. Acceptance commands passed locally on 2026-05-31. | P6 remains not production-complete: no 100k/1M benchmark, real fault injection, restart/recovery soak, diagnostics package, or platform performance gate exists. |
 | S14 | Complete | Added `resume-cli delete --doc-id <doc_id>`; metadata deletion tombstones document rows without touching source files; rediscovery preserves tombstones; existing Tantivy full-text indexes receive committed doc-id deletions; missing full-text indexes are not created solely for delete; SQLite records `DELETE_PENDING` before full-text mutation and finalizes `DELETED` or `DELETE_ERROR`; malformed `doc_id` values are rejected before storage access; search now metadata-filters every Tantivy hit so stale full-text rows cannot surface tombstoned docs; status/search/field-filter paths hide deleted documents. Acceptance commands passed locally on 2026-05-31. | This is CLI-level local deletion propagation only. Production async orchestration, large-corpus delete benchmarks, vector/field-index deletion propagation, and broader audit/recovery workflows remain incomplete. |
+| S15 | Complete | Added `resume-cli benchmark --synthetic-count <n> --query <query>`; validates `n` as 1..=1,000,000; seeds synthetic metadata and real Tantivy documents into a scratch data area under `--data-dir` using a bulk SQLite transaction; searches through the metadata-gated path; deletes one hit through the existing delete path; verifies the deleted doc is absent from post-delete search; prints aggregate metrics only; reports `large-corpus status: not-run` below 100,000 and `synthetic-only` at/above 100,000; cleans scratch on success and tested failure paths. Acceptance commands passed locally on 2026-05-31. | This is honest local synthetic benchmark tooling/smoke only. It is not a real 100k/1M benchmark result, does not use a real/desensitized corpus, and does not complete P6 performance or stability gates. |
 
 ## Command Log
 
@@ -454,3 +455,39 @@ Review summary:
 - Re-importing a tombstoned source path is skipped, preserves the source file, keeps the document hidden, and keeps index state non-searchable.
 - `clean_text_by_doc_id` now joins `document` and requires `is_deleted = 0`; CLI search applies that metadata check to every Tantivy hit, so stale full-text rows and query-time field filters cannot recover deleted documents.
 - S14 does not complete P1 or the overall product: async deletion orchestration, vector/field-index deletion propagation, large-corpus delete benchmarks, and production recovery/audit workflows remain incomplete.
+
+### S15
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli benchmark_
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store bulk_write_commit_and_rollback_control_visibility
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+git diff --check
+git status --short --ignored -- local-data
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- --data-dir "$tmpdir" benchmark --synthetic-count 5 --query SecretNeedle
+```
+
+Output summary:
+
+- TDD red runs for the benchmark CLI initially failed before `benchmark` command parsing and aggregate output existed; quality re-review then identified failed-run scratch retention, unbatched metadata seeding, and ambiguous `large-corpus status: run`.
+- Controller regression `cargo test -p resume-cli benchmark_`: succeeded with 3 focused benchmark tests covering aggregate-only output, invalid-count redaction, successful scratch cleanup, and failed-run scratch cleanup without echoing sensitive payloads.
+- Controller regression `cargo test -p meta-store bulk_write_commit_and_rollback_control_visibility`: succeeded, covering bulk write rollback and commit behavior used by benchmark metadata seeding.
+- Final `cargo fmt --check`: succeeded.
+- Final `cargo test -p meta-store`: succeeded with 15 tests, including the new bulk-write transaction coverage.
+- Final `cargo test -p resume-cli`: succeeded with 26 tests, including benchmark smoke, failed-run cleanup, post-delete verification, and redaction coverage.
+- Final `cargo test --workspace`: succeeded across all crates.
+- Final `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+- Final `git diff --check`: succeeded.
+- Final `git status --short --ignored -- local-data`: showed only `!! local-data/`.
+- Controller CLI smoke in a temporary data directory succeeded: `benchmark --synthetic-count 5 --query SecretNeedle` reported only aggregate counts/timings, `post-delete verification: removed`, and `large-corpus status: not-run`; the temporary data directory had no remaining scratch entries after completion.
+
+Review summary:
+
+- S15 adds benchmark tooling only: it does not claim real 100k/1M corpus performance, P95/P99 targets, OCR benchmark, vector benchmark, or production P6 completion.
+- Synthetic benchmark seeding uses a bulk SQLite write transaction plus real Tantivy writes, so large synthetic runs are not dominated by per-row SQLite autocommit overhead.
+- The benchmark stores the user-provided query only in temporary scratch metadata/index documents, never prints it, and removes scratch data on successful and tested failed benchmark paths.
+- At or above 100,000 synthetic documents the CLI reports `large-corpus status: synthetic-only`, not a production benchmark pass.
