@@ -5,6 +5,7 @@ members = [
     "crates/meta-store",
     "crates/daemon",
     "crates/cli",
+    "crates/fs-crawler",
 ]
 resolver = "2"
 
