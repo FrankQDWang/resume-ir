@@ -17,13 +17,13 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S11 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, production async import orchestration, and diagnostics remain unfinished. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S13 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/diagnostics packaging, CI, and production async import orchestration remain unfinished. |
 | P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, and S9 synthetic import-to-search smoke exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, and benchmark remain absent. |
 | P2 fields and dedupe | In progress | S10 smoke/MVP adds deterministic school, degree, and skill extraction on top of email/phone/date ranges; `rank-fusion` adds field summaries, `degree_min`, `skills_any`, `years_experience_min`, and hashed soft-dedupe skeleton tests; CLI search accepts `--degree bachelor --top-k 20`. | Dictionary coverage is intentionally tiny and synthetic; field filters are computed at query time from persisted clean text, not indexed fast fields; no evaluation harness or production candidate merge workflow exists. |
 | P3 semantic retrieval | In progress | S11 adds dependency-light `embedder` and `index-vector` crates with fake/test-only implementations plus `rank-fusion` RRF hybrid fusion tests. | This is only a fake-interface skeleton. Real embedding model choice/license/checksums/distribution, batch inference, production vector engine, hybrid integration, and recall benchmarks remain blockers. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; S12 adds typed `ocr-client` interfaces and deterministic `ingest-scheduler` OCR-required queue primitives without running OCR. Local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs, real OCR worker integration, and scanned synthetic corpus absent. |
 | P5 packaging | Blocked on binaries and signing inputs | Packaging design only. | Windows/macOS certs, secrets, runners, signing/notarization approval. |
-| P6 performance and stability | Not started | Benchmark/fault-injection design only. | 100k/1M corpus, query set, platform runners absent. |
+| P6 performance and stability | In progress (smoke/skeleton only) | S13 adds a one-query small-data doctor smoke, redacted missing/corrupt full-text index status, helper-level simulated daemon-kill/disk-full diagnostics tests, and a redacted `export-diagnostics` skeleton. | Real 100k/1M benchmarks, real fault injection, restart/recovery soak, diagnostics packaging, corpus, query set, and platform runners remain absent. |
 
 ## Slice Status
 
@@ -42,7 +42,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S10 | Complete | MVP deterministic extraction for email, phone, school, degree, skills, and date ranges; field confidence/evidence preserved by `StrongEntity`; `rank-fusion` field filters and hashed candidate soft-dedupe skeleton; CLI `search "Java" --degree bachelor --top-k 20` parses and filters returned hits by persisted clean text. Acceptance commands passed locally on 2026-05-31. | None |
 | S11 | Complete | Added workspace crates `embedder` and `index-vector`; `embedder` exposes typed embedding request/response/vector APIs, `Embedder`, and deterministic nonzero `FakeEmbedder`; `index-vector` exposes `VectorIndex`, cosine/dot search, upsert, deletion filtering, and deterministic in-memory tests; `rank-fusion` adds RRF hybrid fusion with configurable `k`, deterministic doc-id tie-breaking, and redacted source contribution debug output. Acceptance commands passed locally on 2026-05-31. | Production P3 remains blocked on real model license/manifest/checksums, batch inference, production vector engine, hybrid retrieval integration, and recall benchmarks. |
 | S12 | Complete | Added workspace crates `ocr-client` and `ingest-scheduler`; `ocr-client` exposes typed page request/response/cache-key/options/timeout/cancellation APIs plus a disabled client that returns deferred/cancelled/timed-out output without OCR text; `ingest-scheduler` exposes a deterministic in-memory OCR_REQUIRED queue with priority/resource-policy claiming, cancellation, and defer/retry state. Acceptance commands passed locally on 2026-05-31. | Real P4 OCR execution remains blocked on OCR engine/language packs, worker integration, and scanned synthetic corpus. |
-| S13 | Not started |  |  |
+| S13 | Complete | Added `resume-cli doctor`, `resume-cli export-diagnostics --redact`, redacted full-text index health reporting, a one-query small-data benchmark smoke, corrupt-index handling, helper-level daemon-kill/disk-full simulations, and redaction tests. Acceptance commands passed locally on 2026-05-31. | P6 remains not production-complete: no 100k/1M benchmark, real fault injection, restart/recovery soak, diagnostics package, or platform performance gate exists. |
 
 ## Command Log
 
@@ -375,3 +375,37 @@ Review summary:
 - `DisabledOcrWorkerClient` returns typed non-execution statuses and never fabricates OCR text.
 - OCR-required work is represented as deterministic background queue state; `OcrClaimPolicy::query_path()` claims no background OCR task, keeping scanned documents off the query hot path.
 - P4 remains blocked for real OCR execution until OCR engines/language packs, worker isolation, page cache persistence, and scanned synthetic fixtures are available.
+
+### S13
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- doctor
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- export-diagnostics --redact
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+git diff --check
+git status --short --ignored -- local-data
+```
+
+Output summary:
+
+- TDD red run for `cargo test -p resume-cli` failed first on the expected unresolved S13 diagnostic helper APIs before implementation.
+- Final `cargo fmt --check`: succeeded.
+- Final `cargo test -p resume-cli`: succeeded with 16 tests, including doctor empty-data, seeded-index query smoke, corrupt full-text snapshot, simulated daemon-kill/disk-full diagnostics, and redacted export diagnostics coverage.
+- Final `cargo test --workspace`: succeeded across all crates.
+- `resume-cli doctor`: succeeded against ignored local data, reported aggregate metadata counts, `fulltext index: available`, and a one-query smoke with hit count/elapsed milliseconds only.
+- `resume-cli export-diagnostics --redact`: succeeded against ignored local data and printed only redacted aggregate metadata/status plus static local-only capability fields.
+- Final `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+- Final `git diff --check`: succeeded.
+- Final `git status --short --ignored -- local-data`: showed only `!! local-data/`.
+
+Review summary:
+
+- S13 is a skeleton/smoke-only P6 slice. It does not claim P95, throughput, million-scale behavior, or production performance.
+- The doctor query smoke uses a single fixed local query only when a full-text index opens; missing or corrupt/unreadable full-text state is reported without failing and without paths.
+- `export-diagnostics --redact` requires `--redact` and excludes documents, paths, file names, snippets, queries, raw text, and local data directory details.
+- Daemon-kill and disk-full coverage is helper-level simulation only; no process is killed and no disk is filled.
+- P6 remains incomplete until real 100k/1M benchmarks, fault injection, restart/recovery soak, diagnostics packaging, and platform gates exist.

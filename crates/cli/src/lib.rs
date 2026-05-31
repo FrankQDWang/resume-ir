@@ -17,6 +17,11 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+const CLI_USAGE: &str =
+    "Usage: resume-cli [--data-dir <path>] <status|import|search|doctor|export-diagnostics>";
+const DIAGNOSTIC_QUERY_TEXT: &str = "diagnostic-smoke-token";
 
 /// Returns the crate name for smoke tests and workspace metadata.
 #[must_use]
@@ -38,35 +43,7 @@ where
             let status = store
                 .status()
                 .map_err(|error| error.user_message().to_string())?;
-            writeln!(output, "metadata schema: {}", status.schema_version)
-                .map_err(|error| error.to_string())?;
-            writeln!(
-                output,
-                "visible documents: {}",
-                status.visible_document_count
-            )
-            .map_err(|error| error.to_string())?;
-            writeln!(
-                output,
-                "queued imports: {}",
-                status.queued_import_task_count
-            )
-            .map_err(|error| error.to_string())?;
-            writeln!(output, "index states: {}", status.index_state_count)
-                .map_err(|error| error.to_string())?;
-            writeln!(
-                output,
-                "searchable documents: {}",
-                status.searchable_document_count
-            )
-            .map_err(|error| error.to_string())?;
-            writeln!(
-                output,
-                "ocr required documents: {}",
-                status.ocr_required_document_count
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
+            write_status_counts(output, &status)
         }
         Command::Import { root } => {
             if !root.is_dir() {
@@ -166,6 +143,13 @@ where
             }
             Ok(())
         }
+        Command::Doctor => run_doctor(&options.data_dir, output),
+        Command::ExportDiagnostics { redact } => {
+            if !redact {
+                return Err("Usage: resume-cli export-diagnostics --redact".to_string());
+            }
+            export_diagnostics(&options.data_dir, output)
+        }
     }
 }
 
@@ -176,6 +160,10 @@ struct CliOptions {
 
 enum Command {
     Status,
+    Doctor,
+    ExportDiagnostics {
+        redact: bool,
+    },
     Import {
         root: PathBuf,
     },
@@ -216,15 +204,27 @@ impl CliOptions {
 
 fn parse_command(parts: &[String]) -> Result<Command, String> {
     let Some(command) = parts.first() else {
-        return Err("Usage: resume-cli [--data-dir <path>] <status|import|search>".to_string());
+        return Err(CLI_USAGE.to_string());
     };
     match command.as_str() {
         "status" if parts.len() == 1 => Ok(Command::Status),
+        "doctor" if parts.len() == 1 => Ok(Command::Doctor),
+        "export-diagnostics" => parse_export_diagnostics_command(parts),
         "import" => parse_import_command(parts),
         "search" if parts.len() >= 2 => parse_search_command(parts),
         "search" => Err("Usage: resume-cli search <query>".to_string()),
-        _ => Err("Unknown command. Use status, import, or search.".to_string()),
+        _ => Err(
+            "Unknown command. Use status, import, search, doctor, or export-diagnostics."
+                .to_string(),
+        ),
     }
+}
+
+fn parse_export_diagnostics_command(parts: &[String]) -> Result<Command, String> {
+    if parts.len() != 2 || parts[1] != "--redact" {
+        return Err("Usage: resume-cli export-diagnostics --redact".to_string());
+    }
+    Ok(Command::ExportDiagnostics { redact: true })
 }
 
 fn parse_search_command(parts: &[String]) -> Result<Command, String> {
@@ -332,6 +332,199 @@ fn open_store(data_dir: &Path) -> Result<MetadataStore, String> {
         .run_migrations()
         .map_err(|error| error.user_message().to_string())?;
     Ok(store)
+}
+
+fn run_doctor<W: Write>(data_dir: &Path, output: &mut W) -> Result<(), String> {
+    let store = open_store(data_dir)?;
+    let status = store
+        .status()
+        .map_err(|error| error.user_message().to_string())?;
+    write_status_counts(output, &status)?;
+
+    let inspection = inspect_fulltext_index(data_dir, true);
+    writeln!(output, "fulltext index: {}", inspection.status).map_err(|error| error.to_string())?;
+    if let Some(smoke) = inspection.query_smoke {
+        writeln!(output, "query benchmark smoke: completed").map_err(|error| error.to_string())?;
+        writeln!(output, "query benchmark hits: {}", smoke.hits)
+            .map_err(|error| error.to_string())?;
+        writeln!(output, "query benchmark elapsed_ms: {}", smoke.elapsed_ms)
+            .map_err(|error| error.to_string())?;
+    } else {
+        writeln!(output, "query benchmark smoke: skipped").map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn export_diagnostics<W: Write>(data_dir: &Path, output: &mut W) -> Result<(), String> {
+    let store = open_store(data_dir)?;
+    let status = store
+        .status()
+        .map_err(|error| error.user_message().to_string())?;
+    let index_status = inspect_fulltext_index(data_dir, false).status;
+    let daemon_check = simulate_daemon_kill_diagnostic(0, "", "");
+    let disk_check = simulate_disk_full_diagnostic(false, "", "");
+
+    writeln!(output, "diagnostics redaction: enabled").map_err(|error| error.to_string())?;
+    writeln!(output, "diagnostics format: skeleton").map_err(|error| error.to_string())?;
+    write_status_counts(output, &status)?;
+    writeln!(output, "fulltext index: {index_status}").map_err(|error| error.to_string())?;
+    writeln!(output, "documents: aggregate-only").map_err(|error| error.to_string())?;
+    writeln!(output, "paths: redacted").map_err(|error| error.to_string())?;
+    writeln!(output, "file names: excluded").map_err(|error| error.to_string())?;
+    writeln!(output, "snippets: excluded").map_err(|error| error.to_string())?;
+    writeln!(output, "queries: excluded").map_err(|error| error.to_string())?;
+    writeln!(output, "raw text: excluded").map_err(|error| error.to_string())?;
+    writeln!(output, "environment: local-only").map_err(|error| error.to_string())?;
+    writeln!(output, "remote side effects: none").map_err(|error| error.to_string())?;
+    writeln!(output, "{}", render_diagnostic_check(&daemon_check))
+        .map_err(|error| error.to_string())?;
+    writeln!(output, "{}", render_diagnostic_check(&disk_check))
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn write_status_counts<W: Write>(
+    output: &mut W,
+    status: &meta_store::StoreStatus,
+) -> Result<(), String> {
+    writeln!(output, "metadata schema: {}", status.schema_version)
+        .map_err(|error| error.to_string())?;
+    writeln!(
+        output,
+        "visible documents: {}",
+        status.visible_document_count
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        output,
+        "queued imports: {}",
+        status.queued_import_task_count
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(output, "index states: {}", status.index_state_count)
+        .map_err(|error| error.to_string())?;
+    writeln!(
+        output,
+        "searchable documents: {}",
+        status.searchable_document_count
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        output,
+        "ocr required documents: {}",
+        status.ocr_required_document_count
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[derive(Clone, Copy)]
+struct FullTextInspection {
+    status: &'static str,
+    query_smoke: Option<QuerySmoke>,
+}
+
+#[derive(Clone, Copy)]
+struct QuerySmoke {
+    hits: usize,
+    elapsed_ms: u128,
+}
+
+fn inspect_fulltext_index(data_dir: &Path, run_query_smoke: bool) -> FullTextInspection {
+    let index_dir = fulltext_index_dir(data_dir);
+    let reader = match FullTextIndexReader::open_existing(&index_dir) {
+        Ok(reader) => reader,
+        Err(FullTextError::MissingIndex) => {
+            return FullTextInspection {
+                status: "missing",
+                query_smoke: None,
+            };
+        }
+        Err(_) => {
+            return FullTextInspection {
+                status: "corrupt-or-unreadable",
+                query_smoke: None,
+            };
+        }
+    };
+
+    if !run_query_smoke {
+        return FullTextInspection {
+            status: "available",
+            query_smoke: None,
+        };
+    }
+
+    let started = Instant::now();
+    match reader.search(
+        DIAGNOSTIC_QUERY_TEXT,
+        SearchOptions {
+            top_k: 1,
+            ..SearchOptions::default()
+        },
+    ) {
+        Ok(hits) => FullTextInspection {
+            status: "available",
+            query_smoke: Some(QuerySmoke {
+                hits: hits.len(),
+                elapsed_ms: started.elapsed().as_millis(),
+            }),
+        },
+        Err(_) => FullTextInspection {
+            status: "corrupt-or-unreadable",
+            query_smoke: None,
+        },
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DiagnosticCheck {
+    name: &'static str,
+    status: &'static str,
+    detail: &'static str,
+}
+
+fn simulate_daemon_kill_diagnostic(
+    interrupted_jobs: u64,
+    _local_path: &str,
+    _raw_text: &str,
+) -> DiagnosticCheck {
+    if interrupted_jobs == 0 {
+        DiagnosticCheck {
+            name: "daemon kill simulation",
+            status: "clean",
+            detail: "no interrupted jobs simulated",
+        }
+    } else {
+        DiagnosticCheck {
+            name: "daemon kill simulation",
+            status: "recoverable",
+            detail: "interrupted work remains retryable",
+        }
+    }
+}
+
+fn simulate_disk_full_diagnostic(
+    write_rejected: bool,
+    _local_path: &str,
+    _payload: &str,
+) -> DiagnosticCheck {
+    if write_rejected {
+        DiagnosticCheck {
+            name: "disk space simulation",
+            status: "write-rejected",
+            detail: "write rejected; local path and payload redacted",
+        }
+    } else {
+        DiagnosticCheck {
+            name: "disk space simulation",
+            status: "not-triggered",
+            detail: "no disk exhaustion simulated",
+        }
+    }
+}
+
+fn render_diagnostic_check(check: &DiagnosticCheck) -> String {
+    format!("{}: {} ({})", check.name, check.status, check.detail)
 }
 
 fn fulltext_index_dir(data_dir: &Path) -> PathBuf {
@@ -685,6 +878,172 @@ mod tests {
         assert!(text.contains("visible documents: 0"));
         assert!(text.contains("queued imports: 0"));
         assert!(data_dir.join("metadata.sqlite").is_file());
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_initializes_empty_data_dir_and_skips_missing_index() -> Result<(), String> {
+        let data_dir = unique_data_dir("doctor-empty")?;
+        let mut output = Vec::new();
+
+        run_with_args(
+            ["resume-cli", "--data-dir", data_dir.as_str(), "doctor"],
+            &mut output,
+        )?;
+
+        let text = String::from_utf8(output).map_err(|error| error.to_string())?;
+        assert!(text.contains("metadata schema: 2"));
+        assert!(text.contains("visible documents: 0"));
+        assert!(text.contains("fulltext index: missing"));
+        assert!(text.contains("query benchmark smoke: skipped"));
+        assert!(!text.contains(data_dir.as_str()));
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_runs_small_query_smoke_without_leaking_query_text_or_paths() -> Result<(), String> {
+        let data_dir = unique_data_dir("doctor-index")?;
+        let index_dir = data_dir.join("indexes").join("fulltext");
+        seed_search_document(
+            data_dir.as_ref(),
+            index_dir.as_ref(),
+            "doc-doctor",
+            "synthetic-private-doctor.pdf",
+            "diagnostic-smoke-token hidden resume raw text",
+        )?;
+        let mut output = Vec::new();
+
+        run_with_args(
+            ["resume-cli", "--data-dir", data_dir.as_str(), "doctor"],
+            &mut output,
+        )?;
+
+        let text = String::from_utf8(output).map_err(|error| error.to_string())?;
+        assert!(text.contains("fulltext index: available"));
+        assert!(text.contains("query benchmark smoke: completed"));
+        assert!(text.contains("query benchmark hits: 1"));
+        assert!(!text.contains("diagnostic-smoke-token"));
+        assert!(!text.contains("hidden resume raw text"));
+        assert!(!text.contains("synthetic-private-doctor.pdf"));
+        assert!(!text.contains(index_dir.as_str()));
+        assert!(!text.contains(data_dir.as_str()));
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_reports_corrupt_fulltext_snapshot_redacted_without_error() -> Result<(), String> {
+        let data_dir = unique_data_dir("doctor-corrupt")?;
+        let index_dir = data_dir.join("indexes").join("fulltext");
+        fs::create_dir_all(index_dir.as_ref()).map_err(|error| error.to_string())?;
+        fs::write(
+            index_dir.join("meta.json").as_ref(),
+            b"not valid tantivy metadata",
+        )
+        .map_err(|error| error.to_string())?;
+        let mut output = Vec::new();
+
+        run_with_args(
+            ["resume-cli", "--data-dir", data_dir.as_str(), "doctor"],
+            &mut output,
+        )?;
+
+        let text = String::from_utf8(output).map_err(|error| error.to_string())?;
+        assert!(text.contains("fulltext index: corrupt-or-unreadable"));
+        assert!(text.contains("query benchmark smoke: skipped"));
+        assert!(!text.contains(index_dir.as_str()));
+        assert!(!text.contains(data_dir.as_str()));
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn simulated_fault_diagnostics_are_redacted() -> Result<(), String> {
+        let daemon = super::simulate_daemon_kill_diagnostic(
+            2,
+            "/local/redacted/resume.pdf",
+            "raw resume text",
+        );
+        assert_eq!(daemon.name, "daemon kill simulation");
+        assert_eq!(daemon.status, "recoverable");
+        let daemon_text = super::render_diagnostic_check(&daemon);
+        assert!(daemon_text.contains("daemon kill simulation: recoverable"));
+        assert!(!daemon_text.contains("/local/redacted"));
+        assert!(!daemon_text.contains("raw resume text"));
+
+        let disk_full = super::simulate_disk_full_diagnostic(
+            true,
+            "/local/redacted/indexes/fulltext",
+            "sensitive-payload-marker",
+        );
+        assert_eq!(disk_full.name, "disk space simulation");
+        assert_eq!(disk_full.status, "write-rejected");
+        let disk_text = super::render_diagnostic_check(&disk_full);
+        assert!(disk_text.contains("disk space simulation: write-rejected"));
+        assert!(!disk_text.contains("/local/redacted"));
+        assert!(!disk_text.contains("sensitive-payload-marker"));
+        Ok(())
+    }
+
+    #[test]
+    fn export_diagnostics_requires_redact_and_excludes_local_payloads() -> Result<(), String> {
+        let data_dir = unique_data_dir("export-diagnostics")?;
+        let synthetic_email = ["private", "@", "invalid.test"].concat();
+        let synthetic_phone = ["555", "010", "2121"].join("-");
+        let synthetic_raw_text =
+            format!("confidential raw resume text {synthetic_email} {synthetic_phone}");
+        seed_private_metadata(
+            data_dir.as_ref(),
+            &synthetic_email,
+            &synthetic_phone,
+            &synthetic_raw_text,
+        )?;
+
+        let mut unredacted_output = Vec::new();
+        let error = run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "export-diagnostics",
+            ],
+            &mut unredacted_output,
+        )
+        .err()
+        .ok_or_else(|| "export-diagnostics without --redact should fail".to_string())?;
+        assert!(error.contains("Usage: resume-cli export-diagnostics --redact"));
+        assert!(!error.contains(data_dir.as_str()));
+        assert!(!error.contains(&synthetic_email));
+        assert!(!error.contains(&synthetic_phone));
+
+        let mut output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "export-diagnostics",
+                "--redact",
+            ],
+            &mut output,
+        )?;
+
+        let text = String::from_utf8(output).map_err(|error| error.to_string())?;
+        assert!(text.contains("diagnostics redaction: enabled"));
+        assert!(text.contains("metadata schema: 2"));
+        assert!(text.contains("visible documents: 1"));
+        assert!(text.contains("documents: aggregate-only"));
+        assert!(text.contains("paths: redacted"));
+        assert!(text.contains("raw text: excluded"));
+        assert!(text.contains("remote side effects: none"));
+        assert!(!text.contains(data_dir.as_str()));
+        assert!(!text.contains(&synthetic_email));
+        assert!(!text.contains(&synthetic_phone));
+        assert!(!text.contains(&synthetic_raw_text));
+        assert!(!text.contains("synthetic-private-export.pdf"));
+        assert!(!text.contains("diagnostic-smoke-token"));
         fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -1237,6 +1596,61 @@ mod tests {
             })
             .map_err(|error| error.to_string())?;
         writer.commit().map_err(|error| error.to_string())
+    }
+
+    fn seed_private_metadata(
+        data_dir: &std::path::Path,
+        synthetic_email: &str,
+        synthetic_phone: &str,
+        synthetic_raw_text: &str,
+    ) -> Result<(), String> {
+        use core_domain::{Document, DocumentExtension, DocumentId};
+        use meta_store::{MetadataStore, ParsedResumeRecord};
+
+        let store = MetadataStore::open(data_dir.join("metadata.sqlite"))
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .run_migrations()
+            .map_err(|error| error.user_message().to_string())?;
+        let private_path = data_dir.join("synthetic-private-export.pdf");
+        let private_path_text = private_path.to_string_lossy().to_string();
+        let document = Document {
+            doc_id: DocumentId::new(),
+            source_uri: format!("file://{private_path_text}"),
+            normalized_path: private_path_text,
+            file_name: "synthetic-private-export.pdf".to_string(),
+            extension: DocumentExtension::Pdf,
+            byte_size: 256,
+            mtime: "2026-01-01T00:00:00Z".to_string(),
+            content_hash: Some(format!("{synthetic_email}-{synthetic_phone}")),
+            text_hash: Some("private-text-hash".to_string()),
+            is_deleted: false,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let stored_doc_id = document.doc_id.to_string();
+        store
+            .upsert_document(&document)
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .upsert_resume_version(ParsedResumeRecord {
+                version_id: "private-export-version",
+                doc_id: &stored_doc_id,
+                parse_version: "test-private",
+                schema_version: "test-private",
+                raw_text: Some(synthetic_raw_text),
+                clean_text: Some(synthetic_raw_text),
+                visibility: "SEARCHABLE",
+            })
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .upsert_index_state(
+                "fulltext:private-export",
+                Some("private-export-version"),
+                "SEARCHABLE",
+                Some("private path and payload must stay redacted"),
+            )
+            .map_err(|error| error.user_message().to_string())
     }
 
     fn text_layer_pdf_bytes() -> Vec<u8> {
