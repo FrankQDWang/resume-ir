@@ -1,0 +1,13 @@
+[package]
+name = "ingest-scheduler"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+core-domain = { path = "../core-domain" }
+ocr-client = { path = "../ocr-client" }
+
+[lints]
+workspace = true

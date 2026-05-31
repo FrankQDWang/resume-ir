@@ -583,6 +583,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ingest-scheduler"
+version = "0.1.0"
+dependencies = [
+ "core-domain",
+ "ocr-client",
+]
+
+[[package]]
 name = "inventory"
 version = "0.3.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -763,6 +771,10 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
 ]
+
+[[package]]
+name = "ocr-client"
+version = "0.1.0"
 
 [[package]]
 name = "once_cell"
