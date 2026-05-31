@@ -153,6 +153,28 @@ pub struct StoreStatus {
     pub queued_import_task_count: u64,
     /// Number of known index state rows.
     pub index_state_count: u64,
+    /// Number of documents that reached the S9 searchable state.
+    pub searchable_document_count: u64,
+    /// Number of documents that reached the S9 OCR-required state.
+    pub ocr_required_document_count: u64,
+}
+
+/// Parsed resume-version row accepted by the local ingest smoke path.
+pub struct ParsedResumeRecord<'a> {
+    /// Stable parsed version identifier.
+    pub version_id: &'a str,
+    /// Source document identifier.
+    pub doc_id: &'a str,
+    /// Parser version label.
+    pub parse_version: &'a str,
+    /// Parsed schema version label.
+    pub schema_version: &'a str,
+    /// Extracted raw text, if available.
+    pub raw_text: Option<&'a str>,
+    /// Normalized text, if available.
+    pub clean_text: Option<&'a str>,
+    /// Search or OCR routing state.
+    pub visibility: &'a str,
 }
 
 /// Import-root task row selected by local orchestration.
@@ -424,6 +446,67 @@ impl MetadataStore {
         Ok(documents)
     }
 
+    /// Returns one document by normalized local path when it exists.
+    pub fn document_by_normalized_path(
+        &self,
+        normalized_path: &str,
+    ) -> Result<Option<DocumentRow>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                r"
+                SELECT doc_id, source_uri, normalized_path, file_name, extension, byte_size,
+                       mtime, content_hash, text_hash, is_deleted, created_at, updated_at
+                FROM document
+                WHERE normalized_path = ?1
+                LIMIT 1
+                ",
+            )
+            .map_err(storage_error)?;
+
+        let mut rows = statement
+            .query_map([normalized_path], document_row_from_sql)
+            .map_err(storage_error)?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row.map_err(storage_error)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Inserts or updates a parsed resume-version record.
+    pub fn upsert_resume_version(&self, record: ParsedResumeRecord<'_>) -> Result<()> {
+        self.connection
+            .execute(
+                r"
+                INSERT INTO resume_version (
+                    version_id, doc_id, parse_version, schema_version, language_set_json,
+                    raw_text, clean_text, visibility
+                )
+                VALUES (?1, ?2, ?3, ?4, '[]', ?5, ?6, ?7)
+                ON CONFLICT(version_id) DO UPDATE SET
+                    doc_id = excluded.doc_id,
+                    parse_version = excluded.parse_version,
+                    schema_version = excluded.schema_version,
+                    raw_text = excluded.raw_text,
+                    clean_text = excluded.clean_text,
+                    visibility = excluded.visibility,
+                    updated_at = CURRENT_TIMESTAMP
+                ",
+                params![
+                    record.version_id,
+                    record.doc_id,
+                    record.parse_version,
+                    record.schema_version,
+                    record.raw_text,
+                    record.clean_text,
+                    record.visibility,
+                ],
+            )
+            .map(|_| ())
+            .map_err(storage_error)
+    }
+
     /// Inserts an ingest job and returns its store-assigned identifier.
     pub fn insert_ingest_job(
         &self,
@@ -566,6 +649,22 @@ impl MetadataStore {
         Ok(tasks)
     }
 
+    /// Updates an import-root task state.
+    pub fn update_import_task_state(&self, task_id: i64, state: JobState) -> Result<()> {
+        self.connection
+            .execute(
+                r"
+                UPDATE import_task
+                SET state = ?2,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_id = ?1
+                ",
+                params![task_id, state.as_str()],
+            )
+            .map(|_| ())
+            .map_err(storage_error)
+    }
+
     /// Returns a concise status summary for local operator commands.
     pub fn status(&self) -> Result<StoreStatus> {
         Ok(StoreStatus {
@@ -573,6 +672,10 @@ impl MetadataStore {
             visible_document_count: self.count_rows("document", Some("is_deleted = 0"))?,
             queued_import_task_count: self.count_rows("import_task", Some("state = 'queued'"))?,
             index_state_count: self.count_rows("index_state", None)?,
+            searchable_document_count: self
+                .count_rows("index_state", Some("status = 'SEARCHABLE'"))?,
+            ocr_required_document_count: self
+                .count_rows("index_state", Some("status = 'OCR_REQUIRED'"))?,
         })
     }
 
@@ -748,6 +851,8 @@ mod tests {
         assert_eq!(status.visible_document_count, 1);
         assert_eq!(status.queued_import_task_count, 1);
         assert_eq!(status.index_state_count, 1);
+        assert_eq!(status.searchable_document_count, 0);
+        assert_eq!(status.ocr_required_document_count, 0);
         Ok(())
     }
 

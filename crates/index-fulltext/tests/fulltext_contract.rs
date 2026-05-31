@@ -80,6 +80,42 @@ fn deleted_marker_is_hidden_by_default() -> Result<(), Box<dyn std::error::Error
 }
 
 #[test]
+fn adding_new_version_for_same_document_replaces_old_search_hit(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut writer = FullTextIndexWriter::open_or_create(temp_dir.path())?;
+
+    writer.add_document(IndexDocument {
+        doc_id: "doc-stable".to_string(),
+        version_id: "ver-old".to_string(),
+        file_name: "synthetic-old.pdf".to_string(),
+        clean_text: "Java old synthetic text".to_string(),
+        section_type: "experience".to_string(),
+        is_deleted: false,
+    })?;
+    writer.commit()?;
+
+    writer.add_document(IndexDocument {
+        doc_id: "doc-stable".to_string(),
+        version_id: "ver-new".to_string(),
+        file_name: "synthetic-new.pdf".to_string(),
+        clean_text: "Java new synthetic text".to_string(),
+        section_type: "experience".to_string(),
+        is_deleted: false,
+    })?;
+    writer.commit()?;
+
+    let reader = FullTextIndexReader::open_existing(temp_dir.path())?;
+    let hits = reader.search("Java", SearchOptions::default())?;
+
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].doc_id, "doc-stable");
+    assert_eq!(hits[0].file_name, "synthetic-new.pdf");
+    assert!(hits[0].snippet.contains("new synthetic"));
+    Ok(())
+}
+
+#[test]
 fn debug_output_redacts_text_file_name_and_snippet() {
     let document = IndexDocument {
         doc_id: "doc-debug".to_string(),

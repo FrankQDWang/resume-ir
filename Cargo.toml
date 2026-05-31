@@ -28,6 +28,8 @@ config = { path = "crates/config" }
 meta-store = { path = "crates/meta-store" }
 fs-crawler = { path = "crates/fs-crawler" }
 parser-common = { path = "crates/parser-common" }
+parser-docx = { path = "crates/parser-docx" }
+parser-pdf = { path = "crates/parser-pdf" }
 text-normalizer = { path = "crates/text-normalizer" }
 sectionizer = { path = "crates/sectionizer" }
 extractor-rules = { path = "crates/extractor-rules" }

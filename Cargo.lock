@@ -943,9 +943,18 @@ name = "resume-cli"
 version = "0.1.0"
 dependencies = [
  "config",
+ "core-domain",
+ "fs-crawler",
  "index-fulltext",
  "meta-store",
+ "parser-common",
+ "parser-docx",
+ "parser-pdf",
  "search-planner",
+ "sectionizer",
+ "sha2",
+ "text-normalizer",
+ "zip",
 ]
 
 [[package]]

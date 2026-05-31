@@ -17,8 +17,8 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S8 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, and import/index orchestration remain unfinished. |
-| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, and S8 Tantivy full-text index/search crates exist with synthetic acceptance tests. | Import-to-index integration, real import worker, synthetic large corpus, and benchmark remain absent. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S9 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, production async import orchestration, and diagnostics remain unfinished. |
+| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, and S9 synthetic import-to-search smoke exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, and benchmark remain absent. |
 | P2 fields and dedupe | Not started | S7 strong-rule extraction for email, phone, and date ranges exists with synthetic tests; broader P2 design docs only. | Field-labeled synthetic/desensitized evaluation set, dedupe, dictionaries, and confidence harness remain absent. |
 | P3 semantic retrieval | Not started | Design docs only. | Model choice, license, checksums, and distribution approval require human confirmation. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs and scanned synthetic corpus absent. |
@@ -38,7 +38,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S6 | Complete | `parser-common`, `parser-docx`, and `parser-pdf` implement parser contracts, basic DOCX text extraction, lightweight PDF text-layer/image-only/unknown classification, elapsed-budget timeout mapping, and redacted parser debug/errors; acceptance passed with parser crate tests. | None |
 | S7 | Complete | `text-normalizer`, `sectionizer`, and `extractor-rules` crates implement basic cleanup, offset mapping, heading/fallback sectioning, and strong email/phone/date-range rules with synthetic mixed Chinese/English, table-linearized, offset, redaction, and low-confidence exclusion tests; acceptance passed locally. | None |
 | S8 | Complete | `index-fulltext` and `search-planner` implement a real Tantivy full-text schema, separate writer/reader APIs with reader reload, deleted-marker filtering, top-N snippet planning, and CLI search over an existing local index; standalone CLI search still reports no-index when no local index exists rather than fabricating results. | None |
-| S9 | Not started |  |  |
+| S9 | Complete | `resume-cli import --root tests/fixtures/resumes` crawls synthetic DOCX/PDF fixtures, extracts DOCX and simple text-layer PDF text, routes image-only PDF to `OCR_REQUIRED`, persists metadata/state plus real Tantivy index files under `local-data/indexes/fulltext`, and `resume-cli search "Java"` finds the imported fixtures after reopening the index. | None |
 | S10 | Not started |  |  |
 | S11 | Not started |  |  |
 | S12 | Not started |  |  |
@@ -245,3 +245,39 @@ Review summary:
 - S8 uses real Tantivy via `index-fulltext`; no in-memory fake search is used to satisfy acceptance.
 - CLI search reads an existing local full-text index and prints `rank`, `doc_id`, `file_name`, and `snippet` in integration tests; when no index exists it returns a clear no-index status.
 - S8 does not implement the S9 import-to-query loop, OCR, embeddings, or field filters.
+
+### S9
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-pdf
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli import_indexes_synthetic_docx_and_pdf_then_search_survives_reopen
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli import_routes_image_only_pdf_to_ocr_required_without_indexing_fake_text
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli import_keeps_same_text_documents_as_distinct_search_results
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli reimporting_same_path_as_ocr_required_removes_old_search_hit
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- import --root tests/fixtures/resumes
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- status
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- search "Java"
+```
+
+Output summary:
+
+- `cargo fmt --check`: succeeded.
+- `cargo test -p parser-pdf`: succeeded with 3 tests, including simple synthetic text-layer extraction and image-only OCR routing.
+- `cargo test -p index-fulltext`: succeeded with 6 tests, including replacement of old search hits when the same `doc_id` is re-indexed with a new version.
+- Focused `resume-cli` import tests: succeeded; covered synthetic docx plus PDF import/search after reader reopen, image-only PDF routing without fake indexing, same-text documents remaining distinct search results, and re-importing the same path as OCR-required removing the old full-text hit.
+- `cargo test --workspace`: succeeded across all crates; `resume-cli` has 9 tests and `meta-store` still covers retryable queued/failed/running ingest jobs.
+- `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+- `resume-cli import --root tests/fixtures/resumes`: succeeded; queued import task `10`, discovered 3 synthetic fixtures, advanced 2 to `SEARCHABLE`, advanced 1 to `OCR_REQUIRED`, skipped 0.
+- `resume-cli status`: succeeded; default ignored `local-data` reported metadata schema 2, visible documents 3, queued imports 7 from pre-existing local smoke state, index states 3, searchable documents 2, OCR-required documents 1.
+- `resume-cli search "Java"`: succeeded after reopening the persisted Tantivy index and returned two hits: `synthetic-java-docx.docx` with snippet `Synthetic Java docx resume fixture`, and `synthetic-java-text-layer.pdf` with snippet `Synthetic Java backend engineer resume fixture`.
+
+Review summary:
+
+- S9 uses only synthetic fixtures under `tests/fixtures/resumes`; no real resumes or PII were added.
+- Import writes real local SQLite metadata and a real Tantivy full-text index under the default `local-data/indexes/fulltext`; search does not use an in-memory fake.
+- The S9 CLI importer is intentionally synchronous and narrow. It does not run OCR, embeddings, field filters, packaging, or benchmarks.
+- The checked-in acceptance fixture directory contains one synthetic DOCX fixture, one synthetic text-layer PDF fixture, and one synthetic image-only PDF fixture.

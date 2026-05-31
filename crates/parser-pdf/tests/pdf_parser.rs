@@ -4,14 +4,13 @@ use parser_common::{ParseInput, Parser, SupportLevel};
 use parser_pdf::PdfParser;
 
 #[test]
-fn detects_text_layer_pdf_without_claiming_full_text_extraction(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn extracts_plain_text_from_simple_text_layer_pdf() -> Result<(), Box<dyn std::error::Error>> {
     let input = ParseInput::new("synthetic.pdf", text_layer_pdf_bytes());
 
     let output = PdfParser.parse(&input)?;
 
     assert_eq!(output.support_level(), SupportLevel::TextLayer);
-    assert_eq!(output.text(), None);
+    assert_eq!(output.text(), Some("Synthetic text layer"));
     assert!(!output.ocr_required());
     Ok(())
 }

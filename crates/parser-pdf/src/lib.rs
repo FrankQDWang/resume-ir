@@ -18,6 +18,14 @@ impl Parser for PdfParser {
             ));
         }
 
+        if let Some(text) = extract_text_layer(input.bytes()) {
+            return Ok(ParseOutput::from_text(
+                input.source_name().to_owned(),
+                text,
+                SupportLevel::TextLayer,
+            ));
+        }
+
         let support_level = if has_text_layer(input.bytes()) {
             SupportLevel::TextLayer
         } else if has_encoded_stream(input.bytes()) {
@@ -59,6 +67,91 @@ fn has_text_layer(bytes: &[u8]) -> bool {
     }
 
     false
+}
+
+fn extract_text_layer(bytes: &[u8]) -> Option<String> {
+    let mut index = 0;
+    let mut lines = Vec::new();
+
+    while let Some(text_start) = find_token(&bytes[index..], b"BT") {
+        let object_start = index + text_start + b"BT".len();
+        let Some(text_end) = find_token(&bytes[object_start..], b"ET") else {
+            break;
+        };
+        let object = &bytes[object_start..object_start + text_end];
+        if contains_text_show_operator(object) {
+            lines.extend(pdf_literal_strings(object));
+        }
+        index = object_start + text_end + b"ET".len();
+    }
+
+    let text = lines
+        .into_iter()
+        .map(|line| line.trim().to_owned())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn pdf_literal_strings(bytes: &[u8]) -> Vec<String> {
+    let mut strings = Vec::new();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] != b'(' {
+            index += 1;
+            continue;
+        }
+
+        let mut decoded = Vec::new();
+        let mut depth = 1usize;
+        index += 1;
+
+        while index < bytes.len() && depth > 0 {
+            match bytes[index] {
+                b'\\' => {
+                    index += 1;
+                    if index >= bytes.len() {
+                        break;
+                    }
+                    match bytes[index] {
+                        b'n' => decoded.push(b'\n'),
+                        b'r' => decoded.push(b'\r'),
+                        b't' => decoded.push(b'\t'),
+                        b'b' => decoded.push(0x08),
+                        b'f' => decoded.push(0x0c),
+                        b'(' => decoded.push(b'('),
+                        b')' => decoded.push(b')'),
+                        b'\\' => decoded.push(b'\\'),
+                        b'\n' | b'\r' => {}
+                        value => decoded.push(value),
+                    }
+                }
+                b'(' => {
+                    depth += 1;
+                    decoded.push(b'(');
+                }
+                b')' => {
+                    depth -= 1;
+                    if depth > 0 {
+                        decoded.push(b')');
+                    }
+                }
+                value => decoded.push(value),
+            }
+            index += 1;
+        }
+
+        strings.push(String::from_utf8_lossy(&decoded).into_owned());
+    }
+
+    strings
 }
 
 fn contains_text_show_operator(bytes: &[u8]) -> bool {

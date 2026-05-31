@@ -9,7 +9,7 @@ use thiserror::Error;
 pub enum SupportLevel {
     /// Parser can extract text.
     Text,
-    /// PDF appears to contain a text layer, but extraction is not implemented here.
+    /// PDF appears to contain a text layer.
     TextLayer,
     /// Parser detected a scanned or image-only document that needs OCR.
     OcrRequired,

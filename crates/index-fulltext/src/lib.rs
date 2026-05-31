@@ -160,8 +160,10 @@ impl FullTextIndexWriter {
         Ok(Self { fields, writer })
     }
 
-    /// Adds or replaces one version in the full-text index.
+    /// Adds or replaces the current searchable version for one document.
     pub fn add_document(&mut self, document: IndexDocument) -> Result<()> {
+        self.writer
+            .delete_term(Term::from_field_text(self.fields.doc_id, &document.doc_id));
         self.writer.delete_term(Term::from_field_text(
             self.fields.version_id,
             &document.version_id,
@@ -175,6 +177,12 @@ impl FullTextIndexWriter {
         tantivy_document.add_bool(self.fields.is_deleted, document.is_deleted);
         self.writer.add_document(tantivy_document)?;
         Ok(())
+    }
+
+    /// Removes all indexed versions for one document.
+    pub fn delete_document(&mut self, doc_id: &str) {
+        self.writer
+            .delete_term(Term::from_field_text(self.fields.doc_id, doc_id));
     }
 
     /// Commits pending writes.
