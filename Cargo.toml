@@ -9,6 +9,9 @@ members = [
     "crates/parser-common",
     "crates/parser-docx",
     "crates/parser-pdf",
+    "crates/text-normalizer",
+    "crates/sectionizer",
+    "crates/extractor-rules",
 ]
 resolver = "2"
 
@@ -23,7 +26,11 @@ config = { path = "crates/config" }
 meta-store = { path = "crates/meta-store" }
 fs-crawler = { path = "crates/fs-crawler" }
 parser-common = { path = "crates/parser-common" }
+text-normalizer = { path = "crates/text-normalizer" }
+sectionizer = { path = "crates/sectionizer" }
+extractor-rules = { path = "crates/extractor-rules" }
 serde = { version = "1.0", features = ["derive"] }
+regex = "1.10"
 sha2 = "0.10"
 tempfile = "3.10"
 thiserror = "1.0"

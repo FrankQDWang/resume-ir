@@ -17,9 +17,9 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S6 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, and index integration remain unfinished. |
-| P1 text import and full-text search | In progress | S5 crawler and S6 parser crates exist with synthetic acceptance tests. | Parser integration, text cleaning/sectioning, Tantivy index/search, synthetic large corpus, and benchmark remain absent. |
-| P2 fields and dedupe | Not started | Design docs only. | Field-labeled synthetic/desensitized evaluation set and dictionaries absent. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S7 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, and index integration remain unfinished. |
+| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, and S7 text normalization/sectioning crates exist with synthetic acceptance tests. | Parser integration, Tantivy index/search, synthetic large corpus, and benchmark remain absent. |
+| P2 fields and dedupe | Not started | S7 strong-rule extraction for email, phone, and date ranges exists with synthetic tests; broader P2 design docs only. | Field-labeled synthetic/desensitized evaluation set, dedupe, dictionaries, and confidence harness remain absent. |
 | P3 semantic retrieval | Not started | Design docs only. | Model choice, license, checksums, and distribution approval require human confirmation. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs and scanned synthetic corpus absent. |
 | P5 packaging | Blocked on binaries and signing inputs | Packaging design only. | Windows/macOS certs, secrets, runners, signing/notarization approval. |
@@ -36,7 +36,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S4 | Complete | `resume-cli status`, `resume-cli import --root`, `resume-cli search <query>`, and `resume-daemon --foreground` run without panic; import queues a root task in SQLite and search returns a clear no-index message without fake results. | None |
 | S5 | Complete | `fs-crawler` scans supported files, filters temp/unsupported files, normalizes Unicode and Windows/macOS-style separators, builds fast fingerprints, and reports locked/permission/unreachable errors through deterministic tests. | None |
 | S6 | Complete | `parser-common`, `parser-docx`, and `parser-pdf` implement parser contracts, basic DOCX text extraction, lightweight PDF text-layer/image-only/unknown classification, elapsed-budget timeout mapping, and redacted parser debug/errors; acceptance passed with parser crate tests. | None |
-| S7 | Not started |  |  |
+| S7 | Complete | `text-normalizer`, `sectionizer`, and `extractor-rules` crates implement basic cleanup, offset mapping, heading/fallback sectioning, and strong email/phone/date-range rules with synthetic mixed Chinese/English, table-linearized, offset, redaction, and low-confidence exclusion tests; acceptance passed locally. | None |
 | S8 | Not started |  |  |
 | S9 | Not started |  |  |
 | S10 | Not started |  |  |
@@ -197,3 +197,26 @@ Review summary:
 - Sub-agent spec compliance review approved S6 scope.
 - Sub-agent code quality review found two issues: PDF negative detection over-claimed OCR-required and parser timeout documentation implied hard cancellation. Fixes added `SupportLevel::Unknown`, narrowed OCR-required to image-only evidence, and documented timeout as elapsed-budget accounting; re-review approved.
 - PII pattern scan over parser crates found no local paths, emails, phone-like strings, common placeholder names, output macros, or unsafe panic/unwrap/expect usage.
+
+### S7
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p text-normalizer
+/Users/frankqdwang/.cargo/bin/cargo test -p sectionizer
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: succeeded.
+- `cargo test -p text-normalizer`: succeeded with 4 integration tests covering mixed Chinese/English cleanup, table-linearized spacing, offset mapping, and redacted debug output.
+- `cargo test -p sectionizer`: succeeded with 4 integration tests covering Chinese/English heading detection, paragraph/length fallback chunking, table-linearized fallback preservation, and redacted debug output.
+- `cargo test -p extractor-rules`: succeeded with 4 integration tests covering strong email/phone/date-range extraction, table-linearized offsets, low-confidence exclusion, and redacted debug output.
+- `cargo clippy --all-targets --all-features -- -D warnings`: succeeded after removing lint-risky test unwrap/unreachable usage and using explicit checked conversions.
+
+Review summary:
+
+- S7 scope is limited to local library crates; no real resume data, remote side effects, fake ML, or broad field extraction were added.
+- `regex` was added only for `extractor-rules`; `text-normalizer` and `sectionizer` remain dependency-light.
