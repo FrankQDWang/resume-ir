@@ -9,7 +9,7 @@ This file tracks long-running Goal execution against
 - Data policy: synthetic fixtures only; no real resumes or PII.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
-- Product rule: S0-S14 slice progress is not the same as full product completion; P0-P6 gates remain authoritative.
+- Product rule: S0-S16 slice progress is not the same as full product completion; P0-P6 gates remain authoritative.
 
 ## Product Gate Status
 
@@ -17,13 +17,13 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S15 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton, S14 deletion-propagation CLI slice, and S15 local synthetic benchmark runner with batched metadata seeding. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/diagnostics packaging, CI, and production async import orchestration remain unfinished. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S16 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton, S14 deletion-propagation CLI slice, S15 local synthetic benchmark runner with batched metadata seeding, and S16 local redacted diagnostics package generation. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/observability, CI, and production async import orchestration remain unfinished. |
 | P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, S9 synthetic import-to-search smoke, S14 CLI `delete --doc-id` propagation, and S15 benchmark search/delete smoke exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, async deletion orchestration, and real benchmark corpus runs remain absent. |
 | P2 fields and dedupe | In progress | S10 smoke/MVP adds deterministic school, degree, and skill extraction on top of email/phone/date ranges; `rank-fusion` adds field summaries, `degree_min`, `skills_any`, `years_experience_min`, and hashed soft-dedupe skeleton tests; CLI search accepts `--degree bachelor --top-k 20`; S14 prevents deleted docs from being resurrected by query-time clean-text field filtering. | Dictionary coverage is intentionally tiny and synthetic; field filters are computed at query time from persisted clean text, not indexed fast fields; no evaluation harness or production candidate merge workflow exists. |
 | P3 semantic retrieval | In progress | S11 adds dependency-light `embedder` and `index-vector` crates with fake/test-only implementations plus `rank-fusion` RRF hybrid fusion tests. | This is only a fake-interface skeleton. Real embedding model choice/license/checksums/distribution, batch inference, production vector engine, hybrid integration, and recall benchmarks remain blockers. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; S12 adds typed `ocr-client` interfaces and deterministic `ingest-scheduler` OCR-required queue primitives without running OCR. Local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs, real OCR worker integration, and scanned synthetic corpus absent. |
 | P5 packaging | Blocked on binaries and signing inputs | Packaging design only. | Windows/macOS certs, secrets, runners, signing/notarization approval. |
-| P6 performance and stability | In progress (synthetic smoke/scale tooling only) | S13 adds a one-query small-data doctor smoke, redacted missing/corrupt full-text index status, helper-level simulated daemon-kill/disk-full diagnostics tests, and a redacted `export-diagnostics` skeleton. S15 adds `resume-cli benchmark --synthetic-count <n> --query <query>` for local synthetic metadata/Tantivy indexing with batched SQLite writes, metadata-gated search, existing delete-path verification, aggregate metrics, and scratch cleanup on success and handled failure paths. | No real 100k/1M benchmark result has been run or claimed here. Real fault injection, restart/recovery soak, diagnostics packaging, corpus, query set, and platform runners remain absent. |
+| P6 performance and stability | In progress (synthetic smoke/scale tooling plus local redacted diagnostics package only) | S13 adds a one-query small-data doctor smoke, redacted missing/corrupt full-text index status, helper-level simulated daemon-kill/disk-full diagnostics tests, and a redacted `export-diagnostics` skeleton. S15 adds `resume-cli benchmark --synthetic-count <n> --query <query>` for local synthetic metadata/Tantivy indexing with batched SQLite writes, metadata-gated search, existing delete-path verification, aggregate metrics, and scratch cleanup on success and handled failure paths. S16 adds `resume-cli export-diagnostics --redact --output <dir>` local package generation with aggregate-only `manifest.json`, `status.txt`, and `checks.txt` contents plus redacted stdout/errors. | No real 100k/1M benchmark result has been run or claimed here. Real fault injection, restart/recovery soak, production observability, corpus, query set, and platform runners remain absent. S16 is local redacted package generation only and does not complete P6. |
 
 ## Slice Status
 
@@ -45,6 +45,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S13 | Complete | Added `resume-cli doctor`, `resume-cli export-diagnostics --redact`, redacted full-text index health reporting, a one-query small-data benchmark smoke, corrupt-index handling, helper-level daemon-kill/disk-full simulations, and redaction tests. Acceptance commands passed locally on 2026-05-31. | P6 remains not production-complete: no 100k/1M benchmark, real fault injection, restart/recovery soak, diagnostics package, or platform performance gate exists. |
 | S14 | Complete | Added `resume-cli delete --doc-id <doc_id>`; metadata deletion tombstones document rows without touching source files; rediscovery preserves tombstones; existing Tantivy full-text indexes receive committed doc-id deletions; missing full-text indexes are not created solely for delete; SQLite records `DELETE_PENDING` before full-text mutation and finalizes `DELETED` or `DELETE_ERROR`; malformed `doc_id` values are rejected before storage access; search now metadata-filters every Tantivy hit so stale full-text rows cannot surface tombstoned docs; status/search/field-filter paths hide deleted documents. Acceptance commands passed locally on 2026-05-31. | This is CLI-level local deletion propagation only. Production async orchestration, large-corpus delete benchmarks, vector/field-index deletion propagation, and broader audit/recovery workflows remain incomplete. |
 | S15 | Complete | Added `resume-cli benchmark --synthetic-count <n> --query <query>`; validates `n` as 1..=1,000,000; seeds synthetic metadata and real Tantivy documents into a scratch data area under `--data-dir` using a bulk SQLite transaction; searches through the metadata-gated path; deletes one hit through the existing delete path; verifies the deleted doc is absent from post-delete search; prints aggregate metrics only; reports `large-corpus status: not-run` below 100,000 and `synthetic-only` at/above 100,000; cleans scratch on success and tested failure paths. Acceptance commands passed locally on 2026-05-31. | This is honest local synthetic benchmark tooling/smoke only. It is not a real 100k/1M benchmark result, does not use a real/desensitized corpus, and does not complete P6 performance or stability gates. |
+| S16 | Complete | Added `resume-cli export-diagnostics --redact --output <dir>` while preserving stdout-only `export-diagnostics --redact`; package mode writes through a `diagnostics-package-*.tmp` staging directory, then atomically renames one local `diagnostics-package-*` directory per run containing deterministic `manifest.json`, `status.txt`, and `checks.txt` files with aggregate-only schema/count/fulltext/check metadata; stdout and errors remain redacted and never print the package path. Acceptance commands passed locally on 2026-05-31. | This is local redacted diagnostics package generation only. It is not real production observability, does not exercise real fault injection or soak, and does not complete P6. |
 
 ## Command Log
 
@@ -491,3 +492,35 @@ Review summary:
 - Synthetic benchmark seeding uses a bulk SQLite write transaction plus real Tantivy writes, so large synthetic runs are not dominated by per-row SQLite autocommit overhead.
 - The benchmark stores the user-provided query only in temporary scratch metadata/index documents, never prints it, and removes scratch data on successful and tested failed benchmark paths.
 - At or above 100,000 synthetic documents the CLI reports `large-corpus status: synthetic-only`, not a production benchmark pass.
+
+### S16
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli export_diagnostics_package -- --nocapture
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli export_diagnostics -- --nocapture
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+git diff --check
+git status --short --ignored -- local-data
+```
+
+Output summary:
+
+- TDD red run for `cargo test -p resume-cli export_diagnostics_package -- --nocapture` failed first because `export-diagnostics --redact --output <dir>` was still rejected by the parser.
+- Focused `cargo test -p resume-cli export_diagnostics -- --nocapture` succeeded with 3 tests covering stdout-only compatibility, package creation, redaction, missing `--redact`, and invalid output arguments without echoing sensitive payloads.
+- Final `cargo fmt --check`: succeeded.
+- Final `cargo test -p resume-cli`: succeeded with 30 tests, including diagnostics stdout-only compatibility, diagnostics package generation, repeat package export, staged package write-failure cleanup, package file redaction, missing-redact rejection, invalid output-argument redaction, benchmark, doctor, import/search, and delete propagation coverage.
+- Final `cargo test --workspace`: succeeded across all crates.
+- Final `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+- Final `git diff --check`: succeeded.
+- Final `git status --short --ignored -- local-data`: showed only `!! local-data/`.
+
+Review summary:
+
+- S16 preserves existing `resume-cli export-diagnostics --redact` stdout behavior and adds optional `--output <dir>` package mode.
+- Package mode writes files under `diagnostics-package-*.tmp`, removes staging on write failure, and renames only complete packages to `diagnostics-package-*` with `manifest.json`, `status.txt`, and `checks.txt`.
+- Package files contain aggregate-only schema version, visible/searchable/OCR counts, index-state count, full-text health, redaction-enabled state, local-only/remote-side-effects-none metadata, and simulated diagnostic checks.
+- Tests assert stdout and package files exclude synthetic private paths, output paths, email, phone, raw text, query text, doc ids, and file names.
+- S16 is local redacted diagnostics package generation only. It is not real production observability, does not run real fault injection or soak, and does not complete P6.

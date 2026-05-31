@@ -143,11 +143,15 @@ where
         }
         Command::Delete { doc_id } => run_delete(&options.data_dir, &doc_id, output),
         Command::Doctor => run_doctor(&options.data_dir, output),
-        Command::ExportDiagnostics { redact } => {
+        Command::ExportDiagnostics { redact, output_dir } => {
             if !redact {
                 return Err("Usage: resume-cli export-diagnostics --redact".to_string());
             }
-            export_diagnostics(&options.data_dir, output)
+            if let Some(output_dir) = output_dir {
+                export_diagnostics_package(&options.data_dir, &output_dir, output)
+            } else {
+                export_diagnostics(&options.data_dir, output)
+            }
         }
         Command::Benchmark {
             synthetic_count,
@@ -166,6 +170,7 @@ enum Command {
     Doctor,
     ExportDiagnostics {
         redact: bool,
+        output_dir: Option<PathBuf>,
     },
     Import {
         root: PathBuf,
@@ -233,10 +238,34 @@ fn parse_command(parts: &[String]) -> Result<Command, String> {
 }
 
 fn parse_export_diagnostics_command(parts: &[String]) -> Result<Command, String> {
-    if parts.len() != 2 || parts[1] != "--redact" {
+    let mut redact = false;
+    let mut output_dir = None;
+    let mut index = 1;
+
+    while index < parts.len() {
+        match parts[index].as_str() {
+            "--redact" if !redact => {
+                redact = true;
+                index += 1;
+            }
+            "--output" if output_dir.is_none() => {
+                let Some(value) = parts.get(index + 1) else {
+                    return Err("Usage: resume-cli export-diagnostics --redact".to_string());
+                };
+                if value.starts_with("--") {
+                    return Err("Usage: resume-cli export-diagnostics --redact".to_string());
+                }
+                output_dir = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err("Usage: resume-cli export-diagnostics --redact".to_string()),
+        }
+    }
+
+    if !redact {
         return Err("Usage: resume-cli export-diagnostics --redact".to_string());
     }
-    Ok(Command::ExportDiagnostics { redact: true })
+    Ok(Command::ExportDiagnostics { redact, output_dir })
 }
 
 fn parse_search_command(parts: &[String]) -> Result<Command, String> {
@@ -458,18 +487,13 @@ fn run_doctor<W: Write>(data_dir: &Path, output: &mut W) -> Result<(), String> {
 }
 
 fn export_diagnostics<W: Write>(data_dir: &Path, output: &mut W) -> Result<(), String> {
-    let store = open_store(data_dir)?;
-    let status = store
-        .status()
-        .map_err(|error| error.user_message().to_string())?;
-    let index_status = inspect_fulltext_index(data_dir, false).status;
-    let daemon_check = simulate_daemon_kill_diagnostic(0, "", "");
-    let disk_check = simulate_disk_full_diagnostic(false, "", "");
+    let package = collect_diagnostics_package(data_dir)?;
 
     writeln!(output, "diagnostics redaction: enabled").map_err(|error| error.to_string())?;
     writeln!(output, "diagnostics format: skeleton").map_err(|error| error.to_string())?;
-    write_status_counts(output, &status)?;
-    writeln!(output, "fulltext index: {index_status}").map_err(|error| error.to_string())?;
+    write_status_counts(output, &package.status)?;
+    writeln!(output, "fulltext index: {}", package.fulltext_status)
+        .map_err(|error| error.to_string())?;
     writeln!(output, "documents: aggregate-only").map_err(|error| error.to_string())?;
     writeln!(output, "paths: redacted").map_err(|error| error.to_string())?;
     writeln!(output, "file names: excluded").map_err(|error| error.to_string())?;
@@ -478,11 +502,184 @@ fn export_diagnostics<W: Write>(data_dir: &Path, output: &mut W) -> Result<(), S
     writeln!(output, "raw text: excluded").map_err(|error| error.to_string())?;
     writeln!(output, "environment: local-only").map_err(|error| error.to_string())?;
     writeln!(output, "remote side effects: none").map_err(|error| error.to_string())?;
-    writeln!(output, "{}", render_diagnostic_check(&daemon_check))
+    writeln!(output, "{}", render_diagnostic_check(&package.daemon_check))
         .map_err(|error| error.to_string())?;
-    writeln!(output, "{}", render_diagnostic_check(&disk_check))
+    writeln!(output, "{}", render_diagnostic_check(&package.disk_check))
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn export_diagnostics_package<W: Write>(
+    data_dir: &Path,
+    output_dir: &Path,
+    output: &mut W,
+) -> Result<(), String> {
+    let package = collect_diagnostics_package(data_dir)?;
+    fs::create_dir_all(output_dir)
+        .map_err(|_| "Could not create diagnostics package.".to_string())?;
+    let package_dir = diagnostics_package_dir(output_dir)?;
+    commit_diagnostics_package(&package_dir, &package)?;
+
+    writeln!(output, "diagnostics package: created").map_err(|error| error.to_string())?;
+    writeln!(output, "diagnostics files: 3").map_err(|error| error.to_string())?;
+    writeln!(output, "diagnostics redaction: enabled").map_err(|error| error.to_string())?;
+    writeln!(output, "remote side effects: none").map_err(|error| error.to_string())
+}
+
+fn commit_diagnostics_package(
+    package_dir: &Path,
+    package: &DiagnosticsPackage,
+) -> Result<(), String> {
+    commit_diagnostics_package_with(package_dir, |staging_dir| {
+        write_complete_diagnostics_package(staging_dir, package)
+    })
+}
+
+fn commit_diagnostics_package_with(
+    package_dir: &Path,
+    writer: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let staging_dir = package_dir.with_extension("tmp");
+    fs::create_dir(&staging_dir)
+        .map_err(|_| "Could not create diagnostics package.".to_string())?;
+
+    let write_result = writer(&staging_dir);
+    if write_result.is_ok() {
+        if fs::rename(&staging_dir, package_dir).is_err() {
+            let _ = fs::remove_dir_all(&staging_dir);
+            return Err("Could not create diagnostics package.".to_string());
+        }
+    } else {
+        let _ = fs::remove_dir_all(&staging_dir);
+        write_result?;
+    }
+    Ok(())
+}
+
+fn diagnostics_package_dir(output_dir: &Path) -> Result<PathBuf, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Could not create diagnostics package.".to_string())?
+        .as_nanos();
+    Ok(output_dir.join(format!(
+        "diagnostics-package-{}-{stamp}",
+        std::process::id()
+    )))
+}
+
+fn write_complete_diagnostics_package(
+    package_dir: &Path,
+    package: &DiagnosticsPackage,
+) -> Result<(), String> {
+    write_diagnostics_package_file(
+        package_dir,
+        "manifest.json",
+        &render_diagnostics_manifest(package),
+    )?;
+    write_diagnostics_package_file(
+        package_dir,
+        "status.txt",
+        &render_diagnostics_status(package),
+    )?;
+    write_diagnostics_package_file(
+        package_dir,
+        "checks.txt",
+        &render_diagnostics_checks(package),
+    )
+}
+
+fn write_diagnostics_package_file(
+    package_dir: &Path,
+    file_name: &str,
+    contents: &str,
+) -> Result<(), String> {
+    fs::write(package_dir.join(file_name), contents)
+        .map_err(|_| "Could not write diagnostics package.".to_string())
+}
+
+struct DiagnosticsPackage {
+    status: meta_store::StoreStatus,
+    fulltext_status: &'static str,
+    daemon_check: DiagnosticCheck,
+    disk_check: DiagnosticCheck,
+}
+
+fn collect_diagnostics_package(data_dir: &Path) -> Result<DiagnosticsPackage, String> {
+    let store = open_store(data_dir)?;
+    let status = store
+        .status()
+        .map_err(|error| error.user_message().to_string())?;
+    Ok(DiagnosticsPackage {
+        status,
+        fulltext_status: inspect_fulltext_index(data_dir, false).status,
+        daemon_check: simulate_daemon_kill_diagnostic(0, "", ""),
+        disk_check: simulate_disk_full_diagnostic(false, "", ""),
+    })
+}
+
+fn render_diagnostics_manifest(package: &DiagnosticsPackage) -> String {
+    format!(
+        concat!(
+            "{{\n",
+            "  \"diagnostics_schema_version\": 1,\n",
+            "  \"schema_version\": {},\n",
+            "  \"visible_documents\": {},\n",
+            "  \"searchable_documents\": {},\n",
+            "  \"ocr_required_documents\": {},\n",
+            "  \"index_states\": {},\n",
+            "  \"fulltext_index\": \"{}\",\n",
+            "  \"redaction_enabled\": true,\n",
+            "  \"local_only\": true,\n",
+            "  \"remote_side_effects\": \"none\",\n",
+            "  \"diagnostic_checks\": [\"{}\", \"{}\"]\n",
+            "}}\n"
+        ),
+        package.status.schema_version,
+        package.status.visible_document_count,
+        package.status.searchable_document_count,
+        package.status.ocr_required_document_count,
+        package.status.index_state_count,
+        package.fulltext_status,
+        package.daemon_check.status,
+        package.disk_check.status
+    )
+}
+
+fn render_diagnostics_status(package: &DiagnosticsPackage) -> String {
+    format!(
+        concat!(
+            "diagnostics redaction: enabled\n",
+            "diagnostics format: package\n",
+            "metadata schema: {}\n",
+            "visible documents: {}\n",
+            "index states: {}\n",
+            "searchable documents: {}\n",
+            "ocr required documents: {}\n",
+            "fulltext index: {}\n",
+            "documents: aggregate-only\n",
+            "paths: redacted\n",
+            "file names: excluded\n",
+            "snippets: excluded\n",
+            "queries: excluded\n",
+            "raw text: excluded\n",
+            "environment: local-only\n",
+            "remote side effects: none\n"
+        ),
+        package.status.schema_version,
+        package.status.visible_document_count,
+        package.status.index_state_count,
+        package.status.searchable_document_count,
+        package.status.ocr_required_document_count,
+        package.fulltext_status
+    )
+}
+
+fn render_diagnostics_checks(package: &DiagnosticsPackage) -> String {
+    format!(
+        "{}\n{}\n",
+        render_diagnostic_check(&package.daemon_check),
+        render_diagnostic_check(&package.disk_check)
+    )
 }
 
 struct BenchmarkSummary {
@@ -1332,7 +1529,7 @@ fn single_line(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_with_args, with_benchmark_scratch};
+    use super::{commit_diagnostics_package_with, run_with_args, with_benchmark_scratch};
     use index_fulltext::{FullTextIndexWriter, IndexDocument};
     use std::fs;
     use std::io::Write;
@@ -1520,6 +1717,238 @@ mod tests {
         assert!(!text.contains(&synthetic_raw_text));
         assert!(!text.contains("synthetic-private-export.pdf"));
         assert!(!text.contains("diagnostic-smoke-token"));
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn export_diagnostics_package_writes_redacted_aggregate_files() -> Result<(), String> {
+        let data_dir = unique_data_dir("export-diagnostics-package")?;
+        let output_dir = unique_data_dir("diagnostics-output-private")?;
+        let synthetic_email = ["package", "@", "invalid.test"].concat();
+        let synthetic_phone = ["555", "011", "3131"].join("-");
+        let synthetic_query = "PackagePrivateNeedle";
+        let synthetic_doc_id = seed_search_document(
+            data_dir.as_ref(),
+            data_dir.join("indexes/fulltext").as_ref(),
+            "package-private-doc",
+            "synthetic-private-package.pdf",
+            &format!(
+                "confidential package raw resume text {synthetic_email} {synthetic_phone} {synthetic_query}"
+            ),
+        )?;
+        seed_private_metadata(
+            data_dir.as_ref(),
+            &synthetic_email,
+            &synthetic_phone,
+            "second confidential package raw resume text",
+        )?;
+        let mut output = Vec::new();
+
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "export-diagnostics",
+                "--redact",
+                "--output",
+                output_dir.as_str(),
+            ],
+            &mut output,
+        )?;
+
+        let stdout = String::from_utf8(output).map_err(|error| error.to_string())?;
+        assert!(stdout.contains("diagnostics package: created"));
+        assert!(stdout.contains("diagnostics files: 3"));
+        assert!(stdout.contains("diagnostics redaction: enabled"));
+        assert_no_diagnostics_private_payload(
+            &stdout,
+            data_dir.as_str(),
+            output_dir.as_str(),
+            &synthetic_email,
+            &synthetic_phone,
+            synthetic_query,
+            &synthetic_doc_id,
+        );
+
+        let mut package_dirs = fs::read_dir(output_dir.as_ref())
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        package_dirs.sort_by_key(|entry| entry.file_name());
+        assert_eq!(package_dirs.len(), 1);
+        let package_dir = package_dirs[0].path();
+        assert!(package_dir.is_dir());
+        let file_names = fs::read_dir(&package_dir)
+            .map_err(|error| error.to_string())?
+            .map(|entry| {
+                entry
+                    .map_err(|error| error.to_string())
+                    .map(|entry| entry.file_name().to_string_lossy().to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            sorted(file_names),
+            vec![
+                "checks.txt".to_string(),
+                "manifest.json".to_string(),
+                "status.txt".to_string(),
+            ]
+        );
+
+        for file_name in ["manifest.json", "status.txt", "checks.txt"] {
+            let contents = fs::read_to_string(package_dir.join(file_name))
+                .map_err(|error| error.to_string())?;
+            assert_no_diagnostics_private_payload(
+                &contents,
+                data_dir.as_str(),
+                output_dir.as_str(),
+                &synthetic_email,
+                &synthetic_phone,
+                synthetic_query,
+                &synthetic_doc_id,
+            );
+            assert!(!contents.contains("synthetic-private-package.pdf"));
+            assert!(!contents.contains("synthetic-private-export.pdf"));
+            assert!(!contents.contains("confidential package raw resume text"));
+            assert!(!contents.contains("second confidential package raw resume text"));
+        }
+
+        let manifest = fs::read_to_string(package_dir.join("manifest.json"))
+            .map_err(|error| error.to_string())?;
+        assert!(manifest.contains("\"schema_version\": 2"));
+        assert!(manifest.contains("\"redaction_enabled\": true"));
+        assert!(manifest.contains("\"remote_side_effects\": \"none\""));
+        assert!(manifest.contains("\"local_only\": true"));
+        let status = fs::read_to_string(package_dir.join("status.txt"))
+            .map_err(|error| error.to_string())?;
+        assert!(status.contains("visible documents: 2"));
+        assert!(status.contains("searchable documents: 1"));
+        assert!(status.contains("index states: 1"));
+        assert!(status.contains("fulltext index: available"));
+        let checks = fs::read_to_string(package_dir.join("checks.txt"))
+            .map_err(|error| error.to_string())?;
+        assert!(checks.contains("daemon kill simulation: clean"));
+        assert!(checks.contains("disk space simulation: not-triggered"));
+
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        fs::remove_dir_all(output_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn export_diagnostics_package_can_run_twice_in_same_output_dir() -> Result<(), String> {
+        let data_dir = unique_data_dir("export-diagnostics-package-repeat")?;
+        let output_dir = unique_data_dir("diagnostics-output-repeat-private")?;
+
+        for _ in 0..2 {
+            let mut output = Vec::new();
+            run_with_args(
+                [
+                    "resume-cli",
+                    "--data-dir",
+                    data_dir.as_str(),
+                    "export-diagnostics",
+                    "--redact",
+                    "--output",
+                    output_dir.as_str(),
+                ],
+                &mut output,
+            )?;
+            let stdout = String::from_utf8(output).map_err(|error| error.to_string())?;
+            assert!(stdout.contains("diagnostics package: created"));
+            assert!(!stdout.contains(output_dir.as_str()));
+            assert!(!stdout.contains(data_dir.as_str()));
+        }
+
+        let package_dirs = fs::read_dir(output_dir.as_ref())
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        assert_eq!(package_dirs.len(), 2);
+        for entry in package_dirs {
+            let package_dir = entry.path();
+            assert!(package_dir.is_dir());
+            assert!(package_dir.join("manifest.json").is_file());
+            assert!(package_dir.join("status.txt").is_file());
+            assert!(package_dir.join("checks.txt").is_file());
+        }
+
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        fs::remove_dir_all(output_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostics_package_commit_cleans_staging_after_write_failure() -> Result<(), String> {
+        let output_dir = unique_data_dir("diagnostics-output-failed-write")?;
+        let package_dir = output_dir.as_ref().join("diagnostics-package-test");
+        let staging_dir = package_dir.with_extension("tmp");
+        let sensitive_payload = "sensitive diagnostic payload";
+
+        let error = commit_diagnostics_package_with(package_dir.as_ref(), |staging_dir| {
+            fs::write(staging_dir.join("manifest.json"), sensitive_payload)
+                .map_err(|error| error.to_string())?;
+            Err::<(), String>("Could not write diagnostics package.".to_string())
+        })
+        .err()
+        .ok_or_else(|| "staged package write should fail".to_string())?;
+
+        assert!(error.contains("Could not write diagnostics package"));
+        assert!(!error.contains(sensitive_payload));
+        assert!(!error.contains(output_dir.as_str()));
+        assert!(!package_dir.exists());
+        assert!(!staging_dir.exists());
+
+        fs::remove_dir_all(output_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn export_diagnostics_rejects_invalid_output_args_without_echoing_payloads(
+    ) -> Result<(), String> {
+        let data_dir = unique_data_dir("export-diagnostics-invalid-output")?;
+        let sensitive_output = data_dir.join("sensitive-output-private@example.invalid");
+        let mut missing_value_output = Vec::new();
+
+        let missing_value_error = run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "export-diagnostics",
+                "--redact",
+                "--output",
+            ],
+            &mut missing_value_output,
+        )
+        .err()
+        .ok_or_else(|| "missing output value should fail".to_string())?;
+        assert!(missing_value_error.contains("Usage: resume-cli export-diagnostics --redact"));
+        assert!(!missing_value_error.contains(data_dir.as_str()));
+        assert!(missing_value_output.is_empty());
+
+        let mut unredacted_output = Vec::new();
+        let unredacted_error = run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "export-diagnostics",
+                "--output",
+                sensitive_output.as_str(),
+            ],
+            &mut unredacted_output,
+        )
+        .err()
+        .ok_or_else(|| "package export without redaction should fail".to_string())?;
+        assert!(unredacted_error.contains("Usage: resume-cli export-diagnostics --redact"));
+        assert!(!unredacted_error.contains(data_dir.as_str()));
+        assert!(!unredacted_error.contains(sensitive_output.as_str()));
+        assert!(!unredacted_error.contains("private@example.invalid"));
+        assert!(unredacted_output.is_empty());
+
         fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -2764,6 +3193,30 @@ mod tests {
                 Some("private path and payload must stay redacted"),
             )
             .map_err(|error| error.user_message().to_string())
+    }
+
+    fn sorted(mut values: Vec<String>) -> Vec<String> {
+        values.sort();
+        values
+    }
+
+    fn assert_no_diagnostics_private_payload(
+        text: &str,
+        data_dir: &str,
+        output_dir: &str,
+        synthetic_email: &str,
+        synthetic_phone: &str,
+        synthetic_query: &str,
+        synthetic_doc_id: &str,
+    ) {
+        assert!(!text.contains(data_dir));
+        assert!(!text.contains(output_dir));
+        assert!(!text.contains(synthetic_email));
+        assert!(!text.contains(synthetic_phone));
+        assert!(!text.contains(synthetic_query));
+        assert!(!text.contains(synthetic_doc_id));
+        assert!(!text.contains("doc_id"));
+        assert!(!text.contains("file_name"));
     }
 
     fn text_layer_pdf_bytes() -> Vec<u8> {
