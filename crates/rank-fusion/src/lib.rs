@@ -282,6 +282,131 @@ where
         .collect()
 }
 
+pub fn reciprocal_rank_fusion_hits<I>(channels: I, k: f32) -> Vec<RankedHit>
+where
+    I: IntoIterator<Item = Vec<RankedHit>>,
+{
+    let k = k.max(1.0);
+    let mut scores = BTreeMap::<String, f32>::new();
+    let mut candidate_keys = BTreeMap::<String, Option<String>>::new();
+
+    for channel in channels {
+        for (index, hit) in channel.into_iter().enumerate() {
+            let rank = index + 1;
+            *scores.entry(hit.doc_id.clone()).or_insert(0.0) += 1.0 / (k + rank as f32);
+            candidate_keys
+                .entry(hit.doc_id)
+                .or_insert(hit.candidate_key);
+        }
+    }
+
+    let mut fused = scores.into_iter().collect::<Vec<_>>();
+    fused.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+
+    fused
+        .into_iter()
+        .enumerate()
+        .map(|(index, (doc_id, score))| {
+            let mut hit = RankedHit::new(doc_id.clone(), index + 1, score);
+            if let Some(Some(candidate_key)) = candidate_keys.remove(&doc_id) {
+                hit = hit.with_candidate_key(candidate_key);
+            }
+            hit
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetrievalChannel {
+    FullText,
+    Vector,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct RankedChannel {
+    channel: RetrievalChannel,
+    doc_ids: Vec<String>,
+}
+
+impl RankedChannel {
+    pub fn new<I, S>(channel: RetrievalChannel, doc_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Self {
+            channel,
+            doc_ids: doc_ids
+                .into_iter()
+                .map(|doc_id| doc_id.as_ref().to_string())
+                .collect(),
+        }
+    }
+
+    pub fn channel(&self) -> RetrievalChannel {
+        self.channel
+    }
+
+    pub fn len(&self) -> usize {
+        self.doc_ids.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.doc_ids.is_empty()
+    }
+}
+
+impl fmt::Debug for RankedChannel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RankedChannel")
+            .field("channel", &self.channel)
+            .field("doc_count", &self.doc_ids.len())
+            .finish()
+    }
+}
+
+pub fn fuse_ranked_channels<I>(channels: I, k: f32) -> Vec<RankedHit>
+where
+    I: IntoIterator<Item = RankedChannel>,
+{
+    reciprocal_rank_fusion(channels.into_iter().map(|channel| channel.doc_ids), k)
+}
+
+#[derive(Clone, Default, PartialEq)]
+pub struct HybridRecall {
+    fulltext: Vec<RankedHit>,
+    vector: Vec<RankedHit>,
+}
+
+impl HybridRecall {
+    pub fn new(fulltext: Vec<RankedHit>, vector: Vec<RankedHit>) -> Self {
+        Self { fulltext, vector }
+    }
+}
+
+impl fmt::Debug for HybridRecall {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HybridRecall")
+            .field("fulltext_count", &self.fulltext.len())
+            .field("vector_count", &self.vector.len())
+            .finish()
+    }
+}
+
+pub fn fuse_hybrid_rrf(recall: HybridRecall, k: f32, limit: usize) -> Vec<RankedHit> {
+    let mut fused = reciprocal_rank_fusion_hits([recall.fulltext, recall.vector], k);
+    fused.truncate(limit);
+    fused
+}
+
 fn normalize_skill(skill: &str) -> String {
     skill
         .split_whitespace()
