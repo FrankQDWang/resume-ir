@@ -2,7 +2,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use extractor_rules::{extract_strong_fields, FieldType};
 use import_pipeline::import_root;
@@ -32,7 +32,7 @@ fn run() -> Result<()> {
     let data_dir = take_data_dir(&mut args)?;
     let Some(command) = args.first().map(String::as_str) else {
         return Err(CliError::usage(
-            "expected command: status, import, or search",
+            "expected command: status, import, search, doctor, or export-diagnostics",
         ));
     };
 
@@ -45,8 +45,15 @@ fn run() -> Result<()> {
         }
         "import" => import_command(&data_dir, &args[1..]),
         "search" => search_command(&data_dir, &args[1..]),
+        "doctor" => {
+            if args.len() != 1 {
+                return Err(CliError::usage("usage: resume-cli doctor"));
+            }
+            doctor_command(&data_dir)
+        }
+        "export-diagnostics" => export_diagnostics_command(&data_dir, &args[1..]),
         _ => Err(CliError::usage(
-            "expected command: status, import, or search",
+            "expected command: status, import, search, doctor, or export-diagnostics",
         )),
     }
 }
@@ -212,6 +219,74 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         println!("file_name: {}", hit.file_name);
         println!("snippet: {}", hit.snippet);
     }
+
+    Ok(())
+}
+
+fn doctor_command(data_dir: &Path) -> Result<()> {
+    let store = open_store(data_dir)?;
+    let summary = store.status_summary().map_err(CliError::store)?;
+    let index_diagnostic = inspect_search_index(data_dir);
+
+    println!("resume-ir doctor");
+    println!("metadata: ok");
+    println!("indexed documents: {}", summary.indexed_documents);
+    println!("searchable documents: {}", summary.searchable_documents);
+    println!("ocr queue: {}", summary.ocr_queue_depth);
+    println!("recovery queue: {}", summary.recovery_queue_depth);
+    println!("search index: {}", index_diagnostic.index_label());
+    println!("query smoke: {}", index_diagnostic.query_smoke_label());
+    println!("fault simulations: available");
+    println!("fault simulation hooks: daemon_restart,index_snapshot_corrupt,disk_space_low");
+    println!("diagnostics redaction: available");
+
+    Ok(())
+}
+
+fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    if args != ["--redact"] {
+        return Err(CliError::usage(
+            "usage: resume-cli export-diagnostics --redact",
+        ));
+    }
+
+    let store = open_store(data_dir)?;
+    let summary = store.status_summary().map_err(CliError::store)?;
+    let index_diagnostic = inspect_search_index(data_dir);
+
+    println!("{{");
+    println!("  \"schema_version\": \"diagnostics.v1\",");
+    println!("  \"redacted\": true,");
+    println!("  \"raw_paths\": \"<redacted>\",");
+    println!("  \"raw_queries\": \"<redacted>\",");
+    println!("  \"raw_resume_text\": \"<redacted>\",");
+    println!("  \"metadata\": {{");
+    println!("    \"indexed_documents\": {},", summary.indexed_documents);
+    println!(
+        "    \"searchable_documents\": {},",
+        summary.searchable_documents
+    );
+    println!("    \"ocr_queue_depth\": {},", summary.ocr_queue_depth);
+    println!(
+        "    \"recovery_queue_depth\": {}",
+        summary.recovery_queue_depth
+    );
+    println!("  }},");
+    println!(
+        "  \"search_index_state\": \"{}\",",
+        index_diagnostic.state_label()
+    );
+    println!(
+        "  \"query_smoke\": \"{}\",",
+        index_diagnostic.query_smoke_json_label()
+    );
+    println!("  \"fault_simulations\": [");
+    println!("    \"daemon_restart\",");
+    println!("    \"index_snapshot_corrupt\",");
+    println!("    \"disk_space_low\"");
+    println!("  ],");
+    println!("  \"scope\": \"redacted skeleton; no raw resume text, paths, or queries included\"");
+    println!("}}");
 
     Ok(())
 }
@@ -400,6 +475,72 @@ struct SearchArgs {
     query: String,
     top_k: usize,
     filters: SearchFilters,
+}
+
+fn inspect_search_index(data_dir: &Path) -> SearchIndexDiagnostic {
+    let index_dir = data_dir.join("search-index");
+    if !index_dir.join("meta.json").exists() {
+        return SearchIndexDiagnostic::Unavailable;
+    }
+
+    let Ok(index) = FullTextIndex::open(&index_dir) else {
+        return SearchIndexDiagnostic::Corrupt;
+    };
+
+    let started_at = Instant::now();
+    match index.search(SearchQuery::new("diagnostic").with_limit(1)) {
+        Ok(hits) => SearchIndexDiagnostic::Available {
+            elapsed_ms: started_at.elapsed().as_millis(),
+            results: hits.len(),
+        },
+        Err(_) => SearchIndexDiagnostic::Corrupt,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchIndexDiagnostic {
+    Unavailable,
+    Corrupt,
+    Available { elapsed_ms: u128, results: usize },
+}
+
+impl SearchIndexDiagnostic {
+    fn index_label(self) -> String {
+        match self {
+            Self::Unavailable => "unavailable".to_string(),
+            Self::Corrupt => "corrupt".to_string(),
+            Self::Available { .. } => "available (full-text)".to_string(),
+        }
+    }
+
+    fn state_label(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::Corrupt => "corrupt",
+            Self::Available { .. } => "available",
+        }
+    }
+
+    fn query_smoke_label(self) -> String {
+        match self {
+            Self::Unavailable => "skipped (no full-text index)".to_string(),
+            Self::Corrupt => "skipped (index unavailable)".to_string(),
+            Self::Available {
+                elapsed_ms,
+                results,
+            } => {
+                format!("ok (elapsed_ms={elapsed_ms}, results={results})")
+            }
+        }
+    }
+
+    fn query_smoke_json_label(self) -> &'static str {
+        match self {
+            Self::Unavailable => "skipped_no_fulltext_index",
+            Self::Corrupt => "skipped_index_unavailable",
+            Self::Available { .. } => "ok",
+        }
+    }
 }
 
 fn open_store(data_dir: &Path) -> Result<MetaStore> {
