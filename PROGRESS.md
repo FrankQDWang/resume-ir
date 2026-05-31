@@ -21,7 +21,7 @@ This file tracks long-running Goal execution against
 | S4 | Complete | `cargo fmt --check`, `cargo test -p meta-store`, `cargo test -p resume-cli`, `cargo test -p resume-daemon`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, and the S4 CLI/daemon smoke commands passed. | None for the S4 slice; product search, indexing, OCR, embeddings, IPC, diagnostics, and cross-platform verification remain not complete. |
 | S5 | Slice complete | `cargo fmt --check`, `cargo test -p fs-crawler`, and `cargo clippy -p fs-crawler --all-targets -- -D warnings` passed. | None for the S5 slice; product import execution, document parsing, indexing, OCR, and query closure remain not complete. |
 | S6 | Slice complete | `cargo fmt --check`, `cargo test -p parser-common`, `cargo test -p parser-docx`, `cargo test -p parser-pdf`, and `cargo clippy -p parser-common -p parser-docx -p parser-pdf --all-targets -- -D warnings` passed. | None for the S6 slice; OCR execution, text cleaning, indexing, search, and S7+ remain not complete. |
-| S7 | Not started |  |  |
+| S7 | Slice complete | `cargo fmt --check`, `cargo test -p text-normalizer`, `cargo test -p sectionizer`, `cargo test -p extractor-rules`, and `cargo clippy -p text-normalizer -p sectionizer -p extractor-rules --all-targets -- -D warnings` passed. | None for the S7 slice; import execution, indexing, search, OCR execution, embeddings, and S8+ remain not complete. |
 | S8 | Not started |  |  |
 | S9 | Not started |  |  |
 | S10 | Not started |  |  |
@@ -337,6 +337,70 @@ Output summary:
 Scope note:
 
 - S6 is only the parser skeleton/docx/PDF text-layer slice. It does not implement OCR execution, indexing, full-text search, text cleaning, extraction, or S7+ behavior.
+
+Additional workspace regression:
+
+```bash
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+```
+
+Output summary:
+
+- `cargo test --workspace`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+
+### S7
+
+TDD red checks:
+
+```bash
+cargo test -p text-normalizer
+cargo test -p sectionizer
+cargo test -p extractor-rules
+```
+
+Output summary:
+
+- `text-normalizer` failed before implementation because `TextNormalizer` and normalized offset mapping APIs were unresolved imports.
+- `sectionizer` failed before implementation because `Sectionizer` and section chunk APIs were unresolved imports.
+- `extractor-rules` failed before implementation because `extract_strong_fields` and `FieldType` were unresolved imports.
+
+Implementation checks:
+
+```bash
+cargo test -p text-normalizer
+cargo test -p sectionizer
+cargo test -p extractor-rules
+```
+
+Output summary:
+
+- `cargo test -p text-normalizer`: exit 0; 5 S7 tests passed, covering mixed Chinese-English whitespace cleanup, table-linearized text, offset mapping across inserted newlines, repeated page header/footer removal, simple OCR spacing repair, bullet preservation, and redacted debug output.
+- `cargo test -p sectionizer`: exit 0; 5 S7 tests passed, covering Chinese/English resume heading recognition, fallback paragraph/length chunks including single overlong paragraphs, table-linearized text staying inside the nearest section, character offsets, and redacted debug output.
+- `cargo test -p extractor-rules`: exit 0; 4 S7 tests passed, covering strong email, phone, and date-range extraction, normalized values, byte offsets over table-linearized text, and low-confidence candidates not entering strong filtering.
+
+Acceptance:
+
+```bash
+cargo fmt --check
+cargo test -p text-normalizer
+cargo test -p sectionizer
+cargo test -p extractor-rules
+cargo clippy -p text-normalizer -p sectionizer -p extractor-rules --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `cargo test -p text-normalizer`: exit 0; 5 tests passed.
+- `cargo test -p sectionizer`: exit 0; 5 tests passed.
+- `cargo test -p extractor-rules`: exit 0; 4 tests passed.
+- `cargo clippy -p text-normalizer -p sectionizer -p extractor-rules --all-targets -- -D warnings`: exit 0.
+
+Scope note:
+
+- S7 is only the text cleanup, section fallback, and strong-rule extraction slice. It does not implement import execution, DB writes, indexing, search, OCR execution, embeddings, or S8+ behavior.
 
 Additional workspace regression:
 
