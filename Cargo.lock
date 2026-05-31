@@ -145,10 +145,16 @@ dependencies = [
 [[package]]
 name = "resume-cli"
 version = "0.1.0"
+dependencies = [
+ "meta-store",
+]
 
 [[package]]
 name = "resume-daemon"
 version = "0.1.0"
+dependencies = [
+ "meta-store",
+]
 
 [[package]]
 name = "rusqlite"

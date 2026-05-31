@@ -76,6 +76,7 @@ stable_id_type!(SectionId, "sec_");
 stable_id_type!(EntityMentionId, "ent_");
 stable_id_type!(VectorRecordId, "vec_");
 stable_id_type!(IngestJobId, "job_");
+stable_id_type!(ImportTaskId, "imp_");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IdParseError {

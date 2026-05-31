@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    Document, DocumentId, DocumentStatus, FileExtension, IndexState, IndexStateStatus, IngestJob,
-    IngestJobId, IngestJobKind, IngestJobStatus, MetaStore, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp,
+    Document, DocumentId, DocumentStatus, FileExtension, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexState, IndexStateStatus, IngestJob, IngestJobId, IngestJobKind,
+    IngestJobStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
 use rusqlite::{params, Connection};
 
@@ -16,16 +16,22 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(first.applied_versions(), &[1]);
-    assert_eq!(store.schema_version().unwrap(), 1);
+    assert_eq!(first.applied_versions(), &[1, 2]);
+    assert_eq!(store.schema_version().unwrap(), 2);
 
-    for table_name in ["document", "resume_version", "ingest_job", "index_state"] {
+    for table_name in [
+        "document",
+        "resume_version",
+        "ingest_job",
+        "index_state",
+        "import_task",
+    ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 1);
+    assert_eq!(store.schema_version().unwrap(), 2);
 }
 
 #[test]
@@ -349,6 +355,211 @@ fn index_state_persists_and_upserts_snapshot_status() {
 }
 
 #[test]
+fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
+    let store = migrated_store();
+    let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let searchable = document(
+        "status-searchable-placeholder",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let partial = document(
+        "status-partial-placeholder",
+        false,
+        DocumentStatus::IndexedPartial,
+    );
+    let failed_retryable = document(
+        "status-retryable-placeholder",
+        false,
+        DocumentStatus::FailedRetryable,
+    );
+    let failed_permanent = document(
+        "status-permanent-placeholder",
+        false,
+        DocumentStatus::FailedPermanent,
+    );
+    let ocr_required = document("status-ocr-placeholder", false, DocumentStatus::OcrRequired);
+    let embedding_waiting = document(
+        "status-embedding-placeholder",
+        false,
+        DocumentStatus::FieldsExtracted,
+    );
+    let deleted = document(
+        "status-deleted-placeholder",
+        true,
+        DocumentStatus::Searchable,
+    );
+
+    for document in [
+        searchable.clone(),
+        partial,
+        failed_retryable,
+        failed_permanent,
+        ocr_required,
+        embedding_waiting,
+        deleted,
+    ] {
+        store.upsert_document(&document).unwrap();
+    }
+
+    let running = job(
+        "status-running-placeholder",
+        &searchable.id,
+        IngestJobStatus::Running,
+        1,
+        3,
+    );
+    let exhausted = job(
+        "status-exhausted-placeholder",
+        &searchable.id,
+        IngestJobStatus::FailedRetryable,
+        3,
+        3,
+    );
+    store.insert_ingest_job(&running).unwrap();
+    store.insert_ingest_job(&exhausted).unwrap();
+    store
+        .insert_import_task(&import_task(
+            "status-import-placeholder",
+            "synthetic/import/root",
+            ImportTaskStatus::Queued,
+        ))
+        .unwrap();
+    store
+        .upsert_index_state(&IndexState {
+            manifest_version: "manifest-v1".to_string(),
+            snapshot_token: Some("snapshot-v1".to_string()),
+            status: IndexStateStatus::Building,
+            updated_at: now,
+        })
+        .unwrap();
+
+    let summary = store.status_summary().unwrap();
+
+    assert_eq!(summary.indexed_documents, 2);
+    assert_eq!(summary.searchable_documents, 1);
+    assert_eq!(summary.partial_documents, 1);
+    assert_eq!(summary.failed_retryable, 1);
+    assert_eq!(summary.failed_permanent, 1);
+    assert_eq!(summary.ocr_queue_depth, 1);
+    assert_eq!(summary.embedding_queue_depth, 1);
+    assert_eq!(summary.recovery_queue_depth, 1);
+    assert_eq!(summary.import_tasks_queued, 1);
+    assert_eq!(summary.index_health, IndexStateStatus::Building);
+    assert_eq!(summary.last_snapshot_id.as_deref(), Some("snapshot-v1"));
+}
+
+#[test]
+fn import_tasks_persist_without_document_foreign_key() {
+    let db_path = temp_db_path("import-task-placeholder");
+    let task = import_task(
+        "import-reopen-placeholder",
+        "synthetic/import/root",
+        ImportTaskStatus::Queued,
+    );
+
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+        store.insert_import_task(&task).unwrap();
+        assert_eq!(
+            store.import_task_by_id(&task.id).unwrap(),
+            Some(task.clone())
+        );
+    }
+
+    {
+        let reopened = MetaStore::open(&db_path).unwrap();
+        reopened.run_migrations().unwrap();
+        assert_eq!(reopened.schema_version().unwrap(), 2);
+        assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
+        assert!(reopened.visible_documents().unwrap().is_empty());
+    }
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
+fn import_task_api_rejects_invalid_lifecycle_timestamps() {
+    let store = migrated_store();
+    let timestamp = UnixTimestamp::from_unix_seconds(1_800_000_001);
+
+    let mut queued_with_started = import_task(
+        "invalid-queued-started-placeholder",
+        "synthetic/import/root",
+        ImportTaskStatus::Queued,
+    );
+    queued_with_started.started_at = Some(timestamp);
+    assert_redacted_store_error(store.insert_import_task(&queued_with_started).unwrap_err());
+
+    let mut completed_without_finish = import_task(
+        "invalid-completed-placeholder",
+        "synthetic/import/root",
+        ImportTaskStatus::Completed,
+    );
+    completed_without_finish.started_at = Some(timestamp);
+    assert_redacted_store_error(
+        store
+            .insert_import_task(&completed_without_finish)
+            .unwrap_err(),
+    );
+
+    let mut running_with_finish = import_task(
+        "invalid-running-finished-placeholder",
+        "synthetic/import/root",
+        ImportTaskStatus::Running,
+    );
+    running_with_finish.started_at = Some(timestamp);
+    running_with_finish.finished_at = Some(timestamp);
+    assert_redacted_store_error(store.insert_import_task(&running_with_finish).unwrap_err());
+}
+
+#[test]
+fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
+    let db_path = temp_db_path("v1-upgrade-placeholder");
+    let document = document(
+        "v1-upgrade-document-placeholder",
+        false,
+        DocumentStatus::Discovered,
+    );
+    let task = import_task(
+        "v1-upgrade-import-placeholder",
+        "synthetic/import/root",
+        ImportTaskStatus::Queued,
+    );
+
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+        store.upsert_document(&document).unwrap();
+    }
+
+    {
+        let connection = open_raw_connection(&db_path);
+        connection.execute("DROP TABLE import_task", []).unwrap();
+        connection
+            .execute("DELETE FROM schema_migrations WHERE version = 2", [])
+            .unwrap();
+    }
+
+    {
+        let reopened = MetaStore::open(&db_path).unwrap();
+        let report = reopened.run_migrations().unwrap();
+        assert_eq!(report.applied_versions(), &[2]);
+        assert_eq!(reopened.schema_version().unwrap(), 2);
+        assert_eq!(
+            reopened.document_by_id(&document.id).unwrap(),
+            Some(document)
+        );
+
+        reopened.insert_import_task(&task).unwrap();
+        assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
+    }
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
 fn file_backed_store_reopens_schema_and_index_state() {
     let db_path = temp_db_path("file-backed-placeholder");
     let state = IndexState {
@@ -367,7 +578,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 1);
+        assert_eq!(reopened.schema_version().unwrap(), 2);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 
@@ -473,6 +684,62 @@ fn raw_sql_invalid_enum_and_quality_values_are_rejected() {
             INSERT INTO index_state (state_key, manifest_version, status, updated_at_seconds)
             VALUES ('default', 'manifest-invalid', 'not_index_status', 1)",
             [],
+        ));
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO import_task (
+                id, root_path, status, queued_at_seconds, updated_at_seconds
+            )
+            VALUES (?1, 'synthetic/import/root', 'not_import_status', 1, 1)",
+            params![ImportTaskId::from_non_secret_parts(&["s4", "invalid-import"]).as_str()],
+        ));
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO import_task (
+                id, root_path, status, queued_at_seconds, started_at_seconds, updated_at_seconds
+            )
+            VALUES (?1, 'synthetic/import/root', 'queued', 1, 1, 1)",
+            params![
+                ImportTaskId::from_non_secret_parts(&["s4", "invalid-queued-started"]).as_str()
+            ],
+        ));
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO import_task (
+                id, root_path, status, queued_at_seconds, started_at_seconds, updated_at_seconds
+            )
+            VALUES (?1, 'synthetic/import/root', 'completed', 1, 2, 3)",
+            params![
+                ImportTaskId::from_non_secret_parts(&["s4", "invalid-completed-missing-finished"])
+                    .as_str()
+            ],
+        ));
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO import_task (
+                id, root_path, status, queued_at_seconds, started_at_seconds,
+                finished_at_seconds, updated_at_seconds
+            )
+            VALUES (?1, 'synthetic/import/root', 'running', 1, 2, 2, 3)",
+            params![
+                ImportTaskId::from_non_secret_parts(&["s4", "invalid-running-finished"]).as_str()
+            ],
+        ));
+
+        expect_raw_rejection(connection.execute(
+            "\
+            INSERT INTO import_task (
+                id, root_path, status, queued_at_seconds, started_at_seconds,
+                finished_at_seconds, updated_at_seconds
+            )
+            VALUES (?1, 'synthetic/import/root', 'completed', 3, 2, 4, 4)",
+            params![
+                ImportTaskId::from_non_secret_parts(&["s4", "invalid-timestamp-order"]).as_str()
+            ],
         ));
     }
 
@@ -687,6 +954,20 @@ fn job(
         status,
         attempt_count,
         max_attempts,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    }
+}
+
+fn import_task(label: &str, root_path: &str, status: ImportTaskStatus) -> ImportTask {
+    let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
+
+    ImportTask {
+        id: ImportTaskId::from_non_secret_parts(&["s4", label]),
+        root_path: root_path.to_string(),
+        status,
         queued_at: now,
         started_at: None,
         finished_at: None,

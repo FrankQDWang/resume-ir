@@ -18,7 +18,7 @@ This file tracks long-running Goal execution against
 | S1 | Complete | `cargo metadata --no-deps`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` passed. | None |
 | S2 | Complete | `cargo fmt --check`, `cargo test -p core-domain`, `cargo test -p config`, and `cargo clippy -p core-domain -p config --all-targets -- -D warnings` passed after review-fix changes. | None |
 | S3 | Complete | `cargo fmt --check`, `cargo test -p meta-store`, and `cargo clippy -p meta-store --all-targets -- -D warnings` passed. | None |
-| S4 | Not started |  |  |
+| S4 | Complete | `cargo fmt --check`, `cargo test -p meta-store`, `cargo test -p resume-cli`, `cargo test -p resume-daemon`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`, and the S4 CLI/daemon smoke commands passed. | None for the S4 slice; product search, indexing, OCR, embeddings, IPC, diagnostics, and cross-platform verification remain not complete. |
 | S5 | Not started |  |  |
 | S6 | Not started |  |  |
 | S7 | Not started |  |  |
@@ -197,3 +197,57 @@ Output summary:
 - After the review fix, `core-domain` tests passed with `ContactHash` display redacted while `.as_str()` still exposes explicit persistence material.
 - After the review fix, `meta-store` tests passed with 12 S3 integration tests covering queue/recovery separation, atomic claim semantics, timestamp transitions, invalid transition errors, schema CHECK constraints, file-backed PRAGMA setup, FK rejection/cascade, file-backed reopen recovery, and SQLite metadata/task persistence.
 - This remains plaintext SQLite metadata/task persistence only; no SQLCipher or production data encryption claim is made.
+
+### S4
+
+Baseline red checks:
+
+```bash
+cargo run -p resume-cli -- status
+cargo run -p resume-cli -- import --root tests/fixtures/empty
+cargo run -p resume-cli -- search "Java"
+```
+
+Output summary:
+
+- Before S4 implementation, all three commands exited 2 with `resume-cli: no commands are implemented in S1`.
+
+Implementation checks:
+
+```bash
+cargo fmt --check
+cargo test -p meta-store
+cargo test -p resume-cli
+cargo test -p resume-daemon
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `cargo test -p meta-store`: exit 0; identity plus 16 SQLite tests passed, including import-task persistence without document FK, import-task lifecycle constraints, status aggregation, schema v2 idempotency, v1-to-v2 upgrade, CHECK constraints, recovery queries, and file-backed reopen behavior.
+- `cargo test -p resume-cli`: exit 0; identity plus 3 S4 CLI tests passed, covering status, import-root task submission, no path leak, unavailable search without metadata writes, and no query echo for unavailable search.
+- `cargo test -p resume-daemon`: exit 0; identity plus foreground-once lifecycle test passed.
+
+Acceptance:
+
+```bash
+cargo run -p resume-cli -- status
+cargo run -p resume-cli -- import --root tests/fixtures/empty
+cargo run -p resume-cli -- search "Java"
+cargo run -p resume-daemon -- run --foreground --once
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+```
+
+Output summary:
+
+- `resume-cli status`: exit 0; opened the local metadata store, ran migrations, and printed real aggregate counts plus `search index: unavailable (S4 skeleton: no full-text or vector backend)`.
+- `resume-cli import --root tests/fixtures/empty`: exit 0; submitted a persistent `imp_...` import task without creating document or resume rows.
+- `resume-cli search "Java"`: exit 0; returned `search index not available yet` and `results: 0`, with no fake result rows.
+- `resume-daemon run --foreground --once`: exit 0; opened the metadata store, ran migrations, reported foreground readiness, and exited.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+Scope note:
+
+- S4 is only a control-plane slice. It does not complete product search, full-text indexing, OCR, embeddings, local IPC, diagnostics, packaging, or cross-platform verification.

@@ -9,5 +9,8 @@ publish.workspace = true
 name = "resume-cli"
 path = "src/main.rs"
 
+[dependencies]
+meta-store = { path = "../meta-store" }
+
 [lints]
 workspace = true
