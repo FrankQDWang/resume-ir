@@ -16,7 +16,7 @@ This file tracks long-running Goal execution against
 |---|---|---|---|
 | S0 | Complete | Git initialized; initial design baseline committed as `43e3d1c`; acceptance showed only S0 files pending before commit. | None |
 | S1 | Complete | `cargo metadata --no-deps`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` passed. | None |
-| S2 | Not started |  |  |
+| S2 | Complete | `cargo fmt --check`, `cargo test -p core-domain`, `cargo test -p config`, and `cargo clippy -p core-domain -p config --all-targets -- -D warnings` passed after review-fix changes. | None |
 | S3 | Not started |  |  |
 | S4 | Not started |  |  |
 | S5 | Not started |  |  |
@@ -94,3 +94,43 @@ Output summary:
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
+
+### S2
+
+TDD red checks:
+
+```bash
+cargo test -p core-domain
+cargo test -p config
+```
+
+Output summary:
+
+- `core-domain` failed before implementation because the S2 domain ID, model, and error types were unresolved imports in the new behavior tests.
+- `config` failed before implementation because `Profile` and `ProfileDefaults` were unresolved imports in the new behavior tests.
+
+Review-fix red check:
+
+```bash
+cargo test -p core-domain
+```
+
+Output summary:
+
+- Failed before the review-fix implementation because tests required design-aligned model fields, full document lifecycle states, the exact layered `ErrorKind` list, validated ID hydration, the golden opaque ID string, and the `ContactHash` privacy boundary.
+
+Acceptance:
+
+```bash
+cargo fmt --check
+cargo test -p core-domain
+cargo test -p config
+cargo clippy -p core-domain -p config --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `core-domain`: exit 0; identity test plus 7 S2 tests passed, covering design-aligned fields, full lifecycle states, exact error kinds, diagnostic redaction, redacted domain debug output, validated ID hydration, golden opaque ID generation, and `ContactHash` hydration.
+- `config`: exit 0; identity test plus 2 S2 tests passed, covering default Balanced profile and deterministic Economy/Balanced/Turbo resource tiers.
+- `cargo clippy -p core-domain -p config --all-targets -- -D warnings`: exit 0.
