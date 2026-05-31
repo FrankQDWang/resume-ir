@@ -62,3 +62,53 @@ fn avoids_obvious_low_confidence_degree_and_skill_noise() {
         .iter()
         .any(|field| field.field_type == FieldType::Skill));
 }
+
+#[test]
+fn extracts_company_title_and_certificate_with_evidence() {
+    let text = "\
+Experience
+Synthetic Payments Inc.
+Senior Backend Engineer
+Certificate
+AWS Certified Solutions Architect
+2021.05 - 2024.05";
+
+    let matches = extract_strong_fields(text);
+
+    let company = matches
+        .iter()
+        .find(|field| field.field_type == FieldType::Company)
+        .unwrap();
+    assert_eq!(
+        company.normalized_value.as_deref(),
+        Some("synthetic payments")
+    );
+    assert_eq!(
+        &text[company.span_start..company.span_end],
+        company.raw_value
+    );
+    assert!(company.confidence >= 0.75);
+
+    let title = matches
+        .iter()
+        .find(|field| field.field_type == FieldType::Title)
+        .unwrap();
+    assert_eq!(title.normalized_value.as_deref(), Some("backend_engineer"));
+    assert_eq!(&text[title.span_start..title.span_end], title.raw_value);
+    assert!(title.confidence >= 0.75);
+
+    let certificate = matches
+        .iter()
+        .find(|field| field.field_type == FieldType::Certificate)
+        .unwrap();
+    assert_eq!(
+        certificate.normalized_value.as_deref(),
+        Some("aws certified solutions architect")
+    );
+    assert_eq!(
+        &text[certificate.span_start..certificate.span_end],
+        certificate.raw_value
+    );
+    assert!(certificate.confidence >= 0.8);
+    assert!(!format!("{certificate:?}").contains("AWS Certified"));
+}

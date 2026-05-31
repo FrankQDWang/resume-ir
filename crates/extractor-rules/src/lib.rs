@@ -14,7 +14,10 @@ pub enum FieldType {
     DateRange,
     School,
     Degree,
+    Company,
+    Title,
     Skill,
+    Certificate,
     YearsExperience,
 }
 
@@ -54,7 +57,10 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     derive_years_experience(text, &mut matches);
     extract_schools(text, &mut matches);
     extract_degrees(text, &mut matches);
+    extract_companies(text, &mut matches);
+    extract_titles(text, &mut matches);
     extract_skills(text, &mut matches);
+    extract_certificates(text, &mut matches);
     matches.sort_by_key(|field| field.span_start);
     matches
 }
@@ -334,6 +340,169 @@ fn extract_skills(text: &str, matches: &mut Vec<RuleMatch>) {
             }
         }
     }
+}
+
+fn extract_companies(text: &str, matches: &mut Vec<RuleMatch>) {
+    for (line_start, line) in indexed_lines(text) {
+        let trimmed = line.trim();
+        if trimmed.len() > 100 || !looks_like_company(trimmed) {
+            continue;
+        }
+
+        let Some(normalized) = normalize_company(trimmed) else {
+            continue;
+        };
+        let leading = line.len() - line.trim_start().len();
+        let span_start = line_start + leading;
+        let span_end = span_start + trimmed.len();
+        matches.push(RuleMatch {
+            field_type: FieldType::Company,
+            raw_value: trimmed.to_string(),
+            normalized_value: Some(normalized),
+            span_start,
+            span_end,
+            confidence: 0.78,
+        });
+    }
+}
+
+fn looks_like_company(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    [
+        " inc.",
+        " inc",
+        " llc",
+        " ltd",
+        " corp",
+        " corporation",
+        " company",
+        " technologies",
+        " labs",
+        " group",
+        " bank",
+        "有限公司",
+        "公司",
+        "集团",
+    ]
+    .iter()
+    .any(|needle| lower.ends_with(needle) || lower.contains(needle))
+}
+
+fn normalize_company(value: &str) -> Option<String> {
+    let mut normalized = value
+        .trim()
+        .trim_end_matches('.')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+
+    for suffix in [
+        " incorporated",
+        " corporation",
+        " technologies",
+        " company",
+        " group",
+        " labs",
+        " inc",
+        " llc",
+        " ltd",
+        " corp",
+        " bank",
+        " 有限公司",
+        " 公司",
+        " 集团",
+    ] {
+        if normalized.ends_with(suffix) {
+            normalized.truncate(normalized.len() - suffix.len());
+            normalized = normalized.trim().to_string();
+            break;
+        }
+    }
+
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+fn extract_titles(text: &str, matches: &mut Vec<RuleMatch>) {
+    for (line_start, line) in indexed_lines(text) {
+        let trimmed = line.trim();
+        if trimmed.len() > 100 {
+            continue;
+        }
+
+        let Some((normalized, confidence)) = normalize_title(trimmed) else {
+            continue;
+        };
+        let leading = line.len() - line.trim_start().len();
+        let span_start = line_start + leading;
+        let span_end = span_start + trimmed.len();
+        matches.push(RuleMatch {
+            field_type: FieldType::Title,
+            raw_value: trimmed.to_string(),
+            normalized_value: Some(normalized.to_string()),
+            span_start,
+            span_end,
+            confidence,
+        });
+    }
+}
+
+fn normalize_title(value: &str) -> Option<(&'static str, f32)> {
+    let lower = value.to_lowercase();
+    if lower.contains("backend engineer")
+        || lower.contains("java engineer")
+        || lower.contains("后端")
+    {
+        return Some(("backend_engineer", 0.84));
+    }
+    if lower.contains("software engineer") || lower.contains("software developer") {
+        return Some(("software_engineer", 0.82));
+    }
+    if lower.contains("data engineer") || lower.contains("数据工程") {
+        return Some(("data_engineer", 0.82));
+    }
+    if lower.contains("product manager") || lower.contains("产品经理") {
+        return Some(("product_manager", 0.8));
+    }
+
+    None
+}
+
+fn extract_certificates(text: &str, matches: &mut Vec<RuleMatch>) {
+    for (line_start, line) in indexed_lines(text) {
+        let trimmed = line.trim();
+        if trimmed.len() > 140 || !looks_like_certificate(trimmed) {
+            continue;
+        }
+
+        let leading = line.len() - line.trim_start().len();
+        let span_start = line_start + leading;
+        let span_end = span_start + trimmed.len();
+        matches.push(RuleMatch {
+            field_type: FieldType::Certificate,
+            raw_value: trimmed.to_string(),
+            normalized_value: Some(trimmed.to_lowercase()),
+            span_start,
+            span_end,
+            confidence: 0.86,
+        });
+    }
+}
+
+fn looks_like_certificate(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    if matches!(
+        lower.as_str(),
+        "certificate" | "certificates" | "certifications"
+    ) {
+        return false;
+    }
+
+    lower.contains("certified")
+        || lower.contains("certificate")
+        || lower.contains("certification")
+        || lower.contains("证书")
+        || lower.contains("认证")
 }
 
 fn looks_like_skill_line(line: &str) -> bool {

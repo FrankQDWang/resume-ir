@@ -4,12 +4,11 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use extractor_rules::{extract_strong_fields, FieldType};
 use import_pipeline::{import_root, rebuild_full_text_index};
 use index_fulltext::{FullTextIndex, SearchHit, SearchQuery};
 use meta_store::{
-    DocumentId, DocumentStatus, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus,
-    MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    DocumentId, DocumentStatus, EntityType, ImportTask, ImportTaskId, ImportTaskStatus,
+    IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
 use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
@@ -89,6 +88,7 @@ fn status_command(data_dir: &Path) -> Result<()> {
     println!("ocr queue: {}", summary.ocr_queue_depth);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("embedding queue: {}", summary.embedding_queue_depth);
+    println!("entity mentions: {}", summary.entity_mentions);
     println!("import tasks queued: {}", summary.import_tasks_queued);
     println!(
         "import tasks recoverable: {}",
@@ -262,6 +262,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr queue: {}", summary.ocr_queue_depth);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
+    println!("entity mentions: {}", summary.entity_mentions);
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("search index: {}", index_diagnostic.index_label());
     println!("query smoke: {}", index_diagnostic.query_smoke_label());
@@ -297,6 +298,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
     println!("    \"ocr_queue_depth\": {},", summary.ocr_queue_depth);
     println!("    \"ocr_jobs_queued\": {},", summary.ocr_jobs_queued);
+    println!("    \"entity_mentions\": {},", summary.entity_mentions);
     println!(
         "    \"recovery_queue_depth\": {}",
         summary.recovery_queue_depth
@@ -423,10 +425,7 @@ fn filter_hits(
         let Some(version) = hydrate_visible_version(store, &hit)? else {
             continue;
         };
-        let Some(clean_text) = version.clean_text.as_deref() else {
-            continue;
-        };
-        let profile = extracted_profile(&hit.doc_id, clean_text);
+        let profile = persisted_profile(store, &hit.doc_id, &version)?;
         if !filters.matches(&profile) {
             continue;
         }
@@ -480,21 +479,29 @@ fn hydrate_visible_version(store: &MetaStore, hit: &SearchHit) -> Result<Option<
     Ok(Some(version))
 }
 
-fn extracted_profile(doc_id: &str, clean_text: &str) -> ResumeProfile {
-    let fields = extract_strong_fields(clean_text);
+fn persisted_profile(
+    store: &MetaStore,
+    doc_id: &str,
+    version: &ResumeVersion,
+) -> Result<ResumeProfile> {
+    let fields = store
+        .entity_mentions_for_version(&version.id)
+        .map_err(CliError::store)?;
     let degree = fields
         .iter()
-        .filter(|field| field.field_type == FieldType::Degree && field.confidence >= 0.75)
+        .filter(|field| field.entity_type == EntityType::Degree && field.confidence >= 0.75)
         .filter_map(|field| DegreeLevel::parse(field.normalized_value.as_deref()?))
         .max();
     let skills = fields
         .iter()
-        .filter(|field| field.field_type == FieldType::Skill && field.confidence >= 0.75)
+        .filter(|field| field.entity_type == EntityType::Skill && field.confidence >= 0.75)
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
     let years_experience = fields
         .iter()
-        .filter(|field| field.field_type == FieldType::YearsExperience && field.confidence >= 0.75)
+        .filter(|field| {
+            field.entity_type == EntityType::YearsExperience && field.confidence >= 0.75
+        })
         .filter_map(|field| field.normalized_value.as_deref()?.parse::<f32>().ok())
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -505,7 +512,7 @@ fn extracted_profile(doc_id: &str, clean_text: &str) -> ResumeProfile {
     if let Some(years_experience) = years_experience {
         profile = profile.with_years_experience(years_experience);
     }
-    profile
+    Ok(profile)
 }
 
 #[derive(Clone)]

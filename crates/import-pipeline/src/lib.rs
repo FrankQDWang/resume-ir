@@ -3,12 +3,14 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use core_domain::SectionType;
+use core_domain::{EntityMentionId, SectionType};
+use extractor_rules::{extract_strong_fields, FieldType, RuleMatch};
 use fs_crawler::{crawl_directory, DiscoveredFile};
 use index_fulltext::{FullTextIndex, IndexDocument, IndexSection};
 use meta_store::{
-    Document, DocumentStatus, FileExtension, ImportTask, ImportTaskStatus, IndexState,
-    IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    Document, DocumentStatus, EntityMention, EntityType, FileExtension, ImportTask,
+    ImportTaskStatus, IndexState, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_docx::DocxParser;
@@ -395,6 +397,10 @@ fn process_file(
             visibility: ResumeVisibility::Searchable,
         })
         .map_err(ImportPipelineError::store)?;
+    let mentions = entity_mentions_from_rules(&version_id, &clean_text);
+    store
+        .replace_entity_mentions(&version_id, &mentions)
+        .map_err(ImportPipelineError::store)?;
 
     let sections = sectionizer.sectionize(&clean_text);
     Ok(ProcessedFile::Searchable {
@@ -425,6 +431,55 @@ fn mark_ocr_required_and_enqueue(
         .map_err(ImportPipelineError::store)?;
 
     Ok(enqueue.inserted)
+}
+
+fn entity_mentions_from_rules(
+    version_id: &ResumeVersionId,
+    clean_text: &str,
+) -> Vec<EntityMention> {
+    extract_strong_fields(clean_text)
+        .into_iter()
+        .enumerate()
+        .map(|(index, field)| entity_mention_from_rule(version_id, index, field))
+        .collect()
+}
+
+fn entity_mention_from_rule(
+    version_id: &ResumeVersionId,
+    index: usize,
+    field: RuleMatch,
+) -> EntityMention {
+    EntityMention {
+        id: EntityMentionId::from_non_secret_parts(&[
+            "rules-v1",
+            version_id.as_str(),
+            &index.to_string(),
+        ]),
+        resume_version_id: version_id.clone(),
+        section_id: None,
+        entity_type: entity_type_from_field_type(&field.field_type),
+        raw_value: field.raw_value,
+        normalized_value: field.normalized_value,
+        span_start: Some(field.span_start),
+        span_end: Some(field.span_end),
+        confidence: field.confidence,
+        extractor: "rules-v1".to_string(),
+    }
+}
+
+fn entity_type_from_field_type(field_type: &FieldType) -> EntityType {
+    match field_type {
+        FieldType::Email => EntityType::Email,
+        FieldType::Phone => EntityType::Phone,
+        FieldType::DateRange => EntityType::DateRange,
+        FieldType::School => EntityType::School,
+        FieldType::Degree => EntityType::Degree,
+        FieldType::Company => EntityType::Company,
+        FieldType::Title => EntityType::Title,
+        FieldType::Skill => EntityType::Skill,
+        FieldType::Certificate => EntityType::Certificate,
+        FieldType::YearsExperience => EntityType::YearsExperience,
+    }
 }
 
 fn document_from_discovered_file(

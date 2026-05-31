@@ -5,15 +5,16 @@ use std::str::FromStr;
 use std::time::Duration;
 
 pub use core_domain::{
-    CandidateId, Document, DocumentId, DocumentStatus, FileExtension, ImportTaskId,
-    IndexStateStatus, IngestJobId, IngestJobKind, IngestJobStatus, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp,
+    CandidateId, Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
+    FileExtension, ImportTaskId, IndexStateStatus, IngestJobId, IngestJobKind, IngestJobStatus,
+    ResumeVersion, ResumeVersionId, ResumeVisibility, SectionId, UnixTimestamp,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 const SCHEMA_VERSION_V1: u32 = 1;
 const SCHEMA_VERSION_V2: u32 = 2;
 const SCHEMA_VERSION_V3: u32 = 3;
+const SCHEMA_VERSION_V4: u32 = 4;
 const INDEX_STATE_KEY: &str = "default";
 const DOCUMENT_COLUMNS: &str = "\
     id, source_uri, normalized_path, file_name, extension, byte_size, mtime_seconds, \
@@ -27,6 +28,9 @@ const INGEST_JOB_COLUMNS: &str = "\
 const IMPORT_TASK_COLUMNS: &str = "\
     id, root_path, status, queued_at_seconds, started_at_seconds, finished_at_seconds, \
     updated_at_seconds";
+const ENTITY_MENTION_COLUMNS: &str = "\
+    id, resume_version_id, section_id, entity_type, raw_value, normalized_value, \
+    span_start, span_end, confidence, extractor";
 
 pub fn crate_name() -> &'static str {
     "meta-store"
@@ -85,6 +89,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V1, SCHEMA_V1),
             (SCHEMA_VERSION_V2, SCHEMA_V2),
             (SCHEMA_VERSION_V3, SCHEMA_V3),
+            (SCHEMA_VERSION_V4, SCHEMA_V4),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -378,6 +383,81 @@ impl MetaStore {
         }
 
         Ok(versions)
+    }
+
+    pub fn replace_entity_mentions(
+        &self,
+        version_id: &ResumeVersionId,
+        mentions: &[EntityMention],
+    ) -> Result<()> {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        transaction
+            .execute(
+                "DELETE FROM entity_mention WHERE resume_version_id = ?1",
+                params![version_id.as_str()],
+            )
+            .map_err(MetaStoreError::storage)?;
+
+        for mention in mentions {
+            validate_entity_mention(version_id, mention)?;
+            transaction
+                .execute(
+                    "\
+                    INSERT INTO entity_mention (
+                        id, resume_version_id, section_id, entity_type, raw_value,
+                        normalized_value, span_start, span_end, confidence, extractor
+                    )
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        mention.id.as_str(),
+                        mention.resume_version_id.as_str(),
+                        mention.section_id.as_ref().map(SectionId::as_str),
+                        entity_type_to_storage(&mention.entity_type),
+                        mention.raw_value.as_str(),
+                        mention.normalized_value.as_deref(),
+                        mention
+                            .span_start
+                            .map(|value| usize_to_i64(value, "entity_mention.span_start"))
+                            .transpose()?,
+                        mention
+                            .span_end
+                            .map(|value| usize_to_i64(value, "entity_mention.span_end"))
+                            .transpose()?,
+                        f64::from(mention.confidence),
+                        mention.extractor.as_str(),
+                    ],
+                )
+                .map_err(MetaStoreError::storage)?;
+        }
+
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(())
+    }
+
+    pub fn entity_mentions_for_version(
+        &self,
+        version_id: &ResumeVersionId,
+    ) -> Result<Vec<EntityMention>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {ENTITY_MENTION_COLUMNS}
+            FROM entity_mention
+            WHERE resume_version_id = ?1
+            ORDER BY span_start IS NULL, span_start, rowid"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![version_id.as_str()])
+            .map_err(MetaStoreError::storage)?;
+        let mut mentions = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            mentions.push(read_entity_mention(row)?);
+        }
+
+        Ok(mentions)
     }
 
     pub fn insert_ingest_job(&self, job: &IngestJob) -> Result<()> {
@@ -992,6 +1072,23 @@ impl MetaStore {
                 |row| row.get::<_, i64>(0),
             )
             .map_err(MetaStoreError::storage)?;
+        let entity_mentions = connection
+            .query_row(
+                "\
+                SELECT COUNT(*)
+                FROM entity_mention AS mention
+                JOIN resume_version AS version ON version.id = mention.resume_version_id
+                JOIN document AS document ON document.id = version.document_id
+                WHERE document.is_deleted = 0
+                    AND document.status <> ?1
+                    AND version.visibility <> ?2",
+                params![
+                    document_status_to_storage(DocumentStatus::Deleted),
+                    resume_visibility_to_storage(ResumeVisibility::Hidden),
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?;
         let index_state = connection
             .query_row(
                 "\
@@ -1043,6 +1140,7 @@ impl MetaStore {
                 "status.import_tasks_recoverable",
             )?,
             ocr_jobs_queued: i64_to_u64(ocr_jobs_queued, "status.ocr_jobs_queued")?,
+            entity_mentions: i64_to_u64(entity_mentions, "status.entity_mentions")?,
             index_health,
             last_snapshot_id,
         })
@@ -1155,6 +1253,7 @@ pub struct StoreStatusSummary {
     pub import_tasks_queued: u64,
     pub import_tasks_recoverable: u64,
     pub ocr_jobs_queued: u64,
+    pub entity_mentions: u64,
     pub index_health: IndexStateStatus,
     pub last_snapshot_id: Option<String>,
 }
@@ -1491,6 +1590,51 @@ CREATE UNIQUE INDEX ingest_job_ocr_document_unique_idx
     WHERE kind = 'ocr_document';
 "#;
 
+const SCHEMA_V4: &str = r#"
+CREATE TABLE entity_mention (
+    id TEXT PRIMARY KEY,
+    resume_version_id TEXT NOT NULL,
+    section_id TEXT,
+    entity_type TEXT NOT NULL CHECK (
+        entity_type IN (
+            'name',
+            'email',
+            'phone',
+            'school',
+            'degree',
+            'company',
+            'title',
+            'education',
+            'skills',
+            'skill',
+            'certificate',
+            'date',
+            'date_range',
+            'years_experience',
+            'location'
+        )
+        OR entity_type LIKE 'other:%'
+    ),
+    raw_value TEXT NOT NULL,
+    normalized_value TEXT,
+    span_start INTEGER CHECK (span_start IS NULL OR span_start >= 0),
+    span_end INTEGER CHECK (span_end IS NULL OR span_end >= 0),
+    confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    extractor TEXT NOT NULL,
+    CHECK (
+        span_start IS NULL
+        OR span_end IS NULL
+        OR span_start <= span_end
+    ),
+    FOREIGN KEY (resume_version_id) REFERENCES resume_version(id) ON DELETE CASCADE
+);
+
+CREATE INDEX entity_mention_version_idx
+    ON entity_mention(resume_version_id, entity_type);
+CREATE INDEX entity_mention_type_value_idx
+    ON entity_mention(entity_type, normalized_value, confidence);
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -1548,6 +1692,28 @@ fn read_resume_version(row: &Row<'_>) -> Result<ResumeVersion> {
         clean_text: read_optional_string(row, 8)?,
         quality_score,
         visibility: resume_visibility_from_storage(&read_string(row, 10)?)?,
+    })
+}
+
+fn read_entity_mention(row: &Row<'_>) -> Result<EntityMention> {
+    let span_start = read_optional_i64(row, 6)?
+        .map(|value| i64_to_usize(value, "entity_mention.span_start"))
+        .transpose()?;
+    let span_end = read_optional_i64(row, 7)?
+        .map(|value| i64_to_usize(value, "entity_mention.span_end"))
+        .transpose()?;
+
+    Ok(EntityMention {
+        id: read_id::<EntityMentionId>(row, 0, "entity_mention.id")?,
+        resume_version_id: read_id::<ResumeVersionId>(row, 1, "entity_mention.resume_version_id")?,
+        section_id: read_optional_id::<SectionId>(row, 2, "entity_mention.section_id")?,
+        entity_type: entity_type_from_storage(&read_string(row, 3)?)?,
+        raw_value: read_string(row, 4)?,
+        normalized_value: read_optional_string(row, 5)?,
+        span_start,
+        span_end,
+        confidence: row.get::<_, f64>(8).map_err(MetaStoreError::storage)? as f32,
+        extractor: read_string(row, 9)?,
     })
 }
 
@@ -1635,6 +1801,30 @@ fn validate_import_task(task: &ImportTask) -> Result<()> {
     Ok(())
 }
 
+fn validate_entity_mention(version_id: &ResumeVersionId, mention: &EntityMention) -> Result<()> {
+    if &mention.resume_version_id != version_id {
+        return Err(MetaStoreError::invalid_value(
+            "entity_mention.resume_version_id",
+        ));
+    }
+    if mention.raw_value.trim().is_empty() {
+        return Err(MetaStoreError::invalid_value("entity_mention.raw_value"));
+    }
+    if mention.extractor.trim().is_empty() {
+        return Err(MetaStoreError::invalid_value("entity_mention.extractor"));
+    }
+    if !mention.confidence.is_finite() || !(0.0..=1.0).contains(&mention.confidence) {
+        return Err(MetaStoreError::invalid_value("entity_mention.confidence"));
+    }
+    if let (Some(span_start), Some(span_end)) = (mention.span_start, mention.span_end) {
+        if span_start > span_end {
+            return Err(MetaStoreError::invalid_value("entity_mention.span"));
+        }
+    }
+
+    Ok(())
+}
+
 fn read_string(row: &Row<'_>, index: usize) -> Result<String> {
     row.get(index).map_err(MetaStoreError::storage)
 }
@@ -1680,6 +1870,10 @@ fn u64_to_i64(value: u64, field: &'static str) -> Result<i64> {
     i64::try_from(value).map_err(|_| MetaStoreError::invalid_value(field))
 }
 
+fn usize_to_i64(value: usize, field: &'static str) -> Result<i64> {
+    i64::try_from(value).map_err(|_| MetaStoreError::invalid_value(field))
+}
+
 fn u32_to_i64(value: u32) -> i64 {
     i64::from(value)
 }
@@ -1690,6 +1884,10 @@ fn i64_to_u64(value: i64, field: &'static str) -> Result<u64> {
 
 fn i64_to_u32(value: i64, field: &'static str) -> Result<u32> {
     u32::try_from(value).map_err(|_| MetaStoreError::invalid_value(field))
+}
+
+fn i64_to_usize(value: i64, field: &'static str) -> Result<usize> {
+    usize::try_from(value).map_err(|_| MetaStoreError::invalid_value(field))
 }
 
 fn bool_to_i64(value: bool) -> i64 {
@@ -1779,6 +1977,51 @@ fn resume_visibility_from_storage(value: &str) -> Result<ResumeVisibility> {
         "partial" => Ok(ResumeVisibility::Partial),
         "hidden" => Ok(ResumeVisibility::Hidden),
         _ => Err(MetaStoreError::invalid_value("resume_version.visibility")),
+    }
+}
+
+fn entity_type_to_storage(entity_type: &EntityType) -> String {
+    match entity_type {
+        EntityType::Name => "name".to_string(),
+        EntityType::Email => "email".to_string(),
+        EntityType::Phone => "phone".to_string(),
+        EntityType::School => "school".to_string(),
+        EntityType::Degree => "degree".to_string(),
+        EntityType::Company => "company".to_string(),
+        EntityType::Title => "title".to_string(),
+        EntityType::Education => "education".to_string(),
+        EntityType::Skills => "skills".to_string(),
+        EntityType::Skill => "skill".to_string(),
+        EntityType::Certificate => "certificate".to_string(),
+        EntityType::Date => "date".to_string(),
+        EntityType::DateRange => "date_range".to_string(),
+        EntityType::YearsExperience => "years_experience".to_string(),
+        EntityType::Location => "location".to_string(),
+        EntityType::Other(value) => format!("other:{value}"),
+    }
+}
+
+fn entity_type_from_storage(value: &str) -> Result<EntityType> {
+    match value {
+        "name" => Ok(EntityType::Name),
+        "email" => Ok(EntityType::Email),
+        "phone" => Ok(EntityType::Phone),
+        "school" => Ok(EntityType::School),
+        "degree" => Ok(EntityType::Degree),
+        "company" => Ok(EntityType::Company),
+        "title" => Ok(EntityType::Title),
+        "education" => Ok(EntityType::Education),
+        "skills" => Ok(EntityType::Skills),
+        "skill" => Ok(EntityType::Skill),
+        "certificate" => Ok(EntityType::Certificate),
+        "date" => Ok(EntityType::Date),
+        "date_range" => Ok(EntityType::DateRange),
+        "years_experience" => Ok(EntityType::YearsExperience),
+        "location" => Ok(EntityType::Location),
+        _ => value
+            .strip_prefix("other:")
+            .map(|value| EntityType::Other(value.to_string()))
+            .ok_or_else(|| MetaStoreError::invalid_value("entity_mention.entity_type")),
     }
 }
 

@@ -519,6 +519,7 @@ pub enum EntityType {
     Email,
     Phone,
     School,
+    Degree,
     Company,
     Title,
     Education,
@@ -526,6 +527,8 @@ pub enum EntityType {
     Skill,
     Certificate,
     Date,
+    DateRange,
+    YearsExperience,
     Location,
     Other(String),
 }

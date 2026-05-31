@@ -1,11 +1,13 @@
 use std::fs;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    Document, DocumentId, DocumentStatus, FileExtension, ImportTask, ImportTaskId,
-    ImportTaskStatus, IndexState, IndexStateStatus, IngestJob, IngestJobId, IngestJobKind,
-    IngestJobStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
+    FileExtension, ImportTask, ImportTaskId, ImportTaskStatus, IndexState, IndexStateStatus,
+    IngestJob, IngestJobId, IngestJobKind, IngestJobStatus, MetaStore, ResumeVersion,
+    ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
 use rusqlite::{params, Connection};
 
@@ -16,8 +18,8 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(first.applied_versions(), &[1, 2, 3]);
-    assert_eq!(store.schema_version().unwrap(), 3);
+    assert_eq!(first.applied_versions(), &[1, 2, 3, 4]);
+    assert_eq!(store.schema_version().unwrap(), 4);
 
     for table_name in [
         "document",
@@ -25,13 +27,14 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "ingest_job",
         "index_state",
         "import_task",
+        "entity_mention",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 3);
+    assert_eq!(store.schema_version().unwrap(), 4);
 }
 
 #[test]
@@ -301,6 +304,61 @@ fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
 }
 
 #[test]
+fn entity_mentions_replace_query_and_redact_values() {
+    let store = migrated_store();
+    let document = document("field-mention-document", false, DocumentStatus::Searchable);
+    let version = resume_version("field-mention-version", document.id.clone());
+    store.upsert_document(&document).unwrap();
+    store.upsert_resume_version(&version).unwrap();
+
+    let email = entity_mention(
+        "email",
+        &version.id,
+        EntityType::Email,
+        "Synthetic.Candidate@Example.Test",
+        Some("synthetic.candidate@example.test"),
+        9..41,
+        0.99,
+    );
+    let skill = entity_mention(
+        "skill",
+        &version.id,
+        EntityType::Skill,
+        "Java",
+        Some("Java"),
+        80..84,
+        0.91,
+    );
+    store
+        .replace_entity_mentions(&version.id, &[email.clone(), skill.clone()])
+        .unwrap();
+
+    let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+    assert_eq!(mentions, vec![email, skill]);
+    assert_eq!(store.status_summary().unwrap().entity_mentions, 2);
+    assert!(!format!("{:?}", mentions[0]).contains("Synthetic.Candidate"));
+
+    let title = entity_mention(
+        "title",
+        &version.id,
+        EntityType::Title,
+        "Senior Backend Engineer",
+        Some("backend_engineer"),
+        120..143,
+        0.82,
+    );
+    store
+        .replace_entity_mentions(&version.id, std::slice::from_ref(&title))
+        .unwrap();
+
+    assert_eq!(
+        store.entity_mentions_for_version(&version.id).unwrap(),
+        vec![title]
+    );
+    assert_eq!(store.status_summary().unwrap().entity_mentions, 1);
+}
+
+#[test]
 fn claim_next_job_marks_one_retryable_job_running_with_attempt_increment() {
     let store = migrated_store();
     let document = document(
@@ -551,7 +609,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 3);
+        assert_eq!(reopened.schema_version().unwrap(), 4);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -702,6 +760,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
     {
         let connection = open_raw_connection(&db_path);
         connection.execute("DROP TABLE import_task", []).unwrap();
+        connection.execute("DROP TABLE entity_mention", []).unwrap();
         connection
             .execute(
                 "DROP INDEX IF EXISTS ingest_job_ocr_document_unique_idx",
@@ -709,15 +768,18 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             )
             .unwrap();
         connection
-            .execute("DELETE FROM schema_migrations WHERE version IN (2, 3)", [])
+            .execute(
+                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4)",
+                [],
+            )
             .unwrap();
     }
 
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[2, 3]);
-        assert_eq!(reopened.schema_version().unwrap(), 3);
+        assert_eq!(report.applied_versions(), &[2, 3, 4]);
+        assert_eq!(reopened.schema_version().unwrap(), 4);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -749,7 +811,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 3);
+        assert_eq!(reopened.schema_version().unwrap(), 4);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 
@@ -1105,6 +1167,29 @@ fn resume_version(label: &str, document_id: DocumentId) -> ResumeVersion {
         clean_text: Some("SYNTHETIC CLEAN TEXT".to_string()),
         quality_score: Some(0.8),
         visibility: ResumeVisibility::Searchable,
+    }
+}
+
+fn entity_mention(
+    label: &str,
+    version_id: &ResumeVersionId,
+    entity_type: EntityType,
+    raw_value: &str,
+    normalized_value: Option<&str>,
+    span: Range<usize>,
+    confidence: f32,
+) -> EntityMention {
+    EntityMention {
+        id: EntityMentionId::from_non_secret_parts(&["s16", version_id.as_str(), label]),
+        resume_version_id: version_id.clone(),
+        section_id: None,
+        entity_type,
+        raw_value: raw_value.to_string(),
+        normalized_value: normalized_value.map(str::to_string),
+        span_start: Some(span.start),
+        span_end: Some(span.end),
+        confidence,
+        extractor: "rules-v1".to_string(),
     }
 }
 
