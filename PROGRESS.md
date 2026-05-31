@@ -17,10 +17,10 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S10 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, production async import orchestration, and diagnostics remain unfinished. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S11 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, production async import orchestration, and diagnostics remain unfinished. |
 | P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, and S9 synthetic import-to-search smoke exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, and benchmark remain absent. |
 | P2 fields and dedupe | In progress | S10 smoke/MVP adds deterministic school, degree, and skill extraction on top of email/phone/date ranges; `rank-fusion` adds field summaries, `degree_min`, `skills_any`, `years_experience_min`, and hashed soft-dedupe skeleton tests; CLI search accepts `--degree bachelor --top-k 20`. | Dictionary coverage is intentionally tiny and synthetic; field filters are computed at query time from persisted clean text, not indexed fast fields; no evaluation harness or production candidate merge workflow exists. |
-| P3 semantic retrieval | Not started | Design docs only. | Model choice, license, checksums, and distribution approval require human confirmation. |
+| P3 semantic retrieval | In progress | S11 adds dependency-light `embedder` and `index-vector` crates with fake/test-only implementations plus `rank-fusion` RRF hybrid fusion tests. | This is only a fake-interface skeleton. Real embedding model choice/license/checksums/distribution, batch inference, production vector engine, hybrid integration, and recall benchmarks remain blockers. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs and scanned synthetic corpus absent. |
 | P5 packaging | Blocked on binaries and signing inputs | Packaging design only. | Windows/macOS certs, secrets, runners, signing/notarization approval. |
 | P6 performance and stability | Not started | Benchmark/fault-injection design only. | 100k/1M corpus, query set, platform runners absent. |
@@ -40,7 +40,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S8 | Complete | `index-fulltext` and `search-planner` implement a real Tantivy full-text schema, separate writer/reader APIs with reader reload, deleted-marker filtering, top-N snippet planning, and CLI search over an existing local index; standalone CLI search still reports no-index when no local index exists rather than fabricating results. | None |
 | S9 | Complete | `resume-cli import --root tests/fixtures/resumes` crawls synthetic DOCX/PDF fixtures, extracts DOCX and simple text-layer PDF text, routes image-only PDF to `OCR_REQUIRED`, persists metadata/state plus real Tantivy index files under `local-data/indexes/fulltext`, and `resume-cli search "Java"` finds the imported fixtures after reopening the index. | None |
 | S10 | Complete | MVP deterministic extraction for email, phone, school, degree, skills, and date ranges; field confidence/evidence preserved by `StrongEntity`; `rank-fusion` field filters and hashed candidate soft-dedupe skeleton; CLI `search "Java" --degree bachelor --top-k 20` parses and filters returned hits by persisted clean text. Acceptance commands passed locally on 2026-05-31. | None |
-| S11 | Not started |  |  |
+| S11 | Complete | Added workspace crates `embedder` and `index-vector`; `embedder` exposes typed embedding request/response/vector APIs, `Embedder`, and deterministic nonzero `FakeEmbedder`; `index-vector` exposes `VectorIndex`, cosine/dot search, upsert, deletion filtering, and deterministic in-memory tests; `rank-fusion` adds RRF hybrid fusion with configurable `k`, deterministic doc-id tie-breaking, and redacted source contribution debug output. Acceptance commands passed locally on 2026-05-31. | Production P3 remains blocked on real model license/manifest/checksums, batch inference, production vector engine, hybrid retrieval integration, and recall benchmarks. |
 | S12 | Not started |  |  |
 | S13 | Not started |  |  |
 
@@ -313,3 +313,33 @@ Review summary:
 - S10 remains a smoke/MVP slice: no embeddings, OCR, packaging, external dictionaries, real corpora, or real resumes were added.
 - Field filters are applied by extracting deterministic fields from persisted SQLite clean text for returned Tantivy hits; the Tantivy schema was not expanded for indexed fast-field filtering.
 - `rank-fusion` debug output redacts raw evidence and hashed dedupe keys; contact-based dedupe keys are hashed with local evidence-safe labels.
+
+### S11
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo test -p embedder
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+```
+
+Output summary:
+
+- Baseline `cargo test --workspace` before S11 edits succeeded.
+- TDD red runs for `cargo test -p embedder`, `cargo test -p index-vector`, and `cargo test -p rank-fusion` failed on the expected unresolved S11 APIs before implementation.
+- Final `cargo fmt --check`: succeeded.
+- Final `cargo test -p embedder`: succeeded with 2 tests covering deterministic nonzero fake vectors, dimension/batch validation, and redacted debug output.
+- Final `cargo test -p index-vector`: succeeded with 3 tests covering cosine ordering, dot-similarity tie-breaking, dimension validation, deletion filtering, and redacted vector payload debug output.
+- Final `cargo test -p rank-fusion`: succeeded with 5 tests, including the existing S10 field/dedupe tests and 2 RRF hybrid fusion tests.
+- Final `cargo test --workspace`: succeeded across all crates, including the new `embedder` and `index-vector` crates.
+- Final `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+
+Review summary:
+
+- S11 is a skeleton-only P3 slice: no real embedding model was downloaded, named, referenced, or bundled.
+- No ONNX Runtime, HNSW, FAISS, or other real vector-engine dependency was added.
+- The fake embedder and in-memory vector index are deterministic synthetic-test interfaces only; they are not production semantic search.
+- `Debug` output redacts embedding inputs, vector payloads, and source-list scores/contribution details.

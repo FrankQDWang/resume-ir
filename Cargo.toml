@@ -13,6 +13,8 @@ members = [
     "crates/sectionizer",
     "crates/extractor-rules",
     "crates/index-fulltext",
+    "crates/embedder",
+    "crates/index-vector",
     "crates/search-planner",
     "crates/rank-fusion",
 ]
@@ -35,6 +37,8 @@ text-normalizer = { path = "crates/text-normalizer" }
 sectionizer = { path = "crates/sectionizer" }
 extractor-rules = { path = "crates/extractor-rules" }
 index-fulltext = { path = "crates/index-fulltext" }
+embedder = { path = "crates/embedder" }
+index-vector = { path = "crates/index-vector" }
 search-planner = { path = "crates/search-planner" }
 rank-fusion = { path = "crates/rank-fusion" }
 serde = { version = "1.0", features = ["derive"] }

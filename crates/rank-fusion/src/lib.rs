@@ -2,12 +2,14 @@
 
 use core_domain::EntityType;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
 const STRONG_FIELD_CONFIDENCE: f32 = 0.75;
 const S10_AS_OF_YEAR: i32 = 2026;
 const S10_AS_OF_MONTH: i32 = 5;
+const DEFAULT_RRF_K: f32 = 60.0;
 
 /// Ordered degree levels used by field filters.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -414,6 +416,337 @@ pub fn group_soft_duplicates(records: Vec<CandidateRecord>) -> Vec<CandidateGrou
     }
 
     groups
+}
+
+/// Source list that contributed to a hybrid rank.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RankSource {
+    /// Full-text search source list.
+    FullText,
+    /// Vector similarity source list.
+    Vector,
+}
+
+/// One ranked source hit entering hybrid fusion.
+#[derive(Clone, PartialEq)]
+pub struct RankedSourceHit {
+    doc_id: String,
+    score: f32,
+}
+
+impl RankedSourceHit {
+    /// Creates a ranked source hit.
+    #[must_use]
+    pub fn new(doc_id: impl Into<String>, score: f32) -> Self {
+        Self {
+            doc_id: doc_id.into(),
+            score,
+        }
+    }
+
+    /// Returns the document identifier.
+    #[must_use]
+    pub fn doc_id(&self) -> &str {
+        &self.doc_id
+    }
+
+    /// Returns the source-native score.
+    #[must_use]
+    pub fn score(&self) -> f32 {
+        self.score
+    }
+}
+
+impl fmt::Debug for RankedSourceHit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RankedSourceHit")
+            .field("doc_id", &self.doc_id)
+            .field("score", &"[redacted source score]")
+            .finish()
+    }
+}
+
+/// Full-text and vector ranked lists entering hybrid fusion.
+#[derive(Clone, PartialEq)]
+pub struct HybridRankedLists {
+    fulltext: Vec<RankedSourceHit>,
+    vector: Vec<RankedSourceHit>,
+}
+
+impl HybridRankedLists {
+    /// Creates hybrid ranked lists.
+    #[must_use]
+    pub fn new(fulltext: Vec<RankedSourceHit>, vector: Vec<RankedSourceHit>) -> Self {
+        Self { fulltext, vector }
+    }
+
+    /// Returns the full-text ranked list.
+    #[must_use]
+    pub fn fulltext(&self) -> &[RankedSourceHit] {
+        &self.fulltext
+    }
+
+    /// Returns the vector ranked list.
+    #[must_use]
+    pub fn vector(&self) -> &[RankedSourceHit] {
+        &self.vector
+    }
+}
+
+impl fmt::Debug for HybridRankedLists {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HybridRankedLists")
+            .field("fulltext_count", &self.fulltext.len())
+            .field("vector_count", &self.vector.len())
+            .finish()
+    }
+}
+
+/// Reciprocal-rank fusion configuration.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RrfConfig {
+    k: f32,
+}
+
+impl RrfConfig {
+    /// Creates RRF configuration with a caller-provided k constant.
+    #[must_use]
+    pub fn new(k: f32) -> Self {
+        if k.is_finite() && k >= 0.0 {
+            Self { k }
+        } else {
+            Self { k: DEFAULT_RRF_K }
+        }
+    }
+
+    /// Returns the configured k constant.
+    #[must_use]
+    pub fn k(&self) -> f32 {
+        self.k
+    }
+}
+
+impl Default for RrfConfig {
+    fn default() -> Self {
+        Self { k: DEFAULT_RRF_K }
+    }
+}
+
+/// Hybrid fusion interface.
+pub trait HybridFusion {
+    /// Fuses source-ranked lists into one deterministic hybrid result.
+    fn fuse(&self, lists: HybridRankedLists) -> HybridFusionResult;
+}
+
+/// Reciprocal-rank fusion implementation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReciprocalRankFusion {
+    config: RrfConfig,
+}
+
+impl ReciprocalRankFusion {
+    /// Creates an RRF fusion strategy.
+    #[must_use]
+    pub fn new(config: RrfConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns the RRF configuration.
+    #[must_use]
+    pub fn config(&self) -> RrfConfig {
+        self.config
+    }
+}
+
+impl HybridFusion for ReciprocalRankFusion {
+    fn fuse(&self, lists: HybridRankedLists) -> HybridFusionResult {
+        let mut by_doc_id = BTreeMap::<String, HybridHitBuilder>::new();
+
+        add_contributions(
+            &mut by_doc_id,
+            RankSource::FullText,
+            &lists.fulltext,
+            self.config.k,
+        );
+        add_contributions(
+            &mut by_doc_id,
+            RankSource::Vector,
+            &lists.vector,
+            self.config.k,
+        );
+
+        let mut hits = by_doc_id
+            .into_iter()
+            .map(|(doc_id, builder)| HybridHit {
+                doc_id,
+                score: builder.score,
+                contributions: builder.contributions,
+            })
+            .collect::<Vec<_>>();
+
+        hits.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.doc_id.cmp(&right.doc_id))
+        });
+
+        HybridFusionResult { hits }
+    }
+}
+
+/// Fused hybrid search result.
+#[derive(Clone, PartialEq)]
+pub struct HybridFusionResult {
+    hits: Vec<HybridHit>,
+}
+
+impl HybridFusionResult {
+    /// Returns fused hits in deterministic rank order.
+    #[must_use]
+    pub fn hits(&self) -> &[HybridHit] {
+        &self.hits
+    }
+}
+
+impl fmt::Debug for HybridFusionResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HybridFusionResult")
+            .field("hits", &self.hits)
+            .finish()
+    }
+}
+
+/// One fused hybrid hit.
+#[derive(Clone, PartialEq)]
+pub struct HybridHit {
+    doc_id: String,
+    score: f32,
+    contributions: Vec<SourceContribution>,
+}
+
+impl HybridHit {
+    /// Returns the document identifier.
+    #[must_use]
+    pub fn doc_id(&self) -> &str {
+        &self.doc_id
+    }
+
+    /// Returns the fused RRF score.
+    #[must_use]
+    pub fn score(&self) -> f32 {
+        self.score
+    }
+
+    /// Returns source-level RRF contributions.
+    #[must_use]
+    pub fn contributions(&self) -> &[SourceContribution] {
+        &self.contributions
+    }
+}
+
+impl fmt::Debug for HybridHit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HybridHit")
+            .field("doc_id", &self.doc_id)
+            .field("score", &self.score)
+            .field("contributions", &self.contributions)
+            .finish()
+    }
+}
+
+/// One source contribution to an RRF score.
+#[derive(Clone, PartialEq)]
+pub struct SourceContribution {
+    source: RankSource,
+    rank: usize,
+    reciprocal_rank: f32,
+    raw_score: f32,
+}
+
+impl SourceContribution {
+    /// Returns the source list.
+    #[must_use]
+    pub fn source(&self) -> RankSource {
+        self.source
+    }
+
+    /// Returns the one-based rank from the source list.
+    #[must_use]
+    pub fn rank(&self) -> usize {
+        self.rank
+    }
+
+    /// Returns the RRF score contribution from this source.
+    #[must_use]
+    pub fn reciprocal_rank(&self) -> f32 {
+        self.reciprocal_rank
+    }
+
+    /// Returns the source-native raw score.
+    #[must_use]
+    pub fn raw_score(&self) -> f32 {
+        self.raw_score
+    }
+}
+
+impl fmt::Debug for SourceContribution {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SourceContribution")
+            .field("source", &self.source)
+            .field("rank", &self.rank)
+            .field("reciprocal_rank", &self.reciprocal_rank)
+            .field("raw_score", &"[redacted source score]")
+            .finish()
+    }
+}
+
+#[derive(Default)]
+struct HybridHitBuilder {
+    score: f32,
+    contributions: Vec<SourceContribution>,
+}
+
+fn add_contributions(
+    by_doc_id: &mut BTreeMap<String, HybridHitBuilder>,
+    source: RankSource,
+    hits: &[RankedSourceHit],
+    k: f32,
+) {
+    for (index, hit) in hits.iter().enumerate() {
+        let entry = by_doc_id.entry(hit.doc_id.clone()).or_default();
+        if entry
+            .contributions
+            .iter()
+            .any(|contribution| contribution.source == source)
+        {
+            continue;
+        }
+
+        let rank = index + 1;
+        let reciprocal_rank = reciprocal_rank(k, rank);
+        entry.score += reciprocal_rank;
+        entry.contributions.push(SourceContribution {
+            source,
+            rank,
+            reciprocal_rank,
+            raw_score: hit.score,
+        });
+    }
+}
+
+fn reciprocal_rank(k: f32, rank: usize) -> f32 {
+    let denominator = k + rank as f32;
+    if denominator <= 0.0 {
+        0.0
+    } else {
+        1.0 / denominator
+    }
 }
 
 /// Returns the crate name for smoke tests and workspace metadata.
