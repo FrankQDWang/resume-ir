@@ -1,6 +1,8 @@
 //! Command-line interface skeleton for local resume indexing.
 
+use index_fulltext::{FullTextError, FullTextIndexReader};
 use meta_store::MetadataStore;
+use search_planner::SearchOptions;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -58,16 +60,43 @@ where
             if trimmed.is_empty() {
                 return Err("Search query must not be empty.".to_string());
             }
-            let store = open_store(&options.data_dir)?;
-            let status = store
-                .status()
-                .map_err(|error| error.user_message().to_string())?;
-            writeln!(
-                output,
-                "search index is not available yet; indexed states: {}",
-                status.index_state_count
-            )
-            .map_err(|error| error.to_string())
+            let index_dir = fulltext_index_dir(&options.data_dir);
+            let reader = match FullTextIndexReader::open_existing(&index_dir) {
+                Ok(reader) => reader,
+                Err(FullTextError::MissingIndex) => {
+                    let store = open_store(&options.data_dir)?;
+                    let status = store
+                        .status()
+                        .map_err(|error| error.user_message().to_string())?;
+                    writeln!(
+                        output,
+                        "search index is not available yet; indexed states: {}",
+                        status.index_state_count
+                    )
+                    .map_err(|error| error.to_string())?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+            let hits = reader
+                .search(trimmed, SearchOptions::default())
+                .map_err(|error| error.to_string())?;
+            if hits.is_empty() {
+                writeln!(output, "no search results").map_err(|error| error.to_string())?;
+                return Ok(());
+            }
+            for hit in hits {
+                writeln!(
+                    output,
+                    "rank={} doc_id={} file_name={} snippet={}",
+                    hit.rank,
+                    hit.doc_id,
+                    hit.file_name,
+                    single_line(&hit.snippet)
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            Ok(())
         }
     }
 }
@@ -146,9 +175,18 @@ fn open_store(data_dir: &Path) -> Result<MetadataStore, String> {
     Ok(store)
 }
 
+fn fulltext_index_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("indexes").join("fulltext")
+}
+
+fn single_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::run_with_args;
+    use index_fulltext::{FullTextIndexWriter, IndexDocument};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -189,7 +227,7 @@ mod tests {
             &mut output,
         )
         .err()
-        .ok_or_else(|| "missing root unexpectedly succeeded".to_string())?;
+        .ok_or_else(|| "missing root should have failed".to_string())?;
 
         assert!(error.contains("Import root must be an existing directory"));
         assert!(!error.contains(missing_root.as_str()));
@@ -246,6 +284,46 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn search_reads_existing_fulltext_index_and_prints_ranked_results() -> Result<(), String> {
+        let data_dir = unique_data_dir("search-index")?;
+        let index_dir = data_dir.join("indexes").join("fulltext");
+        let mut writer = FullTextIndexWriter::open_or_create(index_dir.as_ref())
+            .map_err(|error| format!("could not create synthetic full-text test index: {error}"))?;
+        writer
+            .add_document(IndexDocument {
+                doc_id: "doc-cli".to_string(),
+                version_id: "ver-cli".to_string(),
+                file_name: "synthetic-cli.pdf".to_string(),
+                clean_text: "Synthetic Java 支付 project experience text".to_string(),
+                section_type: "experience".to_string(),
+                is_deleted: false,
+            })
+            .map_err(|error| error.to_string())?;
+        writer.commit().map_err(|error| error.to_string())?;
+        let mut output = Vec::new();
+
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "search",
+                "Java 支付",
+            ],
+            &mut output,
+        )?;
+
+        let text = String::from_utf8(output).map_err(|error| error.to_string())?;
+        assert!(text.contains("rank=1"));
+        assert!(text.contains("doc_id=doc-cli"));
+        assert!(text.contains("file_name=synthetic-cli.pdf"));
+        assert!(text.contains("snippet="));
+        assert!(!text.contains(index_dir.as_str()));
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     fn unique_data_dir(label: &str) -> Result<TestPath, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -265,7 +343,7 @@ mod tests {
         }
 
         fn as_str(&self) -> &str {
-            self.0.to_str().unwrap_or("")
+            self.0.to_str().map_or("", std::convert::identity)
         }
 
         fn is_file(&self) -> bool {

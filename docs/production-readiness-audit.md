@@ -9,15 +9,16 @@ checklist: a slice can pass while the full product is still incomplete.
 ## Current State
 
 - The repository was documentation-only after `f3e1a54 revert: remove goal generated implementation`.
-- S1-S7 foundation code has been rebuilt in the current worktree: `Cargo.toml`,
+- S1-S8 foundation code has been rebuilt in the current worktree: `Cargo.toml`,
   `Cargo.lock`, and the first `crates/` workspace members now exist with local
   acceptance evidence, including SQLite metadata schema, queue recovery, and
   CLI/daemon lifecycle skeletons, filesystem crawling, and parser skeletons for
   DOCX/PDF classification, text normalization, section fallback, and strong
-  email/phone/date-range rules.
+  email/phone/date-range rules, plus a real Tantivy full-text index/search
+  layer.
 - `.github/` is absent. `tests/fixtures/` currently contains only an empty CLI
   smoke fixture. Runtime data remains local-only and ignored.
-- `PROGRESS.md` records S0 through S7 as complete while P0/P1 remain incomplete.
+- `PROGRESS.md` records S0 through S8 as complete while P0/P1 remain incomplete.
 - No repo-local `AGENTS.md` exists. The in-thread workflow instructions remain active.
 - Rust is available at `/Users/frankqdwang/.cargo/bin`, but not on the default shell `PATH`.
 - `sqlite3` is available. `tesseract` and `ocrmypdf` are not currently available on `PATH`.
@@ -26,8 +27,8 @@ checklist: a slice can pass while the full product is still incomplete.
 
 | Phase | Complete | Incomplete | Must Rebuild | External Blockers |
 |---|---|---|---|---|
-| P0 architecture skeleton | Design baseline, Git repo, README, PROGRESS, `.gitignore`; S1-S7 workspace/domain/config/SQLite metadata/CLI/daemon/fs-crawler/parser/text-processing foundation has local acceptance evidence. | IPC, logs/diagnostics, CI, and deeper kill-recovery smoke. | Previous skeleton code was deleted and must not count as product progress; future code must carry fresh verification evidence. | Rust must be invoked with the user cargo path unless shell PATH is fixed; local CI/branch protection cannot be fully verified without remote setup. |
-| P1 text import and full-text search | Product design for docx/PDF text, normalization, sectioning, Tantivy, snippets; S5 filesystem crawler exists with synthetic tests; S6 adds parser contracts, basic DOCX extraction, and honest PDF text-layer/image-only/unknown classification; S7 adds basic text cleanup, offset mapping, and heading/fallback sectioning. | Parser-to-normalizer integration, Tantivy index, real import worker, search CLI, 100k text import benchmark. | Fulltext code must still be rebuilt with real tests and synthetic fixtures; PDF text-layer extraction is not implemented yet. | Large synthetic or desensitized corpora are not present. |
+| P0 architecture skeleton | Design baseline, Git repo, README, PROGRESS, `.gitignore`; S1-S8 workspace/domain/config/SQLite metadata/CLI/daemon/fs-crawler/parser/text-processing/fulltext foundation has local acceptance evidence. | IPC, logs/diagnostics, CI, import/index orchestration, and deeper kill-recovery smoke. | Previous skeleton code was deleted and must not count as product progress; future code must carry fresh verification evidence. | Rust must be invoked with the user cargo path unless shell PATH is fixed; local CI/branch protection cannot be fully verified without remote setup. |
+| P1 text import and full-text search | Product design for docx/PDF text, normalization, sectioning, Tantivy, snippets; S5 filesystem crawler exists with synthetic tests; S6 adds parser contracts, basic DOCX extraction, and honest PDF text-layer/image-only/unknown classification; S7 adds basic text cleanup, offset mapping, and heading/fallback sectioning; S8 adds real Tantivy indexing/search and CLI search over an existing index. | Parser-to-normalizer-to-index integration, real import worker, search over imported fixtures, restart smoke, 100k text import benchmark. | PDF text-layer extraction is not implemented yet; S9 must still prove the import-to-query loop with synthetic fixtures. | Large synthetic or desensitized corpora are not present. |
 | P2 fields and dedupe | Field model and confidence rules are specified; S7 adds strong email/phone/date-range rules with low-confidence exclusion tests. | Broader extractors, dictionaries, confidence evidence, field filters, candidate/version folding, quality harness. | Any prior skeleton field logic is gone and cannot be reused as completion evidence; S7 strong rules are not full P2 field extraction or dedupe. | Field-labeled desensitized evaluation set and dictionary/license decisions are not present. |
 | P3 semantic retrieval | ONNX/vector/RRF architecture is specified. | Embedder, model manifest, batch inference, vector index, hybrid retrieval, recall benchmark. | Fake embedders may only support interface tests; they cannot satisfy production semantic search. | Model choice, license, checksums, and distribution approval require human confirmation. |
 | P4 OCR | OCR routing, cache, worker isolation, and degradation design are specified; S6 can classify simple unencoded image-only PDFs as OCR-required. | OCR client/worker, robust scan detection, page cache, timeout/cancel, language profiles, recovery tests. | Noop OCR cannot satisfy production OCR. The OCR path must remain off the query hot path. | `tesseract`/`ocrmypdf` and language packs are absent on PATH; scanned test corpus is absent. |

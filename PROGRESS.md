@@ -17,8 +17,8 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S7 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, and index integration remain unfinished. |
-| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, and S7 text normalization/sectioning crates exist with synthetic acceptance tests. | Parser integration, Tantivy index/search, synthetic large corpus, and benchmark remain absent. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S8 foundation acceptance passed locally on 2026-05-31. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, diagnostics, CI, and import/index orchestration remain unfinished. |
+| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, and S8 Tantivy full-text index/search crates exist with synthetic acceptance tests. | Import-to-index integration, real import worker, synthetic large corpus, and benchmark remain absent. |
 | P2 fields and dedupe | Not started | S7 strong-rule extraction for email, phone, and date ranges exists with synthetic tests; broader P2 design docs only. | Field-labeled synthetic/desensitized evaluation set, dedupe, dictionaries, and confidence harness remain absent. |
 | P3 semantic retrieval | Not started | Design docs only. | Model choice, license, checksums, and distribution approval require human confirmation. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs and scanned synthetic corpus absent. |
@@ -37,7 +37,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S5 | Complete | `fs-crawler` scans supported files, filters temp/unsupported files, normalizes Unicode and Windows/macOS-style separators, builds fast fingerprints, and reports locked/permission/unreachable errors through deterministic tests. | None |
 | S6 | Complete | `parser-common`, `parser-docx`, and `parser-pdf` implement parser contracts, basic DOCX text extraction, lightweight PDF text-layer/image-only/unknown classification, elapsed-budget timeout mapping, and redacted parser debug/errors; acceptance passed with parser crate tests. | None |
 | S7 | Complete | `text-normalizer`, `sectionizer`, and `extractor-rules` crates implement basic cleanup, offset mapping, heading/fallback sectioning, and strong email/phone/date-range rules with synthetic mixed Chinese/English, table-linearized, offset, redaction, and low-confidence exclusion tests; acceptance passed locally. | None |
-| S8 | Not started |  |  |
+| S8 | Complete | `index-fulltext` and `search-planner` implement a real Tantivy full-text schema, separate writer/reader APIs with reader reload, deleted-marker filtering, top-N snippet planning, and CLI search over an existing local index; standalone CLI search still reports no-index when no local index exists rather than fabricating results. | None |
 | S9 | Not started |  |  |
 | S10 | Not started |  |  |
 | S11 | Not started |  |  |
@@ -211,7 +211,7 @@ Review summary:
 Output summary:
 
 - `cargo fmt --check`: succeeded.
-- `cargo test -p text-normalizer`: succeeded with 4 integration tests covering mixed Chinese/English cleanup, table-linearized spacing, offset mapping, and redacted debug output.
+- `cargo test -p text-normalizer`: succeeded with 5 integration tests covering mixed Chinese/English cleanup, table-linearized spacing, offset mapping, conservative repeated header/footer cleanup, and redacted debug output.
 - `cargo test -p sectionizer`: succeeded with 4 integration tests covering Chinese/English heading detection, paragraph/length fallback chunking, table-linearized fallback preservation, and redacted debug output.
 - `cargo test -p extractor-rules`: succeeded with 4 integration tests covering strong email/phone/date-range extraction, table-linearized offsets, low-confidence exclusion, and redacted debug output.
 - `cargo clippy --all-targets --all-features -- -D warnings`: succeeded after removing lint-risky test unwrap/unreachable usage and using explicit checked conversions.
@@ -220,3 +220,28 @@ Review summary:
 
 - S7 scope is limited to local library crates; no real resume data, remote side effects, fake ML, or broad field extraction were added.
 - `regex` was added only for `extractor-rules`; `text-normalizer` and `sectionizer` remain dependency-light.
+
+### S8
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext
+/Users/frankqdwang/.cargo/bin/cargo test -p search-planner
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- search "Java 支付"
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: succeeded.
+- `cargo test -p index-fulltext`: succeeded with 5 tests covering commit-after-reader-reload searchability, deleted-marker hiding by default, malformed stored-document rejection, redacted debug output, and redacted index-error debug output.
+- `cargo test -p search-planner`: succeeded with 1 test covering top-N-only snippet generation.
+- `cargo run -p resume-cli -- search "Java 支付"`: succeeded and reported `search index is not available yet; indexed states: 0` for the empty local data directory, without fake results or query echo.
+- Workspace `cargo test --workspace` and `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+
+Review summary:
+
+- S8 uses real Tantivy via `index-fulltext`; no in-memory fake search is used to satisfy acceptance.
+- CLI search reads an existing local full-text index and prints `rank`, `doc_id`, `file_name`, and `snippet` in integration tests; when no index exists it returns a clear no-index status.
+- S8 does not implement the S9 import-to-query loop, OCR, embeddings, or field filters.

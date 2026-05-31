@@ -12,6 +12,8 @@ members = [
     "crates/text-normalizer",
     "crates/sectionizer",
     "crates/extractor-rules",
+    "crates/index-fulltext",
+    "crates/search-planner",
 ]
 resolver = "2"
 
@@ -29,11 +31,14 @@ parser-common = { path = "crates/parser-common" }
 text-normalizer = { path = "crates/text-normalizer" }
 sectionizer = { path = "crates/sectionizer" }
 extractor-rules = { path = "crates/extractor-rules" }
+index-fulltext = { path = "crates/index-fulltext" }
+search-planner = { path = "crates/search-planner" }
 serde = { version = "1.0", features = ["derive"] }
 regex = "1.10"
 sha2 = "0.10"
 tempfile = "3.10"
 thiserror = "1.0"
+tantivy = "0.26.1"
 uuid = { version = "1.8", features = ["v4", "serde"] }
 
 [workspace.lints.rust]
