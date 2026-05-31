@@ -66,37 +66,63 @@ fn run_once_import_drain_with_worker<W, F>(
     store: &MetadataStore,
     data_dir: &Path,
     output: &mut W,
-    worker: F,
+    mut worker: F,
 ) -> Result<(), String>
 where
     W: Write,
-    F: FnOnce(&MetadataStore, &Path, &Path) -> Result<ImportSummary, String>,
+    F: FnMut(&MetadataStore, &Path, &Path) -> Result<ImportSummary, String>,
 {
     let now_ms = current_time_ms()?;
-    let claim_token = local_import_claim_token(now_ms);
     let lease_expires_at_ms = import_lease_expires_at_ms(now_ms);
-    let Some(claim) = store
-        .claim_next_import_task(&claim_token, now_ms, lease_expires_at_ms)
+    let queued_tasks = store
+        .queued_import_tasks()
         .map_err(|error| error.user_message().to_string())?
-    else {
+        .into_iter()
+        .map(|task| task.task_id)
+        .collect::<Vec<_>>();
+    if queued_tasks.is_empty() {
         writeln!(output, "claimed imports: 0").map_err(|error| error.to_string())?;
+        writeln!(output, "failed imports: 0").map_err(|error| error.to_string())?;
         write_import_summary(output, &ImportSummary::default())?;
         return Ok(());
-    };
+    }
 
-    let summary = match worker(store, data_dir, Path::new(claim.root_path.as_str())) {
-        Ok(summary) => {
-            complete_current_import_claim(store, claim.task_id, claim.claim_token.as_str())?;
-            summary
-        }
-        Err(_) => {
-            fail_current_import_claim(store, claim.task_id, claim.claim_token.as_str())?;
-            ImportSummary::default()
-        }
-    };
+    let mut claimed_imports = 0usize;
+    let mut failed_imports = 0usize;
+    let mut run_summary = ImportSummary::default();
 
-    writeln!(output, "claimed imports: 1").map_err(|error| error.to_string())?;
-    write_import_summary(output, &summary)
+    for task_id in queued_tasks {
+        let claim_token = local_import_claim_token(now_ms, task_id);
+        let Some(claim) = store
+            .claim_import_task(task_id, &claim_token, now_ms, lease_expires_at_ms)
+            .map_err(|error| error.user_message().to_string())?
+        else {
+            continue;
+        };
+
+        claimed_imports += 1;
+        match worker(store, data_dir, Path::new(claim.root_path.as_str())) {
+            Ok(summary) => {
+                complete_current_import_claim(store, claim.task_id, claim.claim_token.as_str())?;
+                add_import_summary(&mut run_summary, summary);
+            }
+            Err(_) => {
+                fail_current_import_claim(store, claim.task_id, claim.claim_token.as_str())?;
+                failed_imports += 1;
+            }
+        }
+    }
+
+    writeln!(output, "claimed imports: {claimed_imports}").map_err(|error| error.to_string())?;
+    writeln!(output, "failed imports: {failed_imports}").map_err(|error| error.to_string())?;
+    write_import_summary(output, &run_summary)
+}
+
+fn add_import_summary(total: &mut ImportSummary, summary: ImportSummary) {
+    total.discovered_documents += summary.discovered_documents;
+    total.searchable_documents += summary.searchable_documents;
+    total.ocr_required_documents += summary.ocr_required_documents;
+    total.skipped_documents += summary.skipped_documents;
 }
 
 fn write_import_summary<W: Write>(output: &mut W, summary: &ImportSummary) -> Result<(), String> {
@@ -164,8 +190,8 @@ fn import_lease_expires_at_ms(now_ms: i64) -> i64 {
     now_ms.saturating_add(IMPORT_LEASE_MS)
 }
 
-fn local_import_claim_token(now_ms: i64) -> String {
-    format!("resume-daemon-local-import-{now_ms}")
+fn local_import_claim_token(now_ms: i64, task_id: i64) -> String {
+    format!("resume-daemon-local-import-{now_ms}-{task_id}")
 }
 
 struct DaemonOptions {
@@ -339,6 +365,68 @@ mod tests {
     }
 
     #[test]
+    fn foreground_once_drains_all_initially_queued_imports() -> Result<(), String> {
+        let data_dir = unique_data_dir("daemon-import-drain-many")?;
+        let first_root = data_dir.join("first-private-root");
+        let second_root = data_dir.join("second-private-root");
+        fs::create_dir_all(first_root.as_ref()).map_err(|error| error.to_string())?;
+        fs::create_dir_all(second_root.as_ref()).map_err(|error| error.to_string())?;
+        fs::write(
+            first_root.join("first-private-searchable.pdf").as_ref(),
+            text_layer_pdf_bytes_with("First daemon synthetic engineer with PDF text"),
+        )
+        .map_err(|error| error.to_string())?;
+        fs::write(
+            second_root.join("second-private-searchable.pdf").as_ref(),
+            text_layer_pdf_bytes_with("Second daemon synthetic engineer with PDF text"),
+        )
+        .map_err(|error| error.to_string())?;
+
+        let store = open_test_store(&data_dir)?;
+        store
+            .enqueue_import_root(first_root.as_ref())
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .enqueue_import_root(second_root.as_ref())
+            .map_err(|error| error.user_message().to_string())?;
+
+        let mut output = Vec::new();
+        run_with_args(
+            [
+                "resume-daemon",
+                "--data-dir",
+                data_dir.as_str(),
+                "--foreground",
+                "--once",
+            ],
+            &mut output,
+        )?;
+
+        let text = String::from_utf8(output).map_err(|error| error.to_string())?;
+        assert!(text.contains("claimed imports: 2"));
+        assert!(text.contains("discovered documents: 2"));
+        assert!(text.contains("searchable documents: 2"));
+        assert!(text.contains("ocr required documents: 0"));
+        assert!(text.contains("skipped documents: 0"));
+        assert!(!text.contains(first_root.as_str()));
+        assert!(!text.contains(second_root.as_str()));
+        assert!(!text.contains("first-private-root"));
+        assert!(!text.contains("second-private-root"));
+        assert!(!text.contains("first-private-searchable.pdf"));
+        assert!(!text.contains("second-private-searchable.pdf"));
+
+        let reopened = open_test_store(&data_dir)?;
+        let status = reopened
+            .status()
+            .map_err(|error| error.user_message().to_string())?;
+        assert_eq!(status.queued_import_task_count, 0);
+        assert_eq!(status.searchable_document_count, 2);
+        assert_eq!(status.ocr_required_document_count, 0);
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
     fn foreground_once_failed_import_is_retryable_without_printing_root_path() -> Result<(), String>
     {
         let data_dir = unique_data_dir("daemon-import-failure")?;
@@ -362,6 +450,7 @@ mod tests {
 
         let text = String::from_utf8(output).map_err(|error| error.to_string())?;
         assert!(text.contains("claimed imports: 1"));
+        assert!(text.contains("failed imports: 1"));
         assert!(text.contains("discovered documents: 0"));
         assert!(text.contains("searchable documents: 0"));
         assert!(text.contains("ocr required documents: 0"));

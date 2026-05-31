@@ -9,7 +9,7 @@ This file tracks long-running Goal execution against
 - Data policy: synthetic fixtures only; no real resumes or PII.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
-- Product rule: S0-S18 slice progress is not the same as full product completion; P0-P6 gates remain authoritative.
+- Product rule: S0-S19 slice progress is not the same as full product completion; P0-P6 gates remain authoritative.
 
 ## Product Gate Status
 
@@ -17,8 +17,8 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S18 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton, S14 deletion-propagation CLI slice, S15 local synthetic benchmark runner with batched metadata seeding, S16 local redacted diagnostics package generation, S17 durable import-task lease/retry metadata schema v3, and S18 shared import worker with daemon `--once` queued-import drain. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/observability, CI, multi-task daemon loop, and production async import orchestration remain unfinished. |
-| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, S9 synthetic import-to-search smoke, S14 CLI `delete --doc-id` propagation, S15 benchmark search/delete smoke, S17 durable import-task claim/lease/retry primitives, and S18 daemon `--once` processing of one queued synthetic import root exist with acceptance tests. | Production multi-task import worker, robust PDF extraction, synthetic large corpus, async deletion orchestration, and real benchmark corpus runs remain absent. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S19 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton, S14 deletion-propagation CLI slice, S15 local synthetic benchmark runner with batched metadata seeding, S16 local redacted diagnostics package generation, S17 durable import-task lease/retry metadata schema v3, S18 shared import worker with daemon `--once` queued-import drain, and S19 bounded daemon drain over initially queued import tasks. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/observability, CI, long-running daemon loop, and production async import orchestration remain unfinished. |
+| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, S9 synthetic import-to-search smoke, S14 CLI `delete --doc-id` propagation, S15 benchmark search/delete smoke, S17 durable import-task claim/lease/retry primitives, S18 daemon `--once` processing of one queued synthetic import root, and S19 bounded drain over initially queued import tasks exist with acceptance tests. | Production long-running import worker, robust PDF extraction, synthetic large corpus, async deletion orchestration, and real benchmark corpus runs remain absent. |
 | P2 fields and dedupe | In progress | S10 smoke/MVP adds deterministic school, degree, and skill extraction on top of email/phone/date ranges; `rank-fusion` adds field summaries, `degree_min`, `skills_any`, `years_experience_min`, and hashed soft-dedupe skeleton tests; CLI search accepts `--degree bachelor --top-k 20`; S14 prevents deleted docs from being resurrected by query-time clean-text field filtering. | Dictionary coverage is intentionally tiny and synthetic; field filters are computed at query time from persisted clean text, not indexed fast fields; no evaluation harness or production candidate merge workflow exists. |
 | P3 semantic retrieval | In progress | S11 adds dependency-light `embedder` and `index-vector` crates with fake/test-only implementations plus `rank-fusion` RRF hybrid fusion tests. | This is only a fake-interface skeleton. Real embedding model choice/license/checksums/distribution, batch inference, production vector engine, hybrid integration, and recall benchmarks remain blockers. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; S12 adds typed `ocr-client` interfaces and deterministic `ingest-scheduler` OCR-required queue primitives without running OCR. Local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs, real OCR worker integration, and scanned synthetic corpus absent. |
@@ -48,6 +48,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S16 | Complete | Added `resume-cli export-diagnostics --redact --output <dir>` while preserving stdout-only `export-diagnostics --redact`; package mode writes through a `diagnostics-package-*.tmp` staging directory, then atomically renames one local `diagnostics-package-*` directory per run containing deterministic `manifest.json`, `status.txt`, and `checks.txt` files with aggregate-only schema/count/fulltext/check metadata; stdout and errors remain redacted and never print the package path. Acceptance commands passed locally on 2026-05-31. | This is local redacted diagnostics package generation only. It is not real production observability, does not exercise real fault injection or soak, and does not complete P6. |
 | S17 | Complete | Upgraded `meta-store` schema to v3 and added durable import-root task `max_attempts`, `attempt_count`, `last_error`, `claim_token`, and `lease_expires_at_ms` fields plus token-gated claim-by-id, claim-next, complete, and fail primitives. Claiming atomically moves queued/failed/expired work to running, increments attempts, sets a lease, redacts root/token/error debug output, stores local failure diagnostics, and converts expired final-attempt leases to `permanent_failed` before future claims. Acceptance commands passed locally on 2026-05-31. | This is the durable lease/retry foundation only. It does not make the daemon drain import tasks, does not add async import orchestration, and does not complete P0 or P1. |
 | S18 | Complete | Added shared `import-worker` crate for the existing local synthetic DOCX/PDF import pipeline; `resume-cli import --root` now uses the shared worker while preserving synchronous smoke behavior; `resume-daemon --foreground --once` claims one queued import task through S17 leases, runs the shared worker, completes or fails the claim, and prints aggregate counts only. Acceptance commands passed locally on 2026-05-31. | This is a one-task daemon drain smoke for synthetic local fixtures only. It is not a production multi-task daemon loop, does not add filesystem watching, async deletion orchestration, OCR execution, semantic indexing, or large-corpus performance evidence, and does not complete P0/P1. |
+| S19 | Complete | Extended `resume-daemon --foreground --once` to snapshot queued import task IDs at run start, attempt each initial task once via S17 `claim_import_task`, process claimed roots through `import-worker`, aggregate successful import counts, report `failed imports`, and avoid same-run retry loops for failed tasks. Acceptance commands passed locally on 2026-05-31. | This is bounded foreground-once draining only. It is not a long-running daemon loop, filesystem watcher, scheduler/backpressure policy, async deletion orchestration, OCR execution, semantic indexing, or production P0/P1 completion. |
 
 ## Command Log
 
@@ -599,3 +600,33 @@ Review summary:
 - If complete/fail finalization finds the claim token is no longer current, daemon returns a fixed redacted error before printing success summary output.
 - Daemon output redacts roots, normalized paths, file names, parser text, claim tokens, and local failure diagnostics.
 - S18 is a one-task local daemon drain smoke. It is not a production daemon loop, file watcher, OCR execution path, semantic/vector indexing path, or large-corpus performance result.
+
+### S19
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon foreground_once_drains_all_initially_queued_imports -- --nocapture
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+git diff --check
+git status --short --ignored -- local-data
+```
+
+Output summary:
+
+- TDD red run for `foreground_once_drains_all_initially_queued_imports` failed before implementation because daemon `--foreground --once` still printed `claimed imports: 1` instead of draining both initially queued import tasks.
+- Final `cargo fmt --check`: succeeded.
+- Final `cargo test -p resume-daemon`: succeeded with 7 tests covering foreground lifecycle, one queued import drain, bounded draining of all initially queued import tasks, aggregate-only output, retryable failed import drain, stale/reclaimed claim handling, and no same-run retry loop.
+- Final `cargo test --workspace`: succeeded across all crates.
+- Final `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+- Final `git diff --check`: succeeded.
+- Final `git status --short --ignored -- local-data`: showed only `!! local-data/`.
+
+Review summary:
+
+- S19 changes daemon `--foreground --once` from one-task drain to bounded drain over the queued import task IDs visible at run start.
+- Each initial task is attempted at most once in the run through `claim_import_task(task_id, ...)`; retryable failures are not re-claimed again during the same foreground-once invocation.
+- Successful import summaries are aggregated across claimed tasks, while worker failures increment `failed imports` and are recorded through the generic redacted failure path.
+- Daemon output remains aggregate-only and does not print roots, normalized paths, file names, raw text, claim tokens, or local diagnostics.
+- S19 is still a bounded foreground-once local drain. It is not a long-running daemon loop, scheduler/backpressure implementation, filesystem watcher, OCR execution path, semantic/vector indexing path, or production performance result.
