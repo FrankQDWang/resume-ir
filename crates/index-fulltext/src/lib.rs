@@ -160,6 +160,18 @@ impl FullTextIndexWriter {
         Ok(Self { fields, writer })
     }
 
+    /// Opens an existing index for writes without creating missing index files.
+    pub fn open_existing(index_dir: impl AsRef<Path>) -> Result<Self> {
+        if !index_dir.as_ref().join("meta.json").is_file() {
+            return Err(FullTextError::MissingIndex);
+        }
+        let mut index = Index::open_in_dir(index_dir)?;
+        register_tokenizers(&mut index)?;
+        let fields = schema_fields(index.schema())?;
+        let writer = index.writer(WRITER_MEMORY_BYTES)?;
+        Ok(Self { fields, writer })
+    }
+
     /// Adds or replaces the current searchable version for one document.
     pub fn add_document(&mut self, document: IndexDocument) -> Result<()> {
         self.writer

@@ -399,7 +399,11 @@ impl MetadataStore {
                     mtime = excluded.mtime,
                     content_hash = excluded.content_hash,
                     text_hash = excluded.text_hash,
-                    is_deleted = excluded.is_deleted,
+                    is_deleted = CASE
+                        WHEN document.is_deleted = 1 THEN 1
+                        WHEN excluded.is_deleted = 1 THEN 1
+                        ELSE 0
+                    END,
                     updated_at = excluded.updated_at
                 ",
                 params![
@@ -474,6 +478,103 @@ impl MetadataStore {
         }
     }
 
+    /// Returns one document by stable identifier, including deleted rows.
+    pub fn document_by_doc_id(&self, doc_id: &str) -> Result<Option<DocumentRow>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                r"
+                SELECT doc_id, source_uri, normalized_path, file_name, extension, byte_size,
+                       mtime, content_hash, text_hash, is_deleted, created_at, updated_at
+                FROM document
+                WHERE doc_id = ?1
+                LIMIT 1
+                ",
+            )
+            .map_err(storage_error)?;
+
+        let mut rows = statement
+            .query_map([doc_id], document_row_from_sql)
+            .map_err(storage_error)?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row.map_err(storage_error)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Marks a document row deleted without touching its source file.
+    pub fn mark_document_deleted(&self, doc_id: &str) -> Result<bool> {
+        let changed = self
+            .connection
+            .execute(
+                r"
+                UPDATE document
+                SET is_deleted = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE doc_id = ?1
+                ",
+                [doc_id],
+            )
+            .map_err(storage_error)?;
+        Ok(changed > 0)
+    }
+
+    /// Atomically records a local delete tombstone plus index-state intent.
+    pub fn mark_document_deleted_with_index_state(
+        &self,
+        doc_id: &str,
+        index_name: &str,
+        version_id: Option<&str>,
+        status: &str,
+        last_error: Option<&str>,
+    ) -> Result<bool> {
+        self.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(storage_error)?;
+
+        let result = (|| {
+            let changed = self.connection.execute(
+                r"
+                UPDATE document
+                SET is_deleted = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE doc_id = ?1
+                ",
+                [doc_id],
+            )?;
+            if changed == 0 {
+                return Ok(false);
+            }
+            self.connection.execute(
+                r"
+                INSERT INTO index_state (index_name, version_id, status, last_error)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(index_name) DO UPDATE SET
+                    version_id = excluded.version_id,
+                    status = excluded.status,
+                    last_error = excluded.last_error,
+                    updated_at = CURRENT_TIMESTAMP
+                ",
+                params![index_name, version_id, status, last_error],
+            )?;
+            Ok(true)
+        })();
+
+        match result {
+            Ok(changed) => {
+                self.connection
+                    .execute_batch("COMMIT")
+                    .map_err(storage_error)?;
+                Ok(changed)
+            }
+            Err(error) => {
+                let _ = self.connection.execute_batch("ROLLBACK");
+                Err(storage_error(error))
+            }
+        }
+    }
+
     /// Returns the latest searchable clean text for a document.
     ///
     /// This returns local resume text to in-process callers only. Do not include
@@ -483,12 +584,14 @@ impl MetadataStore {
             .connection
             .prepare(
                 r"
-                SELECT clean_text
+                SELECT resume_version.clean_text
                 FROM resume_version
-                WHERE doc_id = ?1
-                  AND visibility = 'SEARCHABLE'
-                  AND clean_text IS NOT NULL
-                ORDER BY updated_at DESC, rowid DESC
+                JOIN document ON document.doc_id = resume_version.doc_id
+                WHERE resume_version.doc_id = ?1
+                  AND document.is_deleted = 0
+                  AND resume_version.visibility = 'SEARCHABLE'
+                  AND resume_version.clean_text IS NOT NULL
+                ORDER BY resume_version.updated_at DESC, resume_version.rowid DESC
                 LIMIT 1
                 ",
             )
@@ -636,6 +739,29 @@ impl MetadataStore {
             )
             .map(|_| ())
             .map_err(storage_error)
+    }
+
+    /// Returns the status of one index-state row.
+    pub fn index_state_status(&self, index_name: &str) -> Result<Option<String>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                r"
+                SELECT status
+                FROM index_state
+                WHERE index_name = ?1
+                LIMIT 1
+                ",
+            )
+            .map_err(storage_error)?;
+        let mut rows = statement
+            .query_map([index_name], |row| row.get::<_, String>(0))
+            .map_err(storage_error)?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row.map_err(storage_error)?)),
+            None => Ok(None),
+        }
     }
 
     /// Inserts an import-root task and returns its store-assigned identifier.
@@ -971,6 +1097,33 @@ mod tests {
     }
 
     #[test]
+    fn upsert_document_rediscovery_preserves_deleted_tombstone() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let first = test_document(false);
+        let mut rediscovered = first.clone();
+        rediscovered.doc_id = DocumentId::new();
+        rediscovered.file_name = "resume-a-rediscovered.pdf".to_string();
+        rediscovered.byte_size = 512;
+        rediscovered.is_deleted = false;
+        let original_id = first.doc_id.to_string();
+
+        store.upsert_document(&first)?;
+        assert!(store.mark_document_deleted(&original_id)?);
+        store.upsert_document(&rediscovered)?;
+
+        assert!(store.visible_documents()?.is_empty());
+        let stored = store
+            .document_by_normalized_path(&first.normalized_path)?
+            .ok_or_else(|| storage_diagnostic("rediscovered document missing".to_string()))?;
+        assert_eq!(stored.doc_id, original_id);
+        assert!(stored.is_deleted);
+        assert_eq!(stored.file_name, "resume-a-rediscovered.pdf");
+        assert_eq!(stored.byte_size, 512);
+        Ok(())
+    }
+
+    #[test]
     fn retryable_jobs_for_recovery_include_interrupted_retryable_work() -> Result<()> {
         let store = MetadataStore::open_in_memory()?;
         store.run_migrations()?;
@@ -1047,6 +1200,57 @@ mod tests {
 
         assert_eq!(document_ids, vec![visible_id.as_str()]);
         assert!(!document_ids.contains(&deleted_id.as_str()));
+        Ok(())
+    }
+
+    #[test]
+    fn mark_document_deleted_hides_metadata_and_searchable_clean_text() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let document = test_document(false);
+        let doc_id = document.doc_id.to_string();
+
+        store.upsert_document(&document)?;
+        store.upsert_resume_version(ParsedResumeRecord {
+            version_id: "ver_deleted",
+            doc_id: &doc_id,
+            parse_version: "test",
+            schema_version: "test",
+            raw_text: Some("raw text that must stay local"),
+            clean_text: Some("clean Java text that must not be resurrected"),
+            visibility: "SEARCHABLE",
+        })?;
+
+        assert!(store.mark_document_deleted(&doc_id)?);
+
+        assert!(store.visible_documents()?.is_empty());
+        assert_eq!(store.clean_text_by_doc_id(&doc_id)?, None);
+        assert_eq!(
+            store.document_by_doc_id(&doc_id)?.map(|row| row.is_deleted),
+            Some(true)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn clean_text_lookup_excludes_previously_deleted_document_rows() -> Result<()> {
+        let store = MetadataStore::open_in_memory()?;
+        store.run_migrations()?;
+        let document = test_document(true);
+        let doc_id = document.doc_id.to_string();
+
+        store.upsert_document(&document)?;
+        store.upsert_resume_version(ParsedResumeRecord {
+            version_id: "ver_deleted_existing",
+            doc_id: &doc_id,
+            parse_version: "test",
+            schema_version: "test",
+            raw_text: Some("deleted raw"),
+            clean_text: Some("deleted clean text"),
+            visibility: "SEARCHABLE",
+        })?;
+
+        assert_eq!(store.clean_text_by_doc_id(&doc_id)?, None);
         Ok(())
     }
 

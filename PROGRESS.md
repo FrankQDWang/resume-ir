@@ -9,7 +9,7 @@ This file tracks long-running Goal execution against
 - Data policy: synthetic fixtures only; no real resumes or PII.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
-- Product rule: S0-S13 slice progress is not the same as full product completion; P0-P6 gates remain authoritative.
+- Product rule: S0-S14 slice progress is not the same as full product completion; P0-P6 gates remain authoritative.
 
 ## Product Gate Status
 
@@ -17,9 +17,9 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 
 | Gate | Status | Evidence | Blockers |
 |---|---|---|---|
-| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S13 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/diagnostics packaging, CI, and production async import orchestration remain unfinished. |
-| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, and S9 synthetic import-to-search smoke exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, and benchmark remain absent. |
-| P2 fields and dedupe | In progress | S10 smoke/MVP adds deterministic school, degree, and skill extraction on top of email/phone/date ranges; `rank-fusion` adds field summaries, `degree_min`, `skills_any`, `years_experience_min`, and hashed soft-dedupe skeleton tests; CLI search accepts `--degree bachelor --top-k 20`. | Dictionary coverage is intentionally tiny and synthetic; field filters are computed at query time from persisted clean text, not indexed fast fields; no evaluation harness or production candidate merge workflow exists. |
+| P0 architecture skeleton | In progress | Documentation baseline exists; S1-S14 foundation acceptance passed locally on 2026-05-31, including the S13 CLI doctor/diagnostics skeleton and S14 deletion-propagation CLI slice. | Rust is installed under `/Users/frankqdwang/.cargo/bin` but not on default `PATH`; IPC, production logs/diagnostics packaging, CI, and production async import orchestration remain unfinished. |
+| P1 text import and full-text search | In progress | S5 crawler, S6 parser crates, S7 text normalization/sectioning, S8 Tantivy full-text index/search, S9 synthetic import-to-search smoke, and S14 CLI `delete --doc-id` propagation exist with acceptance tests. | Production import worker, robust PDF extraction, synthetic large corpus, async deletion orchestration, and benchmark remain absent. |
+| P2 fields and dedupe | In progress | S10 smoke/MVP adds deterministic school, degree, and skill extraction on top of email/phone/date ranges; `rank-fusion` adds field summaries, `degree_min`, `skills_any`, `years_experience_min`, and hashed soft-dedupe skeleton tests; CLI search accepts `--degree bachelor --top-k 20`; S14 prevents deleted docs from being resurrected by query-time clean-text field filtering. | Dictionary coverage is intentionally tiny and synthetic; field filters are computed at query time from persisted clean text, not indexed fast fields; no evaluation harness or production candidate merge workflow exists. |
 | P3 semantic retrieval | In progress | S11 adds dependency-light `embedder` and `index-vector` crates with fake/test-only implementations plus `rank-fusion` RRF hybrid fusion tests. | This is only a fake-interface skeleton. Real embedding model choice/license/checksums/distribution, batch inference, production vector engine, hybrid integration, and recall benchmarks remain blockers. |
 | P4 OCR | Blocked for real OCR execution | OCR design exists; S12 adds typed `ocr-client` interfaces and deterministic `ingest-scheduler` OCR-required queue primitives without running OCR. Local `tesseract`/`ocrmypdf` were not found on PATH on 2026-05-31. | OCR engine/language packs, real OCR worker integration, and scanned synthetic corpus absent. |
 | P5 packaging | Blocked on binaries and signing inputs | Packaging design only. | Windows/macOS certs, secrets, runners, signing/notarization approval. |
@@ -43,6 +43,7 @@ See `docs/production-readiness-audit.md` for the detailed P0-P6 audit.
 | S11 | Complete | Added workspace crates `embedder` and `index-vector`; `embedder` exposes typed embedding request/response/vector APIs, `Embedder`, and deterministic nonzero `FakeEmbedder`; `index-vector` exposes `VectorIndex`, cosine/dot search, upsert, deletion filtering, and deterministic in-memory tests; `rank-fusion` adds RRF hybrid fusion with configurable `k`, deterministic doc-id tie-breaking, and redacted source contribution debug output. Acceptance commands passed locally on 2026-05-31. | Production P3 remains blocked on real model license/manifest/checksums, batch inference, production vector engine, hybrid retrieval integration, and recall benchmarks. |
 | S12 | Complete | Added workspace crates `ocr-client` and `ingest-scheduler`; `ocr-client` exposes typed page request/response/cache-key/options/timeout/cancellation APIs plus a disabled client that returns deferred/cancelled/timed-out output without OCR text; `ingest-scheduler` exposes a deterministic in-memory OCR_REQUIRED queue with priority/resource-policy claiming, cancellation, and defer/retry state. Acceptance commands passed locally on 2026-05-31. | Real P4 OCR execution remains blocked on OCR engine/language packs, worker integration, and scanned synthetic corpus. |
 | S13 | Complete | Added `resume-cli doctor`, `resume-cli export-diagnostics --redact`, redacted full-text index health reporting, a one-query small-data benchmark smoke, corrupt-index handling, helper-level daemon-kill/disk-full simulations, and redaction tests. Acceptance commands passed locally on 2026-05-31. | P6 remains not production-complete: no 100k/1M benchmark, real fault injection, restart/recovery soak, diagnostics package, or platform performance gate exists. |
+| S14 | Complete | Added `resume-cli delete --doc-id <doc_id>`; metadata deletion tombstones document rows without touching source files; rediscovery preserves tombstones; existing Tantivy full-text indexes receive committed doc-id deletions; missing full-text indexes are not created solely for delete; SQLite records `DELETE_PENDING` before full-text mutation and finalizes `DELETED` or `DELETE_ERROR`; malformed `doc_id` values are rejected before storage access; search now metadata-filters every Tantivy hit so stale full-text rows cannot surface tombstoned docs; status/search/field-filter paths hide deleted documents. Acceptance commands passed locally on 2026-05-31. | This is CLI-level local deletion propagation only. Production async orchestration, large-corpus delete benchmarks, vector/field-index deletion propagation, and broader audit/recovery workflows remain incomplete. |
 
 ## Command Log
 
@@ -409,3 +410,47 @@ Review summary:
 - `export-diagnostics --redact` requires `--redact` and excludes documents, paths, file names, snippets, queries, raw text, and local data directory details.
 - Daemon-kill and disk-full coverage is helper-level simulation only; no process is killed and no disk is filled.
 - P6 remains incomplete until real 100k/1M benchmarks, fault injection, restart/recovery soak, diagnostics packaging, and platform gates exist.
+
+### S14
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+git diff --check
+git status --short --ignored -- local-data
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- --data-dir "$tmpdir" import --root tests/fixtures/resumes
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- --data-dir "$tmpdir" search Java
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- --data-dir "$tmpdir" delete --doc-id "$doc_id"
+/Users/frankqdwang/.cargo/bin/cargo run -p resume-cli -- --data-dir "$tmpdir" search Java
+```
+
+Output summary:
+
+- Baseline `cargo test -p meta-store` and `cargo test -p resume-cli` passed before S14 edits.
+- TDD red run for `cargo test -p meta-store` failed first on missing `MetadataStore::mark_document_deleted` and `MetadataStore::document_by_doc_id`; TDD red run for `cargo test -p resume-cli` failed first because `delete` was still an unknown command.
+- Quality-review TDD red runs then caught rediscovery clearing a tombstone and the missing full-text failure state helper before fixes.
+- Controller TDD red run for `cargo test -p resume-cli delete_rejects_malformed_doc_id_without_echoing_value` failed before CLI `doc_id` validation was added, then passed after the input-layer validation fix.
+- Quality re-review TDD red run for `cargo test -p resume-cli search_hides_stale_fulltext_hit_after_metadata_delete_error` reproduced a stale full-text hit leaking after SQLite recorded `DELETE_ERROR`; it passed after search was changed to metadata-filter all Tantivy hits.
+- Final `cargo fmt --check`: succeeded.
+- Final `cargo test -p meta-store`: succeeded with 14 tests, including doc-id deletion tombstoning, normalized-path rediscovery preserving tombstones, and clean-text hiding for deleted documents.
+- Final `cargo test -p resume-cli`: succeeded with 23 tests, including import/search/delete/search-after-reopen, delete/re-import/search staying hidden, no-index deletion without index directory creation, source-file preservation, status count reduction, corrupt full-text delete error state, stale full-text hit hiding after `DELETE_ERROR`, redacted unknown-doc errors, and malformed doc-id rejection.
+- Final `cargo test --workspace`: succeeded across all crates.
+- Final `cargo clippy --all-targets --all-features -- -D warnings`: succeeded.
+- Final `git diff --check`: succeeded.
+- Final `git status --short --ignored -- local-data`: showed only `!! local-data/`.
+- Controller CLI smoke in a temporary data directory succeeded: importing `tests/fixtures/resumes` discovered 3 documents, made 2 searchable and 1 OCR-required; `search Java` returned two synthetic hits; `delete --doc-id <first-hit>` committed full-text deletion and marked `DELETED`; reopened `search Java` returned only the remaining synthetic text-layer PDF hit; re-import skipped the tombstoned source and the deleted DOCX stayed hidden.
+
+Review summary:
+
+- S14 adds CLI-level deletion propagation by `doc_id` only; no `delete --path` command was added.
+- Source files are not removed by delete. The command records a SQLite tombstone plus `DELETE_PENDING` state before full-text mutation, deletes committed full-text index documents when an index already exists, and finalizes `fulltext:<doc_id>` as `DELETED`.
+- If no full-text index exists, deletion still tombstones metadata and records `DELETED` index state without creating `indexes/fulltext`.
+- If a full-text index mutation fails, metadata remains tombstoned and `fulltext:<doc_id>` records `DELETE_ERROR` without leaking local paths or document text.
+- Re-importing a tombstoned source path is skipped, preserves the source file, keeps the document hidden, and keeps index state non-searchable.
+- `clean_text_by_doc_id` now joins `document` and requires `is_deleted = 0`; CLI search applies that metadata check to every Tantivy hit, so stale full-text rows and query-time field filters cannot recover deleted documents.
+- S14 does not complete P1 or the overall product: async deletion orchestration, vector/field-index deletion propagation, large-corpus delete benchmarks, and production recovery/audit workflows remain incomplete.

@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 const CLI_USAGE: &str =
-    "Usage: resume-cli [--data-dir <path>] <status|import|search|doctor|export-diagnostics>";
+    "Usage: resume-cli [--data-dir <path>] <status|import|search|delete|doctor|export-diagnostics>";
 const DIAGNOSTIC_QUERY_TEXT: &str = "diagnostic-smoke-token";
 
 /// Returns the crate name for smoke tests and workspace metadata.
@@ -115,17 +115,13 @@ where
                 Err(error) => return Err(error.to_string()),
             };
             let search_options = SearchOptions {
-                top_k: retrieval_limit(top_k, filters.has_constraints()),
+                top_k: retrieval_limit(top_k, true),
                 ..SearchOptions::default()
             };
             let hits = reader
                 .search(trimmed, search_options)
                 .map_err(|error| error.to_string())?;
-            let hits = if filters.has_constraints() {
-                filter_hits_by_fields(hits, &options.data_dir, &filters, top_k)?
-            } else {
-                hits.into_iter().take(top_k).collect()
-            };
+            let hits = filter_hits_by_metadata(hits, &options.data_dir, &filters, top_k)?;
             if hits.is_empty() {
                 writeln!(output, "no search results").map_err(|error| error.to_string())?;
                 return Ok(());
@@ -143,6 +139,7 @@ where
             }
             Ok(())
         }
+        Command::Delete { doc_id } => run_delete(&options.data_dir, &doc_id, output),
         Command::Doctor => run_doctor(&options.data_dir, output),
         Command::ExportDiagnostics { redact } => {
             if !redact {
@@ -171,6 +168,9 @@ enum Command {
         query: String,
         filters: FieldFilters,
         top_k: usize,
+    },
+    Delete {
+        doc_id: String,
     },
 }
 
@@ -213,8 +213,9 @@ fn parse_command(parts: &[String]) -> Result<Command, String> {
         "import" => parse_import_command(parts),
         "search" if parts.len() >= 2 => parse_search_command(parts),
         "search" => Err("Usage: resume-cli search <query>".to_string()),
+        "delete" => parse_delete_command(parts),
         _ => Err(
-            "Unknown command. Use status, import, search, doctor, or export-diagnostics."
+            "Unknown command. Use status, import, search, delete, doctor, or export-diagnostics."
                 .to_string(),
         ),
     }
@@ -321,6 +322,32 @@ fn parse_import_command(parts: &[String]) -> Result<Command, String> {
     Ok(Command::Import {
         root: PathBuf::from(&parts[2]),
     })
+}
+
+fn parse_delete_command(parts: &[String]) -> Result<Command, String> {
+    if parts.len() != 3 || parts[1] != "--doc-id" || parts[2].trim().is_empty() {
+        return Err("Usage: resume-cli delete --doc-id <doc_id>".to_string());
+    }
+    let doc_id = parts[2].trim();
+    validate_doc_id(doc_id)?;
+    Ok(Command::Delete {
+        doc_id: doc_id.to_string(),
+    })
+}
+
+fn validate_doc_id(doc_id: &str) -> Result<(), String> {
+    let Some(suffix) = doc_id.strip_prefix("doc_") else {
+        return Err("Invalid doc_id value.".to_string());
+    };
+    if suffix.is_empty()
+        || suffix.len() > 96
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err("Invalid doc_id value.".to_string());
+    }
+    Ok(())
 }
 
 fn open_store(data_dir: &Path) -> Result<MetadataStore, String> {
@@ -531,6 +558,93 @@ fn fulltext_index_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("indexes").join("fulltext")
 }
 
+#[derive(Clone, Copy)]
+enum FullTextDeleteStatus {
+    Committed,
+    NotPresent,
+}
+
+impl FullTextDeleteStatus {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Committed => "committed",
+            Self::NotPresent => "not-present",
+        }
+    }
+}
+
+fn run_delete<W: Write>(data_dir: &Path, doc_id: &str, output: &mut W) -> Result<(), String> {
+    let doc_id = doc_id.trim();
+    let index_name = fulltext_index_name(doc_id);
+    let store = open_store(data_dir)?;
+    if store
+        .document_by_doc_id(doc_id)
+        .map_err(|error| error.user_message().to_string())?
+        .is_none()
+    {
+        return Err(format!("No document found for doc_id={doc_id}."));
+    }
+
+    if !store
+        .mark_document_deleted_with_index_state(doc_id, &index_name, None, "DELETE_PENDING", None)
+        .map_err(|error| error.user_message().to_string())?
+    {
+        return Err(format!("No document found for doc_id={doc_id}."));
+    }
+
+    let fulltext_status = match delete_from_fulltext_index(data_dir, doc_id) {
+        Ok(status) => status,
+        Err(error) => {
+            store
+                .upsert_index_state(
+                    &index_name,
+                    None,
+                    "DELETE_ERROR",
+                    Some("fulltext-delete-failed"),
+                )
+                .map_err(|store_error| store_error.user_message().to_string())?;
+            return Err(error);
+        }
+    };
+    store
+        .upsert_index_state(&index_name, None, "DELETED", None)
+        .map_err(|error| error.user_message().to_string())?;
+
+    writeln!(output, "deleted doc_id={doc_id}").map_err(|error| error.to_string())?;
+    writeln!(output, "metadata documents marked deleted: 1").map_err(|error| error.to_string())?;
+    writeln!(
+        output,
+        "fulltext index deletion: {}",
+        fulltext_status.as_str()
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(output, "index state: DELETED").map_err(|error| error.to_string())
+}
+
+fn delete_from_fulltext_index(
+    data_dir: &Path,
+    doc_id: &str,
+) -> Result<FullTextDeleteStatus, String> {
+    let mut writer = match FullTextIndexWriter::open_existing(fulltext_index_dir(data_dir)) {
+        Ok(writer) => writer,
+        Err(FullTextError::MissingIndex) => return Ok(FullTextDeleteStatus::NotPresent),
+        Err(_) => {
+            return Err(format!(
+                "Could not update full-text index for doc_id={doc_id}."
+            ))
+        }
+    };
+    writer.delete_document(doc_id);
+    writer
+        .commit()
+        .map_err(|_| format!("Could not update full-text index for doc_id={doc_id}."))?;
+    Ok(FullTextDeleteStatus::Committed)
+}
+
+fn fulltext_index_name(doc_id: &str) -> String {
+    format!("fulltext:{doc_id}")
+}
+
 fn retrieval_limit(top_k: usize, has_filters: bool) -> usize {
     if has_filters {
         top_k.saturating_mul(5).min(top_k.max(100))
@@ -539,7 +653,7 @@ fn retrieval_limit(top_k: usize, has_filters: bool) -> usize {
     }
 }
 
-fn filter_hits_by_fields(
+fn filter_hits_by_metadata(
     hits: Vec<SearchHit>,
     data_dir: &Path,
     filters: &FieldFilters,
@@ -556,10 +670,12 @@ fn filter_hits_by_fields(
             continue;
         };
 
-        if field_summary_from_text(&clean_text).matches(filters) {
-            hit.rank = filtered.len() + 1;
-            filtered.push(hit);
+        if filters.has_constraints() && !field_summary_from_text(&clean_text).matches(filters) {
+            continue;
         }
+
+        hit.rank = filtered.len() + 1;
+        filtered.push(hit);
 
         if filtered.len() >= top_k {
             break;
@@ -658,6 +774,10 @@ fn import_one_file(
         .document_by_normalized_path(file.normalized_path.as_str())
         .map_err(|error| error.user_message().to_string())?
         .ok_or_else(|| "Imported document metadata was not persisted.".to_string())?;
+    if stored_document.is_deleted {
+        cleanup_tombstoned_import(store, data_dir, &stored_document.doc_id)?;
+        return Ok(ParsedDocument::Skipped);
+    }
     let job_id = store
         .insert_ingest_job(
             &stored_document.doc_id,
@@ -770,6 +890,30 @@ fn import_one_file(
     }
 
     Ok(parsed)
+}
+
+fn cleanup_tombstoned_import(
+    store: &MetadataStore,
+    data_dir: &Path,
+    doc_id: &str,
+) -> Result<(), String> {
+    let index_name = fulltext_index_name(doc_id);
+    match delete_from_fulltext_index(data_dir, doc_id) {
+        Ok(_) => store
+            .upsert_index_state(&index_name, None, "DELETED", None)
+            .map_err(|error| error.user_message().to_string()),
+        Err(error) => {
+            store
+                .upsert_index_state(
+                    &index_name,
+                    None,
+                    "DELETE_ERROR",
+                    Some("fulltext-delete-failed"),
+                )
+                .map_err(|store_error| store_error.user_message().to_string())?;
+            Err(error)
+        }
+    }
 }
 
 fn ensure_fulltext_writer<'a>(
@@ -1127,19 +1271,13 @@ mod tests {
     fn search_reads_existing_fulltext_index_and_prints_ranked_results() -> Result<(), String> {
         let data_dir = unique_data_dir("search-index")?;
         let index_dir = data_dir.join("indexes").join("fulltext");
-        let mut writer = FullTextIndexWriter::open_or_create(index_dir.as_ref())
-            .map_err(|error| format!("could not create synthetic full-text test index: {error}"))?;
-        writer
-            .add_document(IndexDocument {
-                doc_id: "doc-cli".to_string(),
-                version_id: "ver-cli".to_string(),
-                file_name: "synthetic-cli.pdf".to_string(),
-                clean_text: "Synthetic Java 支付 project experience text".to_string(),
-                section_type: "experience".to_string(),
-                is_deleted: false,
-            })
-            .map_err(|error| error.to_string())?;
-        writer.commit().map_err(|error| error.to_string())?;
+        let doc_id = seed_search_document(
+            data_dir.as_ref(),
+            index_dir.as_ref(),
+            "doc-cli",
+            "synthetic-cli.pdf",
+            "Synthetic Java 支付 project experience text",
+        )?;
         let mut output = Vec::new();
 
         run_with_args(
@@ -1155,7 +1293,7 @@ mod tests {
 
         let text = String::from_utf8(output).map_err(|error| error.to_string())?;
         assert!(text.contains("rank=1"));
-        assert!(text.contains("doc_id=doc-cli"));
+        assert!(text.contains(&format!("doc_id={doc_id}")));
         assert!(text.contains("file_name=synthetic-cli.pdf"));
         assert!(text.contains("snippet="));
         assert!(!text.contains(index_dir.as_str()));
@@ -1505,6 +1643,470 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn delete_by_doc_id_hides_imported_document_and_keeps_source_file() -> Result<(), String> {
+        let data_dir = unique_data_dir("delete-imported")?;
+        let import_root = data_dir.join("root");
+        fs::create_dir_all(import_root.as_ref()).map_err(|error| error.to_string())?;
+        let resume_path = import_root.join("synthetic-delete.pdf");
+        let synthetic_email = ["delete", "@", "invalid.test"].concat();
+        let synthetic_phone = ["555", "020", "3030"].join("-");
+        let raw_text =
+            format!("DeletionToken Java propagation text {synthetic_email} {synthetic_phone}");
+        fs::write(resume_path.as_ref(), text_layer_pdf_bytes_with(&raw_text))
+            .map_err(|error| error.to_string())?;
+
+        let mut import_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "import",
+                "--root",
+                import_root.as_str(),
+            ],
+            &mut import_output,
+        )?;
+
+        let mut search_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "search",
+                "DeletionToken",
+            ],
+            &mut search_output,
+        )?;
+        let search_text = String::from_utf8(search_output).map_err(|error| error.to_string())?;
+        assert!(search_text.contains("file_name=synthetic-delete.pdf"));
+        let doc_id = doc_id_from_search_output(&search_text)?;
+
+        let mut delete_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "delete",
+                "--doc-id",
+                doc_id.as_str(),
+            ],
+            &mut delete_output,
+        )?;
+        let delete_text = String::from_utf8(delete_output).map_err(|error| error.to_string())?;
+
+        assert!(delete_text.contains(&format!("doc_id={doc_id}")));
+        assert!(delete_text.contains("index state: DELETED"));
+        assert!(resume_path.is_file());
+        assert!(!delete_text.contains(data_dir.as_str()));
+        assert!(!delete_text.contains(import_root.as_str()));
+        assert!(!delete_text.contains(resume_path.as_str()));
+        assert!(!delete_text.contains("synthetic-delete.pdf"));
+        assert!(!delete_text.contains("DeletionToken"));
+        assert!(!delete_text.contains(&synthetic_email));
+        assert!(!delete_text.contains(&synthetic_phone));
+        assert!(!delete_text.contains(&raw_text));
+
+        let mut status_output = Vec::new();
+        run_with_args(
+            ["resume-cli", "--data-dir", data_dir.as_str(), "status"],
+            &mut status_output,
+        )?;
+        let status_text = String::from_utf8(status_output).map_err(|error| error.to_string())?;
+        assert!(status_text.contains("visible documents: 0"));
+        assert!(status_text.contains("searchable documents: 0"));
+
+        let mut reopened_search_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "search",
+                "DeletionToken",
+            ],
+            &mut reopened_search_output,
+        )?;
+        let reopened_search =
+            String::from_utf8(reopened_search_output).map_err(|error| error.to_string())?;
+        assert!(reopened_search.contains("no search results"));
+        assert!(!reopened_search.contains("synthetic-delete.pdf"));
+        assert!(!reopened_search.contains("DeletionToken"));
+        assert!(!reopened_search.contains(&synthetic_email));
+        assert!(!reopened_search.contains(&synthetic_phone));
+
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn reimport_after_delete_keeps_tombstoned_document_hidden() -> Result<(), String> {
+        let data_dir = unique_data_dir("delete-reimport")?;
+        let import_root = data_dir.join("root");
+        fs::create_dir_all(import_root.as_ref()).map_err(|error| error.to_string())?;
+        let resume_path = import_root.join("synthetic-delete-reimport.pdf");
+        fs::write(
+            resume_path.as_ref(),
+            text_layer_pdf_bytes_with("ReimportDeleteToken Java text before tombstone"),
+        )
+        .map_err(|error| error.to_string())?;
+
+        let mut first_import_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "import",
+                "--root",
+                import_root.as_str(),
+            ],
+            &mut first_import_output,
+        )?;
+        let mut first_search_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "search",
+                "ReimportDeleteToken",
+            ],
+            &mut first_search_output,
+        )?;
+        let first_search =
+            String::from_utf8(first_search_output).map_err(|error| error.to_string())?;
+        let doc_id = doc_id_from_search_output(&first_search)?;
+
+        let mut delete_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "delete",
+                "--doc-id",
+                doc_id.as_str(),
+            ],
+            &mut delete_output,
+        )?;
+        assert!(resume_path.is_file());
+
+        fs::write(
+            resume_path.as_ref(),
+            text_layer_pdf_bytes_with("ReimportDeleteToken Java text after tombstone"),
+        )
+        .map_err(|error| error.to_string())?;
+        let mut second_import_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "import",
+                "--root",
+                import_root.as_str(),
+            ],
+            &mut second_import_output,
+        )?;
+        let second_import =
+            String::from_utf8(second_import_output).map_err(|error| error.to_string())?;
+        assert!(second_import.contains("skipped documents: 1"));
+        assert!(!second_import.contains(resume_path.as_str()));
+        assert!(!second_import.contains("synthetic-delete-reimport.pdf"));
+
+        let mut second_search_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "search",
+                "ReimportDeleteToken",
+            ],
+            &mut second_search_output,
+        )?;
+        let second_search =
+            String::from_utf8(second_search_output).map_err(|error| error.to_string())?;
+        assert!(second_search.contains("no search results"));
+        assert!(!second_search.contains("synthetic-delete-reimport.pdf"));
+        assert!(!second_search.contains("after tombstone"));
+        assert!(resume_path.is_file());
+
+        let mut status_output = Vec::new();
+        run_with_args(
+            ["resume-cli", "--data-dir", data_dir.as_str(), "status"],
+            &mut status_output,
+        )?;
+        let status_text = String::from_utf8(status_output).map_err(|error| error.to_string())?;
+        assert!(status_text.contains("visible documents: 0"));
+        assert!(status_text.contains("searchable documents: 0"));
+
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn delete_by_doc_id_without_fulltext_index_does_not_create_index() -> Result<(), String> {
+        let data_dir = unique_data_dir("delete-no-index")?;
+        let source_path = data_dir.join("source").join("synthetic-metadata-only.pdf");
+        fs::create_dir_all(data_dir.join("source").as_ref()).map_err(|error| error.to_string())?;
+        fs::write(source_path.as_ref(), b"synthetic source bytes")
+            .map_err(|error| error.to_string())?;
+        let doc_id = seed_metadata_only_document(
+            data_dir.as_ref(),
+            source_path.as_ref(),
+            "synthetic-metadata-only.pdf",
+            "MetadataOnlyToken Java text",
+        )?;
+        let index_dir = data_dir.join("indexes").join("fulltext");
+
+        let mut delete_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "delete",
+                "--doc-id",
+                doc_id.as_str(),
+            ],
+            &mut delete_output,
+        )?;
+        let delete_text = String::from_utf8(delete_output).map_err(|error| error.to_string())?;
+
+        assert!(delete_text.contains("fulltext index deletion: not-present"));
+        assert!(delete_text.contains("index state: DELETED"));
+        assert!(source_path.is_file());
+        assert!(!index_dir.as_ref().exists());
+
+        let mut status_output = Vec::new();
+        run_with_args(
+            ["resume-cli", "--data-dir", data_dir.as_str(), "status"],
+            &mut status_output,
+        )?;
+        let status_text = String::from_utf8(status_output).map_err(|error| error.to_string())?;
+        assert!(status_text.contains("visible documents: 0"));
+        assert!(status_text.contains("searchable documents: 0"));
+        assert!(status_text.contains("index states: 1"));
+        assert!(!delete_text.contains(source_path.as_str()));
+        assert!(!delete_text.contains("synthetic-metadata-only.pdf"));
+        assert!(!delete_text.contains("MetadataOnlyToken"));
+
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn delete_with_corrupt_fulltext_leaves_tombstone_and_error_state() -> Result<(), String> {
+        let data_dir = unique_data_dir("delete-corrupt-index")?;
+        let source_path = data_dir.join("source").join("synthetic-corrupt-index.pdf");
+        fs::create_dir_all(data_dir.join("source").as_ref()).map_err(|error| error.to_string())?;
+        fs::write(source_path.as_ref(), b"synthetic source bytes")
+            .map_err(|error| error.to_string())?;
+        let doc_id = seed_metadata_only_document(
+            data_dir.as_ref(),
+            source_path.as_ref(),
+            "synthetic-corrupt-index.pdf",
+            "CorruptDeleteToken Java text",
+        )?;
+        let index_dir = data_dir.join("indexes").join("fulltext");
+        fs::create_dir_all(index_dir.as_ref()).map_err(|error| error.to_string())?;
+        fs::write(
+            index_dir.join("meta.json").as_ref(),
+            b"not tantivy metadata",
+        )
+        .map_err(|error| error.to_string())?;
+
+        let mut output = Vec::new();
+        let error = run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "delete",
+                "--doc-id",
+                doc_id.as_str(),
+            ],
+            &mut output,
+        )
+        .err()
+        .ok_or_else(|| "corrupt index delete should fail".to_string())?;
+
+        assert!(error.contains(&doc_id));
+        assert!(error.contains("Could not update full-text index"));
+        assert!(!error.contains(data_dir.as_str()));
+        assert!(!error.contains(source_path.as_str()));
+        assert!(!error.contains("synthetic-corrupt-index.pdf"));
+        assert!(output.is_empty());
+        assert!(source_path.is_file());
+
+        let store = meta_store::MetadataStore::open(data_dir.join("metadata.sqlite").as_ref())
+            .map_err(|error| error.user_message().to_string())?;
+        let stored = store
+            .document_by_doc_id(&doc_id)
+            .map_err(|error| error.user_message().to_string())?
+            .ok_or_else(|| "deleted document metadata missing".to_string())?;
+        assert!(stored.is_deleted);
+        assert_eq!(
+            store
+                .index_state_status(&format!("fulltext:{doc_id}"))
+                .map_err(|error| error.user_message().to_string())?,
+            Some("DELETE_ERROR".to_string())
+        );
+
+        let mut status_output = Vec::new();
+        run_with_args(
+            ["resume-cli", "--data-dir", data_dir.as_str(), "status"],
+            &mut status_output,
+        )?;
+        let status_text = String::from_utf8(status_output).map_err(|error| error.to_string())?;
+        assert!(status_text.contains("visible documents: 0"));
+        assert!(status_text.contains("searchable documents: 0"));
+
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn search_hides_stale_fulltext_hit_after_metadata_delete_error() -> Result<(), String> {
+        let data_dir = unique_data_dir("delete-error-search-visibility")?;
+        let import_root = data_dir.join("root");
+        fs::create_dir_all(import_root.as_ref()).map_err(|error| error.to_string())?;
+        let resume_path = import_root.join("synthetic-stale-delete-hit.pdf");
+        fs::write(
+            resume_path.as_ref(),
+            text_layer_pdf_bytes_with("StaleDeleteToken Java text must stay hidden"),
+        )
+        .map_err(|error| error.to_string())?;
+
+        let mut import_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "import",
+                "--root",
+                import_root.as_str(),
+            ],
+            &mut import_output,
+        )?;
+
+        let mut first_search_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "search",
+                "StaleDeleteToken",
+            ],
+            &mut first_search_output,
+        )?;
+        let first_search =
+            String::from_utf8(first_search_output).map_err(|error| error.to_string())?;
+        let doc_id = doc_id_from_search_output(&first_search)?;
+
+        let store = meta_store::MetadataStore::open(data_dir.join("metadata.sqlite").as_ref())
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .mark_document_deleted_with_index_state(
+                &doc_id,
+                &format!("fulltext:{doc_id}"),
+                None,
+                "DELETE_ERROR",
+                Some("fulltext-delete-failed"),
+            )
+            .map_err(|error| error.user_message().to_string())?;
+
+        let mut second_search_output = Vec::new();
+        run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "search",
+                "StaleDeleteToken",
+            ],
+            &mut second_search_output,
+        )?;
+        let second_search =
+            String::from_utf8(second_search_output).map_err(|error| error.to_string())?;
+        assert!(second_search.contains("no search results"));
+        assert!(!second_search.contains(&doc_id));
+        assert!(!second_search.contains("synthetic-stale-delete-hit.pdf"));
+        assert!(!second_search.contains("StaleDeleteToken"));
+        assert!(resume_path.is_file());
+
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn delete_unknown_doc_id_fails_without_local_payloads() -> Result<(), String> {
+        let data_dir = unique_data_dir("delete-unknown")?;
+        let unknown_doc_id = "doc_unknown_delete";
+        let mut output = Vec::new();
+
+        let error = run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "delete",
+                "--doc-id",
+                unknown_doc_id,
+            ],
+            &mut output,
+        )
+        .err()
+        .ok_or_else(|| "unknown doc_id delete should fail".to_string())?;
+
+        assert!(error.contains(unknown_doc_id));
+        assert!(error.contains("No document found"));
+        assert!(!error.contains(data_dir.as_str()));
+        assert!(!error.contains("synthetic"));
+        assert!(output.is_empty());
+
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn delete_rejects_malformed_doc_id_without_echoing_value() -> Result<(), String> {
+        let data_dir = unique_data_dir("delete-malformed-doc-id")?;
+        let malformed_doc_id = "/local/redacted/resume.pdf\nInjectedToken";
+        let mut output = Vec::new();
+
+        let error = run_with_args(
+            [
+                "resume-cli",
+                "--data-dir",
+                data_dir.as_str(),
+                "delete",
+                "--doc-id",
+                malformed_doc_id,
+            ],
+            &mut output,
+        )
+        .err()
+        .ok_or_else(|| "malformed doc_id delete should fail".to_string())?;
+
+        assert!(error.contains("Invalid doc_id value"));
+        assert!(!error.contains(malformed_doc_id));
+        assert!(!error.contains("/local/redacted"));
+        assert!(!error.contains("resume.pdf"));
+        assert!(!error.contains("InjectedToken"));
+        assert!(output.is_empty());
+
+        fs::remove_dir_all(data_dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     fn unique_data_dir(label: &str) -> Result<TestPath, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1544,7 +2146,7 @@ mod tests {
         doc_id: &str,
         file_name: &str,
         clean_text: &str,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         use core_domain::{Document, DocumentExtension, DocumentId};
         use meta_store::{MetadataStore, ParsedResumeRecord};
 
@@ -1587,7 +2189,7 @@ mod tests {
             .map_err(|error| format!("could not create synthetic full-text test index: {error}"))?;
         writer
             .add_document(IndexDocument {
-                doc_id: stored_doc_id,
+                doc_id: stored_doc_id.clone(),
                 version_id: format!("ver-{doc_id}"),
                 file_name: file_name.to_string(),
                 clean_text: clean_text.to_string(),
@@ -1595,7 +2197,70 @@ mod tests {
                 is_deleted: false,
             })
             .map_err(|error| error.to_string())?;
-        writer.commit().map_err(|error| error.to_string())
+        writer.commit().map_err(|error| error.to_string())?;
+        Ok(stored_doc_id)
+    }
+
+    fn seed_metadata_only_document(
+        data_dir: &std::path::Path,
+        source_path: &std::path::Path,
+        file_name: &str,
+        clean_text: &str,
+    ) -> Result<String, String> {
+        use core_domain::{Document, DocumentExtension, DocumentId};
+        use meta_store::{MetadataStore, ParsedResumeRecord};
+
+        let store = MetadataStore::open(data_dir.join("metadata.sqlite"))
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .run_migrations()
+            .map_err(|error| error.user_message().to_string())?;
+        let source_path_text = source_path.to_string_lossy().to_string();
+        let document = Document {
+            doc_id: DocumentId::new(),
+            source_uri: format!("file://{source_path_text}"),
+            normalized_path: source_path_text,
+            file_name: file_name.to_string(),
+            extension: DocumentExtension::Pdf,
+            byte_size: 128,
+            mtime: "2026-01-01T00:00:00Z".to_string(),
+            content_hash: Some("metadata-only-content".to_string()),
+            text_hash: Some("metadata-only-text".to_string()),
+            is_deleted: false,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let stored_doc_id = document.doc_id.to_string();
+        store
+            .upsert_document(&document)
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .upsert_resume_version(ParsedResumeRecord {
+                version_id: "metadata-only-version",
+                doc_id: &stored_doc_id,
+                parse_version: "test",
+                schema_version: "test",
+                raw_text: Some(clean_text),
+                clean_text: Some(clean_text),
+                visibility: "SEARCHABLE",
+            })
+            .map_err(|error| error.user_message().to_string())?;
+        store
+            .upsert_index_state(
+                &format!("fulltext:{stored_doc_id}"),
+                Some("metadata-only-version"),
+                "SEARCHABLE",
+                None,
+            )
+            .map_err(|error| error.user_message().to_string())?;
+        Ok(stored_doc_id)
+    }
+
+    fn doc_id_from_search_output(text: &str) -> Result<String, String> {
+        text.split_whitespace()
+            .find_map(|part| part.strip_prefix("doc_id="))
+            .map(ToString::to_string)
+            .ok_or_else(|| "search output did not include a doc_id".to_string())
     }
 
     fn seed_private_metadata(
