@@ -63,7 +63,7 @@ fn run() -> Result<()> {
     let data_dir = take_data_dir(&mut args)?;
     let Some(command) = args.first().map(String::as_str) else {
         return Err(CliError::usage(
-            "expected command: status, import, search, detail, delete, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
+            "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
         ));
     };
 
@@ -73,6 +73,7 @@ fn run() -> Result<()> {
         "search" => search_command(&data_dir, &args[1..]),
         "detail" => detail_command(&data_dir, &args[1..]),
         "delete" => delete_command(&data_dir, &args[1..]),
+        "cancel" => cancel_command(&data_dir, &args[1..]),
         "pause" => task_control_command(&data_dir, &args[1..], true),
         "resume" => task_control_command(&data_dir, &args[1..], false),
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
@@ -85,7 +86,7 @@ fn run() -> Result<()> {
         }
         "export-diagnostics" => export_diagnostics_command(&data_dir, &args[1..]),
         _ => Err(CliError::usage(
-            "expected command: status, import, search, detail, delete, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
+            "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
         )),
     }
 }
@@ -136,6 +137,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "import tasks recoverable: {}",
         summary.import_tasks_recoverable
     );
+    println!("import tasks cancelled: {}", summary.import_tasks_cancelled);
     println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("import scan errors: {}", summary.import_scan_errors);
     println!("active profile: balanced");
@@ -249,6 +251,10 @@ fn render_ipc_status(body: &serde_json::Value) {
     println!(
         "import tasks recoverable: {}",
         json_u64(body, "import_tasks_recoverable")
+    );
+    println!(
+        "import tasks cancelled: {}",
+        json_u64(body, "import_tasks_cancelled")
     );
     println!(
         "import scan scopes: {}",
@@ -1500,6 +1506,36 @@ fn task_control_command(data_dir: &Path, args: &[String], paused: bool) -> Resul
     println!("status: {}", worker_task_status_label(paused));
 
     Ok(())
+}
+
+fn cancel_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let task_id = parse_cancel_import_args(args)?;
+    let store = open_store(data_dir)?;
+    let now = current_timestamp()?;
+    store
+        .cancel_import_task(&task_id, now)
+        .map_err(CliError::store)?;
+
+    println!("import task cancelled");
+    println!("task id: {task_id}");
+    println!("status: cancelled");
+
+    Ok(())
+}
+
+fn parse_cancel_import_args(args: &[String]) -> Result<ImportTaskId> {
+    if args.len() != 3
+        || args.first().map(String::as_str) != Some("import")
+        || args.get(1).map(String::as_str) != Some("--task-id")
+    {
+        return Err(cancel_usage());
+    }
+
+    ImportTaskId::from_str(&args[2]).map_err(|_| cancel_usage())
+}
+
+fn cancel_usage() -> CliError {
+    CliError::usage("usage: resume-cli cancel import --task-id <id>")
 }
 
 fn parse_worker_task_control_args(args: &[String]) -> Result<WorkerTaskKind> {

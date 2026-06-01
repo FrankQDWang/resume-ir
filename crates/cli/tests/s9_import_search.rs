@@ -172,6 +172,72 @@ fn import_enqueue_persists_task_without_running_foreground_import() {
 }
 
 #[test]
+fn cancel_import_task_hides_queued_work_without_running_import_or_leaking_paths() {
+    let data_dir = temp_dir("cancel-import-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+
+    let enqueue = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--enqueue",
+            "--root",
+            path_str(&fixture_root),
+        ])
+        .output()
+        .expect("enqueue import task");
+    assert!(
+        enqueue.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&enqueue.stdout),
+        String::from_utf8_lossy(&enqueue.stderr)
+    );
+    let enqueue_stdout = String::from_utf8_lossy(&enqueue.stdout);
+    let task_id = stdout_value(&enqueue_stdout, "task id: ");
+
+    let cancel = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "cancel",
+            "import",
+            "--task-id",
+            task_id,
+        ])
+        .output()
+        .expect("cancel import task");
+    assert!(
+        cancel.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&cancel.stdout),
+        String::from_utf8_lossy(&cancel.stderr)
+    );
+    assert!(cancel.stderr.is_empty());
+    let cancel_stdout = String::from_utf8_lossy(&cancel.stdout);
+    assert!(cancel_stdout.contains("import task cancelled"));
+    assert!(cancel_stdout.contains("status: cancelled"));
+    assert!(!cancel_stdout.contains(path_str(&fixture_root)));
+    assert!(!cancel_stdout.contains(path_str(&canonical_fixture_root)));
+
+    let status = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "status"])
+        .output()
+        .expect("run resume-cli status after cancel");
+    assert!(status.status.success());
+    assert!(status.stderr.is_empty());
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("import tasks queued: 0"));
+    assert!(status_stdout.contains("import tasks cancelled: 1"));
+    assert!(status_stdout.contains("searchable documents: 0"));
+    assert!(!status_stdout.contains(path_str(&fixture_root)));
+    assert!(!status_stdout.contains(path_str(&canonical_fixture_root)));
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn import_multiple_roots_builds_searchable_index_without_path_leak() {
     let data_dir = temp_dir("multi-root-import-data");
     let first_root = temp_dir("multi-root-a-private");
@@ -903,6 +969,13 @@ fn temp_dir(label: &str) -> PathBuf {
 
 fn path_str(path: &Path) -> &str {
     path.to_str().unwrap()
+}
+
+fn stdout_value<'a>(output: &'a str, prefix: &str) -> &'a str {
+    output
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .unwrap_or_else(|| panic!("missing line with prefix {prefix:?} in:\n{output}"))
 }
 
 fn remove_dir(path: &Path) {

@@ -39,7 +39,7 @@ fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
         let request = String::from_utf8_lossy(&request);
         assert!(request.starts_with("GET /status HTTP/1.1"));
 
-        let body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0}";
+        let body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":1}";
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -66,6 +66,7 @@ fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
     assert!(stdout.contains("resume-ir status"));
     assert!(stdout.contains("index health: ready"));
     assert!(stdout.contains("import tasks queued: 0"));
+    assert!(stdout.contains("import tasks cancelled: 1"));
     assert!(!stdout.contains("raw_resume_text"));
     assert!(!stdout.contains("PRIVATE"));
 }

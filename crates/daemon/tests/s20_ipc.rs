@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -43,6 +43,7 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     assert!(response.contains("\"status\":\"ok\""));
     assert!(response.contains("\"index_health\":\"ready\""));
     assert!(response.contains("\"import_tasks_queued\":0"));
+    assert!(response.contains("\"import_tasks_cancelled\":0"));
     assert!(response.contains("\"snapshot_present\":true"));
     assert!(!response.contains(path_str(&data_dir)));
     assert!(!response.contains("PRIVATE_SNAPSHOT_TOKEN"));
@@ -221,6 +222,70 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
         .unwrap()
         .unwrap();
     assert_eq!(task.status, ImportTaskStatus::Queued);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
+    let data_dir = temp_dir("ipc-import-command-cancel-requeue-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "2",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let first_response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
+    assert!(first_response.contains("HTTP/1.1 202 Accepted"));
+    assert!(first_response.contains("\"new_tasks\":1"));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let first_scope = store.latest_import_scan_scope().unwrap().unwrap();
+    store
+        .cancel_import_task(
+            &first_scope.import_task_id,
+            UnixTimestamp::from_unix_seconds(1_800_020_000),
+        )
+        .unwrap();
+
+    let second_response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
+    assert!(second_response.contains("HTTP/1.1 202 Accepted"));
+    assert!(second_response.contains("\"new_tasks\":1"));
+    assert!(!second_response.contains(path_str(&data_dir)));
+    assert!(!second_response.contains(path_str(&fixture_root)));
+    assert!(!second_response.contains(path_str(&canonical_fixture_root)));
+    assert!(!second_response.contains(&token));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    let summary = store.status_summary().unwrap();
+    assert_eq!(summary.import_tasks_queued, 1);
+    assert_eq!(summary.import_tasks_cancelled, 1);
+    let latest_scope = store.latest_import_scan_scope().unwrap().unwrap();
+    assert_ne!(latest_scope.import_task_id, first_scope.import_task_id);
+    assert_eq!(
+        latest_scope.canonical_root_path,
+        path_str(&canonical_fixture_root)
+    );
 
     remove_dir(&data_dir);
 }
@@ -693,32 +758,41 @@ fn wait_for_searchable_documents(
 
 fn drain_status_requests(endpoint: &str, count: usize) {
     for _ in 0..count {
-        let _ = http_get(endpoint);
+        if try_http_get(endpoint).is_err() {
+            return;
+        }
     }
 }
 
 fn http_get(endpoint: &str) -> String {
+    try_http_get(endpoint).expect("read response")
+}
+
+fn try_http_get(endpoint: &str) -> io::Result<String> {
     let rest = endpoint
         .strip_prefix("http://")
         .expect("endpoint has http scheme");
     let (_addr, path) = rest.split_once('/').expect("endpoint has path");
-    http_get_path(endpoint, &format!("/{path}"))
+    try_http_get_path(endpoint, &format!("/{path}"))
 }
 
 fn http_get_path(endpoint: &str, request_path: &str) -> String {
+    try_http_get_path(endpoint, request_path).expect("read response")
+}
+
+fn try_http_get_path(endpoint: &str, request_path: &str) -> io::Result<String> {
     let rest = endpoint
         .strip_prefix("http://")
         .expect("endpoint has http scheme");
     let (addr, _path) = rest.split_once('/').expect("endpoint has path");
-    let mut stream = TcpStream::connect(addr).expect("connect daemon ipc");
+    let mut stream = TcpStream::connect(addr)?;
     write!(
         stream,
         "GET {request_path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
-    )
-    .expect("write request");
+    )?;
     let mut response = String::new();
-    stream.read_to_string(&mut response).expect("read response");
-    response
+    stream.read_to_string(&mut response)?;
+    Ok(response)
 }
 
 fn http_post_import_command(

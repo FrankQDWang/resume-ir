@@ -25,6 +25,7 @@ const SCHEMA_VERSION_V10: u32 = 10;
 const SCHEMA_VERSION_V11: u32 = 11;
 const SCHEMA_VERSION_V12: u32 = 12;
 const SCHEMA_VERSION_V13: u32 = 13;
+const SCHEMA_VERSION_V14: u32 = 14;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -127,6 +128,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V11, SCHEMA_V11),
             (SCHEMA_VERSION_V12, SCHEMA_V12),
             (SCHEMA_VERSION_V13, SCHEMA_V13),
+            (SCHEMA_VERSION_V14, SCHEMA_V14),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -1543,6 +1545,78 @@ impl MetaStore {
         }
     }
 
+    pub fn cancel_import_task(
+        &self,
+        id: &ImportTaskId,
+        requested_at: UnixTimestamp,
+    ) -> Result<bool> {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let current_task = {
+            let sql = format!("SELECT {IMPORT_TASK_COLUMNS} FROM import_task WHERE id = ?1");
+            let mut statement = transaction.prepare(&sql).map_err(MetaStoreError::storage)?;
+            let mut rows = statement
+                .query(params![id.as_str()])
+                .map_err(MetaStoreError::storage)?;
+
+            match rows.next().map_err(MetaStoreError::storage)? {
+                Some(row) => read_import_task(row)?,
+                None => return Err(MetaStoreError::not_found("import_task")),
+            }
+        };
+
+        if !matches!(
+            current_task.status,
+            ImportTaskStatus::Queued | ImportTaskStatus::FailedRetryable
+        ) {
+            return Err(MetaStoreError::invalid_transition());
+        }
+        if requested_at.as_unix_seconds() < current_task.updated_at.as_unix_seconds() {
+            return Err(MetaStoreError::invalid_value("import_task.timestamps"));
+        }
+
+        let requested_at_seconds = requested_at.as_unix_seconds();
+        transaction
+            .execute(
+                "\
+                UPDATE import_task
+                SET updated_at_seconds = ?1
+                WHERE id = ?2",
+                params![requested_at_seconds, id.as_str()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        let inserted = transaction
+            .execute(
+                "\
+                INSERT OR IGNORE INTO import_task_cancellation (
+                    import_task_id, requested_at_seconds
+                )
+                VALUES (?1, ?2)",
+                params![id.as_str(), requested_at_seconds],
+            )
+            .map_err(MetaStoreError::storage)?;
+
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(inserted > 0)
+    }
+
+    pub fn is_import_task_cancelled(&self, id: &ImportTaskId) -> Result<bool> {
+        let connection = self.connection.borrow();
+        let exists = connection
+            .query_row(
+                "\
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM import_task_cancellation
+                    WHERE import_task_id = ?1
+                )",
+                params![id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?;
+        Ok(exists == 1)
+    }
+
     pub fn pending_import_task_by_root(&self, root_path: &str) -> Result<Option<ImportTask>> {
         let connection = self.connection.borrow();
         let sql = format!(
@@ -1550,6 +1624,11 @@ impl MetaStore {
             SELECT {IMPORT_TASK_COLUMNS}
             FROM import_task
             WHERE root_path = ?1 AND status IN (?2, ?3, ?4)
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM import_task_cancellation AS cancellation
+                    WHERE cancellation.import_task_id = import_task.id
+                )
             ORDER BY CASE WHEN status = ?3 THEN 0 ELSE 1 END, queued_at_seconds, rowid
             LIMIT 1"
         );
@@ -1619,6 +1698,11 @@ impl MetaStore {
                 WHERE (
                         (status = ? AND updated_at_seconds <= ?)
                         OR (status = ? AND updated_at_seconds <= ?)
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM import_task_cancellation AS cancellation
+                        WHERE cancellation.import_task_id = import_task.id
                     )
                     {excluded_clause}
                 ORDER BY CASE WHEN status = ? THEN 0 ELSE 1 END, queued_at_seconds, rowid
@@ -2059,20 +2143,41 @@ impl MetaStore {
             .map_err(MetaStoreError::storage)?;
         let import_tasks_queued = connection
             .query_row(
-                "SELECT COUNT(*) FROM import_task WHERE status = ?1",
+                "\
+                SELECT COUNT(*)
+                FROM import_task
+                WHERE status = ?1
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM import_task_cancellation AS cancellation
+                        WHERE cancellation.import_task_id = import_task.id
+                    )",
                 params![import_task_status_to_storage(ImportTaskStatus::Queued)],
                 |row| row.get::<_, i64>(0),
             )
             .map_err(MetaStoreError::storage)?;
         let import_tasks_recoverable = connection
             .query_row(
-                "SELECT COUNT(*) FROM import_task WHERE status IN (?1, ?2)",
+                "\
+                SELECT COUNT(*)
+                FROM import_task
+                WHERE status IN (?1, ?2)
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM import_task_cancellation AS cancellation
+                        WHERE cancellation.import_task_id = import_task.id
+                    )",
                 params![
                     import_task_status_to_storage(ImportTaskStatus::Running),
                     import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
                 ],
                 |row| row.get::<_, i64>(0),
             )
+            .map_err(MetaStoreError::storage)?;
+        let import_tasks_cancelled = connection
+            .query_row("SELECT COUNT(*) FROM import_task_cancellation", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .map_err(MetaStoreError::storage)?;
         let import_scan_scopes = connection
             .query_row("SELECT COUNT(*) FROM import_scan_scope", [], |row| {
@@ -2150,6 +2255,10 @@ impl MetaStore {
             import_tasks_recoverable: i64_to_u64(
                 import_tasks_recoverable,
                 "status.import_tasks_recoverable",
+            )?,
+            import_tasks_cancelled: i64_to_u64(
+                import_tasks_cancelled,
+                "status.import_tasks_cancelled",
             )?,
             import_scan_scopes: i64_to_u64(import_scan_scopes, "status.import_scan_scopes")?,
             import_scan_errors: i64_to_u64(import_scan_errors, "status.import_scan_errors")?,
@@ -2604,6 +2713,7 @@ pub struct StoreStatusSummary {
     pub recovery_queue_depth: u64,
     pub import_tasks_queued: u64,
     pub import_tasks_recoverable: u64,
+    pub import_tasks_cancelled: u64,
     pub import_scan_scopes: u64,
     pub import_scan_errors: u64,
     pub ocr_jobs_queued: u64,
@@ -3177,6 +3287,17 @@ CREATE UNIQUE INDEX embedding_job_spec_unique_idx
 
 CREATE INDEX embedding_job_spec_model_idx
     ON embedding_job_spec(model_id, dimension, resume_version_id);
+"#;
+
+const SCHEMA_V14: &str = r#"
+CREATE TABLE import_task_cancellation (
+    import_task_id TEXT PRIMARY KEY,
+    requested_at_seconds INTEGER NOT NULL,
+    FOREIGN KEY (import_task_id) REFERENCES import_task(id) ON DELETE CASCADE
+);
+
+CREATE INDEX import_task_cancellation_requested_idx
+    ON import_task_cancellation(requested_at_seconds);
 "#;
 
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {

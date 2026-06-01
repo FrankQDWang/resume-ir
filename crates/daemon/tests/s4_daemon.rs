@@ -87,6 +87,60 @@ fn foreground_once_worker_processes_queued_import_task_from_persistent_scope() {
 }
 
 #[test]
+fn foreground_once_worker_skips_cancelled_import_task() {
+    let data_dir = temp_dir("daemon-import-cancelled-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let task_id = seed_queued_import_task(
+        &data_dir,
+        "daemon-import-cancelled",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .cancel_import_task(&task_id, UnixTimestamp::from_unix_seconds(1_700_000_010))
+        .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--once",
+            "--work-imports-once",
+        ])
+        .output()
+        .expect("run resume-daemon import worker once with cancelled task");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("import worker processed: 0"));
+    assert!(stdout.contains("import worker searchable documents: 0"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains(path_str(&canonical_fixture_root)));
+
+    let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Queued);
+    assert!(store.is_import_task_cancelled(&task_id).unwrap());
+    let summary = store.status_summary().unwrap();
+    assert_eq!(summary.import_tasks_queued, 0);
+    assert_eq!(summary.import_tasks_cancelled, 1);
+    assert_eq!(summary.searchable_documents, 0);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn foreground_once_worker_continues_after_retryable_import_failure() {
     let data_dir = temp_dir("daemon-import-worker-failure-data");
     let missing_root = temp_dir("daemon-import-worker-missing-root");

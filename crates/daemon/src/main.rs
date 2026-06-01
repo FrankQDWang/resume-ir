@@ -191,6 +191,7 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("mode: {}", if options.once { "once" } else { "foreground" });
     println!("index health: {}", index_health_label(summary.index_health));
     println!("import tasks queued: {}", summary.import_tasks_queued);
+    println!("import tasks cancelled: {}", summary.import_tasks_cancelled);
     io::stdout()
         .flush()
         .map_err(|_| DaemonError::user("unable to write daemon status"))?;
@@ -2504,6 +2505,7 @@ fn status_json(data_dir: &Path) -> Result<String> {
         "entity_mentions": summary.entity_mentions,
         "import_tasks_queued": summary.import_tasks_queued,
         "import_tasks_recoverable": summary.import_tasks_recoverable,
+        "import_tasks_cancelled": summary.import_tasks_cancelled,
         "import_scan_scopes": summary.import_scan_scopes,
         "import_scan_errors": summary.import_scan_errors,
         "active_profile": "balanced",

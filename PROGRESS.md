@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S54 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S56 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -26,12 +26,14 @@ obsolete preliminary files and checklists are not product scope.
   one-shot daemon import worker, a long-running daemon import scheduler, a
   daemon OCR worker loop for queued OCR jobs, and a daemon embedding worker
   loop for local vector snapshot generation exist. Import tasks have retry
-  backoff, running-task heartbeat, and stale-running task recovery. The daemon
-  can serve loopback status IPC while import, OCR, or embedding worker loops
-  run.
-  Missing production control-plane work includes import cancellation/progress
-  streaming, daemon index-maintenance workers, service lifecycle, CI,
-  CODEOWNERS, and macOS/Windows validation.
+  backoff, running-task heartbeat, stale-running task recovery, queued/
+  retryable cancellation markers, and cancelled-task status reporting. The
+  daemon can serve loopback status IPC while import, OCR, or embedding worker
+  loops run.
+  Missing production control-plane work includes live import progress
+  streaming, cooperative cancellation of already-running import scans, daemon
+  index-maintenance workers, service lifecycle, CI, CODEOWNERS, and
+  macOS/Windows validation.
 - P1 import/search: directory scanning, DOCX/text-layer PDF parsing, cleaning,
   sectioning, full-text snapshot publish/recover, delete rebuild, and redacted
   snippets exist. Missing production work includes watcher/background
@@ -132,8 +134,81 @@ obsolete preliminary files and checklists are not product scope.
 | S53 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this model/dimension-scoped durable embedding job slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, model-scoped vector query isolation, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 | S54 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this model-scoped vector query isolation slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 | S55 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this section-level vector input slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
+| S56 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this queued/retryable import cancellation slice; live progress streaming, cooperative cancellation of already-running import scans, daemon endpoint discovery UX, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, and Windows/macOS validation remain not complete. |
 
 ## Command Log
+
+### S56
+
+Design target:
+
+- S56 adds a production control-plane cancellation path for import tasks that
+  have not started running yet. The metadata store now has a V14
+  `import_task_cancellation` table, a task-id cancellation API, status summary
+  counts, and claim/pending queries that exclude cancelled tasks.
+- `resume-cli cancel import --task-id <id>` records cancellation without
+  printing roots or paths. Local status and daemon status IPC include
+  `import tasks cancelled`.
+- Daemon import workers do not need a separate skip branch because cancelled
+  tasks are no longer claimable. Daemon import command IPC can enqueue a new
+  task for a root whose previous queued task was cancelled.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store cancelled_import_tasks_are_not_claimed_or_reported_as_queued -- --exact
+```
+
+Output summary:
+
+- Before implementation, the focused metadata test failed to compile because
+  `cancel_import_task`, `is_import_task_cancelled`, and
+  `import_tasks_cancelled` did not exist.
+- After implementation, metadata tests prove queued and retryable cancelled
+  import tasks are not returned by pending lookup, are not claimed by workers,
+  and are not counted as queued/recoverable.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+git diff --check
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `cargo test -p meta-store`: exit 0; 40 tests passed, including V14
+  migration, queued/retryable cancellation, claim exclusion, and status counts.
+- `cargo test -p resume-cli --test s20_status_ipc`: exit 0; 4 tests passed,
+  including cancelled-count rendering from daemon status IPC.
+- `cargo test -p resume-cli --test s9_import_search`: exit 0; 15 tests passed,
+  including task-id cancellation without running import or leaking paths.
+- `cargo test -p resume-cli`: exit 0.
+- `cargo test -p resume-daemon --test s20_ipc`: exit 0; 15 tests passed,
+  including cancelled-count daemon status IPC and requeue after cancellation.
+- `cargo test -p resume-daemon --test s4_daemon`: exit 0; 7 tests passed,
+  including worker skip of a cancelled queued task.
+- `cargo test -p resume-daemon`: exit 0.
+- `cargo clippy --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0.
+
+Scope note:
+
+- S56 does not implement cooperative cancellation for an import task already
+  inside a running scanner/import pipeline. That still needs cancellation-token
+  plumbing through crawler, per-file processing, parser/index phases, and
+  partial-write semantics. Live import progress streaming also remains
+  incomplete.
 
 ### S55
 

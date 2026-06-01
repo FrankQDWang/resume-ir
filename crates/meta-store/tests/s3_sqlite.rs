@@ -23,9 +23,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     );
-    assert_eq!(store.schema_version().unwrap(), 13);
+    assert_eq!(store.schema_version().unwrap(), 14);
 
     for table_name in [
         "candidate",
@@ -40,13 +40,14 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "import_scan_scope",
         "import_scan_error",
         "embedding_job_spec",
+        "import_task_cancellation",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 13);
+    assert_eq!(store.schema_version().unwrap(), 14);
 }
 
 #[test]
@@ -1297,7 +1298,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7]);
-        assert_eq!(reopened.schema_version().unwrap(), 13);
+        assert_eq!(reopened.schema_version().unwrap(), 14);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1602,7 +1603,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 13);
+        assert_eq!(reopened.schema_version().unwrap(), 14);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -1693,6 +1694,51 @@ fn import_task_status_updates_support_completion_and_retry() {
     let retryable_to_running_backwards =
         store.update_import_task_status(&task.id, ImportTaskStatus::Running, retry_at);
     assert_redacted_store_error(retryable_to_running_backwards.unwrap_err());
+}
+
+#[test]
+fn cancelled_import_tasks_are_not_claimed_or_reported_as_queued() {
+    let store = migrated_store();
+    let cancel_at = UnixTimestamp::from_unix_seconds(1_800_000_050);
+    let claim_at = UnixTimestamp::from_unix_seconds(1_800_000_060);
+    let queued = import_task(
+        "cancelled-queued-import",
+        "/private/cancelled/queued",
+        ImportTaskStatus::Queued,
+    );
+    let mut retryable = import_task(
+        "cancelled-retryable-import",
+        "/private/cancelled/retryable",
+        ImportTaskStatus::FailedRetryable,
+    );
+    retryable.started_at = Some(UnixTimestamp::from_unix_seconds(1_800_000_010));
+    retryable.finished_at = Some(UnixTimestamp::from_unix_seconds(1_800_000_020));
+    retryable.updated_at = UnixTimestamp::from_unix_seconds(1_800_000_020);
+
+    store.insert_import_task(&queued).unwrap();
+    store.insert_import_task(&retryable).unwrap();
+
+    assert!(store.cancel_import_task(&queued.id, cancel_at).unwrap());
+    assert!(store.is_import_task_cancelled(&queued.id).unwrap());
+    assert!(store.cancel_import_task(&retryable.id, cancel_at).unwrap());
+    assert!(store.is_import_task_cancelled(&retryable.id).unwrap());
+
+    assert_eq!(
+        store
+            .pending_import_task_by_root(&queued.root_path)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .claim_next_import_task_for_worker_excluding_due_at(claim_at, claim_at, &[])
+            .unwrap(),
+        None
+    );
+    let summary = store.status_summary().unwrap();
+    assert_eq!(summary.import_tasks_queued, 0);
+    assert_eq!(summary.import_tasks_recoverable, 0);
+    assert_eq!(summary.import_tasks_cancelled, 2);
 }
 
 #[test]
@@ -1976,7 +2022,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             report.applied_versions(),
             &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 13);
+        assert_eq!(reopened.schema_version().unwrap(), 14);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -2008,7 +2054,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 13);
+        assert_eq!(reopened.schema_version().unwrap(), 14);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 
