@@ -347,7 +347,7 @@ cargo run -p resume-cli -- export-diagnostics --redact
 
 目标：以 GOAL.md、系统设计文档和执行方案为 production-ready 范围来源，按 PROGRESS.md 记录的已完成切片继续补齐真实产品闭环；不要把本清单的早期 S0-S13 bootstrap 范围当成产品完成标准。
 
-执行方式：使用 fw-build 的工程纪律推进，但产品范围以 GOAL.md、01_system_design_系统设计、02_execution_plan_执行方案和 PROGRESS.md 为准；不要引用已删除的 Superpowers bootstrap plan 作为产品计划；不要进入 push、PR、release、签名或未经授权的真实数据导入。
+执行方式：使用 fw-build 的工程纪律推进，但产品范围以 GOAL.md、01_system_design_系统设计、02_execution_plan_执行方案和 PROGRESS.md 为准；不要引用已删除的 bootstrap 文档作为产品计划；不要进入 push、PR、release、签名或未经授权的真实数据导入。
 
 规则：
 - 当前目录若还不是 Git 仓库，先 git init 并提交现有文档基线。
