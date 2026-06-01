@@ -339,9 +339,38 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
             task,
             root,
             &import_args,
-            &ImportSummary::default(),
+            &initial_import_summary(&import_args),
             now,
         )?;
+    }
+
+    if import_args.enqueue {
+        let task_ids = tasks
+            .iter()
+            .map(|task| task.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        println!("import task submitted");
+        if tasks.len() == 1 {
+            println!("task id: {}", tasks[0].id);
+        } else {
+            println!("task ids: {task_ids}");
+        }
+        println!("status: queued");
+        println!("scan profile: {}", import_args.profile.label());
+        println!("roots queued: {}", roots.len());
+        println!(
+            "scan file limit: {}",
+            import_args
+                .max_files
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        );
+        return Ok(());
+    }
+
+    for (task, root) in tasks.iter().zip(roots.iter()) {
         let root_summary = import_root_with_options(
             data_dir,
             &store,
@@ -412,6 +441,20 @@ fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
         && (total.scan_budget.is_none() || next.scan_budget.is_some_and(|budget| budget.exhausted))
     {
         total.scan_budget = next.scan_budget;
+    }
+}
+
+fn initial_import_summary(import_args: &ImportArgs) -> ImportSummary {
+    ImportSummary {
+        scan_budget: import_args
+            .max_files
+            .map(|limit| import_pipeline::ImportScanBudget {
+                kind: PipelineImportScanBudgetKind::Files,
+                limit,
+                observed: 0,
+                exhausted: false,
+            }),
+        ..ImportSummary::default()
     }
 }
 
@@ -500,6 +543,7 @@ struct ImportArgs {
     root_selection: ImportRootSelection,
     profile: ScanProfile,
     max_files: Option<usize>,
+    enqueue: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -527,10 +571,17 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
     let mut profile = None;
     let mut profile_seen = false;
     let mut max_files = None;
+    let mut enqueue = false;
     let mut index = 0;
 
     while index < args.len() {
         match args[index].as_str() {
+            "--enqueue" => {
+                if enqueue {
+                    return Err(import_usage());
+                }
+                enqueue = true;
+            }
             "--root" => {
                 if root_preset.is_some() {
                     return Err(import_usage());
@@ -603,6 +654,7 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
         root_selection,
         profile: profile.unwrap_or(default_profile),
         max_files,
+        enqueue,
     })
 }
 
@@ -631,7 +683,7 @@ fn parse_positive_usize(value: &str) -> Result<usize> {
 
 fn import_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli import (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]",
+        "usage: resume-cli import [--enqueue] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]",
     )
 }
 

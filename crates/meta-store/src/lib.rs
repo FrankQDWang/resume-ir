@@ -10,7 +10,7 @@ pub use core_domain::{
     IngestJobKind, IngestJobStatus, ResumeVersion, ResumeVersionId, ResumeVisibility, SectionId,
     UnixTimestamp,
 };
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension, Row};
 
 const SCHEMA_VERSION_V1: u32 = 1;
 const SCHEMA_VERSION_V2: u32 = 2;
@@ -1165,6 +1165,76 @@ impl MetaStore {
                 import_task_status_to_storage(ImportTaskStatus::Running),
                 import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
             ])
+            .map_err(MetaStoreError::storage)?;
+
+        match rows.next().map_err(MetaStoreError::storage)? {
+            Some(row) => Ok(Some(read_import_task(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn claim_next_import_task_for_worker(
+        &self,
+        updated_at: UnixTimestamp,
+    ) -> Result<Option<ImportTask>> {
+        self.claim_next_import_task_for_worker_excluding(updated_at, &[])
+    }
+
+    pub fn claim_next_import_task_for_worker_excluding(
+        &self,
+        updated_at: UnixTimestamp,
+        excluded_ids: &[ImportTaskId],
+    ) -> Result<Option<ImportTask>> {
+        let connection = self.connection.borrow();
+        let excluded_clause = if excluded_ids.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " AND id NOT IN ({})",
+                std::iter::repeat_n("?", excluded_ids.len())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let sql = format!(
+            "\
+            UPDATE import_task
+            SET
+                status = ?,
+                started_at_seconds = ?,
+                finished_at_seconds = NULL,
+                updated_at_seconds = ?
+            WHERE rowid = (
+                SELECT rowid
+                FROM import_task
+                WHERE status IN (?, ?)
+                    AND updated_at_seconds <= ?
+                    {excluded_clause}
+                ORDER BY CASE WHEN status = ? THEN 0 ELSE 1 END, queued_at_seconds, rowid
+                LIMIT 1
+            )
+            RETURNING {IMPORT_TASK_COLUMNS}"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let updated_at_seconds = updated_at.as_unix_seconds();
+        let queued = import_task_status_to_storage(ImportTaskStatus::Queued);
+        let retryable = import_task_status_to_storage(ImportTaskStatus::FailedRetryable);
+        let mut values = vec![
+            Value::Text(import_task_status_to_storage(ImportTaskStatus::Running).to_string()),
+            Value::Integer(updated_at_seconds),
+            Value::Integer(updated_at_seconds),
+            Value::Text(queued.to_string()),
+            Value::Text(retryable.to_string()),
+            Value::Integer(updated_at_seconds),
+        ];
+        values.extend(
+            excluded_ids
+                .iter()
+                .map(|id| Value::Text(id.as_str().to_string())),
+        );
+        values.push(Value::Text(queued.to_string()));
+        let mut rows = statement
+            .query(params_from_iter(values))
             .map_err(MetaStoreError::storage)?;
 
         match rows.next().map_err(MetaStoreError::storage)? {

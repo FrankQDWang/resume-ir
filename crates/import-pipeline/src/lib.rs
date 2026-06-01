@@ -54,9 +54,11 @@ pub fn import_root_with_options(
     now: UnixTimestamp,
     options: ImportOptions,
 ) -> Result<ImportSummary> {
-    store
-        .update_import_task_status(&task.id, ImportTaskStatus::Running, now)
-        .map_err(ImportPipelineError::store)?;
+    if task.status != ImportTaskStatus::Running {
+        store
+            .update_import_task_status(&task.id, ImportTaskStatus::Running, now)
+            .map_err(ImportPipelineError::store)?;
+    }
 
     let result = run_import(data_dir, store, task, root, now, options);
     match result {

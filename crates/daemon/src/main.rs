@@ -5,9 +5,16 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use meta_store::{IndexStateStatus, MetaStore};
+use import_pipeline::{
+    import_root_with_options, ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind,
+    ImportSummary, ScanProfile,
+};
+use meta_store::{
+    ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTaskId, ImportTaskStatus,
+    IndexStateStatus, MetaStore, UnixTimestamp,
+};
 
 fn main() {
     if let Err(error) = run() {
@@ -55,12 +62,17 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     if !options.foreground {
         return Err(DaemonError::usage(
-            "usage: resume-daemon run --foreground [--once] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]",
+            "usage: resume-daemon run --foreground [--once] [--work-imports-once] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]",
         ));
     }
     if options.once && options.ipc_listen.is_some() {
         return Err(DaemonError::usage(
             "usage: --once cannot be combined with --ipc-listen",
+        ));
+    }
+    if options.work_imports_once && !options.once {
+        return Err(DaemonError::usage(
+            "usage: --work-imports-once requires --once",
         ));
     }
 
@@ -74,6 +86,23 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
     io::stdout()
         .flush()
         .map_err(|_| DaemonError::user("unable to write daemon status"))?;
+
+    if options.work_imports_once {
+        let import_summary = run_import_worker_once(data_dir, &store)?;
+        println!("import worker processed: {}", import_summary.processed);
+        println!("import worker failed: {}", import_summary.failed);
+        println!(
+            "import worker searchable documents: {}",
+            import_summary.searchable_documents
+        );
+        println!(
+            "import worker ocr jobs queued: {}",
+            import_summary.ocr_jobs_queued
+        );
+        io::stdout()
+            .flush()
+            .map_err(|_| DaemonError::user("unable to write daemon status"))?;
+    }
 
     if options.once {
         return Ok(());
@@ -124,6 +153,10 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 );
                 index += 2;
             }
+            "--work-imports-once" => {
+                options.work_imports_once = true;
+                index += 1;
+            }
             _ => return Err(DaemonError::usage(run_usage())),
         }
     }
@@ -138,7 +171,141 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+}
+
+fn run_import_worker_once(data_dir: &Path, store: &MetaStore) -> Result<ImportWorkerSummary> {
+    let mut worker_summary = ImportWorkerSummary::default();
+    let mut attempted = Vec::<ImportTaskId>::new();
+
+    while let Some(task) = store
+        .claim_next_import_task_for_worker_excluding(current_timestamp()?, &attempted)
+        .map_err(DaemonError::store)?
+    {
+        attempted.push(task.id.clone());
+        let now = current_timestamp()?;
+        let Some(scope) = store
+            .import_scan_scope_by_task_id(&task.id)
+            .map_err(DaemonError::store)?
+        else {
+            mark_import_task_failed_permanent(store, &task, now)?;
+            worker_summary.failed += 1;
+            continue;
+        };
+
+        let import_options = match import_options_from_scope(&scope) {
+            Ok(import_options) => import_options,
+            Err(_) => {
+                mark_import_task_failed_permanent(store, &task, now)?;
+                worker_summary.failed += 1;
+                continue;
+            }
+        };
+        let import_summary = match import_root_with_options(
+            data_dir,
+            store,
+            &task,
+            Path::new(&scope.canonical_root_path),
+            now,
+            import_options,
+        ) {
+            Ok(import_summary) => import_summary,
+            Err(_) => {
+                worker_summary.failed += 1;
+                continue;
+            }
+        };
+
+        upsert_scope_summary(store, scope, import_summary, now)?;
+        worker_summary.processed += 1;
+        worker_summary.searchable_documents += import_summary.searchable_documents;
+        worker_summary.ocr_jobs_queued += import_summary.ocr_jobs_queued;
+    }
+
+    Ok(worker_summary)
+}
+
+fn mark_import_task_failed_permanent(
+    store: &MetaStore,
+    task: &meta_store::ImportTask,
+    now: UnixTimestamp,
+) -> Result<()> {
+    if task.status != ImportTaskStatus::Running {
+        store
+            .update_import_task_status(&task.id, ImportTaskStatus::Running, now)
+            .map_err(DaemonError::store)?;
+    }
+    store
+        .update_import_task_status(&task.id, ImportTaskStatus::FailedPermanent, now)
+        .map_err(DaemonError::store)
+}
+
+fn import_options_from_scope(scope: &ImportScanScope) -> Result<ImportOptions> {
+    Ok(ImportOptions {
+        scan_profile: match scope.scan_profile {
+            ImportScanProfile::Explicit => ScanProfile::Explicit,
+            ImportScanProfile::Discovery => ScanProfile::Discovery,
+        },
+        max_files: match (scope.scan_budget_kind, scope.scan_budget_limit) {
+            (Some(ImportScanBudgetKind::Files), Some(limit)) => Some(u64_to_usize(limit)?),
+            (None, None) => None,
+            _ => {
+                return Err(DaemonError::user(
+                    "queued import task has invalid scan budget metadata",
+                ))
+            }
+        },
+    })
+}
+
+fn upsert_scope_summary(
+    store: &MetaStore,
+    mut scope: ImportScanScope,
+    summary: ImportSummary,
+    now: UnixTimestamp,
+) -> Result<()> {
+    scope.files_discovered = usize_to_u64(summary.files_discovered)?;
+    scope.ignored_entries = usize_to_u64(summary.ignored_entries)?;
+    scope.scan_errors = usize_to_u64(summary.scan_errors)?;
+    scope.searchable_documents = usize_to_u64(summary.searchable_documents)?;
+    scope.ocr_required_documents = usize_to_u64(summary.ocr_required_documents)?;
+    scope.ocr_jobs_queued = usize_to_u64(summary.ocr_jobs_queued)?;
+    scope.failed_documents = usize_to_u64(summary.failed_documents)?;
+    scope.deleted_documents = usize_to_u64(summary.deleted_documents)?;
+    scope.scan_budget_kind = summary.scan_budget.map(|budget| match budget.kind {
+        PipelineImportScanBudgetKind::Files => ImportScanBudgetKind::Files,
+    });
+    scope.scan_budget_limit = summary
+        .scan_budget
+        .map(|budget| usize_to_u64(budget.limit))
+        .transpose()?;
+    scope.scan_budget_observed = summary
+        .scan_budget
+        .map(|budget| usize_to_u64(budget.observed))
+        .transpose()?;
+    scope.scan_budget_exhausted = summary.scan_budget.is_some_and(|budget| budget.exhausted);
+    scope.updated_at = now;
+    store
+        .upsert_import_scan_scope(&scope)
+        .map_err(DaemonError::store)
+}
+
+fn current_timestamp() -> Result<UnixTimestamp> {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| DaemonError::user("system clock is before unix epoch"))?
+        .as_secs();
+    let seconds =
+        i64::try_from(seconds).map_err(|_| DaemonError::user("system timestamp is too large"))?;
+    Ok(UnixTimestamp::from_unix_seconds(seconds))
+}
+
+fn usize_to_u64(value: usize) -> Result<u64> {
+    u64::try_from(value).map_err(|_| DaemonError::user("import summary count is too large"))
+}
+
+fn u64_to_usize(value: u64) -> Result<usize> {
+    usize::try_from(value).map_err(|_| DaemonError::user("scan budget is too large"))
 }
 
 fn parse_loopback_addr(value: &str) -> Result<SocketAddr> {
@@ -257,6 +424,15 @@ struct RunOptions {
     once: bool,
     ipc_listen: Option<SocketAddr>,
     max_requests: Option<usize>,
+    work_imports_once: bool,
+}
+
+#[derive(Default)]
+struct ImportWorkerSummary {
+    processed: usize,
+    failed: usize,
+    searchable_documents: usize,
+    ocr_jobs_queued: usize,
 }
 
 fn open_store(data_dir: &Path) -> Result<MetaStore> {

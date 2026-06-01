@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S42 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S43 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -19,10 +19,11 @@ design docs, the execution docs, and this evidence log as scope sources. Deleted
 obsolete bootstrap files and the old S0-S13 checklist are not product scope.
 
 - P0 architecture: Rust workspace, CLI/daemon entrypoints, SQLite metadata,
-  task/status tables, loopback status IPC, doctor, and diagnostics exist.
-  Missing production control-plane work includes daemon scheduling for
-  import/OCR/index/embedding, command IPC endpoints, service lifecycle, CI,
-  CODEOWNERS, and macOS/Windows validation.
+  task/status tables, loopback status IPC, doctor, diagnostics, and a one-shot
+  daemon import worker for queued import tasks exist. Missing production
+  control-plane work includes long-running daemon scheduling loops, OCR/index/
+  embedding workers, command IPC endpoints, service lifecycle, CI, CODEOWNERS,
+  and macOS/Windows validation.
 - P1 import/search: directory scanning, DOCX/text-layer PDF parsing, cleaning,
   sectioning, full-text snapshot publish/recover, delete rebuild, and redacted
   snippets exist. Missing production work includes watcher/background
@@ -100,6 +101,7 @@ obsolete bootstrap files and the old S0-S13 checklist are not product scope.
 | S40 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this local-discovery default budget and multi-root budget-summary slice; live progress streaming, user cancellation, time/byte/CPU budgets, user-facing partial-result UX, real whole-machine witness runs, and Windows/macOS full-disk validation remain not complete. |
 | S41 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this OCR worker searchable-index slice; multi-page PDF rendering, daemon-loop OCR execution, concrete OCR engine install/license, bbox persistence, real scanned-resume witness runs, encrypted OCR text storage/physical purge, and Windows process-tree validation remain not complete. |
 | S42 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext`, `/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p index-fulltext -p rank-fusion -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this CLI semantic/hybrid query slice; licensed embedding model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, daemon-loop embedding queue, section vectors, real semantic quality/performance benchmarks, OS-enforced no-network command sandboxing, and cross-platform validation remain not complete or BLOCKED. |
+| S43 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-cli -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this one-shot daemon import worker slice; long-running scheduling loop, authenticated import command IPC endpoint, import cancellation/progress streaming, background OCR/vector workers, multi-process stress testing, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
 
 ## Command Log
 
@@ -2039,6 +2041,68 @@ Sub-agent review:
 Scope note:
 
 - S42 does not choose, install, license, or distribute a production embedding model; it does not add ONNX/HNSW/FAISS or another ANN engine; it does not run a daemon embedding queue, section-level vectors, OS-enforced no-network sandboxing for user embedding commands, real semantic quality benchmarks, real resume witness scans, or cross-platform validation. Those remain incomplete or BLOCKED.
+
+### S43
+
+Design note:
+
+- S43 moves import execution closer to the daemon-owned production control plane. `resume-cli import --enqueue` now persists queued import tasks and scan scope metadata without doing foreground indexing. `resume-daemon run --foreground --once --work-imports-once` claims queued/retryable import tasks from SQLite, reconstructs scan options from persisted scope, runs the existing real import/index pipeline, records updated scan counts, and continues past retryable failures in the same worker pass.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store import_worker_claim_atomically_marks_next_task_running_and_skips_attempted_tasks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search import_enqueue_persists_task_without_running_foreground_import -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_once_worker_processes_queued_import_task_from_persistent_scope -- --exact
+```
+
+Output summary:
+
+- Before implementation, the meta-store test failed because there was no atomic import-task claim API for daemon workers.
+- Before implementation, the CLI enqueue test failed because `resume-cli import` did not accept `--enqueue`.
+- Before implementation, the daemon worker test failed because `resume-daemon run` did not accept `--work-imports-once`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-cli -p resume-daemon --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `cargo test -p meta-store`: exit 0; 32 meta-store tests passed, including atomic import worker claim and attempted-task exclusion.
+- `cargo test -p resume-cli --test s9_import_search`: exit 0; 14 import/search tests passed, including enqueue without foreground import and preserved scan budget metadata.
+- `cargo test -p resume-daemon`: exit 0; daemon identity, IPC, foreground once, queued import worker, and failure-continuation tests passed.
+- `cargo test -p resume-cli`: exit 0; all CLI tests passed.
+- `cargo clippy -p meta-store -p import-pipeline -p resume-cli -p resume-daemon --all-targets -- -D warnings`: exit 0.
+
+Workspace acceptance:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+```
+
+Output summary:
+
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+Sub-agent review fix:
+
+- Feynman found three issues before commit: queued imports dropped scan-budget metadata, worker task selection was not atomic, and a single import failure aborted the worker pass. The implementation now persists initial budget metadata, uses an atomic SQLite `UPDATE ... RETURNING` claim API, excludes attempted task IDs during a one-shot worker pass to avoid immediate retry loops, and counts failures while continuing to later queued tasks.
+
+Scope note:
+
+- S43 does not add a long-running scheduler loop, authenticated import command IPC, progress streaming, cancellation, background OCR/vector workers, multi-process stress proof, real whole-machine witness scans, or Windows/macOS service validation. Those remain incomplete.
 
 ### S9
 

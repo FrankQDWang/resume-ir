@@ -110,6 +110,68 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
 }
 
 #[test]
+fn import_enqueue_persists_task_without_running_foreground_import() {
+    let data_dir = temp_dir("enqueue-import-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+
+    let enqueue = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--enqueue",
+            "--root",
+            path_str(&fixture_root),
+            "--max-files",
+            "2",
+        ])
+        .output()
+        .expect("enqueue import task");
+
+    assert!(
+        enqueue.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&enqueue.stdout),
+        String::from_utf8_lossy(&enqueue.stderr)
+    );
+    assert!(enqueue.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&enqueue.stdout);
+    assert!(stdout.contains("import task submitted"));
+    assert!(stdout.contains("status: queued"));
+    assert!(stdout.contains("roots queued: 1"));
+    assert!(!stdout.contains("files discovered: 3"));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains(path_str(&canonical_fixture_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let summary = store.status_summary().unwrap();
+    assert_eq!(summary.import_tasks_queued, 1);
+    assert_eq!(summary.searchable_documents, 0);
+    let scope = store.latest_import_scan_scope().unwrap().unwrap();
+    assert_eq!(scope.canonical_root_path, path_str(&canonical_fixture_root));
+    assert_eq!(scope.files_discovered, 0);
+    assert_eq!(scope.searchable_documents, 0);
+    assert_eq!(scope.scan_budget_kind, Some(ImportScanBudgetKind::Files));
+    assert_eq!(scope.scan_budget_limit, Some(2));
+    assert_eq!(scope.scan_budget_observed, Some(0));
+    assert!(!scope.scan_budget_exhausted);
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "search", "Java"])
+        .output()
+        .expect("search before daemon import worker");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(search_stdout.contains("search index not available yet"));
+    assert!(search_stdout.contains("results: 0"));
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn import_multiple_roots_builds_searchable_index_without_path_leak() {
     let data_dir = temp_dir("multi-root-import-data");
     let first_root = temp_dir("multi-root-a-private");

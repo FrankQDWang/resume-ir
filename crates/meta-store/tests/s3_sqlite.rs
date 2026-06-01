@@ -1418,6 +1418,62 @@ fn import_task_status_updates_support_completion_and_retry() {
 }
 
 #[test]
+fn import_worker_claim_atomically_marks_next_task_running_and_skips_attempted_tasks() {
+    let store = migrated_store();
+    let timestamp = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let mut running = import_task(
+        "next-import-running",
+        "synthetic/import/running",
+        ImportTaskStatus::Running,
+    );
+    running.started_at = Some(timestamp);
+    let mut completed = import_task(
+        "next-import-completed",
+        "synthetic/import/completed",
+        ImportTaskStatus::Completed,
+    );
+    completed.started_at = Some(timestamp);
+    completed.finished_at = Some(timestamp);
+    let mut retryable = import_task(
+        "next-import-retryable",
+        "synthetic/import/retryable",
+        ImportTaskStatus::FailedRetryable,
+    );
+    retryable.started_at = Some(timestamp);
+    retryable.finished_at = Some(timestamp);
+    let queued = import_task(
+        "next-import-queued",
+        "synthetic/import/queued",
+        ImportTaskStatus::Queued,
+    );
+
+    store.insert_import_task(&running).unwrap();
+    store.insert_import_task(&completed).unwrap();
+    store.insert_import_task(&retryable).unwrap();
+    store.insert_import_task(&queued).unwrap();
+
+    let claim_at = UnixTimestamp::from_unix_seconds(1_900_000_000);
+    let claimed = store
+        .claim_next_import_task_for_worker(claim_at)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, queued.id.clone());
+    assert_eq!(claimed.status, ImportTaskStatus::Running);
+    assert_eq!(claimed.started_at, Some(claim_at));
+    assert_eq!(
+        store.import_task_by_id(&queued.id).unwrap().unwrap().status,
+        ImportTaskStatus::Running
+    );
+
+    let claimed_retryable = store
+        .claim_next_import_task_for_worker_excluding(claim_at, std::slice::from_ref(&queued.id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed_retryable.id, retryable.id);
+    assert_eq!(claimed_retryable.status, ImportTaskStatus::Running);
+}
+
+#[test]
 fn import_task_api_rejects_invalid_lifecycle_timestamps() {
     let store = migrated_store();
     let timestamp = UnixTimestamp::from_unix_seconds(1_800_000_001);
