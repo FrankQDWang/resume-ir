@@ -1,0 +1,511 @@
+use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use index_fulltext::{FullTextIndex, IndexDocument, IndexSection};
+use meta_store::{
+    Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
+    FileExtension, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+};
+
+#[test]
+fn daemon_search_ipc_authenticates_filters_and_redacts_results() {
+    let data_dir = temp_dir("search-ipc-data");
+    let first_doc = DocumentId::from_non_secret_parts(&["s48", "first"]);
+    let first_version = ResumeVersionId::from_non_secret_parts(&["s48", "first-version"]);
+    let second_doc = DocumentId::from_non_secret_parts(&["s48", "second"]);
+    let second_version = ResumeVersionId::from_non_secret_parts(&["s48", "second-version"]);
+    seed_searchable_resume(SeedResume {
+        data_dir: &data_dir,
+        document_id: &first_doc,
+        version_id: &first_version,
+        file_name: "candidate@example.test-java.pdf",
+        clean_text: "Java platform engineer candidate@example.test 155-555-0199 Kubernetes",
+        degree: "master",
+        skill: "Kubernetes",
+        years: 7.0,
+    });
+    seed_searchable_resume(SeedResume {
+        data_dir: &data_dir,
+        document_id: &second_doc,
+        version_id: &second_version,
+        file_name: "synthetic-rust-java.pdf",
+        clean_text: "Java Rust engineer with two years of experience",
+        degree: "bachelor",
+        skill: "Rust",
+        years: 2.0,
+    });
+    seed_fulltext_index(
+        &data_dir,
+        [
+            IndexDocument {
+                doc_id: first_doc.to_string(),
+                version_id: first_version.to_string(),
+                file_name: "candidate@example.test-java.pdf".to_string(),
+                clean_text: "Java platform engineer candidate@example.test 155-555-0199 Kubernetes"
+                    .to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: "Java Kubernetes".to_string(),
+                }],
+                is_deleted: false,
+            },
+            IndexDocument {
+                doc_id: second_doc.to_string(),
+                version_id: second_version.to_string(),
+                file_name: "synthetic-rust-java.pdf".to_string(),
+                clean_text: "Java Rust engineer with two years of experience".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: "Java Rust".to_string(),
+                }],
+                is_deleted: false,
+            },
+        ],
+    );
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "Java",
+            "mode": "fulltext",
+            "top_k": 5,
+            "filters": {
+                "degree_min": "master",
+                "skills_any": ["kubernetes"],
+                "years_experience_min": 5.0
+            }
+        }),
+    );
+
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    assert!(!response.contains(path_str(&data_dir)));
+    assert!(!response.contains(&token));
+    assert!(!response.contains("candidate@example.test"));
+    assert!(!response.contains("155-555-0199"));
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or_default();
+    let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(payload["schema_version"], "daemon.search.v1");
+    assert_eq!(payload["status"], "ok");
+    assert_eq!(payload["mode"], "fulltext");
+    assert_eq!(payload["search_index"], "available");
+    assert_eq!(payload["result_count"], 1);
+    let results = payload["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["rank"], 1);
+    assert_eq!(results[0]["doc_id"], first_doc.to_string());
+    assert_eq!(results[0]["version_id"], first_version.to_string());
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_search_ipc_requires_bearer_token_without_leaking_query() {
+    let data_dir = temp_dir("search-ipc-auth-data");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let response = http_post_search_command(
+        &endpoint,
+        None,
+        serde_json::json!({
+            "query": "secret-query",
+            "mode": "fulltext",
+            "top_k": 1
+        }),
+    );
+
+    assert!(response.contains("HTTP/1.1 401 Unauthorized"));
+    assert!(!response.contains("secret-query"));
+    assert!(!response.contains(path_str(&data_dir)));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_search_ipc_rejects_invalid_requests_without_leaking_query() {
+    let data_dir = temp_dir("search-ipc-invalid-data");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "5",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+
+    let wrong_token = http_post_search_command(
+        &endpoint,
+        Some("0000000000000000000000000000000000000000000000000000000000000000"),
+        serde_json::json!({
+            "query": "secret-query",
+            "mode": "fulltext",
+            "top_k": 1
+        }),
+    );
+    assert!(wrong_token.contains("HTTP/1.1 401 Unauthorized"));
+    assert!(!wrong_token.contains("secret-query"));
+
+    let invalid_json = raw_ipc_request(
+        &endpoint,
+        format!(
+            "POST /search HTTP/1.1\r\nHost: local\r\nAuthorization: Bearer {token}\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot json"
+        )
+        .as_bytes(),
+    );
+    assert!(invalid_json.contains("HTTP/1.1 400 Bad Request"));
+    assert!(!invalid_json.contains("not json"));
+
+    let empty_query = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "",
+            "mode": "fulltext",
+            "top_k": 1
+        }),
+    );
+    assert!(empty_query.contains("HTTP/1.1 400 Bad Request"));
+
+    let unsupported_mode = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "secret-query",
+            "mode": "semantic",
+            "top_k": 1
+        }),
+    );
+    assert!(unsupported_mode.contains("HTTP/1.1 400 Bad Request"));
+    assert!(!unsupported_mode.contains("secret-query"));
+
+    let malformed_filters = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "secret-query",
+            "mode": "fulltext",
+            "top_k": 1,
+            "filters": {
+                "skills_any": "not-array"
+            }
+        }),
+    );
+    assert!(malformed_filters.contains("HTTP/1.1 400 Bad Request"));
+    assert!(!malformed_filters.contains("secret-query"));
+    assert!(!malformed_filters.contains(path_str(&data_dir)));
+    assert!(!malformed_filters.contains(&token));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_search_ipc_reports_not_ready_without_opening_local_results() {
+    let data_dir = temp_dir("search-ipc-not-ready-data");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "secret-query",
+            "mode": "fulltext",
+            "top_k": 1
+        }),
+    );
+
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    assert!(response.contains("\"search_index\":\"not_ready\""));
+    assert!(response.contains("\"result_count\":0"));
+    assert!(!response.contains("secret-query"));
+    assert!(!response.contains(path_str(&data_dir)));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+struct SeedResume<'a> {
+    data_dir: &'a Path,
+    document_id: &'a DocumentId,
+    version_id: &'a ResumeVersionId,
+    file_name: &'a str,
+    clean_text: &'a str,
+    degree: &'a str,
+    skill: &'a str,
+    years: f32,
+}
+
+fn seed_searchable_resume(seed: SeedResume<'_>) {
+    let now = UnixTimestamp::from_unix_seconds(1_800_048_000);
+    let store = MetaStore::open(seed.data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .upsert_document(&Document {
+            id: seed.document_id.clone(),
+            source_uri: format!("synthetic://{}", seed.file_name),
+            normalized_path: format!("synthetic/{}", seed.file_name),
+            file_name: seed.file_name.to_string(),
+            extension: FileExtension::Pdf,
+            byte_size: 128,
+            mtime: now,
+            content_hash: Some(format!("{}-hash", seed.file_name)),
+            text_hash: None,
+            is_deleted: false,
+            created_at: now,
+            updated_at: now,
+            status: DocumentStatus::Searchable,
+        })
+        .unwrap();
+    store
+        .upsert_resume_version(&ResumeVersion {
+            id: seed.version_id.clone(),
+            document_id: seed.document_id.clone(),
+            candidate_id: None,
+            parse_version: "parser-v1".to_string(),
+            schema_version: "schema-v1".to_string(),
+            language_set: vec!["en".to_string()],
+            page_count: Some(1),
+            raw_text: Some(seed.clean_text.to_string()),
+            clean_text: Some(seed.clean_text.to_string()),
+            quality_score: Some(0.9),
+            visibility: ResumeVisibility::Searchable,
+        })
+        .unwrap();
+    store
+        .replace_entity_mentions(
+            seed.version_id,
+            &[
+                entity_mention(
+                    seed.version_id,
+                    "degree",
+                    EntityType::Degree,
+                    seed.degree,
+                    0.95,
+                ),
+                entity_mention(
+                    seed.version_id,
+                    "skill",
+                    EntityType::Skill,
+                    seed.skill,
+                    0.95,
+                ),
+                entity_mention(
+                    seed.version_id,
+                    "years",
+                    EntityType::YearsExperience,
+                    &seed.years.to_string(),
+                    0.95,
+                ),
+            ],
+        )
+        .unwrap();
+}
+
+fn entity_mention(
+    version_id: &ResumeVersionId,
+    label: &str,
+    entity_type: EntityType,
+    normalized_value: &str,
+    confidence: f32,
+) -> EntityMention {
+    EntityMention {
+        id: EntityMentionId::from_non_secret_parts(&["s48", version_id.as_str(), label]),
+        resume_version_id: version_id.clone(),
+        section_id: None,
+        entity_type,
+        raw_value: normalized_value.to_string(),
+        normalized_value: Some(normalized_value.to_string()),
+        span_start: Some(0),
+        span_end: Some(normalized_value.len()),
+        confidence,
+        extractor: "s48-test".to_string(),
+    }
+}
+
+fn seed_fulltext_index<const N: usize>(data_dir: &Path, documents: [IndexDocument; N]) {
+    let index = FullTextIndex::open_or_create(&data_dir.join("search-index")).unwrap();
+    index.replace_documents(documents).unwrap();
+    index.commit().unwrap();
+}
+
+fn http_post_search_command(
+    endpoint: &str,
+    token: Option<&str>,
+    payload: serde_json::Value,
+) -> String {
+    let rest = endpoint
+        .strip_prefix("http://")
+        .expect("endpoint has http scheme");
+    let (addr, _path) = rest.split_once('/').expect("endpoint has path");
+    let body = payload.to_string();
+    let authorization = token
+        .map(|token| format!("Authorization: Bearer {token}\r\n"))
+        .unwrap_or_default();
+    let request = format!(
+        "POST /search HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let mut stream = TcpStream::connect(addr).expect("connect daemon ipc");
+    stream
+        .write_all(request.as_bytes())
+        .expect("write search request");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("read search response");
+    response
+}
+
+fn raw_ipc_request(endpoint: &str, request: &[u8]) -> String {
+    let rest = endpoint
+        .strip_prefix("http://")
+        .expect("endpoint has http scheme");
+    let (addr, _path) = rest.split_once('/').expect("endpoint has path");
+    let mut stream = TcpStream::connect(addr).expect("connect daemon ipc");
+    stream.write_all(request).expect("write raw request");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("read raw response");
+    response
+}
+
+fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut line = String::new();
+    while Instant::now() < deadline {
+        line.clear();
+        let bytes = stdout.read_line(&mut line).expect("read daemon stdout");
+        if bytes == 0 {
+            if let Ok(Some(status)) = child.try_wait() {
+                panic!("daemon exited before endpoint: {status}");
+            }
+            continue;
+        }
+        if let Some(endpoint) = line.trim().strip_prefix("ipc status endpoint: ") {
+            return endpoint.to_string();
+        }
+    }
+    panic!("daemon did not print ipc status endpoint");
+}
+
+fn read_ipc_auth_token(data_dir: &Path) -> String {
+    let token = fs::read_to_string(data_dir.join("ipc.auth")).expect("read daemon ipc auth token");
+    token.trim().to_string()
+}
+
+fn wait_child(child: Child) -> ChildOutput {
+    let output = child.wait_with_output().expect("wait daemon");
+    ChildOutput {
+        success: output.status.success(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+struct ChildOutput {
+    success: bool,
+    stderr: String,
+}
+
+fn temp_dir(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("resume-ir-s48-daemon-{label}-{unique}"));
+    fs::create_dir_all(&path).unwrap();
+    path
+}
+
+fn path_str(path: &Path) -> &str {
+    path.to_str().unwrap()
+}
+
+fn remove_dir(path: &Path) {
+    let _ = fs::remove_dir_all(path);
+}

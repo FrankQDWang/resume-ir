@@ -297,6 +297,11 @@ struct IpcImportEndpoint {
     addr: SocketAddr,
 }
 
+#[derive(Clone)]
+struct IpcSearchEndpoint {
+    addr: SocketAddr,
+}
+
 fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let import_args = parse_import_args(args)?;
     if let Some(endpoint) = &import_args.ipc_endpoint {
@@ -443,7 +448,7 @@ fn import_ipc_command(endpoint: &IpcImportEndpoint, import_args: &ImportArgs) ->
         .ok_or_else(import_usage)?;
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon import ipc token"))?;
-    let token = validate_daemon_import_ipc_token(&token)?;
+    let token = validate_daemon_ipc_token(&token, "daemon import ipc token is invalid")?;
 
     let roots = expand_import_root_selection(&import_args.root_selection)?;
     let root_values = roots
@@ -496,10 +501,10 @@ fn import_ipc_command(endpoint: &IpcImportEndpoint, import_args: &ImportArgs) ->
     Ok(())
 }
 
-fn validate_daemon_import_ipc_token(token: &str) -> Result<&str> {
+fn validate_daemon_ipc_token<'a>(token: &'a str, invalid_message: &'static str) -> Result<&'a str> {
     let token = token.trim();
     if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(CliError::user("daemon import ipc token is invalid"));
+        return Err(CliError::user(invalid_message));
     }
     Ok(token)
 }
@@ -946,6 +951,10 @@ fn pending_import_task(
 
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let search_args = parse_search_args(args)?;
+    if let Some(endpoint) = &search_args.ipc_endpoint {
+        return search_ipc_command(endpoint, &search_args);
+    }
+
     let candidate_limit = search_args
         .top_k
         .saturating_mul(5)
@@ -985,6 +994,109 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     print_search_hits(hits);
 
+    Ok(())
+}
+
+fn search_ipc_command(endpoint: &IpcSearchEndpoint, search_args: &SearchArgs) -> Result<()> {
+    let token_file = search_args
+        .ipc_token_file
+        .as_ref()
+        .ok_or_else(|| CliError::usage(search_usage()))?;
+    let token = fs::read_to_string(token_file)
+        .map_err(|_| CliError::user("unable to read daemon search ipc token"))?;
+    let token = validate_daemon_ipc_token(&token, "daemon search ipc token is invalid")?;
+    let body = search_ipc_request_body(search_args);
+
+    let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
+        .map_err(|_| CliError::user("unable to connect to daemon search ipc"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon search ipc"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon search ipc"))?;
+    let request = format!(
+        "POST /search HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        endpoint.addr,
+        token,
+        body.len(),
+        body
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|_| CliError::user("unable to request daemon search ipc"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|_| CliError::user("unable to read daemon search ipc"))?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| CliError::user("daemon search ipc response is invalid"))?;
+    let status_line = headers.lines().next().unwrap_or_default();
+    if !status_line.starts_with("HTTP/1.1 200 ") && !status_line.starts_with("HTTP/1.0 200 ") {
+        return Err(CliError::user("daemon search ipc returned an error"));
+    }
+
+    let body: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| CliError::user("daemon search ipc returned invalid json"))?;
+    render_search_ipc_result(&body)?;
+    Ok(())
+}
+
+fn search_ipc_request_body(search_args: &SearchArgs) -> String {
+    serde_json::json!({
+        "query": search_args.query.as_str(),
+        "mode": search_args.mode.label(),
+        "top_k": search_args.top_k,
+        "filters": search_filters_json(&search_args.filters),
+    })
+    .to_string()
+}
+
+fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
+    serde_json::json!({
+        "degree_min": filters.degree_min().map(DegreeLevel::canonical),
+        "skills_any": filters.skills_any(),
+        "years_experience_min": filters.years_experience_min(),
+    })
+}
+
+fn render_search_ipc_result(body: &serde_json::Value) -> Result<()> {
+    if json_str(body, "schema_version") != Some("daemon.search.v1")
+        || json_str(body, "status") != Some("ok")
+    {
+        return Err(CliError::user(
+            "daemon search ipc returned invalid protocol",
+        ));
+    }
+    if json_str(body, "search_index") == Some("not_ready") {
+        println!("search index not available yet");
+    }
+    let results = body
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
+    println!("results: {}", results.len());
+    for result in results {
+        let rank = result
+            .get("rank")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
+        let doc_id = json_str(result, "doc_id")
+            .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
+        let version_id = json_str(result, "version_id")
+            .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
+        let file_name = json_str(result, "file_name")
+            .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
+        let snippet = json_str(result, "snippet")
+            .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
+        println!("rank: {rank}");
+        println!("doc_id: {doc_id}");
+        println!("version_id: {version_id}");
+        println!("file_name: {}", redact_contact_values(file_name));
+        println!("snippet: {}", redact_contact_values(snippet));
+    }
     Ok(())
 }
 
@@ -1840,10 +1952,32 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
     let mut dimension = None;
     let mut vector_top_k = None;
     let mut embedding_timeout_ms = 30_000_u64;
+    let mut ipc_endpoint = None;
+    let mut ipc_token_file = None;
     let mut index = 1_usize;
 
     while index < args.len() {
         match args[index].as_str() {
+            "--ipc" => {
+                if ipc_endpoint.is_some() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                ipc_endpoint = Some(parse_search_ipc_endpoint(value)?);
+                index += 2;
+            }
+            "--ipc-token-file" => {
+                if ipc_token_file.is_some() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                ipc_token_file = Some(PathBuf::from(value));
+                index += 2;
+            }
             "--mode" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -1953,6 +2087,9 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
             _ => return Err(CliError::usage(search_usage())),
         }
     }
+    if ipc_endpoint.is_some() != ipc_token_file.is_some() {
+        return Err(CliError::usage(search_usage()));
+    }
 
     Ok(SearchArgs {
         query: query.clone(),
@@ -1964,11 +2101,32 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
         dimension,
         vector_top_k,
         embedding_timeout_ms,
+        ipc_endpoint,
+        ipc_token_file,
     })
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--ipc <http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+}
+
+fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
+    let rest = value
+        .strip_prefix("http://")
+        .ok_or_else(|| CliError::usage(search_usage()))?;
+    let (authority, path) = rest
+        .split_once('/')
+        .ok_or_else(|| CliError::usage(search_usage()))?;
+    if path != "search" && path != "status" {
+        return Err(CliError::usage(search_usage()));
+    }
+
+    let addr = SocketAddr::from_str(authority).map_err(|_| CliError::usage(search_usage()))?;
+    if !addr.ip().is_loopback() {
+        return Err(CliError::usage("search ipc endpoint must be loopback"));
+    }
+
+    Ok(IpcSearchEndpoint { addr })
 }
 
 fn run_semantic_search(
@@ -2341,6 +2499,14 @@ impl SearchMode {
             _ => None,
         }
     }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::FullText => "fulltext",
+            Self::Semantic => "semantic",
+            Self::Hybrid => "hybrid",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -2354,6 +2520,8 @@ struct SearchArgs {
     dimension: Option<usize>,
     vector_top_k: Option<usize>,
     embedding_timeout_ms: u64,
+    ipc_endpoint: Option<IpcSearchEndpoint>,
+    ipc_token_file: Option<PathBuf>,
 }
 
 fn inspect_search_index(data_dir: &Path) -> SearchIndexDiagnostic {

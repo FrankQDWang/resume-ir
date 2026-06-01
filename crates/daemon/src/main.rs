@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
@@ -16,10 +17,14 @@ use import_pipeline::{
     import_root_with_options, ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind,
     ImportSummary, ScanProfile,
 };
+use index_fulltext::{redact_contact_values, FullTextIndex, SearchHit, SearchQuery};
 use meta_store::{
-    ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
-    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, MetaStore, UnixTimestamp,
+    DocumentId, DocumentStatus, EntityType, ImportRootKind, ImportRootPreset, ImportScanBudgetKind,
+    ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
+    IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
+use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
+use search_planner::plan_search;
 
 const IMPORT_RETRY_BACKOFF_SECONDS: i64 = 60;
 const IMPORT_TASK_HEARTBEAT_SECONDS: u64 = 30;
@@ -602,6 +607,13 @@ fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
         return handle_import_command_ipc(data_dir, &request, &mut stream);
     }
 
+    if request.method == "POST"
+        && request.path == "/search"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_search_command_ipc(data_dir, &request, &mut stream);
+    }
+
     write_http_response(&mut stream, 404, "text/plain", "not found")
 }
 
@@ -704,7 +716,7 @@ fn handle_import_command_ipc(
     request: &IpcRequest,
     stream: &mut TcpStream,
 ) -> Result<()> {
-    if !import_command_authorized(data_dir, &request.headers)? {
+    if !ipc_command_authorized(data_dir, &request.headers)? {
         let body = serde_json::json!({
             "schema_version": "daemon.error.v1",
             "status": "unauthorized",
@@ -737,7 +749,7 @@ fn handle_import_command_ipc(
     }
 }
 
-fn import_command_authorized(data_dir: &Path, headers: &[(String, String)]) -> Result<bool> {
+fn ipc_command_authorized(data_dir: &Path, headers: &[(String, String)]) -> Result<bool> {
     let expected = load_or_create_ipc_auth_token(data_dir)?;
     let Some(header) = header_value(headers, "authorization") else {
         return Ok(false);
@@ -750,6 +762,325 @@ fn import_command_authorized(data_dir: &Path, headers: &[(String, String)]) -> R
         token.trim().as_bytes(),
         expected.as_bytes(),
     ))
+}
+
+fn handle_search_command_ipc(
+    data_dir: &Path,
+    request: &IpcRequest,
+    stream: &mut TcpStream,
+) -> Result<()> {
+    if !ipc_command_authorized(data_dir, &request.headers)? {
+        let body = serde_json::json!({
+            "schema_version": "daemon.error.v1",
+            "status": "unauthorized",
+        })
+        .to_string();
+        return write_http_response(stream, 401, "application/json", &body);
+    }
+
+    match execute_search_command(data_dir, &request.body) {
+        Ok(body) => write_http_response(stream, 200, "application/json", &body),
+        Err(IpcCommandError::BadRequest(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "bad_request",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 400, "application/json", &body)
+        }
+        Err(IpcCommandError::Conflict(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "conflict",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 409, "application/json", &body)
+        }
+        Err(IpcCommandError::Internal(error)) => Err(error),
+    }
+}
+
+fn execute_search_command(
+    data_dir: &Path,
+    body: &[u8],
+) -> std::result::Result<String, IpcCommandError> {
+    let payload = serde_json::from_slice::<serde_json::Value>(body)
+        .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
+    let args = parse_search_command(&payload)?;
+    if args.mode != "fulltext" {
+        return Err(IpcCommandError::BadRequest(
+            "daemon search ipc supports fulltext mode only",
+        ));
+    }
+
+    let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+        .map_err(DaemonError::fulltext)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        let body = serde_json::json!({
+            "schema_version": "daemon.search.v1",
+            "status": "ok",
+            "mode": "fulltext",
+            "search_index": "not_ready",
+            "result_count": 0,
+            "results": [],
+        });
+        return Ok(body.to_string());
+    };
+    let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
+    let hits = daemon_fulltext_search(&index, &store, &args)?;
+    let results = hits
+        .iter()
+        .map(|hit| {
+            serde_json::json!({
+                "rank": hit.rank,
+                "doc_id": hit.doc_id,
+                "version_id": hit.version_id,
+                "file_name": hit.file_name,
+                "snippet": hit.snippet,
+            })
+        })
+        .collect::<Vec<_>>();
+    let body = serde_json::json!({
+        "schema_version": "daemon.search.v1",
+        "status": "ok",
+        "mode": "fulltext",
+        "search_index": "available",
+        "result_count": results.len(),
+        "results": results,
+    });
+    Ok(body.to_string())
+}
+
+fn parse_search_command(
+    payload: &serde_json::Value,
+) -> std::result::Result<DaemonSearchArgs, IpcCommandError> {
+    let query = payload
+        .get("query")
+        .and_then(serde_json::Value::as_str)
+        .filter(|query| !query.trim().is_empty())
+        .ok_or(IpcCommandError::BadRequest(
+            "query must be a non-empty string",
+        ))?
+        .to_string();
+    let mode = payload
+        .get("mode")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("fulltext")
+        .to_string();
+    let top_k = match payload.get("top_k") {
+        Some(value) => value
+            .as_u64()
+            .filter(|value| *value > 0)
+            .and_then(|value| usize::try_from(value).ok())
+            .map(|value| value.min(100))
+            .ok_or(IpcCommandError::BadRequest("top_k must be positive"))?,
+        None => 10,
+    };
+    let filters = parse_search_filters(payload.get("filters"))?;
+    Ok(DaemonSearchArgs {
+        query,
+        mode,
+        top_k,
+        filters,
+    })
+}
+
+fn parse_search_filters(
+    filters: Option<&serde_json::Value>,
+) -> std::result::Result<SearchFilters, IpcCommandError> {
+    let Some(filters) = filters else {
+        return Ok(SearchFilters::default());
+    };
+    if filters.is_null() {
+        return Ok(SearchFilters::default());
+    }
+    let Some(object) = filters.as_object() else {
+        return Err(IpcCommandError::BadRequest("filters must be an object"));
+    };
+
+    let mut parsed = SearchFilters::default();
+    if let Some(value) = object.get("degree_min") {
+        if !value.is_null() {
+            let degree = value
+                .as_str()
+                .and_then(DegreeLevel::parse)
+                .ok_or(IpcCommandError::BadRequest("degree_min is invalid"))?;
+            parsed = parsed.with_degree_min(degree);
+        }
+    }
+    if let Some(value) = object.get("skills_any") {
+        if !value.is_null() {
+            let skills = value
+                .as_array()
+                .ok_or(IpcCommandError::BadRequest("skills_any must be an array"))?;
+            if skills.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many skills"));
+            }
+            let skills = skills
+                .iter()
+                .map(|skill| {
+                    skill
+                        .as_str()
+                        .filter(|skill| !skill.trim().is_empty())
+                        .ok_or(IpcCommandError::BadRequest("skills_any must be strings"))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_skills_any(skills);
+        }
+    }
+    if let Some(value) = object.get("years_experience_min") {
+        if !value.is_null() {
+            let years = value
+                .as_f64()
+                .filter(|years| years.is_finite() && *years >= 0.0)
+                .ok_or(IpcCommandError::BadRequest(
+                    "years_experience_min is invalid",
+                ))? as f32;
+            parsed = parsed.with_years_experience_min(years);
+        }
+    }
+    Ok(parsed)
+}
+
+fn daemon_fulltext_search(
+    index: &FullTextIndex,
+    store: &MetaStore,
+    args: &DaemonSearchArgs,
+) -> std::result::Result<Vec<DaemonSearchHit>, IpcCommandError> {
+    let candidate_limit = args.top_k.saturating_mul(5).clamp(args.top_k, 100);
+    let plan = plan_search(&args.query, candidate_limit)
+        .map_err(|_| IpcCommandError::BadRequest("query must have searchable terms"))?;
+    let hits = index
+        .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
+        .map_err(DaemonError::fulltext)
+        .map_err(IpcCommandError::Internal)?;
+    daemon_visible_hits(store, hits, &args.filters, args.top_k)
+}
+
+fn daemon_visible_hits(
+    store: &MetaStore,
+    hits: Vec<SearchHit>,
+    filters: &SearchFilters,
+    top_k: usize,
+) -> std::result::Result<Vec<DaemonSearchHit>, IpcCommandError> {
+    let mut visible = Vec::new();
+    let mut seen_candidate_keys = BTreeSet::new();
+
+    for hit in hits {
+        let Some(version) = daemon_hydrate_visible_version(store, &hit)? else {
+            continue;
+        };
+        if !filters.is_empty()
+            && !filters.matches(&daemon_persisted_profile(store, &hit.doc_id, &version)?)
+        {
+            continue;
+        }
+        let candidate_key = daemon_candidate_fold_key(&version);
+        if !seen_candidate_keys.insert(candidate_key) {
+            continue;
+        }
+
+        visible.push(DaemonSearchHit {
+            rank: visible.len() + 1,
+            doc_id: hit.doc_id,
+            version_id: hit.version_id,
+            file_name: redact_contact_values(&hit.file_name),
+            snippet: redact_contact_values(&hit.snippet),
+        });
+        if visible.len() == top_k {
+            break;
+        }
+    }
+
+    Ok(visible)
+}
+
+fn daemon_hydrate_visible_version(
+    store: &MetaStore,
+    hit: &SearchHit,
+) -> std::result::Result<Option<ResumeVersion>, IpcCommandError> {
+    let Ok(document_id) = DocumentId::from_str(&hit.doc_id) else {
+        return Ok(None);
+    };
+    let Some(document) = store
+        .document_by_id(&document_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Ok(None);
+    };
+    if document.is_deleted
+        || !matches!(
+            document.status,
+            DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+        )
+    {
+        return Ok(None);
+    }
+
+    let Ok(version_id) = ResumeVersionId::from_str(&hit.version_id) else {
+        return Ok(None);
+    };
+    let Some(version) = store
+        .resume_version_by_id(&version_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Ok(None);
+    };
+    if version.document_id != document_id || version.visibility != ResumeVisibility::Searchable {
+        return Ok(None);
+    }
+
+    Ok(Some(version))
+}
+
+fn daemon_persisted_profile(
+    store: &MetaStore,
+    doc_id: &str,
+    version: &ResumeVersion,
+) -> std::result::Result<ResumeProfile, IpcCommandError> {
+    let fields = store
+        .entity_mentions_for_version(&version.id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?;
+    let degree = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Degree && field.confidence >= 0.75)
+        .filter_map(|field| DegreeLevel::parse(field.normalized_value.as_deref()?))
+        .max();
+    let skills = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Skill && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let years_experience = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::YearsExperience && field.confidence >= 0.75
+        })
+        .filter_map(|field| field.normalized_value.as_deref()?.parse::<f32>().ok())
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut profile = ResumeProfile::new(doc_id).with_skills(skills);
+    if let Some(degree) = degree {
+        profile = profile.with_degree(degree);
+    }
+    if let Some(years_experience) = years_experience {
+        profile = profile.with_years_experience(years_experience);
+    }
+    Ok(profile)
+}
+
+fn daemon_candidate_fold_key(version: &ResumeVersion) -> String {
+    version
+        .candidate_id
+        .as_ref()
+        .map(|candidate_id| format!("candidate:{}", candidate_id.as_str()))
+        .unwrap_or_else(|| format!("doc:{}", version.document_id.as_str()))
 }
 
 fn enqueue_import_command(
@@ -1160,6 +1491,21 @@ struct CanonicalImportRoot {
     canonical: PathBuf,
 }
 
+struct DaemonSearchArgs {
+    query: String,
+    mode: String,
+    top_k: usize,
+    filters: SearchFilters,
+}
+
+struct DaemonSearchHit {
+    rank: usize,
+    doc_id: String,
+    version_id: String,
+    file_name: String,
+    snippet: String,
+}
+
 fn status_json(data_dir: &Path) -> Result<String> {
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(DaemonError::store)?;
@@ -1353,6 +1699,13 @@ impl DaemonError {
     fn store(error: meta_store::MetaStoreError) -> Self {
         Self {
             message: error.to_string(),
+            exit_code: 1,
+        }
+    }
+
+    fn fulltext(_error: index_fulltext::FullTextError) -> Self {
+        Self {
+            message: "search index operation failed".to_string(),
             exit_code: 1,
         }
     }

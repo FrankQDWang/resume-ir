@@ -146,6 +146,18 @@ impl SearchFilters {
             && self.years_experience_min.is_none()
     }
 
+    pub fn degree_min(&self) -> Option<DegreeLevel> {
+        self.degree_min
+    }
+
+    pub fn skills_any(&self) -> &[String] {
+        &self.skills_any
+    }
+
+    pub fn years_experience_min(&self) -> Option<f32> {
+        self.years_experience_min
+    }
+
     pub fn matches(&self, profile: &ResumeProfile) -> bool {
         if let Some(min_degree) = self.degree_min {
             if profile.degree().is_none_or(|degree| degree < min_degree) {
