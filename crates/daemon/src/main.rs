@@ -17,8 +17,8 @@ use import_pipeline::{
     ImportSummary, ScanProfile,
 };
 use meta_store::{
-    ImportRootKind, ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask,
-    ImportTaskId, ImportTaskStatus, IndexStateStatus, MetaStore, UnixTimestamp,
+    ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, MetaStore, UnixTimestamp,
 };
 
 const IMPORT_RETRY_BACKOFF_SECONDS: i64 = 60;
@@ -759,6 +759,7 @@ fn enqueue_import_command(
     let payload = serde_json::from_slice::<serde_json::Value>(body)
         .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
     let roots = parse_import_command_roots(&payload)?;
+    let root_preset = parse_import_command_root_preset(&payload)?;
     let profile = parse_import_command_profile(&payload)?;
     let max_files = parse_import_command_max_files(&payload)?;
     let canonical_roots = canonical_import_roots(&roots)?;
@@ -783,6 +784,7 @@ fn enqueue_import_command(
                     &task.id,
                     requested_root_path,
                     canonical_root_path,
+                    root_preset,
                     profile,
                     max_files,
                     now,
@@ -807,6 +809,7 @@ fn enqueue_import_command(
                     &task.id,
                     requested_root_path,
                     canonical_root_path,
+                    root_preset,
                     profile,
                     max_files,
                     now,
@@ -839,14 +842,19 @@ fn import_command_scan_scope(
     task_id: &ImportTaskId,
     requested_root_path: String,
     canonical_root_path: String,
+    root_preset: Option<ImportRootPreset>,
     profile: ImportScanProfile,
     max_files: Option<usize>,
     updated_at: UnixTimestamp,
 ) -> std::result::Result<ImportScanScope, IpcCommandError> {
     Ok(ImportScanScope {
         import_task_id: task_id.clone(),
-        root_kind: ImportRootKind::Explicit,
-        root_preset: None,
+        root_kind: if root_preset.is_some() {
+            ImportRootKind::Preset
+        } else {
+            ImportRootKind::Explicit
+        },
+        root_preset,
         scan_profile: profile,
         requested_root_path,
         canonical_root_path,
@@ -867,6 +875,21 @@ fn import_command_scan_scope(
         scan_budget_exhausted: false,
         updated_at,
     })
+}
+
+fn parse_import_command_root_preset(
+    payload: &serde_json::Value,
+) -> std::result::Result<Option<ImportRootPreset>, IpcCommandError> {
+    let Some(value) = payload.get("root_preset") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    match value.as_str() {
+        Some("local-discovery") => Ok(Some(ImportRootPreset::LocalDiscovery)),
+        _ => Err(IpcCommandError::BadRequest("invalid root_preset")),
+    }
 }
 
 fn parse_import_command_roots(

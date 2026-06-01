@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S46 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S47 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -20,10 +20,11 @@ obsolete bootstrap files and the old S0-S13 checklist are not product scope.
 
 - P0 architecture: Rust workspace, CLI/daemon entrypoints, SQLite metadata,
   task/status tables, loopback status IPC, an authenticated loopback import
-  command IPC endpoint, doctor, diagnostics, a one-shot daemon import worker,
-  and a long-running daemon import scheduler for queued import tasks with retry
-  backoff, running-task heartbeat, and stale-running task recovery exist. The
-  daemon can now serve loopback status IPC while the import worker loop runs.
+  command IPC endpoint, CLI import-over-IPC submission, doctor, diagnostics, a
+  one-shot daemon import worker, and a long-running daemon import scheduler for
+  queued import tasks with retry backoff, running-task heartbeat, and
+  stale-running task recovery exist. The daemon can now serve loopback status
+  IPC while the import worker loop runs.
   Missing production control-plane work includes search/detail command IPC
   endpoints, import cancellation/progress streaming, OCR/index/embedding
   workers, service lifecycle, CI, CODEOWNERS, and macOS/Windows validation.
@@ -108,8 +109,84 @@ obsolete bootstrap files and the old S0-S13 checklist are not product scope.
 | S44 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this long-running daemon import scheduler slice; authenticated import command IPC endpoint, import cancellation/progress streaming, configurable retry policy, singleton service lifecycle enforcement, background OCR/vector workers, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
 | S45 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_serves_status_while_import_worker_processes_late_queued_task -- --exact`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_does_not_start_import_worker_when_ipc_bind_fails -- --exact`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_rejects_worker_tick_limit_in_combined_ipc_worker_mode -- --exact`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this combined status IPC plus import worker event-loop slice; authenticated command IPC endpoint, import cancellation/progress streaming, configurable retry policy, singleton service lifecycle enforcement, background OCR/vector workers, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
 | S46 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_authenticates_and_queues_import_command_over_ipc -- --exact`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_requires_bearer_token_for_import_command_ipc -- --exact`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store import_task_and_scan_scope_insert_atomically_for_daemon_command_ipc -- --exact`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this authenticated loopback import command IPC slice; search/detail IPC endpoints, CLI import-over-IPC UX, command token rotation/revocation, import cancellation/progress streaming, singleton service lifecycle enforcement, daemon OCR/vector workers, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
+| S47 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_import_command_preserves_local_discovery_preset_scope -- --exact`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the legacy bootstrap marker scan passed with no matches. | None for this CLI import-over-IPC UX slice; search/detail IPC endpoints, daemon endpoint discovery UX, token rotation/revocation, import cancellation/progress streaming, singleton service lifecycle enforcement, daemon OCR/vector workers, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
 
 ## Command Log
+
+### S47
+
+Design target:
+
+- S47 wires the S46 authenticated daemon import command IPC into the CLI. A
+  local caller can now run `resume-cli import --ipc ... --ipc-token-file ...`
+  to submit explicit roots to the daemon without opening or writing the
+  metadata store directly.
+- IPC mode remains loopback-only, reads the bearer token from a caller-supplied
+  local token file, sends only the import command payload to `/imports`, and
+  keeps stdout/stderr free of token values and local paths.
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc import_ipc_submits_authenticated_request_without_touching_local_store -- --exact
+```
+
+Output summary:
+
+- Failed before implementation because `resume-cli import` did not recognize
+  the IPC flags and never connected to the fake daemon listener.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc import_ipc_submits_authenticated_request_without_touching_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_import_command_preserves_local_discovery_preset_scope -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+```
+
+Output summary:
+
+- The successful IPC import test passed: CLI sends `POST /imports`, includes
+  the bearer token in the `Authorization` header, serializes roots/profile/file
+  budget as JSON, renders the daemon `202 Accepted` response as queued import
+  output, omits root path/token path/token content from stdout, and does not
+  create the local `--data-dir`.
+- `cargo test -p resume-cli --test s47_import_ipc`: exit 0; 7 tests passed.
+  The suite covers success, local-discovery preset preservation, HTTP error,
+  invalid JSON, connect failure, malformed response, non-loopback rejection,
+  missing token file, invalid token content, no local-store fallback, and
+  token/path redaction.
+- The daemon focused preset test passed and verified that import command IPC
+  persists local-discovery scan scope metadata with `Preset` root kind.
+- `cargo test -p resume-daemon --test s20_ipc`: exit 0; 14 tests passed.
+- `cargo test -p resume-cli`: exit 0; all CLI tests passed, including existing
+  local import/search/status/OCR/embedding behavior.
+- `cargo fmt --check`, `git diff --check`, workspace clippy, and
+  `cargo test --workspace` passed.
+- The legacy bootstrap marker scan was re-run and returned no matches.
+
+Sub-agent orchestration:
+
+- A separate Codex sub-agent review was spawned after local verification to
+  inspect the S47 diff for token/path leakage, endpoint parsing, no-fallback
+  guarantees, and compatibility with existing import/status commands. Review
+  findings were fixed before commit: IPC mode now preserves root preset
+  semantics, validates the daemon token shape before composing headers, reads
+  fake-daemon request bodies by `Content-Length`, and tests connect-failure,
+  malformed-response, and invalid-JSON no-fallback paths.
+
+Scope note:
+
+- S47 does not add search/detail IPC endpoints, daemon endpoint discovery UX,
+  token rotation/revocation, import cancellation/progress streaming, singleton
+  service lifecycle enforcement, daemon OCR/vector workers, real whole-machine
+  witness scans, or macOS/Windows service validation. Those remain incomplete.
 
 ### S0
 

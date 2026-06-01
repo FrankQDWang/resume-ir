@@ -293,8 +293,16 @@ struct IpcStatusEndpoint {
     addr: SocketAddr,
 }
 
+struct IpcImportEndpoint {
+    addr: SocketAddr,
+}
+
 fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let import_args = parse_import_args(args)?;
+    if let Some(endpoint) = &import_args.ipc_endpoint {
+        return import_ipc_command(endpoint, &import_args);
+    }
+
     let requested_roots = expand_import_root_selection(&import_args.root_selection)?;
     let roots = canonical_import_roots(&requested_roots)?;
 
@@ -428,6 +436,106 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn import_ipc_command(endpoint: &IpcImportEndpoint, import_args: &ImportArgs) -> Result<()> {
+    let token_file = import_args
+        .ipc_token_file
+        .as_ref()
+        .ok_or_else(import_usage)?;
+    let token = fs::read_to_string(token_file)
+        .map_err(|_| CliError::user("unable to read daemon import ipc token"))?;
+    let token = validate_daemon_import_ipc_token(&token)?;
+
+    let roots = expand_import_root_selection(&import_args.root_selection)?;
+    let root_values = roots
+        .iter()
+        .map(|root| serde_json::Value::String(path_string(root)))
+        .collect::<Vec<_>>();
+    let root_preset = import_args.root_selection.preset_label();
+    let body = serde_json::json!({
+        "roots": root_values,
+        "root_preset": root_preset,
+        "profile": import_args.profile.label(),
+        "max_files": import_args.max_files,
+    })
+    .to_string();
+
+    let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
+        .map_err(|_| CliError::user("unable to connect to daemon import ipc"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon import ipc"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon import ipc"))?;
+    let request = format!(
+        "POST /imports HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        endpoint.addr,
+        token,
+        body.len(),
+        body
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|_| CliError::user("unable to request daemon import ipc"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|_| CliError::user("unable to read daemon import ipc"))?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| CliError::user("daemon import ipc response is invalid"))?;
+    let status_line = headers.lines().next().unwrap_or_default();
+    if !status_line.starts_with("HTTP/1.1 202 ") && !status_line.starts_with("HTTP/1.0 202 ") {
+        return Err(CliError::user("daemon import ipc returned an error"));
+    }
+
+    let body: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| CliError::user("daemon import ipc returned invalid json"))?;
+    render_import_ipc_result(&body);
+    Ok(())
+}
+
+fn validate_daemon_import_ipc_token(token: &str) -> Result<&str> {
+    let token = token.trim();
+    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(CliError::user("daemon import ipc token is invalid"));
+    }
+    Ok(token)
+}
+
+fn render_import_ipc_result(body: &serde_json::Value) {
+    let task_ids = body
+        .get("task_ids")
+        .and_then(serde_json::Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let roots_queued = json_u64(body, "accepted_roots");
+    let scan_file_limit = body
+        .get("scan_file_limit")
+        .and_then(serde_json::Value::as_u64)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string());
+
+    println!("import task submitted");
+    match task_ids.as_slice() {
+        [task_id] => println!("task id: {task_id}"),
+        [] => println!("task ids: none"),
+        ids => println!("task ids: {}", ids.join(",")),
+    }
+    println!("status: queued");
+    println!(
+        "scan profile: {}",
+        json_str(body, "scan_profile").unwrap_or("unknown")
+    );
+    println!("roots queued: {roots_queued}");
+    println!("scan file limit: {scan_file_limit}");
+}
+
 fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
     total.files_discovered += next.files_discovered;
     total.scan_errors += next.scan_errors;
@@ -544,12 +652,23 @@ struct ImportArgs {
     profile: ScanProfile,
     max_files: Option<usize>,
     enqueue: bool,
+    ipc_endpoint: Option<IpcImportEndpoint>,
+    ipc_token_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ImportRootSelection {
     Explicit(Vec<PathBuf>),
     Preset(RootPreset),
+}
+
+impl ImportRootSelection {
+    fn preset_label(&self) -> Option<&'static str> {
+        match self {
+            Self::Explicit(_) => None,
+            Self::Preset(RootPreset::LocalDiscovery) => Some("local-discovery"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -572,6 +691,8 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
     let mut profile_seen = false;
     let mut max_files = None;
     let mut enqueue = false;
+    let mut ipc_endpoint = None;
+    let mut ipc_token_file = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -627,9 +748,32 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
                 };
                 max_files = Some(parse_positive_usize(value)?);
             }
+            "--ipc" => {
+                if ipc_endpoint.is_some() {
+                    return Err(import_usage());
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(import_usage());
+                };
+                ipc_endpoint = Some(parse_import_ipc_endpoint(value)?);
+            }
+            "--ipc-token-file" => {
+                if ipc_token_file.is_some() {
+                    return Err(import_usage());
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(import_usage());
+                };
+                ipc_token_file = Some(PathBuf::from(value));
+            }
             _ => return Err(import_usage()),
         }
         index += 1;
+    }
+    if ipc_endpoint.is_some() != ipc_token_file.is_some() {
+        return Err(import_usage());
     }
 
     let (root_selection, default_profile) = if !roots.is_empty() {
@@ -655,7 +799,24 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
         profile: profile.unwrap_or(default_profile),
         max_files,
         enqueue,
+        ipc_endpoint,
+        ipc_token_file,
     })
+}
+
+fn parse_import_ipc_endpoint(value: &str) -> Result<IpcImportEndpoint> {
+    let rest = value.strip_prefix("http://").ok_or_else(import_usage)?;
+    let (authority, path) = rest.split_once('/').ok_or_else(import_usage)?;
+    if path != "imports" && path != "status" {
+        return Err(import_usage());
+    }
+
+    let addr = SocketAddr::from_str(authority).map_err(|_| import_usage())?;
+    if !addr.ip().is_loopback() {
+        return Err(CliError::usage("import ipc endpoint must be loopback"));
+    }
+
+    Ok(IpcImportEndpoint { addr })
 }
 
 fn parse_root_preset(value: &str) -> Result<RootPreset> {
@@ -683,7 +844,7 @@ fn parse_positive_usize(value: &str) -> Result<usize> {
 
 fn import_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli import [--enqueue] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]",
+        "usage: resume-cli import [--enqueue] [--ipc <http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]",
     )
 }
 

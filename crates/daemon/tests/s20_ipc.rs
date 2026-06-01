@@ -6,8 +6,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
-    IndexState, IndexStateStatus, MetaStore, UnixTimestamp,
+    ImportRootKind, ImportRootPreset, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexState, IndexStateStatus, MetaStore, UnixTimestamp,
 };
 
 #[cfg(unix)]
@@ -221,6 +221,61 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
         .unwrap()
         .unwrap();
     assert_eq!(task.status, ImportTaskStatus::Queued);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_import_command_preserves_local_discovery_preset_scope() {
+    let data_dir = temp_dir("ipc-import-preset-command-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_import_command_with_root_preset(
+        &endpoint,
+        &token,
+        &fixture_root,
+        Some("local-discovery"),
+        Some(1),
+    );
+
+    assert!(response.contains("HTTP/1.1 202 Accepted"));
+    assert!(!response.contains(path_str(&data_dir)));
+    assert!(!response.contains(path_str(&fixture_root)));
+    assert!(!response.contains(path_str(&canonical_fixture_root)));
+    assert!(!response.contains(&token));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scope = store.latest_import_scan_scope().unwrap().unwrap();
+    assert_eq!(scope.root_kind, ImportRootKind::Preset);
+    assert_eq!(scope.root_preset, Some(ImportRootPreset::LocalDiscovery));
+    assert_eq!(scope.scan_profile, ImportScanProfile::Explicit);
+    assert_eq!(scope.requested_root_path, path_str(&fixture_root));
+    assert_eq!(scope.canonical_root_path, path_str(&canonical_fixture_root));
 
     remove_dir(&data_dir);
 }
@@ -668,16 +723,46 @@ fn http_post_import_command(
     root: &Path,
     max_files: Option<usize>,
 ) -> String {
+    http_post_import_command_value(
+        endpoint,
+        token,
+        serde_json::json!({
+            "roots": [path_str(root)],
+            "profile": "explicit",
+            "max_files": max_files,
+        }),
+    )
+}
+
+fn http_post_import_command_with_root_preset(
+    endpoint: &str,
+    token: &str,
+    root: &Path,
+    root_preset: Option<&str>,
+    max_files: Option<usize>,
+) -> String {
+    http_post_import_command_value(
+        endpoint,
+        Some(token),
+        serde_json::json!({
+            "roots": [path_str(root)],
+            "root_preset": root_preset,
+            "profile": "explicit",
+            "max_files": max_files,
+        }),
+    )
+}
+
+fn http_post_import_command_value(
+    endpoint: &str,
+    token: Option<&str>,
+    payload: serde_json::Value,
+) -> String {
     let rest = endpoint
         .strip_prefix("http://")
         .expect("endpoint has http scheme");
     let (addr, _path) = rest.split_once('/').expect("endpoint has path");
-    let body = serde_json::json!({
-        "roots": [path_str(root)],
-        "profile": "explicit",
-        "max_files": max_files,
-    })
-    .to_string();
+    let body = payload.to_string();
     let authorization = token
         .map(|token| format!("Authorization: Bearer {token}\r\n"))
         .unwrap_or_default();
