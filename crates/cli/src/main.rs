@@ -8,7 +8,7 @@ use std::str::FromStr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use import_pipeline::{
-    import_root_with_options, rebuild_full_text_index, ImportOptions, ScanProfile,
+    import_root_with_options, rebuild_full_text_index, ImportOptions, ImportSummary, ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, FullTextIndex, SearchHit, SearchQuery, SnapshotReadTarget,
@@ -248,56 +248,73 @@ struct IpcStatusEndpoint {
 
 fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let import_args = parse_import_args(args)?;
-
-    let requested_root = import_args.root;
-    let requested_root_path = requested_root.as_os_str().to_string_lossy().into_owned();
-    let metadata = fs::metadata(&requested_root)
-        .map_err(|_| CliError::user("import root must exist and be a directory"))?;
-    if !metadata.is_dir() {
-        return Err(CliError::user("import root must exist and be a directory"));
-    }
-    let root = fs::canonicalize(&requested_root)
-        .map_err(|_| CliError::user("import root must exist and be a directory"))?;
+    let roots = canonical_import_roots(&import_args.roots)?;
 
     let store = open_store(data_dir)?;
     let now = current_timestamp()?;
-    let root_path = root.as_os_str().to_string_lossy().into_owned();
-    let task = match pending_import_task(&store, &root_path, &requested_root_path)? {
-        Some(task) if task.status == ImportTaskStatus::Running => {
-            return Err(CliError::user("import task is already running"));
-        }
-        Some(task) => task,
-        None => {
-            let task = ImportTask {
-                id: new_import_task_id()?,
-                root_path,
-                status: ImportTaskStatus::Queued,
-                queued_at: now,
-                started_at: None,
-                finished_at: None,
-                updated_at: now,
-            };
-            store.insert_import_task(&task).map_err(CliError::store)?;
-            task
-        }
-    };
+    let mut tasks = Vec::new();
+    let mut new_tasks = Vec::new();
 
-    let summary = import_root_with_options(
-        data_dir,
-        &store,
-        &task,
-        &root,
-        now,
-        ImportOptions {
-            scan_profile: import_args.profile,
-        },
-    )
-    .map_err(CliError::import)?;
+    for root in &roots {
+        let canonical_root_path = path_string(&root.canonical);
+        let requested_root_path = path_string(&root.requested);
+        let task = match pending_import_task(&store, &canonical_root_path, &requested_root_path)? {
+            Some(task) if task.status == ImportTaskStatus::Running => {
+                return Err(CliError::user("import task is already running"));
+            }
+            Some(task) => task,
+            None => {
+                let task = ImportTask {
+                    id: new_import_task_id()?,
+                    root_path: canonical_root_path,
+                    status: ImportTaskStatus::Queued,
+                    queued_at: now,
+                    started_at: None,
+                    finished_at: None,
+                    updated_at: now,
+                };
+                new_tasks.push(task.clone());
+                task
+            }
+        };
+        tasks.push(task);
+    }
+
+    for task in &new_tasks {
+        store.insert_import_task(task).map_err(CliError::store)?;
+    }
+
+    let mut summary = ImportSummary::default();
+    for (task, root) in tasks.iter().zip(roots.iter()) {
+        let root_summary = import_root_with_options(
+            data_dir,
+            &store,
+            task,
+            &root.canonical,
+            now,
+            ImportOptions {
+                scan_profile: import_args.profile,
+            },
+        )
+        .map_err(CliError::import)?;
+        merge_import_summary(&mut summary, root_summary);
+    }
+
+    let task_ids = tasks
+        .iter()
+        .map(|task| task.id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
 
     println!("import task submitted");
-    println!("task id: {}", task.id);
+    if tasks.len() == 1 {
+        println!("task id: {}", tasks[0].id);
+    } else {
+        println!("task ids: {task_ids}");
+    }
     println!("status: completed");
     println!("scan profile: {}", import_args.profile.label());
+    println!("roots scanned: {}", roots.len());
     println!("files discovered: {}", summary.files_discovered);
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr required documents: {}", summary.ocr_required_documents);
@@ -309,13 +326,34 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
+    total.files_discovered += next.files_discovered;
+    total.scan_errors += next.scan_errors;
+    total.ignored_entries += next.ignored_entries;
+    total.searchable_documents += next.searchable_documents;
+    total.ocr_required_documents += next.ocr_required_documents;
+    total.ocr_jobs_queued += next.ocr_jobs_queued;
+    total.failed_documents += next.failed_documents;
+    total.deleted_documents += next.deleted_documents;
+}
+
+#[derive(Clone)]
+struct CanonicalImportRoot {
+    requested: PathBuf,
+    canonical: PathBuf,
+}
+
+fn path_string(path: &Path) -> String {
+    path.as_os_str().to_string_lossy().into_owned()
+}
+
 struct ImportArgs {
-    root: PathBuf,
+    roots: Vec<PathBuf>,
     profile: ScanProfile,
 }
 
 fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
-    let mut root = None;
+    let mut roots = Vec::<PathBuf>::new();
     let mut profile = ScanProfile::Explicit;
     let mut profile_seen = false;
     let mut index = 0;
@@ -323,14 +361,15 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
     while index < args.len() {
         match args[index].as_str() {
             "--root" => {
-                if root.is_some() {
-                    return Err(import_usage());
-                }
                 index += 1;
                 let Some(value) = args.get(index) else {
                     return Err(import_usage());
                 };
-                root = Some(PathBuf::from(value));
+                let root = PathBuf::from(value);
+                if roots.iter().any(|existing| existing == &root) {
+                    return Err(import_usage());
+                }
+                roots.push(root);
             }
             "--profile" => {
                 if profile_seen {
@@ -348,11 +387,11 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
         index += 1;
     }
 
-    let Some(root) = root else {
+    if roots.is_empty() {
         return Err(import_usage());
-    };
+    }
 
-    Ok(ImportArgs { root, profile })
+    Ok(ImportArgs { roots, profile })
 }
 
 fn parse_scan_profile(value: &str) -> Result<ScanProfile> {
@@ -364,7 +403,42 @@ fn parse_scan_profile(value: &str) -> Result<ScanProfile> {
 }
 
 fn import_usage() -> CliError {
-    CliError::usage("usage: resume-cli import --root <path> [--profile explicit|discovery]")
+    CliError::usage(
+        "usage: resume-cli import --root <path> [--root <path> ...] [--profile explicit|discovery]",
+    )
+}
+
+fn canonical_import_roots(requested_roots: &[PathBuf]) -> Result<Vec<CanonicalImportRoot>> {
+    let mut roots = requested_roots
+        .iter()
+        .map(|requested_root| {
+            let metadata = fs::metadata(requested_root)
+                .map_err(|_| CliError::user("import root must exist and be a directory"))?;
+            if !metadata.is_dir() {
+                return Err(CliError::user("import root must exist and be a directory"));
+            }
+            let canonical = fs::canonicalize(requested_root)
+                .map_err(|_| CliError::user("import root must exist and be a directory"))?;
+            Ok(CanonicalImportRoot {
+                requested: requested_root.clone(),
+                canonical,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    roots.sort_by(|left, right| left.canonical.cmp(&right.canonical));
+    for window in roots.windows(2) {
+        let [left, right] = window else {
+            continue;
+        };
+        if left.canonical == right.canonical || right.canonical.starts_with(&left.canonical) {
+            return Err(CliError::user(
+                "import roots must be distinct and non-overlapping",
+            ));
+        }
+    }
+
+    Ok(roots)
 }
 
 fn pending_import_task(

@@ -137,6 +137,7 @@ fn run_import(
             now,
         )?;
     }
+
     let pending_doc_ids = pending_index_documents
         .iter()
         .map(|(document, _)| document.id.as_str().to_string())
@@ -725,7 +726,7 @@ enum ProcessedFile {
     Failed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ImportSummary {
     pub files_discovered: usize,
     pub scan_errors: usize,

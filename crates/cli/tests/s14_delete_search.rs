@@ -93,6 +93,39 @@ fn reimport_marks_missing_files_deleted_and_default_search_hides_stale_hits() {
 }
 
 #[test]
+fn multi_root_reimport_marks_missing_files_deleted_per_root() {
+    let data_dir = temp_dir("multi-root-reimport-delete-data");
+    let first_root = temp_dir("multi-root-delete-a");
+    let second_root = temp_dir("multi-root-delete-b");
+    fs::copy(
+        fixture_file("synthetic-java-platform.pdf"),
+        first_root.join("synthetic-java-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_file("synthetic-java-engineer.docx"),
+        second_root.join("synthetic-java-engineer.docx"),
+    )
+    .unwrap();
+
+    import_multi_root_fixtures(&data_dir, &first_root, &second_root);
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 2"));
+
+    fs::remove_file(first_root.join("synthetic-java-platform.pdf")).unwrap();
+    import_multi_root_fixtures(&data_dir, &first_root, &second_root);
+
+    let after = search(&data_dir, "Java");
+    assert!(after.contains("results: 1"));
+    assert!(!after.contains("synthetic-java-platform.pdf"));
+    assert!(after.contains("synthetic-java-engineer.docx"));
+
+    remove_dir(&data_dir);
+    remove_dir(&first_root);
+    remove_dir(&second_root);
+}
+
+#[test]
 fn discovery_profile_reuses_root_scan_without_deleting_skipped_directories() {
     let data_dir = temp_dir("discovery-reimport-data");
     let fixture_root = temp_dir("discovery-reimport-fixtures");
@@ -218,6 +251,27 @@ fn import_fixtures(data_dir: &Path, fixture_root: &Path) {
         ])
         .output()
         .expect("import fixtures");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn import_multi_root_fixtures(data_dir: &Path, first_root: &Path, second_root: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(data_dir),
+            "import",
+            "--root",
+            path_str(first_root),
+            "--root",
+            path_str(second_root),
+        ])
+        .output()
+        .expect("import multi-root fixtures");
     assert!(
         output.status.success(),
         "stdout:\n{}\nstderr:\n{}",

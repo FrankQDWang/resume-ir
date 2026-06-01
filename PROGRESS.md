@@ -6,7 +6,7 @@ This file tracks long-running Goal execution against
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S27 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S28 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -42,6 +42,7 @@ This file tracks long-running Goal execution against
 | S25 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p index-fulltext -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the S25 synthetic import/status/search/doctor/export-diagnostics CLI smoke passed. | None for this active full-text snapshot publish and diagnostics slice; last-good fallback after active pointer corruption, old snapshot GC, physical segment purge, vector snapshotting, SQLCipher, full disk-full/kill-daemon fault injection, and cross-platform atomic rename validation remain not complete. |
 | S26 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p index-fulltext -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this read-path full-text snapshot last-good fallback slice; snapshot GC/retention, active-pointer repair, staging cleanup, physical purge, vector fallback, real disk-full/kill-daemon fault injection, and cross-platform filesystem validation remain not complete. |
 | S27 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p fs-crawler`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p fs-crawler -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this local discovery-profile slice; default whole-machine root presets, multi-root CLI/UI, progress/cancel/budget limits, persisted scan-profile schema, symlink cycle protection if follow-symlink is later enabled, real local resume witness runs, and cross-platform root/exclusion validation remain not complete. |
+| S28 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this multi-root CLI import slice; automatic default root presets, persisted scan scope metadata, import progress/cancel, per-root partial-failure UX, true atomic multi-root transaction semantics, real local resume witness runs, and cross-platform root path validation remain not complete. |
 
 ## Command Log
 
@@ -1287,6 +1288,61 @@ Output summary:
 Scope note:
 
 - S27 keeps `resume-cli import --root <path>` as the unified import path and adds `--profile discovery` for local large-root discovery. It does not add automatic whole-machine root selection, multi-root CLI/UI, scan progress/cancel, time/file-count/IO budgets, real local resume witness runs, follow-symlink traversal, persisted scan-profile metadata, or cross-platform validation of root exclusions.
+
+### S28
+
+Sub-agent review:
+
+- A read-only explorer recommended keeping `ImportTask.root_path` as a single canonical root and implementing multi-root import as CLI batching over existing per-root tasks, rather than storing a composite root key.
+- A final read-only reviewer confirmed the implemented S28 path uses one existing `ImportTask` per canonical root, preserves running/retryable task behavior, rejects duplicate/overlapping roots without path leakage, and keeps deletion propagation isolated to each single-root import.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search import_multiple_roots_builds_searchable_index_without_path_leak
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli import_rejects_overlapping_roots_without_path_leak
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search multi_root_reimport_marks_missing_files_deleted_per_root
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search multi_root_import_does_not_take_over_live_running_task_for_any_root
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search multi_root_import_reuses_recoverable_task_for_each_root
+```
+
+Output summary:
+
+- Before implementation, multi-root import tests failed because `resume-cli import` still rejected a second `--root` with the old usage path.
+- After the first implementation, review red tests showed the composite multi-root task key bypassed per-root running and retryable task semantics.
+- S28 now validates canonical roots as distinct and non-overlapping, then executes each root through its own existing `ImportTask` and merges the user-facing summary without printing requested or canonical paths.
+
+Implementation and acceptance:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo clippy -p import-pipeline -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `cargo test -p import-pipeline`: exit 0; 2 import-pipeline tests passed.
+- `cargo test -p resume-cli --test s4_cli`: exit 0; 5 CLI base tests passed, including duplicate and overlapping root rejection without path leakage.
+- `cargo test -p resume-cli --test s9_import_search`: exit 0; 7 import/search tests passed, including multi-root import, multi-root running-task refusal, and per-root retryable task reuse.
+- `cargo test -p resume-cli --test s14_delete_search`: exit 0; 5 delete/search tests passed, including multi-root reimport tombstoning a missing file in one root without hiding the other root.
+- `cargo test -p resume-cli`: exit 0; 34 CLI tests passed.
+- `cargo clippy -p import-pipeline -p resume-cli --all-targets -- -D warnings`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+Scope note:
+
+- S28 adds multi-root CLI import over existing per-root task semantics. It does not add automatic root presets, persisted scan-scope records, progress/cancel, per-root partial-failure reporting beyond the merged summary, a true all-or-nothing multi-root transaction, real local resume witness runs, or cross-platform validation of Windows/macOS root overlap behavior.
 
 ### S9
 

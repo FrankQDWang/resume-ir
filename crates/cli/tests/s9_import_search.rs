@@ -104,6 +104,69 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
 }
 
 #[test]
+fn import_multiple_roots_builds_searchable_index_without_path_leak() {
+    let data_dir = temp_dir("multi-root-import-data");
+    let first_root = temp_dir("multi-root-a-private");
+    let second_root = temp_dir("multi-root-b-private");
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        first_root.join("synthetic-java-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-engineer.docx"),
+        second_root.join("synthetic-java-engineer.docx"),
+    )
+    .unwrap();
+    let canonical_first_root = fs::canonicalize(&first_root).unwrap();
+    let canonical_second_root = fs::canonicalize(&second_root).unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&first_root),
+            "--root",
+            path_str(&second_root),
+        ])
+        .output()
+        .expect("run resume-cli multi-root import");
+
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    assert!(import_stdout.contains("roots scanned: 2"));
+    assert!(import_stdout.contains("files discovered: 2"));
+    assert!(import_stdout.contains("searchable documents: 2"));
+    assert!(!import_stdout.contains(path_str(&first_root)));
+    assert!(!import_stdout.contains(path_str(&second_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_first_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_second_root)));
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "search", "Java"])
+        .output()
+        .expect("run resume-cli search after multi-root import");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(search_stdout.contains("results: 2"));
+    assert!(search_stdout.contains("synthetic-java-platform.pdf"));
+    assert!(search_stdout.contains("synthetic-java-engineer.docx"));
+
+    remove_dir(&data_dir);
+    remove_dir(&first_root);
+    remove_dir(&second_root);
+}
+
+#[test]
 fn import_reuses_recoverable_task_after_restart() {
     let data_dir = temp_dir("import-restart-data");
     let fixture_root = fixture_root();
@@ -213,6 +276,89 @@ fn discovery_import_does_not_take_over_live_running_task_for_same_root() {
     assert_eq!(task.status, ImportTaskStatus::Running);
 
     remove_dir(&data_dir);
+}
+
+#[test]
+fn multi_root_import_does_not_take_over_live_running_task_for_any_root() {
+    let data_dir = temp_dir("multi-root-live-running-data");
+    let fixture_root = fixture_root();
+    let second_root = temp_dir("multi-root-live-second");
+    let pending_task_id = seed_live_running_import_task(&data_dir, &fixture_root);
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+            "--root",
+            path_str(&second_root),
+        ])
+        .output()
+        .expect("run multi-root import while one task is live");
+
+    assert!(!import.status.success());
+    assert!(import.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&import.stderr);
+    assert!(stderr.contains("import task is already running"));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+    assert!(!stderr.contains(path_str(&second_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Running);
+
+    remove_dir(&data_dir);
+    remove_dir(&second_root);
+}
+
+#[test]
+fn multi_root_import_reuses_recoverable_task_for_each_root() {
+    let data_dir = temp_dir("multi-root-recoverable-data");
+    let fixture_root = fixture_root();
+    let second_root = temp_dir("multi-root-recoverable-second");
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let canonical_second_root = fs::canonicalize(&second_root).unwrap();
+    let pending_task_id = seed_retryable_import_task(&data_dir, &fixture_root);
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+            "--root",
+            path_str(&second_root),
+        ])
+        .output()
+        .expect("run multi-root import after restart");
+
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    assert!(import_stdout.contains(&pending_task_id.to_string()));
+    assert!(import_stdout.contains("roots scanned: 2"));
+    assert!(!import_stdout.contains(path_str(&fixture_root)));
+    assert!(!import_stdout.contains(path_str(&second_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_fixture_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_second_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Completed);
+    assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 0);
+
+    remove_dir(&data_dir);
+    remove_dir(&second_root);
 }
 
 fn seed_retryable_import_task(data_dir: &Path, fixture_root: &Path) -> ImportTaskId {

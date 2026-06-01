@@ -107,6 +107,37 @@ fn import_rejects_duplicate_root_and_profile_flags_without_path_leak() {
 }
 
 #[test]
+fn import_rejects_overlapping_roots_without_path_leak() {
+    let data_dir = temp_dir("overlap-import-data");
+    let root_dir = temp_dir("overlap-import-root-private-name");
+    let child_dir = root_dir.join("child");
+    fs::create_dir_all(&child_dir).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&root_dir),
+            "--root",
+            path_str(&child_dir),
+        ])
+        .output()
+        .expect("run overlapping root import");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("import roots must be distinct and non-overlapping"));
+    assert!(!stderr.contains(path_str(&root_dir)));
+    assert!(!stderr.contains(path_str(&child_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
 fn search_without_index_returns_unavailable_message_without_echoing_query() {
     let data_dir = temp_path("search-data");
     let sensitive_query = "Java PRIVATE_TOKEN";
