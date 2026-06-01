@@ -1,11 +1,14 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use meta_store::{IndexState, IndexStateStatus, MetaStore, UnixTimestamp};
+use meta_store::{
+    ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
+    IndexState, IndexStateStatus, MetaStore, UnixTimestamp,
+};
 
 #[test]
 fn daemon_serves_redacted_status_over_loopback_ipc() {
@@ -29,7 +32,7 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
 
     let stdout = child.stdout.take().expect("daemon stdout");
     let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
     let response = http_get(&endpoint);
 
     assert!(response.contains("HTTP/1.1 200 OK"));
@@ -96,7 +99,7 @@ fn daemon_returns_404_for_non_status_ipc_path() {
 
     let stdout = child.stdout.take().expect("daemon stdout");
     let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
     let response = http_get_path(&endpoint, "/not-status");
 
     assert!(response.contains("HTTP/1.1 404 Not Found"));
@@ -110,7 +113,133 @@ fn daemon_returns_404_for_non_status_ipc_path() {
     remove_dir(&data_dir);
 }
 
-fn read_ipc_endpoint(stdout: &mut BufReader<impl Read>) -> String {
+#[test]
+fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
+    let data_dir = temp_dir("ipc-import-worker-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--worker-interval-ms",
+            "25",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "40",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc plus import worker");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let initial_response = http_get(&endpoint);
+    assert!(initial_response.contains("HTTP/1.1 200 OK"));
+    assert!(initial_response.contains("\"searchable_documents\":0"));
+
+    let task_id = seed_queued_import_task(
+        &data_dir,
+        "ipc-import-worker",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+    let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 39);
+    let used_requests = 1 + worker_requests;
+    drain_status_requests(&endpoint, 40 - used_requests);
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Completed);
+    assert_eq!(store.status_summary().unwrap().searchable_documents, 2);
+    assert!(!initial_response.contains(path_str(&data_dir)));
+    assert!(!initial_response.contains(path_str(&fixture_root)));
+    assert!(!initial_response.contains(path_str(&canonical_fixture_root)));
+    assert!(!completed_response.contains(path_str(&data_dir)));
+    assert!(!completed_response.contains(path_str(&fixture_root)));
+    assert!(!completed_response.contains(path_str(&canonical_fixture_root)));
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_does_not_start_import_worker_when_ipc_bind_fails() {
+    let data_dir = temp_dir("ipc-bind-failure-worker-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let task_id = seed_queued_import_task(
+        &data_dir,
+        "ipc-bind-failure-worker",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+    let blocker = TcpListener::bind("127.0.0.1:0").expect("bind blocker listener");
+    let blocked_addr = blocker.local_addr().unwrap().to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--worker-interval-ms",
+            "25",
+            "--ipc-listen",
+            &blocked_addr,
+        ])
+        .output()
+        .expect("run resume-daemon combined mode with occupied ipc port");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unable to bind daemon ipc listener"));
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Queued);
+    assert_eq!(store.status_summary().unwrap().searchable_documents, 0);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_rejects_worker_tick_limit_in_combined_ipc_worker_mode() {
+    let data_dir = temp_dir("ipc-worker-tick-limit-data");
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--max-worker-ticks",
+            "1",
+            "--ipc-listen",
+            "127.0.0.1:0",
+        ])
+        .output()
+        .expect("run resume-daemon combined mode with worker tick limit");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--max-worker-ticks cannot be combined with --ipc-listen"));
+
+    remove_dir(&data_dir);
+}
+
+fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut line = String::new();
 
@@ -125,7 +254,34 @@ fn read_ipc_endpoint(stdout: &mut BufReader<impl Read>) -> String {
         }
     }
 
+    let _ = child.kill();
+    let _ = child.wait();
     panic!("daemon did not print ipc status endpoint");
+}
+
+fn wait_for_searchable_documents(
+    endpoint: &str,
+    expected: usize,
+    max_requests: usize,
+) -> (usize, String) {
+    for request_count in 1..=max_requests {
+        let response = http_get(endpoint);
+        assert!(response.contains("HTTP/1.1 200 OK"));
+        if response.contains(&format!("\"searchable_documents\":{expected}")) {
+            assert!(response.contains("\"import_tasks_queued\":0"));
+            assert!(!response.contains("raw_resume_text"));
+            return (request_count, response);
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    panic!("daemon status did not report searchable document count {expected}");
+}
+
+fn drain_status_requests(endpoint: &str, count: usize) {
+    for _ in 0..count {
+        let _ = http_get(endpoint);
+    }
 }
 
 fn http_get(endpoint: &str) -> String {
@@ -165,6 +321,59 @@ fn seed_snapshot_state(data_dir: &Path) {
         .unwrap();
 }
 
+fn seed_queued_import_task(
+    data_dir: &Path,
+    label: &str,
+    canonical_root: &Path,
+    queued_at_seconds: i64,
+) -> ImportTaskId {
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(queued_at_seconds);
+    let task_id = ImportTaskId::from_non_secret_parts(&["s45", label]);
+    store
+        .insert_import_task(&ImportTask {
+            id: task_id.clone(),
+            root_path: path_str(canonical_root).to_string(),
+            status: ImportTaskStatus::Queued,
+            queued_at: now,
+            started_at: None,
+            finished_at: None,
+            updated_at: now,
+        })
+        .unwrap();
+    store
+        .upsert_import_scan_scope(&ImportScanScope {
+            import_task_id: task_id.clone(),
+            root_kind: ImportRootKind::Explicit,
+            root_preset: None,
+            scan_profile: ImportScanProfile::Explicit,
+            requested_root_path: path_str(canonical_root).to_string(),
+            canonical_root_path: path_str(canonical_root).to_string(),
+            files_discovered: 0,
+            ignored_entries: 0,
+            scan_errors: 0,
+            searchable_documents: 0,
+            ocr_required_documents: 0,
+            ocr_jobs_queued: 0,
+            failed_documents: 0,
+            deleted_documents: 0,
+            scan_budget_kind: None,
+            scan_budget_limit: None,
+            scan_budget_observed: None,
+            scan_budget_exhausted: false,
+            updated_at: now,
+        })
+        .unwrap();
+    task_id
+}
+
+fn fixture_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/fixtures/resumes")
+}
+
 struct ChildOutput {
     success: bool,
     stderr: String,
@@ -188,6 +397,7 @@ fn wait_child(mut child: Child) -> ChildOutput {
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
+            let _ = child.wait();
             panic!("daemon did not exit after max requests");
         }
         std::thread::sleep(Duration::from_millis(25));

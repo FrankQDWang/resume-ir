@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
+    mpsc::{self, Receiver, TryRecvError},
     Arc,
 };
 use std::thread;
@@ -93,16 +94,16 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: choose either --work-imports or --work-imports-once",
         ));
     }
-    if options.work_imports && options.ipc_listen.is_some() {
-        return Err(DaemonError::usage(
-            "usage: --work-imports cannot be combined with --ipc-listen yet",
-        ));
-    }
     if (options.worker_interval_ms.is_some() || options.max_worker_ticks.is_some())
         && !options.work_imports
     {
         return Err(DaemonError::usage(
             "usage: worker loop options require --work-imports",
+        ));
+    }
+    if options.work_imports && options.ipc_listen.is_some() && options.max_worker_ticks.is_some() {
+        return Err(DaemonError::usage(
+            "usage: --max-worker-ticks cannot be combined with --ipc-listen",
         ));
     }
 
@@ -125,8 +126,12 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
     if options.once {
         return Ok(());
     }
+    if options.work_imports && options.ipc_listen.is_some() {
+        run_import_worker_with_ipc(data_dir, &options)?;
+        return Ok(());
+    }
     if options.work_imports {
-        run_import_worker_loop(data_dir, &store, &options)?;
+        run_import_worker_loop(data_dir, &store, &options, None)?;
         return Ok(());
     }
     if let Some(ipc_addr) = options.ipc_listen {
@@ -226,11 +231,56 @@ fn run_usage() -> &'static str {
     "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
-fn run_import_worker_loop(data_dir: &Path, store: &MetaStore, options: &RunOptions) -> Result<()> {
+fn run_import_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
+    let ipc_addr = options
+        .ipc_listen
+        .expect("validated combined worker/ipc mode has ipc address");
+    let listener = bind_ipc_listener(ipc_addr)?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|_| DaemonError::user("unable to configure daemon ipc listener"))?;
+    let stop_worker = Arc::new(AtomicBool::new(false));
+    let worker_stop = Arc::clone(&stop_worker);
+    let worker_data_dir = data_dir.to_path_buf();
+    let worker_options = options.clone();
+    let (worker_result_sender, worker_result_receiver) = mpsc::channel::<Result<()>>();
+    let worker_handle = thread::spawn(move || {
+        let result = (|| -> Result<()> {
+            let store = open_store(&worker_data_dir)?;
+            run_import_worker_loop(&worker_data_dir, &store, &worker_options, Some(worker_stop))
+        })();
+        let _ = worker_result_sender.send(result);
+    });
+
+    let ipc_result = serve_ipc_listener_with_worker_monitor(
+        data_dir,
+        &listener,
+        options.max_requests,
+        &worker_result_receiver,
+    );
+    stop_worker.store(true, Ordering::Relaxed);
+    worker_handle
+        .join()
+        .map_err(|_| DaemonError::user("import worker thread panicked"))?;
+    ipc_result
+}
+
+fn run_import_worker_loop(
+    data_dir: &Path,
+    store: &MetaStore,
+    options: &RunOptions,
+    stop_signal: Option<Arc<AtomicBool>>,
+) -> Result<()> {
     let interval = Duration::from_millis(options.worker_interval_ms.unwrap_or(1_000));
     let mut ticks = 0_usize;
 
     loop {
+        if stop_signal
+            .as_ref()
+            .is_some_and(|stop| stop.load(Ordering::Relaxed))
+        {
+            return Ok(());
+        }
         ticks += 1;
         let now = current_timestamp()?;
         let mut import_summary = ImportWorkerSummary {
@@ -251,7 +301,22 @@ fn run_import_worker_loop(data_dir: &Path, store: &MetaStore, options: &RunOptio
         {
             return Ok(());
         }
+        sleep_worker_interval(interval, stop_signal.as_ref());
+    }
+}
+
+fn sleep_worker_interval(interval: Duration, stop_signal: Option<&Arc<AtomicBool>>) {
+    let Some(stop_signal) = stop_signal else {
         thread::sleep(interval);
+        return;
+    };
+    let deadline = std::time::Instant::now() + interval;
+    while std::time::Instant::now() < deadline {
+        if stop_signal.load(Ordering::Relaxed) {
+            return;
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        thread::sleep(Duration::from_millis(25).min(remaining));
     }
 }
 
@@ -428,6 +493,11 @@ fn parse_loopback_addr(value: &str) -> Result<SocketAddr> {
 }
 
 fn serve_ipc(data_dir: &Path, addr: SocketAddr, max_requests: Option<usize>) -> Result<()> {
+    let listener = bind_ipc_listener(addr)?;
+    serve_ipc_listener(data_dir, &listener, max_requests)
+}
+
+fn bind_ipc_listener(addr: SocketAddr) -> Result<TcpListener> {
     let listener = TcpListener::bind(addr)
         .map_err(|_| DaemonError::user("unable to bind daemon ipc listener"))?;
     let local_addr = listener
@@ -437,13 +507,60 @@ fn serve_ipc(data_dir: &Path, addr: SocketAddr, max_requests: Option<usize>) -> 
     io::stdout()
         .flush()
         .map_err(|_| DaemonError::user("unable to write daemon status"))?;
+    Ok(listener)
+}
 
+fn serve_ipc_listener(
+    data_dir: &Path,
+    listener: &TcpListener,
+    max_requests: Option<usize>,
+) -> Result<()> {
     let request_limit = max_requests.unwrap_or(usize::MAX);
     for _ in 0..request_limit {
         let (stream, _) = listener
             .accept()
             .map_err(|_| DaemonError::user("unable to accept daemon ipc request"))?;
         handle_ipc_stream(data_dir, stream)?;
+    }
+
+    Ok(())
+}
+
+fn serve_ipc_listener_with_worker_monitor(
+    data_dir: &Path,
+    listener: &TcpListener,
+    max_requests: Option<usize>,
+    worker_result_receiver: &Receiver<Result<()>>,
+) -> Result<()> {
+    let request_limit = max_requests.unwrap_or(usize::MAX);
+    let mut handled_requests = 0_usize;
+
+    while handled_requests < request_limit {
+        match worker_result_receiver.try_recv() {
+            Ok(Ok(())) => {
+                return Err(DaemonError::user(
+                    "import worker exited while daemon ipc was still running",
+                ))
+            }
+            Ok(Err(error)) => return Err(error),
+            Err(TryRecvError::Disconnected) => {
+                return Err(DaemonError::user(
+                    "import worker thread stopped unexpectedly",
+                ))
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+
+        match listener.accept() {
+            Ok((stream, _)) => {
+                handle_ipc_stream(data_dir, stream)?;
+                handled_requests += 1;
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => return Err(DaemonError::user("unable to accept daemon ipc request")),
+        }
     }
 
     Ok(())
@@ -529,7 +646,7 @@ fn write_http_response(
     .map_err(|_| DaemonError::user("unable to write daemon ipc response"))
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct RunOptions {
     foreground: bool,
     once: bool,
