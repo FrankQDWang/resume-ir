@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{Candidate, CandidateId, ContactHash, MetaStore, ResumeVersion};
+use meta_store::{Candidate, CandidateId, ContactHash, EntityType, MetaStore, ResumeVersion};
 
 #[test]
 fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
@@ -79,6 +79,22 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
     assert_eq!(candidate.version_count, 2);
     assert!(!format!("{candidate:?}").contains("shared.candidate@example.test"));
     assert!(!format!("{candidate:?}").contains("+14155550132"));
+
+    for version in &versions {
+        let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+        let contact_dump = mentions
+            .iter()
+            .filter(|mention| matches!(mention.entity_type, EntityType::Email | EntityType::Phone))
+            .map(|mention| format!("{} {:?}", mention.raw_value, mention.normalized_value))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(contact_dump.contains("<redacted:email>"));
+        assert!(contact_dump.contains("<redacted:phone>"));
+        assert!(!contact_dump.contains("Shared.Candidate"));
+        assert!(!contact_dump.contains("shared.candidate@example.test"));
+        assert!(!contact_dump.contains("415-555-0132"));
+        assert!(!contact_dump.contains("+14155550132"));
+    }
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "search", "Java"])

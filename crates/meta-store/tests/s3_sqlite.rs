@@ -18,8 +18,8 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5]);
-    assert_eq!(store.schema_version().unwrap(), 5);
+    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5, 6]);
+    assert_eq!(store.schema_version().unwrap(), 6);
 
     for table_name in [
         "candidate",
@@ -35,7 +35,7 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 5);
+    assert_eq!(store.schema_version().unwrap(), 6);
 }
 
 #[test]
@@ -519,7 +519,10 @@ fn entity_mentions_replace_query_and_redact_values() {
         .unwrap();
 
     let mentions = store.entity_mentions_for_version(&version.id).unwrap();
-    assert_eq!(mentions, vec![email, skill]);
+    let mut expected_email = email;
+    expected_email.raw_value = "<redacted:email>".to_string();
+    expected_email.normalized_value = None;
+    assert_eq!(mentions, vec![expected_email, skill]);
     assert_eq!(store.status_summary().unwrap().entity_mentions, 2);
     assert!(!format!("{:?}", mentions[0]).contains("Synthetic.Candidate"));
 
@@ -541,6 +544,229 @@ fn entity_mentions_replace_query_and_redact_values() {
         vec![title]
     );
     assert_eq!(store.status_summary().unwrap().entity_mentions, 1);
+}
+
+#[test]
+fn contact_entity_mentions_do_not_persist_contact_values() {
+    let db_path = temp_db_path("private-contact-mention");
+    let store = MetaStore::open(&db_path).unwrap();
+    store.run_migrations().unwrap();
+    let document = document(
+        "private-contact-mention-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let version = resume_version("private-contact-mention-version", document.id.clone());
+    store.upsert_document(&document).unwrap();
+    store.upsert_resume_version(&version).unwrap();
+
+    let email = entity_mention(
+        "private-email",
+        &version.id,
+        EntityType::Email,
+        "Sensitive.Candidate@Example.Test",
+        Some("sensitive.candidate@example.test"),
+        9..41,
+        0.99,
+    );
+    let phone = entity_mention(
+        "private-phone",
+        &version.id,
+        EntityType::Phone,
+        "(415) 555-0132",
+        Some("+14155550132"),
+        42..56,
+        0.98,
+    );
+    let skill = entity_mention(
+        "private-skill",
+        &version.id,
+        EntityType::Skill,
+        "Rust",
+        Some("rust"),
+        80..84,
+        0.91,
+    );
+
+    store
+        .replace_entity_mentions(&version.id, &[email, phone, skill.clone()])
+        .unwrap();
+
+    let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+    let email = mentions
+        .iter()
+        .find(|mention| mention.entity_type == EntityType::Email)
+        .expect("email mention");
+    assert_eq!(email.raw_value, "<redacted:email>");
+    assert_eq!(email.normalized_value, None);
+    assert_eq!(email.span_start, Some(9));
+    assert_eq!(email.span_end, Some(41));
+    assert_eq!(email.confidence, 0.99);
+    assert_eq!(email.extractor, "rules-v1");
+
+    let phone = mentions
+        .iter()
+        .find(|mention| mention.entity_type == EntityType::Phone)
+        .expect("phone mention");
+    assert_eq!(phone.raw_value, "<redacted:phone>");
+    assert_eq!(phone.normalized_value, None);
+    assert_eq!(phone.span_start, Some(42));
+    assert_eq!(phone.span_end, Some(56));
+    assert_eq!(phone.confidence, 0.98);
+    assert_eq!(phone.extractor, "rules-v1");
+
+    assert!(mentions.iter().any(|mention| mention == &skill));
+    let joined = mentions
+        .iter()
+        .map(|mention| format!("{} {:?}", mention.raw_value, mention.normalized_value))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!joined.contains("Sensitive.Candidate"));
+    assert!(!joined.contains("sensitive.candidate@example.test"));
+    assert!(!joined.contains("415"));
+    assert!(!joined.contains("+14155550132"));
+
+    let raw_connection = open_raw_connection(&db_path);
+    let raw_dump = raw_entity_mention_value_dump(&raw_connection);
+    assert!(raw_dump.contains("<redacted:email>"));
+    assert!(raw_dump.contains("<redacted:phone>"));
+    assert!(!raw_dump.contains("Sensitive.Candidate"));
+    assert!(!raw_dump.contains("sensitive.candidate@example.test"));
+    assert!(!raw_dump.contains("415"));
+    assert!(!raw_dump.contains("+14155550132"));
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
+fn schema_v6_redacts_existing_contact_entity_mentions() {
+    let db_path = temp_db_path("legacy-contact-mention");
+    let document = document(
+        "legacy-contact-mention-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let version = resume_version("legacy-contact-mention-version", document.id.clone());
+    let email = entity_mention(
+        "legacy-email",
+        &version.id,
+        EntityType::Email,
+        "Legacy.Candidate@Example.Test",
+        Some("legacy.candidate@example.test"),
+        9..38,
+        0.99,
+    );
+    let phone = entity_mention(
+        "legacy-phone",
+        &version.id,
+        EntityType::Phone,
+        "(415) 555-0199",
+        Some("+14155550199"),
+        40..54,
+        0.98,
+    );
+    let skill = entity_mention(
+        "legacy-skill",
+        &version.id,
+        EntityType::Skill,
+        "Go",
+        Some("go"),
+        80..82,
+        0.91,
+    );
+
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+        store.upsert_document(&document).unwrap();
+        store.upsert_resume_version(&version).unwrap();
+    }
+
+    {
+        let connection = open_raw_connection(&db_path);
+        connection
+            .execute("DELETE FROM schema_migrations WHERE version = 6", [])
+            .unwrap();
+        for mention in [&email, &phone, &skill] {
+            connection
+                .execute(
+                    "\
+                    INSERT INTO entity_mention (
+                        id, resume_version_id, section_id, entity_type, raw_value,
+                        normalized_value, span_start, span_end, confidence, extractor
+                    )
+                    VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        mention.id.as_str(),
+                        mention.resume_version_id.as_str(),
+                        match mention.entity_type {
+                            EntityType::Email => "email",
+                            EntityType::Phone => "phone",
+                            EntityType::Skill => "skill",
+                            _ => unreachable!("test only uses email, phone, and skill"),
+                        },
+                        mention.raw_value.as_str(),
+                        mention.normalized_value.as_deref(),
+                        mention.span_start.unwrap() as i64,
+                        mention.span_end.unwrap() as i64,
+                        f64::from(mention.confidence),
+                        mention.extractor.as_str(),
+                    ],
+                )
+                .unwrap();
+        }
+
+        let legacy_dump = raw_entity_mention_value_dump(&connection);
+        assert!(legacy_dump.contains("Legacy.Candidate@Example.Test"));
+        assert!(legacy_dump.contains("legacy.candidate@example.test"));
+        assert!(legacy_dump.contains("(415) 555-0199"));
+        assert!(legacy_dump.contains("+14155550199"));
+    }
+
+    {
+        let reopened = MetaStore::open(&db_path).unwrap();
+        let report = reopened.run_migrations().unwrap();
+        assert_eq!(report.applied_versions(), &[6]);
+        assert_eq!(reopened.schema_version().unwrap(), 6);
+
+        let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
+        let email = mentions
+            .iter()
+            .find(|mention| mention.entity_type == EntityType::Email)
+            .expect("email mention");
+        assert_eq!(email.raw_value, "<redacted:email>");
+        assert_eq!(email.normalized_value, None);
+        assert_eq!(email.extractor, "rules-v1");
+        assert_eq!(email.span_start, Some(9));
+        assert_eq!(email.span_end, Some(38));
+
+        let phone = mentions
+            .iter()
+            .find(|mention| mention.entity_type == EntityType::Phone)
+            .expect("phone mention");
+        assert_eq!(phone.raw_value, "<redacted:phone>");
+        assert_eq!(phone.normalized_value, None);
+        assert_eq!(phone.extractor, "rules-v1");
+        assert_eq!(phone.span_start, Some(40));
+        assert_eq!(phone.span_end, Some(54));
+
+        assert!(mentions.iter().any(|mention| mention == &skill));
+    }
+
+    {
+        let connection = open_raw_connection(&db_path);
+        let raw_dump = raw_entity_mention_value_dump(&connection);
+        assert!(raw_dump.contains("<redacted:email>"));
+        assert!(raw_dump.contains("<redacted:phone>"));
+        assert!(raw_dump.contains("Go"));
+        assert!(raw_dump.contains("Some(\"go\")"));
+        assert!(!raw_dump.contains("Legacy.Candidate"));
+        assert!(!raw_dump.contains("legacy.candidate@example.test"));
+        assert!(!raw_dump.contains("555-0199"));
+        assert!(!raw_dump.contains("+14155550199"));
+    }
+
+    remove_temp_db(&db_path);
 }
 
 #[test]
@@ -794,7 +1020,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 5);
+        assert_eq!(reopened.schema_version().unwrap(), 6);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -958,7 +1184,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             .unwrap();
         connection
             .execute(
-                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5)",
+                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6)",
                 [],
             )
             .unwrap();
@@ -967,8 +1193,8 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[2, 3, 4, 5]);
-        assert_eq!(reopened.schema_version().unwrap(), 5);
+        assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6]);
+        assert_eq!(reopened.schema_version().unwrap(), 6);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -1000,7 +1226,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 5);
+        assert_eq!(reopened.schema_version().unwrap(), 6);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 
@@ -1454,6 +1680,22 @@ fn open_raw_connection(db_path: &PathBuf) -> Connection {
         .execute_batch("PRAGMA foreign_keys = ON;")
         .unwrap();
     connection
+}
+
+fn raw_entity_mention_value_dump(connection: &Connection) -> String {
+    connection
+        .prepare("SELECT raw_value, normalized_value FROM entity_mention ORDER BY rowid")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+        .iter()
+        .map(|(raw, normalized)| format!("{raw} {normalized:?}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn expect_raw_rejection(result: rusqlite::Result<usize>) {

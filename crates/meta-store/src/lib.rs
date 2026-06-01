@@ -17,6 +17,7 @@ const SCHEMA_VERSION_V2: u32 = 2;
 const SCHEMA_VERSION_V3: u32 = 3;
 const SCHEMA_VERSION_V4: u32 = 4;
 const SCHEMA_VERSION_V5: u32 = 5;
+const SCHEMA_VERSION_V6: u32 = 6;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -95,6 +96,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V3, SCHEMA_V3),
             (SCHEMA_VERSION_V4, SCHEMA_V4),
             (SCHEMA_VERSION_V5, SCHEMA_V5),
+            (SCHEMA_VERSION_V6, SCHEMA_V6),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -519,8 +521,8 @@ impl MetaStore {
                         mention.resume_version_id.as_str(),
                         mention.section_id.as_ref().map(SectionId::as_str),
                         entity_type_to_storage(&mention.entity_type),
-                        mention.raw_value.as_str(),
-                        mention.normalized_value.as_deref(),
+                        entity_mention_raw_value_for_storage(mention),
+                        entity_mention_normalized_value_for_storage(mention),
                         mention
                             .span_start
                             .map(|value| usize_to_i64(value, "entity_mention.span_start"))
@@ -1762,6 +1764,18 @@ CREATE INDEX resume_version_candidate_idx
     WHERE candidate_id IS NOT NULL;
 "#;
 
+const SCHEMA_V6: &str = r#"
+UPDATE entity_mention
+SET raw_value = '<redacted:email>',
+    normalized_value = NULL
+WHERE entity_type = 'email';
+
+UPDATE entity_mention
+SET raw_value = '<redacted:phone>',
+    normalized_value = NULL
+WHERE entity_type = 'phone';
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -2112,6 +2126,21 @@ fn validate_entity_mention(version_id: &ResumeVersionId, mention: &EntityMention
     }
 
     Ok(())
+}
+
+fn entity_mention_raw_value_for_storage(mention: &EntityMention) -> &str {
+    match mention.entity_type {
+        EntityType::Email => "<redacted:email>",
+        EntityType::Phone => "<redacted:phone>",
+        _ => mention.raw_value.as_str(),
+    }
+}
+
+fn entity_mention_normalized_value_for_storage(mention: &EntityMention) -> Option<&str> {
+    match mention.entity_type {
+        EntityType::Email | EntityType::Phone => None,
+        _ => mention.normalized_value.as_deref(),
+    }
 }
 
 fn read_string(row: &Row<'_>, index: usize) -> Result<String> {
