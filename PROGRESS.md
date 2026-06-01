@@ -6,7 +6,7 @@ This file tracks long-running Goal execution against
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S33 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S34 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -48,6 +48,7 @@ This file tracks long-running Goal execution against
 | S31 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this local OCR worker command/cache-write slice; PDF page rendering, per-page multi-page OCR, daemon-loop OCR execution, searchable OCR text indexing, bbox persistence, full pause/resume loop, concrete OCR engine install/license, real scanned-resume witness run, and Windows process-tree validation remain not complete. |
 | S32 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this local-discovery root preset slice; real whole-machine witness runs, explicit user confirmation UX, persisted scan-scope records, progress/cancel/budget limits, per-root partial-failure UX, cross-platform root enumeration validation, and proof that all local resumes are discoverable remain not complete. |
 | S33 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this persisted OCR pause/resume control slice; daemon OCR loop integration, interrupting an already-running OCR child, process-tree pause semantics, PDF page rendering, concrete engine install/license, searchable OCR indexing, bbox persistence, real scanned-resume witness, and Windows process-control validation remain not complete. |
+| S34 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p embedder`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p embedder -p index-vector --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this local embedding command client slice; concrete embedding model selection/license/install, model distribution, embedding daemon/queue integration, persistent vector index, CLI semantic/hybrid search using the vector channel, quality/performance benchmarks, real data validation, and cross-platform process-tree validation remain not complete or BLOCKED. |
 
 ## Command Log
 
@@ -1588,6 +1589,52 @@ Output summary:
 Scope note:
 
 - S33 adds SQLite schema V8 `worker_task_control`, `resume-cli pause --task ocr`, `resume-cli resume --task ocr`, status reporting for `ocr task`, and an `ocr-worker` pre-claim pause gate that returns without consuming queued jobs. It does not interrupt an OCR process that is already running, does not add daemon-loop orchestration, does not render PDF pages, does not bundle or license a concrete OCR engine, does not index OCR output into search, does not persist OCR bounding boxes, does not run a real scanned-resume witness, and does not validate Windows process-control behavior.
+
+### S34
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p embedder
+```
+
+Output summary:
+
+- Before implementation, `embedder` failed because `LocalEmbeddingCommandSpec`, `LocalEmbeddingCommandEmbedder`, and the command-execution error variants were unresolved.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p embedder
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector
+/Users/frankqdwang/.cargo/bin/cargo clippy -p embedder -p index-vector --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `cargo test -p embedder`: exit 0; 5 embedder tests passed, including configured local command execution, structured vector parsing, missing-worker classification, malformed-output rejection without payload leakage, timeout handling, and private input-file permissions.
+- `cargo test -p index-vector`: exit 0; 2 vector-index tests passed.
+- `cargo clippy -p embedder -p index-vector --all-targets -- -D warnings`: exit 0.
+
+Workspace acceptance:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+```
+
+Output summary:
+
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+Scope note:
+
+- S34 adds a structured local embedding command client that writes a private local input file, invokes a configured local executable, parses the `resume-ir-embedding-v1` stdout protocol, validates model/dimension/output shape, times out stalled workers, and redacts payloads from errors/debug output. It does not select, bundle, license, download, or install a concrete embedding model; the deterministic embedder remains test-only scaffolding, `index-vector` remains in-memory, and product semantic/hybrid search is still not complete.
 
 ### S9
 
