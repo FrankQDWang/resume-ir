@@ -8,13 +8,15 @@ use core_domain::{EntityMentionId, SectionType};
 use extractor_rules::{extract_strong_fields, FieldType, RuleMatch};
 pub use fs_crawler::ScanProfile;
 use fs_crawler::{
-    crawl_directory_with_options, DiscoveredFile, NormalizedPath, ScanBudgetKind, ScanOptions,
+    crawl_directory_with_options, CrawlError, CrawlErrorKind, DiscoveredFile, FsOperation,
+    NormalizedPath, ScanBudgetKind, ScanOptions,
 };
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use meta_store::{
-    Document, DocumentStatus, EntityMention, EntityType, FileExtension, ImportTask,
-    ImportTaskStatus, IndexState, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp,
+    Document, DocumentStatus, EntityMention, EntityType, FileExtension, ImportScanError,
+    ImportScanErrorKind, ImportScanErrorOperation, ImportTask, ImportTaskId, ImportTaskStatus,
+    IndexState, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility,
+    UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_docx::DocxParser;
@@ -55,7 +57,7 @@ pub fn import_root_with_options(
         .update_import_task_status(&task.id, ImportTaskStatus::Running, now)
         .map_err(ImportPipelineError::store)?;
 
-    let result = run_import(data_dir, store, root, now, options);
+    let result = run_import(data_dir, store, task, root, now, options);
     match result {
         Ok(summary) => {
             store
@@ -81,6 +83,7 @@ pub fn import_root_with_options(
 fn run_import(
     data_dir: &Path,
     store: &MetaStore,
+    task: &ImportTask,
     root: &Path,
     now: UnixTimestamp,
     options: ImportOptions,
@@ -95,6 +98,7 @@ fn run_import(
     .map_err(ImportPipelineError::crawl)?;
     let scanned_directories = report.scanned_directories.clone();
     let skipped_directories = report.skipped_directories.clone();
+    let scan_errors = import_scan_errors_from_crawl(&task.id, &report.errors, now);
     let scan_budget_exhausted = report.budget_exhausted;
     let mut summary = ImportSummary {
         files_discovered: report.files.len(),
@@ -107,6 +111,9 @@ fn run_import(
         deleted_documents: 0,
         scan_budget: scan_budget_exhausted.map(ImportScanBudget::from),
     };
+    store
+        .replace_import_scan_errors(&task.id, &scan_errors)
+        .map_err(ImportPipelineError::store)?;
     let mut pending_index_documents = Vec::new();
     let sectionizer = Sectionizer::default();
     let can_propagate_deletions = report.errors.is_empty() && scan_budget_exhausted.is_none();
@@ -773,6 +780,43 @@ impl From<fs_crawler::ScanBudgetExhausted> for ImportScanBudget {
             observed: value.observed,
             exhausted: true,
         }
+    }
+}
+
+fn import_scan_errors_from_crawl(
+    task_id: &ImportTaskId,
+    errors: &[CrawlError],
+    now: UnixTimestamp,
+) -> Vec<ImportScanError> {
+    errors
+        .iter()
+        .enumerate()
+        .map(|(index, error)| ImportScanError {
+            import_task_id: task_id.clone(),
+            error_index: u64::try_from(index).expect("scan error index fits into u64"),
+            kind: import_scan_error_kind(error.kind),
+            operation: import_scan_error_operation(error.operation),
+            path_digest: None,
+            updated_at: now,
+        })
+        .collect()
+}
+
+fn import_scan_error_kind(kind: CrawlErrorKind) -> ImportScanErrorKind {
+    match kind {
+        CrawlErrorKind::PermissionDenied => ImportScanErrorKind::PermissionDenied,
+        CrawlErrorKind::SourceUnavailable => ImportScanErrorKind::SourceUnavailable,
+        CrawlErrorKind::LockedOrUnreadable => ImportScanErrorKind::LockedOrUnreadable,
+        CrawlErrorKind::Io => ImportScanErrorKind::Io,
+    }
+}
+
+fn import_scan_error_operation(operation: FsOperation) -> ImportScanErrorOperation {
+    match operation {
+        FsOperation::NormalizePath => ImportScanErrorOperation::NormalizePath,
+        FsOperation::ReadDirectory => ImportScanErrorOperation::ReadDirectory,
+        FsOperation::ReadMetadata => ImportScanErrorOperation::ReadMetadata,
+        FsOperation::Fingerprint => ImportScanErrorOperation::Fingerprint,
     }
 }
 

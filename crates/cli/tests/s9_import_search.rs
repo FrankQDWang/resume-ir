@@ -4,8 +4,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportTask,
-    ImportTaskId, ImportTaskStatus, MetaStore, UnixTimestamp,
+    ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanErrorKind,
+    ImportScanErrorOperation, ImportScanProfile, ImportTask, ImportTaskId, ImportTaskStatus,
+    MetaStore, UnixTimestamp,
 };
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
@@ -315,6 +316,73 @@ fn import_max_files_limits_scan_and_persists_budget_state_without_path_leak() {
     assert_eq!(scope.files_discovered, 1);
     assert!(!format!("{scope:?}").contains(path_str(&private_root)));
 
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[cfg(unix)]
+#[test]
+fn import_persists_scan_errors_without_path_leak() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let data_dir = temp_dir("scan-error-import-data");
+    let private_root = temp_dir("scan-error-private-root");
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+    let unreadable_dir = private_root.join("unreadable-synthetic-subdir");
+    fs::create_dir_all(&unreadable_dir).unwrap();
+    fs::set_permissions(&unreadable_dir, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run scan-error import");
+
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    assert!(import_stdout.contains("files discovered: 0"));
+    assert!(import_stdout.contains("scan errors: 1"));
+    assert!(!import_stdout.contains(path_str(&private_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_private_root)));
+
+    let status = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "status"])
+        .output()
+        .expect("run status after scan-error import");
+    assert!(status.status.success());
+    assert!(status.stderr.is_empty());
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("import scan errors: 1"));
+    assert!(!status_stdout.contains(path_str(&private_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scope = store
+        .latest_import_scan_scope()
+        .unwrap()
+        .expect("scan scope persisted");
+    assert_eq!(scope.scan_errors, 1);
+    let errors = store
+        .import_scan_errors_for_task(&scope.import_task_id)
+        .unwrap();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].kind, ImportScanErrorKind::PermissionDenied);
+    assert_eq!(errors[0].operation, ImportScanErrorOperation::ReadDirectory);
+    assert_eq!(errors[0].path_digest, None);
+    assert!(!format!("{:?}", errors[0]).contains(path_str(&private_root)));
+
+    fs::set_permissions(&unreadable_dir, fs::Permissions::from_mode(0o700)).unwrap();
     remove_dir(&data_dir);
     remove_dir(&private_root);
 }

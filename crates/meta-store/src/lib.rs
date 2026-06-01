@@ -22,6 +22,7 @@ const SCHEMA_VERSION_V7: u32 = 7;
 const SCHEMA_VERSION_V8: u32 = 8;
 const SCHEMA_VERSION_V9: u32 = 9;
 const SCHEMA_VERSION_V10: u32 = 10;
+const SCHEMA_VERSION_V11: u32 = 11;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -50,6 +51,8 @@ const IMPORT_SCAN_SCOPE_COLUMNS: &str = "\
     searchable_documents, ocr_required_documents, ocr_jobs_queued, failed_documents, \
     deleted_documents, scan_budget_kind, scan_budget_limit, scan_budget_observed, \
     scan_budget_exhausted, updated_at_seconds";
+const IMPORT_SCAN_ERROR_COLUMNS: &str = "\
+    import_task_id, error_index, kind, operation, path_digest, updated_at_seconds";
 
 pub fn crate_name() -> &'static str {
     "meta-store"
@@ -115,6 +118,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V8, SCHEMA_V8),
             (SCHEMA_VERSION_V9, SCHEMA_V9),
             (SCHEMA_VERSION_V10, SCHEMA_V10),
+            (SCHEMA_VERSION_V11, SCHEMA_V11),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -1287,6 +1291,79 @@ impl MetaStore {
         }
     }
 
+    pub fn replace_import_scan_errors(
+        &self,
+        task_id: &ImportTaskId,
+        errors: &[ImportScanError],
+    ) -> Result<()> {
+        for error in errors {
+            validate_import_scan_error(task_id, error)?;
+        }
+
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        transaction
+            .execute(
+                "DELETE FROM import_scan_error WHERE import_task_id = ?1",
+                params![task_id.as_str()],
+            )
+            .map_err(MetaStoreError::storage)?;
+
+        {
+            let mut statement = transaction
+                .prepare(
+                    "\
+                    INSERT INTO import_scan_error (
+                        import_task_id, error_index, kind, operation, path_digest,
+                        updated_at_seconds
+                    )
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                )
+                .map_err(MetaStoreError::storage)?;
+
+            for error in errors {
+                statement
+                    .execute(params![
+                        error.import_task_id.as_str(),
+                        u64_to_i64(error.error_index, "import_scan_error.error_index")?,
+                        import_scan_error_kind_to_storage(error.kind),
+                        import_scan_error_operation_to_storage(error.operation),
+                        error.path_digest.as_deref(),
+                        error.updated_at.as_unix_seconds(),
+                    ])
+                    .map_err(MetaStoreError::storage)?;
+            }
+        }
+
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(())
+    }
+
+    pub fn import_scan_errors_for_task(
+        &self,
+        task_id: &ImportTaskId,
+    ) -> Result<Vec<ImportScanError>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {IMPORT_SCAN_ERROR_COLUMNS}
+            FROM import_scan_error
+            WHERE import_task_id = ?1
+            ORDER BY error_index"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![task_id.as_str()])
+            .map_err(MetaStoreError::storage)?;
+        let mut errors = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            errors.push(read_import_scan_error(row)?);
+        }
+
+        Ok(errors)
+    }
+
     pub fn update_import_task_status(
         &self,
         id: &ImportTaskId,
@@ -1443,6 +1520,11 @@ impl MetaStore {
                 row.get::<_, i64>(0)
             })
             .map_err(MetaStoreError::storage)?;
+        let import_scan_errors = connection
+            .query_row("SELECT COUNT(*) FROM import_scan_error", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(MetaStoreError::storage)?;
         let entity_mentions = connection
             .query_row(
                 "\
@@ -1511,6 +1593,7 @@ impl MetaStore {
                 "status.import_tasks_recoverable",
             )?,
             import_scan_scopes: i64_to_u64(import_scan_scopes, "status.import_scan_scopes")?,
+            import_scan_errors: i64_to_u64(import_scan_errors, "status.import_scan_errors")?,
             ocr_jobs_queued: i64_to_u64(ocr_jobs_queued, "status.ocr_jobs_queued")?,
             entity_mentions: i64_to_u64(entity_mentions, "status.entity_mentions")?,
             index_health,
@@ -1886,6 +1969,49 @@ pub enum ImportScanBudgetKind {
     Files,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct ImportScanError {
+    pub import_task_id: ImportTaskId,
+    pub error_index: u64,
+    pub kind: ImportScanErrorKind,
+    pub operation: ImportScanErrorOperation,
+    pub path_digest: Option<String>,
+    pub updated_at: UnixTimestamp,
+}
+
+impl fmt::Debug for ImportScanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportScanError")
+            .field("import_task_id", &self.import_task_id)
+            .field("error_index", &self.error_index)
+            .field("kind", &self.kind)
+            .field("operation", &self.operation)
+            .field(
+                "path_digest",
+                &self.path_digest.as_ref().map(|_| "<redacted>"),
+            )
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportScanErrorKind {
+    PermissionDenied,
+    SourceUnavailable,
+    LockedOrUnreadable,
+    Io,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportScanErrorOperation {
+    NormalizePath,
+    ReadDirectory,
+    ReadMetadata,
+    Fingerprint,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportTaskStatus {
     Queued,
@@ -1920,6 +2046,7 @@ pub struct StoreStatusSummary {
     pub import_tasks_queued: u64,
     pub import_tasks_recoverable: u64,
     pub import_scan_scopes: u64,
+    pub import_scan_errors: u64,
     pub ocr_jobs_queued: u64,
     pub entity_mentions: u64,
     pub index_health: IndexStateStatus,
@@ -2442,6 +2569,23 @@ ALTER TABLE import_scan_scope
     );
 "#;
 
+const SCHEMA_V11: &str = r#"
+CREATE TABLE import_scan_error (
+    import_task_id TEXT NOT NULL,
+    error_index INTEGER NOT NULL CHECK (error_index >= 0),
+    kind TEXT NOT NULL CHECK (
+        kind IN ('permission_denied', 'source_unavailable', 'locked_or_unreadable', 'io')
+    ),
+    operation TEXT NOT NULL CHECK (
+        operation IN ('normalize_path', 'read_directory', 'read_metadata', 'fingerprint')
+    ),
+    path_digest TEXT CHECK (path_digest IS NULL OR length(path_digest) > 0),
+    updated_at_seconds INTEGER NOT NULL,
+    PRIMARY KEY (import_task_id, error_index),
+    FOREIGN KEY (import_task_id) REFERENCES import_task(id) ON DELETE CASCADE
+);
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -2646,6 +2790,19 @@ fn read_import_scan_scope(row: &Row<'_>) -> Result<ImportScanScope> {
     };
     validate_import_scan_scope(&scope)?;
     Ok(scope)
+}
+
+fn read_import_scan_error(row: &Row<'_>) -> Result<ImportScanError> {
+    let error = ImportScanError {
+        import_task_id: read_id::<ImportTaskId>(row, 0, "import_scan_error.import_task_id")?,
+        error_index: i64_to_u64(read_i64(row, 1)?, "import_scan_error.error_index")?,
+        kind: import_scan_error_kind_from_storage(&read_string(row, 2)?)?,
+        operation: import_scan_error_operation_from_storage(&read_string(row, 3)?)?,
+        path_digest: read_optional_string(row, 4)?,
+        updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 5)?),
+    };
+    validate_import_scan_error(&error.import_task_id, &error)?;
+    Ok(error)
 }
 
 fn upsert_candidate_in_connection(connection: &Connection, candidate: &Candidate) -> Result<()> {
@@ -2878,6 +3035,21 @@ fn validate_import_scan_scope(scope: &ImportScanScope) -> Result<()> {
             "import_scan_scope.scan_budget",
         )),
     }
+}
+
+fn validate_import_scan_error(task_id: &ImportTaskId, error: &ImportScanError) -> Result<()> {
+    if &error.import_task_id != task_id {
+        return Err(MetaStoreError::invalid_value(
+            "import_scan_error.import_task_id",
+        ));
+    }
+    if error.path_digest.as_deref().is_some_and(str::is_empty) {
+        return Err(MetaStoreError::invalid_value(
+            "import_scan_error.path_digest",
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_entity_mention(version_id: &ResumeVersionId, mention: &EntityMention) -> Result<()> {
@@ -3298,6 +3470,44 @@ fn import_scan_budget_kind_from_storage(value: &str) -> Result<ImportScanBudgetK
         _ => Err(MetaStoreError::invalid_value(
             "import_scan_scope.scan_budget_kind",
         )),
+    }
+}
+
+fn import_scan_error_kind_to_storage(kind: ImportScanErrorKind) -> &'static str {
+    match kind {
+        ImportScanErrorKind::PermissionDenied => "permission_denied",
+        ImportScanErrorKind::SourceUnavailable => "source_unavailable",
+        ImportScanErrorKind::LockedOrUnreadable => "locked_or_unreadable",
+        ImportScanErrorKind::Io => "io",
+    }
+}
+
+fn import_scan_error_kind_from_storage(value: &str) -> Result<ImportScanErrorKind> {
+    match value {
+        "permission_denied" => Ok(ImportScanErrorKind::PermissionDenied),
+        "source_unavailable" => Ok(ImportScanErrorKind::SourceUnavailable),
+        "locked_or_unreadable" => Ok(ImportScanErrorKind::LockedOrUnreadable),
+        "io" => Ok(ImportScanErrorKind::Io),
+        _ => Err(MetaStoreError::invalid_value("import_scan_error.kind")),
+    }
+}
+
+fn import_scan_error_operation_to_storage(operation: ImportScanErrorOperation) -> &'static str {
+    match operation {
+        ImportScanErrorOperation::NormalizePath => "normalize_path",
+        ImportScanErrorOperation::ReadDirectory => "read_directory",
+        ImportScanErrorOperation::ReadMetadata => "read_metadata",
+        ImportScanErrorOperation::Fingerprint => "fingerprint",
+    }
+}
+
+fn import_scan_error_operation_from_storage(value: &str) -> Result<ImportScanErrorOperation> {
+    match value {
+        "normalize_path" => Ok(ImportScanErrorOperation::NormalizePath),
+        "read_directory" => Ok(ImportScanErrorOperation::ReadDirectory),
+        "read_metadata" => Ok(ImportScanErrorOperation::ReadMetadata),
+        "fingerprint" => Ok(ImportScanErrorOperation::Fingerprint),
+        _ => Err(MetaStoreError::invalid_value("import_scan_error.operation")),
     }
 }
 

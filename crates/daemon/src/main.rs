@@ -223,6 +223,7 @@ fn status_json(data_dir: &Path) -> Result<String> {
         "import_tasks_queued": summary.import_tasks_queued,
         "import_tasks_recoverable": summary.import_tasks_recoverable,
         "import_scan_scopes": summary.import_scan_scopes,
+        "import_scan_errors": summary.import_scan_errors,
         "active_profile": "balanced",
         "index_health": index_health_label(summary.index_health),
         "snapshot_present": summary.last_snapshot_id.is_some(),

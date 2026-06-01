@@ -122,6 +122,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
         summary.import_tasks_recoverable
     );
     println!("import scan scopes: {}", summary.import_scan_scopes);
+    println!("import scan errors: {}", summary.import_scan_errors);
     println!("active profile: balanced");
     println!("index health: {}", index_health_label(summary.index_health));
     println!(
@@ -231,6 +232,10 @@ fn render_ipc_status(body: &serde_json::Value) {
     println!(
         "import scan scopes: {}",
         json_u64(body, "import_scan_scopes")
+    );
+    println!(
+        "import scan errors: {}",
+        json_u64(body, "import_scan_errors")
     );
     println!(
         "active profile: {}",
@@ -1115,6 +1120,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("entity mentions: {}", summary.entity_mentions);
     println!("import scan scopes: {}", summary.import_scan_scopes);
+    println!("import scan errors: {}", summary.import_scan_errors);
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("index health: {}", index_health_label(summary.index_health));
     println!(
@@ -1174,6 +1180,10 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!(
         "    \"import_scan_scopes\": {},",
         summary.import_scan_scopes
+    );
+    println!(
+        "    \"import_scan_errors\": {},",
+        summary.import_scan_errors
     );
     println!(
         "    \"recovery_queue_depth\": {}",
