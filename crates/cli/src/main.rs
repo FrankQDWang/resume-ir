@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io::{Read, Write};
@@ -16,15 +16,15 @@ use import_pipeline::{
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{
-    inspect_snapshot_root, FullTextIndex, SearchHit, SearchQuery, SnapshotReadTarget,
-    SnapshotRootState,
+    inspect_snapshot_root, redact_contact_values, FullTextIndex, SearchHit, SearchQuery,
+    SnapshotReadTarget, SnapshotRootState,
 };
 use index_vector::{
     inspect_persistent_vector_snapshot, PersistentVectorIndex, PersistentVectorSnapshotInspection,
-    PersistentVectorSnapshotState, VectorDocument, VectorIndex,
+    PersistentVectorSnapshotState, QueryVector, VectorDocument, VectorHit, VectorIndex,
 };
 use meta_store::{
-    DocumentId, DocumentStatus, EntityType, ImportRootKind as StoreImportRootKind,
+    Document, DocumentId, DocumentStatus, EntityType, ImportRootKind as StoreImportRootKind,
     ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
     ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
     ImportTaskStatus, IndexStateStatus, IngestJobKind, IngestJobStatus, MetaStore,
@@ -36,7 +36,9 @@ use ocr_client::{
     OcrPageRequest, OcrWorkerBudget, RenderedPage,
 };
 use privacy::inspect_contact_hash_key;
-use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
+use rank_fusion::{
+    fuse_hybrid_rrf, DegreeLevel, HybridRecall, RankedHit, ResumeProfile, SearchFilters,
+};
 use search_planner::plan_search;
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
@@ -731,31 +733,68 @@ fn pending_import_task(
 
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let search_args = parse_search_args(args)?;
-
-    let Some(index) =
-        FullTextIndex::open_active(&data_dir.join("search-index")).map_err(CliError::fulltext)?
-    else {
-        println!("search index not available yet");
-        println!("results: 0");
-        return Ok(());
-    };
-
     let candidate_limit = search_args
         .top_k
         .saturating_mul(5)
         .clamp(search_args.top_k, 100);
+
+    let hits = match search_args.mode {
+        SearchMode::FullText => {
+            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+                .map_err(CliError::fulltext)?
+            else {
+                println!("search index not available yet");
+                println!("results: 0");
+                return Ok(());
+            };
+            let store = open_store(data_dir)?;
+            let fulltext_hits = run_fulltext_search(&index, &store, &search_args, candidate_limit)?;
+            fulltext_hits.into_iter().take(search_args.top_k).collect()
+        }
+        SearchMode::Semantic => {
+            let store = open_store(data_dir)?;
+            run_semantic_search(data_dir, &store, &search_args, candidate_limit)?
+        }
+        SearchMode::Hybrid => {
+            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+                .map_err(CliError::fulltext)?
+            else {
+                return Err(CliError::user(
+                    "hybrid search unavailable: full-text index is not ready",
+                ));
+            };
+            let store = open_store(data_dir)?;
+            let fulltext_hits = run_fulltext_search(&index, &store, &search_args, candidate_limit)?;
+            let vector_hits = run_semantic_search(data_dir, &store, &search_args, candidate_limit)?;
+            fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k)
+        }
+    };
+
+    print_search_hits(hits);
+
+    Ok(())
+}
+
+fn run_fulltext_search(
+    index: &FullTextIndex,
+    store: &MetaStore,
+    search_args: &SearchArgs,
+    candidate_limit: usize,
+) -> Result<Vec<SearchOutputHit>> {
     let plan = plan_search(&search_args.query, candidate_limit)
         .map_err(|_| CliError::user("search query is empty"))?;
     let hits = index
         .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
         .map_err(CliError::fulltext)?;
-    let store = open_store(data_dir)?;
-    let hits = if search_args.filters.is_empty() {
-        visible_hits(&store, hits, search_args.top_k)?
-    } else {
-        filter_hits(&store, hits, &search_args.filters, search_args.top_k)?
-    };
 
+    if search_args.filters.is_empty() {
+        visible_hits(store, hits, candidate_limit)
+    } else {
+        filter_hits(store, hits, &search_args.filters, candidate_limit)
+    }
+}
+
+fn print_search_hits(hits: Vec<SearchOutputHit>) {
     println!("results: {}", hits.len());
     for hit in hits {
         println!("rank: {}", hit.rank);
@@ -764,8 +803,6 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         println!("file_name: {}", hit.file_name);
         println!("snippet: {}", hit.snippet);
     }
-
-    Ok(())
 }
 
 fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -1584,10 +1621,77 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
 
     let mut top_k = 10_usize;
     let mut filters = SearchFilters::default();
+    let mut mode = SearchMode::FullText;
+    let mut embedding_command = None;
+    let mut model_id = None;
+    let mut dimension = None;
+    let mut vector_top_k = None;
+    let mut embedding_timeout_ms = 30_000_u64;
     let mut index = 1_usize;
 
     while index < args.len() {
         match args[index].as_str() {
+            "--mode" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                mode = SearchMode::parse(value).ok_or_else(|| CliError::usage(search_usage()))?;
+                index += 2;
+            }
+            "--embedding-command" => {
+                if embedding_command.is_some() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                embedding_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--model-id" => {
+                if model_id.is_some() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                model_id = Some(value.clone());
+                index += 2;
+            }
+            "--dimension" => {
+                if dimension.is_some() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                dimension = Some(parse_positive_usize(value)?);
+                index += 2;
+            }
+            "--vector-top-k" => {
+                if vector_top_k.is_some() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                vector_top_k = Some(parse_positive_usize(value)?.min(1000));
+                index += 2;
+            }
+            "--embedding-timeout-ms" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                embedding_timeout_ms = value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| CliError::usage(search_usage()))?;
+                index += 2;
+            }
             "--degree" | "--degree-min" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -1641,14 +1745,176 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
         query: query.clone(),
         top_k,
         filters,
+        mode,
+        embedding_command,
+        model_id,
+        dimension,
+        vector_top_k,
+        embedding_timeout_ms,
     })
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--degree <level>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
 }
 
-fn visible_hits(store: &MetaStore, hits: Vec<SearchHit>, top_k: usize) -> Result<Vec<SearchHit>> {
+fn run_semantic_search(
+    data_dir: &Path,
+    store: &MetaStore,
+    search_args: &SearchArgs,
+    candidate_limit: usize,
+) -> Result<Vec<SearchOutputHit>> {
+    let command = search_args.embedding_command.clone().ok_or_else(|| {
+        CliError::user("semantic search blocked: local embedding command not configured")
+    })?;
+    let model_id = search_args.model_id.as_deref().ok_or_else(|| {
+        CliError::user("semantic search blocked: embedding model id not configured")
+    })?;
+    let snapshot_dimension = vector_snapshot_dimension(data_dir)?;
+    let dimension = search_args.dimension.unwrap_or(snapshot_dimension);
+    let embedder = LocalEmbeddingCommandEmbedder::new(
+        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
+            .map_err(CliError::embedding)?
+            .with_timeout_ms(search_args.embedding_timeout_ms)
+            .map_err(CliError::embedding)?,
+    );
+    let input = EmbeddingInput::new("query", search_args.query.as_str());
+    let query_vectors = embedder
+        .embed_batch(
+            &[input],
+            EmbeddingBudget::new(1, search_args.query.len().max(1)),
+        )
+        .map_err(CliError::embedding)?;
+    let query_vector = query_vectors
+        .into_iter()
+        .next()
+        .ok_or_else(|| CliError::user("semantic search query embedding is unavailable"))?;
+    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
+        .map_err(CliError::vector)?;
+    let vector_limit = search_args.vector_top_k.unwrap_or(candidate_limit);
+    let vector_hits = vector_index
+        .knn(
+            QueryVector::new(query_vector.values().to_vec()).map_err(CliError::vector)?,
+            vector_limit,
+        )
+        .map_err(CliError::vector)?;
+
+    vector_output_hits(store, vector_hits, &search_args.filters, search_args.top_k)
+}
+
+fn vector_snapshot_dimension(data_dir: &Path) -> Result<usize> {
+    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
+    match (inspection.state(), inspection.snapshot()) {
+        (PersistentVectorSnapshotState::Ready, Some(snapshot)) => Ok(snapshot.dimension()),
+        (PersistentVectorSnapshotState::Missing, _) => Err(CliError::user(
+            "semantic search unavailable: vector index is missing",
+        )),
+        (PersistentVectorSnapshotState::Corrupt, _) => Err(CliError::user(
+            "semantic search unavailable: vector index is corrupt",
+        )),
+        (PersistentVectorSnapshotState::Unreadable, _) => Err(CliError::user(
+            "semantic search unavailable: vector index is unreadable",
+        )),
+        _ => Err(CliError::user(
+            "semantic search unavailable: vector index is not ready",
+        )),
+    }
+}
+
+fn vector_output_hits(
+    store: &MetaStore,
+    hits: Vec<VectorHit>,
+    filters: &SearchFilters,
+    top_k: usize,
+) -> Result<Vec<SearchOutputHit>> {
+    let mut visible = Vec::new();
+    let mut seen_candidate_keys = BTreeSet::new();
+
+    for (rank, hit) in hits.into_iter().enumerate() {
+        let Some((document, version)) = hydrate_visible_document_version(store, hit.doc_id())?
+        else {
+            continue;
+        };
+        if !filters.is_empty()
+            && !filters.matches(&persisted_profile(store, hit.doc_id(), &version)?)
+        {
+            continue;
+        }
+
+        let candidate_key = candidate_fold_key(&version);
+        if !seen_candidate_keys.insert(candidate_key.clone()) {
+            continue;
+        }
+
+        visible.push(SearchOutputHit {
+            rank: rank + 1,
+            score: hit.score(),
+            doc_id: document.id.to_string(),
+            version_id: version.id.to_string(),
+            file_name: redact_contact_values(&document.file_name),
+            snippet: "semantic match".to_string(),
+            candidate_key,
+        });
+        if visible.len() == top_k {
+            break;
+        }
+    }
+
+    Ok(rerank_output_hits(visible))
+}
+
+fn fuse_hybrid_output_hits(
+    fulltext_hits: Vec<SearchOutputHit>,
+    vector_hits: Vec<SearchOutputHit>,
+    top_k: usize,
+) -> Vec<SearchOutputHit> {
+    let mut by_doc = BTreeMap::<String, SearchOutputHit>::new();
+    for hit in vector_hits.iter().chain(fulltext_hits.iter()) {
+        by_doc.insert(hit.doc_id.clone(), hit.clone());
+    }
+    let fulltext_ranked = ranked_hits_from_output(&fulltext_hits);
+    let vector_ranked = ranked_hits_from_output(&vector_hits);
+    let fused = fuse_hybrid_rrf(
+        HybridRecall::new(fulltext_ranked, vector_ranked),
+        60.0,
+        top_k.saturating_mul(5).max(top_k),
+    );
+    let mut output = Vec::new();
+    let mut seen_candidate_keys = BTreeSet::new();
+    for ranked in fused {
+        let Some(hit) = by_doc.get(ranked.doc_id()) else {
+            continue;
+        };
+        if !seen_candidate_keys.insert(hit.candidate_key.clone()) {
+            continue;
+        }
+        let mut hit = hit.clone();
+        hit.rank = output.len() + 1;
+        hit.score = ranked.score();
+        output.push(hit);
+        if output.len() == top_k {
+            break;
+        }
+    }
+
+    output
+}
+
+fn ranked_hits_from_output(hits: &[SearchOutputHit]) -> Vec<RankedHit> {
+    hits.iter()
+        .enumerate()
+        .map(|(index, hit)| {
+            RankedHit::new(hit.doc_id.clone(), index + 1, hit.score)
+                .with_candidate_key(hit.candidate_key.clone())
+        })
+        .collect()
+}
+
+fn visible_hits(
+    store: &MetaStore,
+    hits: Vec<SearchHit>,
+    top_k: usize,
+) -> Result<Vec<SearchOutputHit>> {
     let mut visible = Vec::new();
     let mut seen_candidate_keys = BTreeSet::new();
 
@@ -1656,19 +1922,18 @@ fn visible_hits(store: &MetaStore, hits: Vec<SearchHit>, top_k: usize) -> Result
         let Some(version) = hydrate_visible_version(store, &hit)? else {
             continue;
         };
-        if !seen_candidate_keys.insert(candidate_fold_key(&version)) {
+        let candidate_key = candidate_fold_key(&version);
+        if !seen_candidate_keys.insert(candidate_key.clone()) {
             continue;
         }
 
-        let mut hit = hit;
-        hit.rank = visible.len() + 1;
-        visible.push(hit);
+        visible.push(SearchOutputHit::from_fulltext(hit, candidate_key));
         if visible.len() == top_k {
             break;
         }
     }
 
-    Ok(visible)
+    Ok(rerank_output_hits(visible))
 }
 
 fn filter_hits(
@@ -1676,7 +1941,7 @@ fn filter_hits(
     hits: Vec<SearchHit>,
     filters: &SearchFilters,
     top_k: usize,
-) -> Result<Vec<SearchHit>> {
+) -> Result<Vec<SearchOutputHit>> {
     let mut filtered = Vec::new();
     let mut seen_candidate_keys = BTreeSet::new();
 
@@ -1688,19 +1953,25 @@ fn filter_hits(
         if !filters.matches(&profile) {
             continue;
         }
-        if !seen_candidate_keys.insert(candidate_fold_key(&version)) {
+        let candidate_key = candidate_fold_key(&version);
+        if !seen_candidate_keys.insert(candidate_key.clone()) {
             continue;
         }
 
-        let mut hit = hit;
-        hit.rank = filtered.len() + 1;
-        filtered.push(hit);
+        filtered.push(SearchOutputHit::from_fulltext(hit, candidate_key));
         if filtered.len() == top_k {
             break;
         }
     }
 
-    Ok(filtered)
+    Ok(rerank_output_hits(filtered))
+}
+
+fn rerank_output_hits(mut hits: Vec<SearchOutputHit>) -> Vec<SearchOutputHit> {
+    for (index, hit) in hits.iter_mut().enumerate() {
+        hit.rank = index + 1;
+    }
+    hits
 }
 
 fn candidate_fold_key(version: &ResumeVersion) -> String {
@@ -1785,11 +2056,91 @@ fn persisted_profile(
     Ok(profile)
 }
 
+fn hydrate_visible_document_version(
+    store: &MetaStore,
+    doc_id: &str,
+) -> Result<Option<(Document, ResumeVersion)>> {
+    let Ok(document_id) = DocumentId::from_str(doc_id) else {
+        return Ok(None);
+    };
+    let Some(document) = store
+        .document_by_id(&document_id)
+        .map_err(CliError::store)?
+    else {
+        return Ok(None);
+    };
+    if document.is_deleted
+        || !matches!(
+            document.status,
+            DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+        )
+    {
+        return Ok(None);
+    }
+
+    let version = store
+        .resume_versions_for_document(&document_id)
+        .map_err(CliError::store)?
+        .into_iter()
+        .find(|version| version.visibility == ResumeVisibility::Searchable);
+
+    Ok(version.map(|version| (document, version)))
+}
+
+#[derive(Clone)]
+struct SearchOutputHit {
+    rank: usize,
+    score: f32,
+    doc_id: String,
+    version_id: String,
+    file_name: String,
+    snippet: String,
+    candidate_key: String,
+}
+
+impl SearchOutputHit {
+    fn from_fulltext(hit: SearchHit, candidate_key: String) -> Self {
+        Self {
+            rank: hit.rank,
+            score: hit.score,
+            doc_id: hit.doc_id,
+            version_id: hit.version_id,
+            file_name: hit.file_name,
+            snippet: hit.snippet,
+            candidate_key,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchMode {
+    FullText,
+    Semantic,
+    Hybrid,
+}
+
+impl SearchMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "fulltext" | "keyword" => Some(Self::FullText),
+            "semantic" => Some(Self::Semantic),
+            "hybrid" => Some(Self::Hybrid),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct SearchArgs {
     query: String,
     top_k: usize,
     filters: SearchFilters,
+    mode: SearchMode,
+    embedding_command: Option<PathBuf>,
+    model_id: Option<String>,
+    dimension: Option<usize>,
+    vector_top_k: Option<usize>,
+    embedding_timeout_ms: u64,
 }
 
 fn inspect_search_index(data_dir: &Path) -> SearchIndexDiagnostic {

@@ -8,9 +8,50 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S41 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S42 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
+
+## Production Gap Audit
+
+S42 included a read-only P0-P6 product gap audit using `GOAL.md`, the system
+design docs, the execution docs, and this evidence log as scope sources. Deleted
+obsolete bootstrap files and the old S0-S13 checklist are not product scope.
+
+- P0 architecture: Rust workspace, CLI/daemon entrypoints, SQLite metadata,
+  task/status tables, loopback status IPC, doctor, and diagnostics exist.
+  Missing production control-plane work includes daemon scheduling for
+  import/OCR/index/embedding, command IPC endpoints, service lifecycle, CI,
+  CODEOWNERS, and macOS/Windows validation.
+- P1 import/search: directory scanning, DOCX/text-layer PDF parsing, cleaning,
+  sectioning, full-text snapshot publish/recover, delete rebuild, and redacted
+  snippets exist. Missing production work includes watcher/background
+  incremental import, stronger `.doc`/`.txt` support, production-grade PDF
+  coverage, large-corpus proof, and incremental index updates.
+- P2 fields/dedupe/privacy: rules for contacts/date/education/company/title/
+  skills/certs/years, persisted entity mentions, contact HMAC assignment, and
+  candidate folding exist. Missing production work includes name extraction,
+  dictionaries, normalization, soft-dedupe scoring, labeled F1 metrics,
+  encrypted local storage, and physical purge.
+- P3 semantic/hybrid: local embedding command protocol, persisted vector
+  snapshot, linear KNN, RRF helpers, embedding worker, and CLI semantic/hybrid
+  query execution now exist. Missing or BLOCKED work includes licensed model
+  selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, daemon queueing,
+  section vectors, semantic quality metrics, and real performance proof.
+- P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
+  cache schema, local OCR command client, timeout/cancel/temp cleanup, and OCR
+  text indexing exist. Missing or BLOCKED work includes real PDF page rendering,
+  multi-page OCR, bbox persistence, concrete OCR engine install/license, daemon
+  worker loop, backpressure, and real scanned-resume witness runs.
+- P5 packaging/platform: not production-ready. Installer, signing,
+  notarization, LaunchAgent/user-mode service, Windows service/MSI, upgrade/
+  uninstall, and release workflow remain absent or externally blocked by
+  platform credentials/runners.
+- P6 performance/stability: synthetic benchmark runner, status/doctor/export
+  diagnostics, snapshot fallback, and targeted fault tests exist. Missing or
+  BLOCKED work includes 100k/1M real-corpus benchmarks, nightly gates,
+  destructive kill/disk-space fault injection, resource telemetry, runbooks, and
+  cross-platform performance evidence.
 
 ## Slice Status
 
@@ -58,6 +99,7 @@ production-ready scope source.
 | S39 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli embed_worker_debug_output_redacts_candidate_text_and_command_path`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p embedder`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p embedder -p index-vector --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this CLI local embedding worker slice; real licensed embedding model selection/distribution, OS-enforced no-network sandboxing for user-provided commands, daemon-loop embedding execution, import-time embedding job state, CLI semantic/hybrid query execution, vector snapshot GC/repair, quality benchmarks, real data validation, and cross-platform command validation remain not complete or BLOCKED. |
 | S40 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this local-discovery default budget and multi-root budget-summary slice; live progress streaming, user cancellation, time/byte/CPU budgets, user-facing partial-result UX, real whole-machine witness runs, and Windows/macOS full-disk validation remain not complete. |
 | S41 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this OCR worker searchable-index slice; multi-page PDF rendering, daemon-loop OCR execution, concrete OCR engine install/license, bbox persistence, real scanned-resume witness runs, encrypted OCR text storage/physical purge, and Windows process-tree validation remain not complete. |
+| S42 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext`, `/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p index-fulltext -p rank-fusion -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this CLI semantic/hybrid query slice; licensed embedding model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, daemon-loop embedding queue, section vectors, real semantic quality/performance benchmarks, OS-enforced no-network command sandboxing, and cross-platform validation remain not complete or BLOCKED. |
 
 ## Command Log
 
@@ -1937,6 +1979,66 @@ Sub-agent review fix:
 Scope note:
 
 - S41 adds `import_pipeline::index_ocr_text`, connects OCR worker cache-hit and command-success paths to OCR text indexing, keeps empty OCR text non-searchable as `OcrDone`, persists OCR text in local SQLite resume versions, reuses existing rule extraction/contact-hash assignment, and rebuilds the full-text index after OCR completion. It does not render multi-page PDF pages, run OCR from the daemon loop, choose/install/license a concrete OCR engine, persist bounding boxes, prove behavior on real scanned resumes, encrypt OCR text at rest, physically purge SQLite/WAL data, or validate Windows process-tree behavior.
+
+### S42
+
+Design note:
+
+- S42 completes the local P3 query loop that remained after the embedding worker slice: `resume-cli search --mode semantic` embeds the query through an explicit local command, opens the persisted vector snapshot, performs KNN, hydrates visible documents from SQLite, applies persisted field filters, folds candidates, and prints redacted output. `--mode hybrid` combines full-text and vector channels with existing RRF. Full-text search remains the default and does not create metadata when the full-text index is missing.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker semantic_and_hybrid_search_use_persistent_vector_snapshot_with_local_query_embedding -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker semantic_search_reports_missing_vector_snapshot_even_when_dimension_is_supplied -- --exact
+```
+
+Output summary:
+
+- Before implementation, `semantic_and_hybrid_search_use_persistent_vector_snapshot_with_local_query_embedding` failed because `resume-cli search` did not accept `--mode` or any query embedding/vector options.
+- Before the missing-snapshot fix, `semantic_search_reports_missing_vector_snapshot_even_when_dimension_is_supplied` failed because semantic search succeeded against an implicitly created empty vector index when `--dimension` was supplied.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo clippy -p index-fulltext -p rank-fusion -p resume-cli --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `cargo test -p resume-cli --test s39_embedding_worker`: exit 0; 4 embedding/semantic tests passed, covering local command query embedding, semantic search over the persisted vector snapshot, hybrid RRF search, missing command behavior, and missing vector snapshot behavior without query/path leakage.
+- `cargo test -p index-fulltext`: exit 0; 11 full-text tests passed.
+- `cargo test -p rank-fusion`: exit 0; 6 rank-fusion tests passed.
+- `cargo test -p resume-cli`: exit 0; all CLI tests passed.
+- `cargo clippy -p index-fulltext -p rank-fusion -p resume-cli --all-targets -- -D warnings`: exit 0.
+
+Workspace acceptance:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+```
+
+Output summary:
+
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+Sub-agent review:
+
+- Kant completed a read-only P0-P6 audit and identified P3 semantic/hybrid closure as the highest-value local production feature after restoring build health. It did not edit files. Its stale source snapshot saw missing search symbols before this implementation; the final local verification above covers the corrected state.
+
+Scope note:
+
+- S42 does not choose, install, license, or distribute a production embedding model; it does not add ONNX/HNSW/FAISS or another ANN engine; it does not run a daemon embedding queue, section-level vectors, OS-enforced no-network sandboxing for user embedding commands, real semantic quality benchmarks, real resume witness scans, or cross-platform validation. Those remain incomplete or BLOCKED.
 
 ### S9
 

@@ -737,7 +737,7 @@ fn build_snippet(text: &str, query: &str) -> String {
     redact_contact_values(text[start..end].trim())
 }
 
-fn redact_contact_values(text: &str) -> String {
+pub fn redact_contact_values(text: &str) -> String {
     static EMAIL_REGEX: OnceLock<Regex> = OnceLock::new();
     static PHONE_REGEX: OnceLock<Regex> = OnceLock::new();
     static COMPACT_PHONE_REGEX: OnceLock<Regex> = OnceLock::new();

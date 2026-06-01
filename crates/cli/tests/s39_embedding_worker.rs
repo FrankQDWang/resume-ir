@@ -107,6 +107,130 @@ printf 'metadata=synthetic-fixture\n'
     remove_dir(&data_dir);
 }
 
+#[cfg(unix)]
+#[test]
+fn semantic_and_hybrid_search_use_persistent_vector_snapshot_with_local_query_embedding() {
+    let data_dir = temp_dir("semantic-search-data");
+    let fixture_root = fixture_root();
+    let command = write_fixture_executable(
+        "fixture-semantic-search-embedding",
+        r#"#!/bin/sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0,0\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+    import_fixtures(&data_dir, &fixture_root);
+
+    let embed = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "embed-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+            "--model-id",
+            "fixture-local-model",
+            "--dimension",
+            "4",
+            "--max-docs",
+            "8",
+            "--max-text-bytes",
+            "100000",
+        ])
+        .output()
+        .expect("run embed worker before semantic search");
+    assert!(
+        embed.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&embed.stdout),
+        String::from_utf8_lossy(&embed.stderr)
+    );
+
+    for mode in ["semantic", "hybrid"] {
+        let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .args([
+                "--data-dir",
+                path_str(&data_dir),
+                "search",
+                "SemanticOnlyToken",
+                "--mode",
+                mode,
+                "--embedding-command",
+                path_str(&command),
+                "--model-id",
+                "fixture-local-model",
+                "--top-k",
+                "20",
+            ])
+            .output()
+            .expect("run semantic or hybrid search");
+        assert!(
+            search.status.success(),
+            "mode: {mode}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&search.stdout),
+            String::from_utf8_lossy(&search.stderr)
+        );
+        assert!(search.stderr.is_empty());
+        let stdout = String::from_utf8_lossy(&search.stdout);
+        assert!(
+            stdout.contains("results: 2"),
+            "mode: {mode}\nstdout:\n{stdout}"
+        );
+        assert!(stdout.contains("synthetic-java-platform.pdf"));
+        assert!(stdout.contains("synthetic-java-engineer.docx"));
+        assert!(!stdout.contains("SemanticOnlyToken"));
+        assert!(!stdout.contains(path_str(&data_dir)));
+        assert!(!stdout.contains(path_str(&fixture_root)));
+    }
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn semantic_search_reports_missing_vector_snapshot_even_when_dimension_is_supplied() {
+    let data_dir = temp_dir("semantic-missing-vector-snapshot-data");
+    let command = write_fixture_executable(
+        "fixture-semantic-missing-vector-snapshot-embedding",
+        r#"#!/bin/sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0,0\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "SemanticOnlyToken",
+            "--mode",
+            "semantic",
+            "--embedding-command",
+            path_str(&command),
+            "--model-id",
+            "fixture-local-model",
+            "--dimension",
+            "4",
+        ])
+        .output()
+        .expect("run semantic search without a vector snapshot");
+
+    assert!(!search.status.success());
+    assert!(search.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&search.stderr);
+    assert!(stderr.contains("semantic search unavailable: vector index is missing"));
+    assert!(!stderr.contains("SemanticOnlyToken"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+
+    remove_dir(&data_dir);
+}
+
 fn import_fixtures(data_dir: &Path, fixture_root: &Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
