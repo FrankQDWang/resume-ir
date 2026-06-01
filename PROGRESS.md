@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S50 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S51 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -23,13 +23,15 @@ obsolete preliminary files and checklists are not product scope.
   command IPC endpoint, CLI import-over-IPC submission, authenticated loopback
   full-text search command IPC, CLI search-over-IPC submission, local and
   authenticated loopback redacted detail retrieval, doctor, diagnostics, a
-  one-shot daemon import worker, a long-running daemon import scheduler, and a
-  daemon OCR worker loop for queued OCR jobs exist. Import tasks have retry
+  one-shot daemon import worker, a long-running daemon import scheduler, a
+  daemon OCR worker loop for queued OCR jobs, and a daemon embedding worker
+  loop for local vector snapshot generation exist. Import tasks have retry
   backoff, running-task heartbeat, and stale-running task recovery. The daemon
-  can serve loopback status IPC while import or OCR worker loops run.
+  can serve loopback status IPC while import, OCR, or embedding worker loops
+  run.
   Missing production control-plane work includes import cancellation/progress
-  streaming, daemon embedding/index workers, service lifecycle, CI, CODEOWNERS,
-  and macOS/Windows validation.
+  streaming, daemon index-maintenance workers, service lifecycle, CI,
+  CODEOWNERS, and macOS/Windows validation.
 - P1 import/search: directory scanning, DOCX/text-layer PDF parsing, cleaning,
   sectioning, full-text snapshot publish/recover, delete rebuild, and redacted
   snippets exist. Missing production work includes watcher/background
@@ -42,10 +44,12 @@ obsolete preliminary files and checklists are not product scope.
   encrypted local storage, and physical purge.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, linear KNN, RRF helpers, embedding worker, and CLI semantic/hybrid
-  query execution now exist. Missing or BLOCKED work includes licensed model
-  selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, daemon embedding
-  execution, section vectors, semantic quality metrics, and real performance
-  proof.
+  query execution now exist. The daemon can now execute a configured local
+  embedding command in one-shot or long-running worker mode and persist a
+  vector snapshot while serving status IPC. Missing or BLOCKED work includes
+  licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN,
+  durable per-version embedding job state, section vectors, semantic quality
+  metrics, and real performance proof.
 - P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
   cache schema, local OCR command client, timeout/cancel/temp cleanup, and OCR
   text indexing exist. The daemon can now claim queued OCR jobs, execute a
@@ -119,8 +123,71 @@ obsolete preliminary files and checklists are not product scope.
 | S48 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p rank-fusion -p resume-cli -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this authenticated full-text search-over-IPC slice; daemon endpoint discovery UX, semantic/hybrid daemon search IPC, token rotation/revocation, import/search progress streaming, singleton service lifecycle enforcement, daemon OCR/vector workers, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
 | S49 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s49_detail_cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s49_detail_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s49_detail_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this redacted detail retrieval slice; daemon endpoint discovery UX, semantic/hybrid daemon search IPC, token rotation/revocation, import/search/detail progress streaming, singleton service lifecycle enforcement, daemon OCR/vector workers, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
 | S50 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this daemon OCR worker slice; real PDF page rendering, multi-page OCR, bbox persistence, concrete OCR engine install/license, OCR backpressure, encrypted OCR text purge, real scanned-resume witness runs, daemon embedding worker, and Windows/macOS service/process validation remain not complete or BLOCKED. |
+| S51 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this daemon local embedding worker slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, durable per-version embedding job state, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S51
+
+Design target:
+
+- S51 moves local embedding execution into the daemon control plane. A daemon
+  can now run `--work-embeddings-once` or a long-running `--work-embeddings`
+  loop, execute an explicitly configured local embedding command, persist the
+  vector snapshot, and keep serving status IPC while embedding work runs.
+- This slice still requires a user-provided local command, model id, and
+  dimension. It does not select, bundle, download, license, or claim a
+  production embedding model.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker daemon_embedding_worker_once_runs_local_command_and_persists_vector_snapshot -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker daemon_embedding_worker_loop_serves_status_ipc_while_persisting_vectors -- --exact
+```
+
+Output summary:
+
+- Before implementation, the one-shot daemon embedding test failed because
+  `resume-daemon run` rejected `--work-embeddings-once` as usage.
+- Before implementation, the loop daemon embedding test failed because the
+  daemon rejected `--work-embeddings` and exited before printing an IPC
+  endpoint.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `cargo test -p resume-daemon --test s51_embedding_worker`: exit 0; 2 tests
+  passed. Coverage includes one-shot daemon embedding command execution,
+  vector snapshot persistence, no stdout leakage of paths or embedded text, and
+  a worker loop serving status IPC while persisting vectors.
+- `cargo test -p resume-cli --test s39_embedding_worker`: exit 0; 4 tests
+  passed, preserving CLI local embedding worker and semantic/hybrid search
+  behavior.
+- `cargo test -p resume-daemon`: exit 0; daemon identity, status/search/detail
+  IPC, import worker, OCR worker, and S51 embedding worker tests passed.
+- Focused daemon clippy passed.
+
+Scope note:
+
+- S51 does not choose or distribute a licensed model, add ANN/HNSW/FAISS,
+  persist durable per-version embedding job state, create section vectors, run
+  semantic quality metrics, prove production-scale vector performance, enforce
+  OS-level no-network sandboxing for configured commands, or validate
+  Windows/macOS command behavior. Those remain incomplete or BLOCKED.
 
 ### S50
 

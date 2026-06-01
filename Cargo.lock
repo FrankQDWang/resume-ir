@@ -1059,9 +1059,11 @@ dependencies = [
 name = "resume-daemon"
 version = "0.1.0"
 dependencies = [
+ "embedder",
  "getrandom 0.2.17",
  "import-pipeline",
  "index-fulltext",
+ "index-vector",
  "meta-store",
  "ocr-client",
  "rank-fusion",

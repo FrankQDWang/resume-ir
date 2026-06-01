@@ -10,8 +10,10 @@ name = "resume-daemon"
 path = "src/main.rs"
 
 [dependencies]
+embedder = { path = "../embedder" }
 getrandom = "0.2"
 index-fulltext = { path = "../index-fulltext" }
+index-vector = { path = "../index-vector" }
 import-pipeline = { path = "../import-pipeline" }
 meta-store = { path = "../meta-store" }
 ocr-client = { path = "../ocr-client" }

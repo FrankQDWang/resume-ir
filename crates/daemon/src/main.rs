@@ -13,11 +13,16 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use embedder::{
+    Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
+    LocalEmbeddingCommandSpec,
+};
 use import_pipeline::{
     import_root_with_options, index_ocr_text, ImportOptions,
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{redact_contact_values, FullTextIndex, SearchHit, SearchQuery};
+use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{
     DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension, ImportRootKind,
     ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask,
@@ -43,6 +48,9 @@ const DEFAULT_OCR_LANG: &str = "eng";
 const DEFAULT_OCR_PROFILE: &str = "balanced";
 const DEFAULT_OCR_RENDER_DPI: u32 = 300;
 const DEFAULT_OCR_PAGE_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_EMBEDDING_MAX_DOCS: usize = 64;
+const DEFAULT_EMBEDDING_MAX_TEXT_BYTES: usize = 1_000_000;
+const DEFAULT_EMBEDDING_TIMEOUT_MS: u64 = 30_000;
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -127,14 +135,29 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: choose either --work-ocr or --work-ocr-once",
         ));
     }
-    if (options.worker_interval_ms.is_some() || options.max_worker_ticks.is_some())
-        && !(options.work_imports || options.work_ocr)
-    {
+    if options.work_embeddings_once && !options.once {
         return Err(DaemonError::usage(
-            "usage: worker loop options require --work-imports or --work-ocr",
+            "usage: --work-embeddings-once requires --once",
         ));
     }
-    if (options.work_imports || options.work_ocr)
+    if options.work_embeddings && options.once {
+        return Err(DaemonError::usage(
+            "usage: --work-embeddings cannot be combined with --once",
+        ));
+    }
+    if options.work_embeddings && options.work_embeddings_once {
+        return Err(DaemonError::usage(
+            "usage: choose either --work-embeddings or --work-embeddings-once",
+        ));
+    }
+    if (options.worker_interval_ms.is_some() || options.max_worker_ticks.is_some())
+        && !(options.work_imports || options.work_ocr || options.work_embeddings)
+    {
+        return Err(DaemonError::usage(
+            "usage: worker loop options require --work-imports, --work-ocr, or --work-embeddings",
+        ));
+    }
+    if (options.work_imports || options.work_ocr || options.work_embeddings)
         && options.ipc_listen.is_some()
         && options.max_worker_ticks.is_some()
     {
@@ -146,6 +169,18 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Err(DaemonError::user(
             "ocr worker blocked: local OCR command not configured",
         ));
+    }
+    if (options.work_embeddings_once || options.work_embeddings)
+        && options.embedding_command.is_none()
+    {
+        return Err(DaemonError::user(
+            "embedding worker blocked: local embedding command not configured",
+        ));
+    }
+    if (options.work_embeddings_once || options.work_embeddings)
+        && (options.embedding_model_id.is_none() || options.embedding_dimension.is_none())
+    {
+        return Err(DaemonError::usage(run_usage()));
     }
 
     let store = open_store(data_dir)?;
@@ -167,15 +202,23 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         let ocr_summary = run_ocr_worker_once(data_dir, &store, &options)?;
         print_ocr_worker_summary(&ocr_summary)?;
     }
+    if options.work_embeddings_once {
+        let mut excluded_version_ids = BTreeSet::new();
+        let embedding_summary =
+            run_embedding_worker_once(data_dir, &store, &options, &mut excluded_version_ids)?;
+        print_embedding_worker_summary(&embedding_summary)?;
+    }
 
     if options.once {
         return Ok(());
     }
-    if (options.work_imports || options.work_ocr) && options.ipc_listen.is_some() {
+    if (options.work_imports || options.work_ocr || options.work_embeddings)
+        && options.ipc_listen.is_some()
+    {
         run_worker_with_ipc(data_dir, &options)?;
         return Ok(());
     }
-    if options.work_imports || options.work_ocr {
+    if options.work_imports || options.work_ocr || options.work_embeddings {
         run_worker_loop(data_dir, &store, &options, None)?;
         return Ok(());
     }
@@ -241,6 +284,14 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 options.work_ocr = true;
                 index += 1;
             }
+            "--work-embeddings-once" => {
+                options.work_embeddings_once = true;
+                index += 1;
+            }
+            "--work-embeddings" => {
+                options.work_embeddings = true;
+                index += 1;
+            }
             "--ocr-command" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(DaemonError::usage(run_usage()));
@@ -279,6 +330,56 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                     return Err(DaemonError::usage(run_usage()));
                 };
                 options.ocr_page_timeout_ms = value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| DaemonError::usage(run_usage()))?;
+                index += 2;
+            }
+            "--embedding-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                if options.embedding_command.is_some() {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.embedding_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--embedding-model-id" => {
+                let value = parse_non_empty_run_value(args.get(index + 1))?;
+                if !valid_run_identifier(&value) {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.embedding_model_id = Some(value);
+                index += 2;
+            }
+            "--embedding-dimension" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.embedding_dimension = Some(parse_positive_usize_run_value(value)?);
+                index += 2;
+            }
+            "--embedding-max-docs" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.embedding_max_docs = parse_positive_usize_run_value(value)?;
+                index += 2;
+            }
+            "--embedding-max-text-bytes" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.embedding_max_text_bytes = parse_positive_usize_run_value(value)?;
+                index += 2;
+            }
+            "--embedding-timeout-ms" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.embedding_timeout_ms = value
                     .parse::<u64>()
                     .ok()
                     .filter(|value| *value > 0)
@@ -325,7 +426,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--ocr-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--ocr-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -336,6 +437,21 @@ fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
         return Err(DaemonError::usage(run_usage()));
     }
     Ok(value.clone())
+}
+
+fn parse_positive_usize_run_value(value: &str) -> Result<usize> {
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| DaemonError::usage(run_usage()))
+}
+
+fn valid_run_identifier(value: &str) -> bool {
+    !value.trim().is_empty()
+        && !value.contains('\n')
+        && !value.contains('\r')
+        && !value.contains('\t')
 }
 
 fn run_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
@@ -380,6 +496,7 @@ fn run_worker_loop(
 ) -> Result<()> {
     let interval = Duration::from_millis(options.worker_interval_ms.unwrap_or(1_000));
     let mut ticks = 0_usize;
+    let mut embedded_version_ids = BTreeSet::new();
 
     loop {
         if stop_signal
@@ -408,6 +525,13 @@ fn run_worker_loop(
             let ocr_summary = run_ocr_worker_once(data_dir, store, options)?;
             if ocr_summary.has_activity() {
                 print_ocr_worker_summary(&ocr_summary)?;
+            }
+        }
+        if options.work_embeddings {
+            let embedding_summary =
+                run_embedding_worker_once(data_dir, store, options, &mut embedded_version_ids)?;
+            if embedding_summary.has_activity() {
+                print_embedding_worker_summary(&embedding_summary)?;
             }
         }
         if options
@@ -696,6 +820,129 @@ fn mark_ocr_job_failed_permanent(
     store
         .update_job_status(&job.id, IngestJobStatus::FailedPermanent, now)
         .map_err(DaemonError::store)
+}
+
+fn run_embedding_worker_once(
+    data_dir: &Path,
+    store: &MetaStore,
+    options: &RunOptions,
+    excluded_version_ids: &mut BTreeSet<String>,
+) -> Result<EmbeddingWorkerSummary> {
+    let Some(command) = options.embedding_command.clone() else {
+        return Err(DaemonError::user(
+            "embedding worker blocked: local embedding command not configured",
+        ));
+    };
+    let model_id = options
+        .embedding_model_id
+        .as_deref()
+        .ok_or_else(|| DaemonError::usage(run_usage()))?;
+    let dimension = options
+        .embedding_dimension
+        .ok_or_else(|| DaemonError::usage(run_usage()))?;
+    let candidates = embedding_candidates(store, options.embedding_max_docs, excluded_version_ids)?;
+    let documents_considered = candidates.len();
+    if candidates.is_empty() {
+        return Ok(EmbeddingWorkerSummary::default());
+    }
+
+    let embedder = LocalEmbeddingCommandEmbedder::new(
+        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
+            .map_err(DaemonError::embedding)?
+            .with_timeout_ms(options.embedding_timeout_ms)
+            .map_err(DaemonError::embedding)?,
+    );
+    let inputs = candidates
+        .iter()
+        .map(|candidate| {
+            EmbeddingInput::new(candidate.version_id.as_str(), candidate.text.as_str())
+        })
+        .collect::<Vec<_>>();
+    let vectors = embedder
+        .embed_batch(
+            &inputs,
+            EmbeddingBudget::new(options.embedding_max_docs, options.embedding_max_text_bytes),
+        )
+        .map_err(DaemonError::embedding)?;
+    let vector_writes = vectors.len();
+    let vector_documents = vectors
+        .into_iter()
+        .zip(candidates.iter())
+        .map(|(vector, candidate)| {
+            VectorDocument::new(
+                format!("{}:{}", vector.model_id(), vector.id()),
+                candidate.document_id.as_str(),
+                vector.values().to_vec(),
+            )
+            .map_err(DaemonError::vector)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
+        .map_err(DaemonError::vector)?;
+    index
+        .upsert(vector_documents)
+        .map_err(DaemonError::vector)?;
+
+    for candidate in &candidates {
+        excluded_version_ids.insert(candidate.version_id.to_string());
+    }
+
+    Ok(EmbeddingWorkerSummary {
+        documents_considered,
+        processed: inputs.len(),
+        vector_writes,
+        failed: 0,
+    })
+}
+
+fn embedding_candidates(
+    store: &MetaStore,
+    max_docs: usize,
+    excluded_version_ids: &BTreeSet<String>,
+) -> Result<Vec<EmbeddingWorkerCandidate>> {
+    let mut candidates = Vec::new();
+    for document in store.visible_documents().map_err(DaemonError::store)? {
+        if !matches!(
+            document.status,
+            DocumentStatus::FieldsExtracted
+                | DocumentStatus::EmbeddingDone
+                | DocumentStatus::IndexedPartial
+                | DocumentStatus::Searchable
+        ) {
+            continue;
+        }
+
+        for version in store
+            .resume_versions_for_document(&document.id)
+            .map_err(DaemonError::store)?
+        {
+            if version.visibility != ResumeVisibility::Searchable {
+                continue;
+            }
+            if excluded_version_ids.contains(version.id.as_str()) {
+                continue;
+            }
+            let Some(text) = version
+                .clean_text
+                .as_deref()
+                .or(version.raw_text.as_deref())
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+            else {
+                continue;
+            };
+            candidates.push(EmbeddingWorkerCandidate {
+                document_id: document.id.clone(),
+                version_id: version.id,
+                text: text.to_string(),
+            });
+            if candidates.len() == max_docs {
+                return Ok(candidates);
+            }
+        }
+    }
+
+    Ok(candidates)
 }
 
 fn recover_stale_import_tasks(store: &MetaStore, now: UnixTimestamp) -> Result<usize> {
@@ -2105,12 +2352,20 @@ struct RunOptions {
     work_imports: bool,
     work_ocr_once: bool,
     work_ocr: bool,
+    work_embeddings_once: bool,
+    work_embeddings: bool,
     ocr_command: Option<PathBuf>,
     ocr_engine_profile: String,
     ocr_lang: String,
     ocr_profile: String,
     ocr_render_dpi: u32,
     ocr_page_timeout_ms: u64,
+    embedding_command: Option<PathBuf>,
+    embedding_model_id: Option<String>,
+    embedding_dimension: Option<usize>,
+    embedding_max_docs: usize,
+    embedding_max_text_bytes: usize,
+    embedding_timeout_ms: u64,
     worker_interval_ms: Option<u64>,
     max_worker_ticks: Option<usize>,
 }
@@ -2126,12 +2381,20 @@ impl Default for RunOptions {
             work_imports: false,
             work_ocr_once: false,
             work_ocr: false,
+            work_embeddings_once: false,
+            work_embeddings: false,
             ocr_command: None,
             ocr_engine_profile: DEFAULT_OCR_ENGINE_PROFILE.to_string(),
             ocr_lang: DEFAULT_OCR_LANG.to_string(),
             ocr_profile: DEFAULT_OCR_PROFILE.to_string(),
             ocr_render_dpi: DEFAULT_OCR_RENDER_DPI,
             ocr_page_timeout_ms: DEFAULT_OCR_PAGE_TIMEOUT_MS,
+            embedding_command: None,
+            embedding_model_id: None,
+            embedding_dimension: None,
+            embedding_max_docs: DEFAULT_EMBEDDING_MAX_DOCS,
+            embedding_max_text_bytes: DEFAULT_EMBEDDING_MAX_TEXT_BYTES,
+            embedding_timeout_ms: DEFAULT_EMBEDDING_TIMEOUT_MS,
             worker_interval_ms: None,
             max_worker_ticks: None,
         }
@@ -2210,6 +2473,55 @@ fn print_ocr_worker_summary(summary: &OcrWorkerSummary) -> Result<()> {
     println!("ocr worker cache writes: {}", summary.cache_writes);
     println!("ocr worker cache hits: {}", summary.cache_hits);
     println!("ocr worker failed: {}", summary.failed);
+    io::stdout()
+        .flush()
+        .map_err(|_| DaemonError::user("unable to write daemon status"))
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct EmbeddingWorkerCandidate {
+    document_id: DocumentId,
+    version_id: ResumeVersionId,
+    text: String,
+}
+
+impl fmt::Debug for EmbeddingWorkerCandidate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmbeddingWorkerCandidate")
+            .field("document_id", &self.document_id)
+            .field("version_id", &self.version_id)
+            .field("text", &"<redacted>")
+            .field("text_bytes", &self.text.len())
+            .finish()
+    }
+}
+
+#[derive(Default)]
+struct EmbeddingWorkerSummary {
+    documents_considered: usize,
+    processed: usize,
+    vector_writes: usize,
+    failed: usize,
+}
+
+impl EmbeddingWorkerSummary {
+    fn has_activity(&self) -> bool {
+        self.documents_considered > 0
+            || self.processed > 0
+            || self.vector_writes > 0
+            || self.failed > 0
+    }
+}
+
+fn print_embedding_worker_summary(summary: &EmbeddingWorkerSummary) -> Result<()> {
+    println!(
+        "embedding worker documents considered: {}",
+        summary.documents_considered
+    );
+    println!("embedding worker processed: {}", summary.processed);
+    println!("embedding worker vector writes: {}", summary.vector_writes);
+    println!("embedding worker failed: {}", summary.failed);
     io::stdout()
         .flush()
         .map_err(|_| DaemonError::user("unable to write daemon status"))
@@ -2378,6 +2690,20 @@ impl DaemonError {
     }
 
     fn ocr(error: ocr_client::OcrError) -> Self {
+        Self {
+            message: error.to_string(),
+            exit_code: 1,
+        }
+    }
+
+    fn embedding(error: embedder::EmbeddingError) -> Self {
+        Self {
+            message: error.to_string(),
+            exit_code: 1,
+        }
+    }
+
+    fn vector(error: index_vector::VectorIndexError) -> Self {
         Self {
             message: error.to_string(),
             exit_code: 1,
