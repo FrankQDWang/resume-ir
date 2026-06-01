@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S49 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S50 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -23,13 +23,13 @@ obsolete preliminary files and checklists are not product scope.
   command IPC endpoint, CLI import-over-IPC submission, authenticated loopback
   full-text search command IPC, CLI search-over-IPC submission, local and
   authenticated loopback redacted detail retrieval, doctor, diagnostics, a
-  one-shot daemon import worker, and a long-running daemon import scheduler for
-  queued import tasks with retry backoff, running-task heartbeat, and
-  stale-running task recovery exist. The daemon can now serve loopback status
-  IPC while the import worker loop runs.
+  one-shot daemon import worker, a long-running daemon import scheduler, and a
+  daemon OCR worker loop for queued OCR jobs exist. Import tasks have retry
+  backoff, running-task heartbeat, and stale-running task recovery. The daemon
+  can serve loopback status IPC while import or OCR worker loops run.
   Missing production control-plane work includes import cancellation/progress
-  streaming, OCR/index/embedding workers, service lifecycle, CI, CODEOWNERS, and
-  macOS/Windows validation.
+  streaming, daemon embedding/index workers, service lifecycle, CI, CODEOWNERS,
+  and macOS/Windows validation.
 - P1 import/search: directory scanning, DOCX/text-layer PDF parsing, cleaning,
   sectioning, full-text snapshot publish/recover, delete rebuild, and redacted
   snippets exist. Missing production work includes watcher/background
@@ -43,13 +43,17 @@ obsolete preliminary files and checklists are not product scope.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, linear KNN, RRF helpers, embedding worker, and CLI semantic/hybrid
   query execution now exist. Missing or BLOCKED work includes licensed model
-  selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, daemon queueing,
-  section vectors, semantic quality metrics, and real performance proof.
+  selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, daemon embedding
+  execution, section vectors, semantic quality metrics, and real performance
+  proof.
 - P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
   cache schema, local OCR command client, timeout/cancel/temp cleanup, and OCR
-  text indexing exist. Missing or BLOCKED work includes real PDF page rendering,
-  multi-page OCR, bbox persistence, concrete OCR engine install/license, daemon
-  worker loop, backpressure, and real scanned-resume witness runs.
+  text indexing exist. The daemon can now claim queued OCR jobs, execute a
+  configured local OCR command, persist cache entries, index OCR text, honor
+  persistent pause state, and keep serving status IPC while OCR runs. Missing or
+  BLOCKED work includes real PDF page rendering, multi-page OCR, bbox
+  persistence, concrete OCR engine install/license, backpressure, and real
+  scanned-resume witness runs.
 - P5 packaging/platform: not production-ready. Installer, signing,
   notarization, LaunchAgent/user-mode service, Windows service/MSI, upgrade/
   uninstall, and release workflow remain absent or externally blocked by
@@ -114,8 +118,73 @@ obsolete preliminary files and checklists are not product scope.
 | S47 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_import_command_preserves_local_discovery_preset_scope -- --exact`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this CLI import-over-IPC UX slice; search/detail IPC endpoints, daemon endpoint discovery UX, token rotation/revocation, import cancellation/progress streaming, singleton service lifecycle enforcement, daemon OCR/vector workers, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
 | S48 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p rank-fusion -p resume-cli -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this authenticated full-text search-over-IPC slice; daemon endpoint discovery UX, semantic/hybrid daemon search IPC, token rotation/revocation, import/search progress streaming, singleton service lifecycle enforcement, daemon OCR/vector workers, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
 | S49 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s49_detail_cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s49_detail_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s49_detail_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this redacted detail retrieval slice; daemon endpoint discovery UX, semantic/hybrid daemon search IPC, token rotation/revocation, import/search/detail progress streaming, singleton service lifecycle enforcement, daemon OCR/vector workers, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
+| S50 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this daemon OCR worker slice; real PDF page rendering, multi-page OCR, bbox persistence, concrete OCR engine install/license, OCR backpressure, encrypted OCR text purge, real scanned-resume witness runs, daemon embedding worker, and Windows/macOS service/process validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S50
+
+Design target:
+
+- S50 moves OCR execution into the daemon control plane. A daemon can now run
+  `--work-ocr-once` or a long-running `--work-ocr` loop, claim durable
+  `OcrDocument` jobs, honor the persistent OCR pause flag, execute a configured
+  local OCR command, persist the page cache, index successful OCR text, and
+  keep serving status IPC while the OCR worker loop runs.
+- The daemon summary output reports counts only. It does not print source
+  document paths, data-dir paths, OCR command paths, or OCR text.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker daemon_ocr_worker_once_executes_local_command_and_indexes_scanned_pdf -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker daemon_ocr_worker_loop_serves_status_ipc_while_indexing_scanned_pdf -- --exact
+```
+
+Output summary:
+
+- Before implementation, the one-shot daemon OCR test failed because
+  `resume-daemon run` rejected `--work-ocr-once` as usage.
+- Before implementation, the loop daemon OCR test failed because the daemon
+  rejected `--work-ocr` and exited before printing an IPC endpoint.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `cargo test -p resume-daemon --test s50_ocr_worker`: exit 0; 3 tests passed.
+  Coverage includes one-shot daemon OCR command execution, cache persistence,
+  searchable OCR text indexing, persistent pause preventing job claim/command
+  invocation, no stdout leakage of paths or OCR text, and an OCR worker loop
+  serving status IPC while processing a queued OCR job.
+- `cargo test -p resume-cli --test s15_ocr_handoff`: exit 0; 7 OCR handoff
+  tests passed, preserving CLI OCR worker command/cache/pause/resume behavior.
+- `cargo test -p resume-daemon`: exit 0; daemon identity, status/search/detail
+  IPC, import worker, combined IPC-worker, and S50 OCR worker tests passed.
+- `cargo clippy -p resume-daemon --all-targets -- -D warnings`,
+  `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt
+  --check`, `git diff --check`, and `cargo test --workspace` all passed.
+- The obsolete-reference marker scan returned no matches.
+
+Scope note:
+
+- S50 does not render real PDF pages for OCR, split multi-page scanned PDFs,
+  persist OCR bounding boxes, choose/install/license an OCR engine, implement
+  OCR backpressure, encrypt/purge OCR text, run a real scanned-resume witness,
+  add daemon embedding execution, or validate Windows/macOS service and process
+  behavior. Those remain incomplete or BLOCKED.
 
 ### S49
 

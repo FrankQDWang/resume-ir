@@ -14,15 +14,20 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use import_pipeline::{
-    import_root_with_options, ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind,
-    ImportSummary, ScanProfile,
+    import_root_with_options, index_ocr_text, ImportOptions,
+    ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{redact_contact_values, FullTextIndex, SearchHit, SearchQuery};
 use meta_store::{
     DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension, ImportRootKind,
     ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask,
-    ImportTaskId, ImportTaskStatus, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp,
+    ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobKind, IngestJobStatus,
+    MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion,
+    ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
+};
+use ocr_client::{
+    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
+    OcrPageRequest, OcrWorkerBudget, RenderedPage,
 };
 use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
@@ -33,6 +38,11 @@ const STALE_IMPORT_TASK_SECONDS: i64 = 15 * 60;
 const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
 const IPC_AUTH_TOKEN_BYTES: usize = 32;
 const IPC_MAX_REQUEST_BYTES: usize = 64 * 1024;
+const DEFAULT_OCR_ENGINE_PROFILE: &str = "local-command";
+const DEFAULT_OCR_LANG: &str = "eng";
+const DEFAULT_OCR_PROFILE: &str = "balanced";
+const DEFAULT_OCR_RENDER_DPI: u32 = 300;
+const DEFAULT_OCR_PAGE_TIMEOUT_MS: u64 = 30_000;
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -82,9 +92,7 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let options = parse_run_options(args)?;
 
     if !options.foreground {
-        return Err(DaemonError::usage(
-            "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]",
-        ));
+        return Err(DaemonError::usage(run_usage()));
     }
     if options.once && options.ipc_listen.is_some() {
         return Err(DaemonError::usage(
@@ -106,16 +114,37 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: choose either --work-imports or --work-imports-once",
         ));
     }
-    if (options.worker_interval_ms.is_some() || options.max_worker_ticks.is_some())
-        && !options.work_imports
-    {
+    if options.work_ocr_once && !options.once {
+        return Err(DaemonError::usage("usage: --work-ocr-once requires --once"));
+    }
+    if options.work_ocr && options.once {
         return Err(DaemonError::usage(
-            "usage: worker loop options require --work-imports",
+            "usage: --work-ocr cannot be combined with --once",
         ));
     }
-    if options.work_imports && options.ipc_listen.is_some() && options.max_worker_ticks.is_some() {
+    if options.work_ocr && options.work_ocr_once {
+        return Err(DaemonError::usage(
+            "usage: choose either --work-ocr or --work-ocr-once",
+        ));
+    }
+    if (options.worker_interval_ms.is_some() || options.max_worker_ticks.is_some())
+        && !(options.work_imports || options.work_ocr)
+    {
+        return Err(DaemonError::usage(
+            "usage: worker loop options require --work-imports or --work-ocr",
+        ));
+    }
+    if (options.work_imports || options.work_ocr)
+        && options.ipc_listen.is_some()
+        && options.max_worker_ticks.is_some()
+    {
         return Err(DaemonError::usage(
             "usage: --max-worker-ticks cannot be combined with --ipc-listen",
+        ));
+    }
+    if (options.work_ocr_once || options.work_ocr) && options.ocr_command.is_none() {
+        return Err(DaemonError::user(
+            "ocr worker blocked: local OCR command not configured",
         ));
     }
 
@@ -134,16 +163,20 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         let import_summary = run_import_worker_once(data_dir, &store)?;
         print_import_worker_summary(&import_summary)?;
     }
+    if options.work_ocr_once {
+        let ocr_summary = run_ocr_worker_once(data_dir, &store, &options)?;
+        print_ocr_worker_summary(&ocr_summary)?;
+    }
 
     if options.once {
         return Ok(());
     }
-    if options.work_imports && options.ipc_listen.is_some() {
-        run_import_worker_with_ipc(data_dir, &options)?;
+    if (options.work_imports || options.work_ocr) && options.ipc_listen.is_some() {
+        run_worker_with_ipc(data_dir, &options)?;
         return Ok(());
     }
-    if options.work_imports {
-        run_import_worker_loop(data_dir, &store, &options, None)?;
+    if options.work_imports || options.work_ocr {
+        run_worker_loop(data_dir, &store, &options, None)?;
         return Ok(());
     }
     if let Some(ipc_addr) = options.ipc_listen {
@@ -200,6 +233,58 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 options.work_imports = true;
                 index += 1;
             }
+            "--work-ocr-once" => {
+                options.work_ocr_once = true;
+                index += 1;
+            }
+            "--work-ocr" => {
+                options.work_ocr = true;
+                index += 1;
+            }
+            "--ocr-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                if options.ocr_command.is_some() {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.ocr_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-engine-profile" => {
+                options.ocr_engine_profile = parse_non_empty_run_value(args.get(index + 1))?;
+                index += 2;
+            }
+            "--ocr-lang" => {
+                options.ocr_lang = parse_non_empty_run_value(args.get(index + 1))?;
+                index += 2;
+            }
+            "--ocr-profile" => {
+                options.ocr_profile = parse_non_empty_run_value(args.get(index + 1))?;
+                index += 2;
+            }
+            "--ocr-render-dpi" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.ocr_render_dpi = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| DaemonError::usage(run_usage()))?;
+                index += 2;
+            }
+            "--ocr-page-timeout-ms" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.ocr_page_timeout_ms = value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| DaemonError::usage(run_usage()))?;
+                index += 2;
+            }
             "--worker-interval-ms" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(DaemonError::usage(run_usage()));
@@ -240,10 +325,20 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--ocr-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
-fn run_import_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
+fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
+    let Some(value) = value else {
+        return Err(DaemonError::usage(run_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(DaemonError::usage(run_usage()));
+    }
+    Ok(value.clone())
+}
+
+fn run_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
     let ipc_addr = options
         .ipc_listen
         .expect("validated combined worker/ipc mode has ipc address");
@@ -259,7 +354,7 @@ fn run_import_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<(
     let worker_handle = thread::spawn(move || {
         let result = (|| -> Result<()> {
             let store = open_store(&worker_data_dir)?;
-            run_import_worker_loop(&worker_data_dir, &store, &worker_options, Some(worker_stop))
+            run_worker_loop(&worker_data_dir, &store, &worker_options, Some(worker_stop))
         })();
         let _ = worker_result_sender.send(result);
     });
@@ -273,11 +368,11 @@ fn run_import_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<(
     stop_worker.store(true, Ordering::Relaxed);
     worker_handle
         .join()
-        .map_err(|_| DaemonError::user("import worker thread panicked"))?;
+        .map_err(|_| DaemonError::user("worker thread panicked"))?;
     ipc_result
 }
 
-fn run_import_worker_loop(
+fn run_worker_loop(
     data_dir: &Path,
     store: &MetaStore,
     options: &RunOptions,
@@ -294,18 +389,26 @@ fn run_import_worker_loop(
             return Ok(());
         }
         ticks += 1;
-        let now = current_timestamp()?;
-        let mut import_summary = ImportWorkerSummary {
-            stale_recovered: recover_stale_import_tasks(store, now)?,
-            ..ImportWorkerSummary::default()
-        };
-        import_summary.extend(run_import_worker_once_with_retry_due(
-            data_dir,
-            store,
-            timestamp_minus_seconds(now, IMPORT_RETRY_BACKOFF_SECONDS),
-        )?);
-        if import_summary.has_activity() {
-            print_import_worker_summary(&import_summary)?;
+        if options.work_imports {
+            let now = current_timestamp()?;
+            let mut import_summary = ImportWorkerSummary {
+                stale_recovered: recover_stale_import_tasks(store, now)?,
+                ..ImportWorkerSummary::default()
+            };
+            import_summary.extend(run_import_worker_once_with_retry_due(
+                data_dir,
+                store,
+                timestamp_minus_seconds(now, IMPORT_RETRY_BACKOFF_SECONDS),
+            )?);
+            if import_summary.has_activity() {
+                print_import_worker_summary(&import_summary)?;
+            }
+        }
+        if options.work_ocr {
+            let ocr_summary = run_ocr_worker_once(data_dir, store, options)?;
+            if ocr_summary.has_activity() {
+                print_ocr_worker_summary(&ocr_summary)?;
+            }
         }
         if options
             .max_worker_ticks
@@ -398,6 +501,201 @@ fn run_import_worker_once_with_retry_due(
     }
 
     Ok(worker_summary)
+}
+
+fn run_ocr_worker_once(
+    data_dir: &Path,
+    store: &MetaStore,
+    options: &RunOptions,
+) -> Result<OcrWorkerSummary> {
+    let now = current_timestamp()?;
+    if store
+        .worker_task_control(WorkerTaskKind::Ocr)
+        .map_err(DaemonError::store)?
+        .paused
+    {
+        return Ok(OcrWorkerSummary {
+            paused: true,
+            ..OcrWorkerSummary::default()
+        });
+    }
+
+    let Some(command) = options.ocr_command.clone() else {
+        return Err(DaemonError::user(
+            "ocr worker blocked: local OCR command not configured",
+        ));
+    };
+
+    let Some(job) = store
+        .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
+        .map_err(DaemonError::store)?
+    else {
+        return Ok(OcrWorkerSummary::default());
+    };
+
+    run_claimed_ocr_job(data_dir, store, &job, options, command, now)
+}
+
+fn run_claimed_ocr_job(
+    data_dir: &Path,
+    store: &MetaStore,
+    job: &IngestJob,
+    options: &RunOptions,
+    command: PathBuf,
+    now: UnixTimestamp,
+) -> Result<OcrWorkerSummary> {
+    let Some(mut document) = store
+        .document_by_id(&job.document_id)
+        .map_err(DaemonError::store)?
+    else {
+        mark_ocr_job_failed_permanent(store, job, now)?;
+        return Ok(OcrWorkerSummary {
+            failed: 1,
+            ..OcrWorkerSummary::default()
+        });
+    };
+    let Some(content_hash) = document.content_hash.clone() else {
+        mark_ocr_job_failed_permanent(store, job, now)?;
+        return Ok(OcrWorkerSummary {
+            failed: 1,
+            ..OcrWorkerSummary::default()
+        });
+    };
+    let cache_key = OcrPageCacheKey::new(
+        content_hash,
+        1,
+        options.ocr_render_dpi,
+        options.ocr_lang.as_str(),
+        options.ocr_profile.as_str(),
+    )
+    .map_err(DaemonError::store)?;
+
+    if let Some(entry) = store
+        .ocr_page_cache_entry(&cache_key)
+        .map_err(DaemonError::store)?
+        .filter(|entry| entry.status() == OcrPageCacheStatus::Succeeded)
+    {
+        if let Some(text) = entry.text() {
+            if let Err(error) =
+                index_ocr_text(data_dir, store, &document.id, text, entry.confidence(), now)
+            {
+                let _ = mark_ocr_job_failed_retryable(store, job, now);
+                return Err(DaemonError::import(error));
+            }
+        } else {
+            document.status = DocumentStatus::OcrDone;
+            document.updated_at = now;
+            store
+                .upsert_document(&document)
+                .map_err(DaemonError::store)?;
+        }
+        store
+            .update_job_status(&job.id, IngestJobStatus::Completed, now)
+            .map_err(DaemonError::store)?;
+        return Ok(OcrWorkerSummary {
+            processed: 1,
+            cache_hits: 1,
+            ..OcrWorkerSummary::default()
+        });
+    }
+
+    let bytes = match fs::read(&document.normalized_path) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            mark_ocr_job_failed_retryable(store, job, now)?;
+            return Ok(OcrWorkerSummary {
+                failed: 1,
+                ..OcrWorkerSummary::default()
+            });
+        }
+    };
+    let client = LocalOcrCommandClient::new(
+        LocalOcrCommandSpec::new(
+            command,
+            Vec::<String>::new(),
+            options.ocr_engine_profile.as_str(),
+        )
+        .map_err(DaemonError::ocr)?,
+    );
+    let request = OcrPageRequest::new(
+        RenderedPage::new(1, options.ocr_render_dpi, bytes).map_err(DaemonError::ocr)?,
+        OcrOptions::new(options.ocr_lang.as_str(), options.ocr_profile.as_str())
+            .map_err(DaemonError::ocr)?,
+    )
+    .map_err(DaemonError::ocr)?;
+
+    match client.recognize_page(
+        request,
+        OcrWorkerBudget::new(options.ocr_page_timeout_ms).map_err(DaemonError::ocr)?,
+        &CancellationToken::new(),
+    ) {
+        Ok(page) => {
+            let entry = OcrPageCacheEntry::succeeded(
+                cache_key,
+                page.text(),
+                page.confidence(),
+                page.engine_profile(),
+                page.duration_ms(),
+                now,
+            )
+            .map_err(DaemonError::store)?;
+            store
+                .upsert_ocr_page_cache_entry(&entry)
+                .map_err(DaemonError::store)?;
+            if let Err(error) = index_ocr_text(
+                data_dir,
+                store,
+                &document.id,
+                page.text(),
+                Some(page.confidence()),
+                now,
+            ) {
+                let _ = mark_ocr_job_failed_retryable(store, job, now);
+                return Err(DaemonError::import(error));
+            }
+            store
+                .update_job_status(&job.id, IngestJobStatus::Completed, now)
+                .map_err(DaemonError::store)?;
+            Ok(OcrWorkerSummary {
+                processed: 1,
+                cache_writes: 1,
+                ..OcrWorkerSummary::default()
+            })
+        }
+        Err(error) => {
+            let entry =
+                OcrPageCacheEntry::failed_retryable(cache_key, format!("{:?}", error.kind()), now)
+                    .map_err(DaemonError::store)?;
+            store
+                .upsert_ocr_page_cache_entry(&entry)
+                .map_err(DaemonError::store)?;
+            mark_ocr_job_failed_retryable(store, job, now)?;
+            Ok(OcrWorkerSummary {
+                failed: 1,
+                ..OcrWorkerSummary::default()
+            })
+        }
+    }
+}
+
+fn mark_ocr_job_failed_retryable(
+    store: &MetaStore,
+    job: &IngestJob,
+    now: UnixTimestamp,
+) -> Result<()> {
+    store
+        .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+        .map_err(DaemonError::store)
+}
+
+fn mark_ocr_job_failed_permanent(
+    store: &MetaStore,
+    job: &IngestJob,
+    now: UnixTimestamp,
+) -> Result<()> {
+    store
+        .update_job_status(&job.id, IngestJobStatus::FailedPermanent, now)
+        .map_err(DaemonError::store)
 }
 
 fn recover_stale_import_tasks(store: &MetaStore, now: UnixTimestamp) -> Result<usize> {
@@ -1797,7 +2095,7 @@ fn write_http_response(
     .map_err(|_| DaemonError::user("unable to write daemon ipc response"))
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct RunOptions {
     foreground: bool,
     once: bool,
@@ -1805,8 +2103,39 @@ struct RunOptions {
     max_requests: Option<usize>,
     work_imports_once: bool,
     work_imports: bool,
+    work_ocr_once: bool,
+    work_ocr: bool,
+    ocr_command: Option<PathBuf>,
+    ocr_engine_profile: String,
+    ocr_lang: String,
+    ocr_profile: String,
+    ocr_render_dpi: u32,
+    ocr_page_timeout_ms: u64,
     worker_interval_ms: Option<u64>,
     max_worker_ticks: Option<usize>,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            foreground: false,
+            once: false,
+            ipc_listen: None,
+            max_requests: None,
+            work_imports_once: false,
+            work_imports: false,
+            work_ocr_once: false,
+            work_ocr: false,
+            ocr_command: None,
+            ocr_engine_profile: DEFAULT_OCR_ENGINE_PROFILE.to_string(),
+            ocr_lang: DEFAULT_OCR_LANG.to_string(),
+            ocr_profile: DEFAULT_OCR_PROFILE.to_string(),
+            ocr_render_dpi: DEFAULT_OCR_RENDER_DPI,
+            ocr_page_timeout_ms: DEFAULT_OCR_PAGE_TIMEOUT_MS,
+            worker_interval_ms: None,
+            max_worker_ticks: None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1851,6 +2180,36 @@ fn print_import_worker_summary(import_summary: &ImportWorkerSummary) -> Result<(
         "import worker ocr jobs queued: {}",
         import_summary.ocr_jobs_queued
     );
+    io::stdout()
+        .flush()
+        .map_err(|_| DaemonError::user("unable to write daemon status"))
+}
+
+#[derive(Default)]
+struct OcrWorkerSummary {
+    paused: bool,
+    processed: usize,
+    failed: usize,
+    cache_writes: usize,
+    cache_hits: usize,
+}
+
+impl OcrWorkerSummary {
+    fn has_activity(&self) -> bool {
+        self.paused
+            || self.processed > 0
+            || self.failed > 0
+            || self.cache_writes > 0
+            || self.cache_hits > 0
+    }
+}
+
+fn print_ocr_worker_summary(summary: &OcrWorkerSummary) -> Result<()> {
+    println!("ocr worker paused: {}", summary.paused);
+    println!("ocr worker processed: {}", summary.processed);
+    println!("ocr worker cache writes: {}", summary.cache_writes);
+    println!("ocr worker cache hits: {}", summary.cache_hits);
+    println!("ocr worker failed: {}", summary.failed);
     io::stdout()
         .flush()
         .map_err(|_| DaemonError::user("unable to write daemon status"))
@@ -2007,6 +2366,20 @@ impl DaemonError {
     fn fulltext(_error: index_fulltext::FullTextError) -> Self {
         Self {
             message: "search index operation failed".to_string(),
+            exit_code: 1,
+        }
+    }
+
+    fn import(error: import_pipeline::ImportPipelineError) -> Self {
+        Self {
+            message: error.to_string(),
+            exit_code: 1,
+        }
+    }
+
+    fn ocr(error: ocr_client::OcrError) -> Self {
+        Self {
+            message: error.to_string(),
             exit_code: 1,
         }
     }

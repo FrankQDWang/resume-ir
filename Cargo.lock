@@ -1063,6 +1063,7 @@ dependencies = [
  "import-pipeline",
  "index-fulltext",
  "meta-store",
+ "ocr-client",
  "rank-fusion",
  "search-planner",
  "serde_json",
