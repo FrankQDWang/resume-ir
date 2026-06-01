@@ -102,6 +102,24 @@ fn import_rejects_duplicate_root_and_profile_flags_without_path_leak() {
     assert!(duplicate_profile_stderr.contains("usage: resume-cli import"));
     assert!(!duplicate_profile_stderr.contains(path_str(&root_dir)));
 
+    let mixed_preset_and_root = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root-preset",
+            "local-discovery",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run mixed root-preset and root import");
+    assert!(!mixed_preset_and_root.status.success());
+    assert!(mixed_preset_and_root.stdout.is_empty());
+    let mixed_stderr = String::from_utf8_lossy(&mixed_preset_and_root.stderr);
+    assert!(mixed_stderr.contains("usage: resume-cli import"));
+    assert!(!mixed_stderr.contains(path_str(&root_dir)));
+
     remove_dir(&data_dir);
     remove_dir(&root_dir);
 }

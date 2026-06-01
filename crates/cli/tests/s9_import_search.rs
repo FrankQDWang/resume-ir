@@ -5,6 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{ImportTask, ImportTaskId, ImportTaskStatus, MetaStore, UnixTimestamp};
 
+const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
+
 #[test]
 fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
     let data_dir = temp_dir("import-search-data");
@@ -164,6 +166,71 @@ fn import_multiple_roots_builds_searchable_index_without_path_leak() {
     remove_dir(&data_dir);
     remove_dir(&first_root);
     remove_dir(&second_root);
+}
+
+#[test]
+fn local_discovery_root_preset_uses_discovery_profile_without_path_leak() {
+    let data_dir = temp_dir("local-discovery-import-data");
+    let local_root = temp_dir("local-discovery-private-root");
+    let canonical_local_root = fs::canonicalize(&local_root).unwrap();
+    fs::create_dir_all(local_root.join("Documents")).unwrap();
+    fs::create_dir_all(local_root.join("node_modules")).unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        local_root
+            .join("Documents")
+            .join("synthetic-java-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-engineer.docx"),
+        local_root
+            .join("node_modules")
+            .join("synthetic-java-engineer.docx"),
+    )
+    .unwrap();
+
+    let root_override = std::env::join_paths([&local_root]).unwrap();
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env(LOCAL_DISCOVERY_ROOTS_ENV, root_override)
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root-preset",
+            "local-discovery",
+        ])
+        .output()
+        .expect("run local discovery preset import");
+
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    assert!(import_stdout.contains("scan profile: discovery"));
+    assert!(import_stdout.contains("roots scanned: 1"));
+    assert!(import_stdout.contains("files discovered: 1"));
+    assert!(import_stdout.contains("searchable documents: 1"));
+    assert!(!import_stdout.contains(path_str(&local_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_local_root)));
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "search", "Java"])
+        .output()
+        .expect("run resume-cli search after local discovery import");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(search_stdout.contains("results: 1"));
+    assert!(search_stdout.contains("synthetic-java-platform.pdf"));
+    assert!(!search_stdout.contains("synthetic-java-engineer.docx"));
+
+    remove_dir(&data_dir);
+    remove_dir(&local_root);
 }
 
 #[test]

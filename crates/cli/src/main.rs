@@ -27,6 +27,8 @@ use privacy::inspect_contact_hash_key;
 use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
 
+const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("resume-cli: {error}");
@@ -254,7 +256,8 @@ struct IpcStatusEndpoint {
 
 fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let import_args = parse_import_args(args)?;
-    let roots = canonical_import_roots(&import_args.roots)?;
+    let requested_roots = expand_import_root_selection(&import_args.root_selection)?;
+    let roots = canonical_import_roots(&requested_roots)?;
 
     let store = open_store(data_dir)?;
     let now = current_timestamp()?;
@@ -354,19 +357,42 @@ fn path_string(path: &Path) -> String {
 }
 
 struct ImportArgs {
-    roots: Vec<PathBuf>,
+    root_selection: ImportRootSelection,
     profile: ScanProfile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ImportRootSelection {
+    Explicit(Vec<PathBuf>),
+    Preset(RootPreset),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RootPreset {
+    LocalDiscovery,
+}
+
+impl RootPreset {
+    fn default_profile(self) -> ScanProfile {
+        match self {
+            Self::LocalDiscovery => ScanProfile::Discovery,
+        }
+    }
 }
 
 fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
     let mut roots = Vec::<PathBuf>::new();
-    let mut profile = ScanProfile::Explicit;
+    let mut root_preset = None;
+    let mut profile = None;
     let mut profile_seen = false;
     let mut index = 0;
 
     while index < args.len() {
         match args[index].as_str() {
             "--root" => {
+                if root_preset.is_some() {
+                    return Err(import_usage());
+                }
                 index += 1;
                 let Some(value) = args.get(index) else {
                     return Err(import_usage());
@@ -377,6 +403,16 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
                 }
                 roots.push(root);
             }
+            "--root-preset" => {
+                if root_preset.is_some() || !roots.is_empty() {
+                    return Err(import_usage());
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(import_usage());
+                };
+                root_preset = Some(parse_root_preset(value)?);
+            }
             "--profile" => {
                 if profile_seen {
                     return Err(import_usage());
@@ -386,18 +422,35 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
                 let Some(value) = args.get(index) else {
                     return Err(import_usage());
                 };
-                profile = parse_scan_profile(value)?;
+                profile = Some(parse_scan_profile(value)?);
             }
             _ => return Err(import_usage()),
         }
         index += 1;
     }
 
-    if roots.is_empty() {
+    let (root_selection, default_profile) = if !roots.is_empty() {
+        (ImportRootSelection::Explicit(roots), ScanProfile::Explicit)
+    } else if let Some(root_preset) = root_preset {
+        (
+            ImportRootSelection::Preset(root_preset),
+            root_preset.default_profile(),
+        )
+    } else {
         return Err(import_usage());
-    }
+    };
 
-    Ok(ImportArgs { roots, profile })
+    Ok(ImportArgs {
+        root_selection,
+        profile: profile.unwrap_or(default_profile),
+    })
+}
+
+fn parse_root_preset(value: &str) -> Result<RootPreset> {
+    match value {
+        "local-discovery" => Ok(RootPreset::LocalDiscovery),
+        _ => Err(import_usage()),
+    }
 }
 
 fn parse_scan_profile(value: &str) -> Result<ScanProfile> {
@@ -410,8 +463,50 @@ fn parse_scan_profile(value: &str) -> Result<ScanProfile> {
 
 fn import_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli import --root <path> [--root <path> ...] [--profile explicit|discovery]",
+        "usage: resume-cli import (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery]",
     )
+}
+
+fn expand_import_root_selection(selection: &ImportRootSelection) -> Result<Vec<PathBuf>> {
+    match selection {
+        ImportRootSelection::Explicit(roots) => Ok(roots.clone()),
+        ImportRootSelection::Preset(RootPreset::LocalDiscovery) => local_discovery_roots(),
+    }
+}
+
+fn local_discovery_roots() -> Result<Vec<PathBuf>> {
+    let roots = std::env::var_os(LOCAL_DISCOVERY_ROOTS_ENV)
+        .map(|value| {
+            std::env::split_paths(&value)
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(platform_local_discovery_roots);
+
+    if roots.is_empty() {
+        return Err(CliError::user(
+            "local discovery import roots are unavailable",
+        ));
+    }
+
+    Ok(roots)
+}
+
+#[cfg(not(windows))]
+fn platform_local_discovery_roots() -> Vec<PathBuf> {
+    vec![PathBuf::from("/")]
+}
+
+#[cfg(windows)]
+fn platform_local_discovery_roots() -> Vec<PathBuf> {
+    (b'A'..=b'Z')
+        .map(|drive| PathBuf::from(format!("{}:\\", drive as char)))
+        .filter(|root| {
+            fs::metadata(root)
+                .map(|metadata| metadata.is_dir())
+                .unwrap_or(false)
+        })
+        .collect()
 }
 
 fn canonical_import_roots(requested_roots: &[PathBuf]) -> Result<Vec<CanonicalImportRoot>> {
