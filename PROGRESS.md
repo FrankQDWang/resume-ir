@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S43 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S44 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -19,11 +19,13 @@ design docs, the execution docs, and this evidence log as scope sources. Deleted
 obsolete bootstrap files and the old S0-S13 checklist are not product scope.
 
 - P0 architecture: Rust workspace, CLI/daemon entrypoints, SQLite metadata,
-  task/status tables, loopback status IPC, doctor, diagnostics, and a one-shot
-  daemon import worker for queued import tasks exist. Missing production
-  control-plane work includes long-running daemon scheduling loops, OCR/index/
-  embedding workers, command IPC endpoints, service lifecycle, CI, CODEOWNERS,
-  and macOS/Windows validation.
+  task/status tables, loopback status IPC, doctor, diagnostics, a one-shot
+  daemon import worker, and a long-running daemon import scheduler for queued
+  import tasks with retry backoff, running-task heartbeat, and stale-running
+  task recovery exist.
+  Missing production control-plane work includes combined IPC plus worker event
+  loop, OCR/index/embedding workers, command IPC endpoints, service lifecycle,
+  CI, CODEOWNERS, and macOS/Windows validation.
 - P1 import/search: directory scanning, DOCX/text-layer PDF parsing, cleaning,
   sectioning, full-text snapshot publish/recover, delete rebuild, and redacted
   snippets exist. Missing production work includes watcher/background
@@ -102,6 +104,7 @@ obsolete bootstrap files and the old S0-S13 checklist are not product scope.
 | S41 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this OCR worker searchable-index slice; multi-page PDF rendering, daemon-loop OCR execution, concrete OCR engine install/license, bbox persistence, real scanned-resume witness runs, encrypted OCR text storage/physical purge, and Windows process-tree validation remain not complete. |
 | S42 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext`, `/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p index-fulltext -p rank-fusion -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this CLI semantic/hybrid query slice; licensed embedding model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, daemon-loop embedding queue, section vectors, real semantic quality/performance benchmarks, OS-enforced no-network command sandboxing, and cross-platform validation remain not complete or BLOCKED. |
 | S43 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-cli -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this one-shot daemon import worker slice; long-running scheduling loop, authenticated import command IPC endpoint, import cancellation/progress streaming, background OCR/vector workers, multi-process stress testing, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
+| S44 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this long-running daemon import scheduler slice; combined IPC plus worker event loop, authenticated import command IPC endpoint, import cancellation/progress streaming, configurable retry policy, singleton service lifecycle enforcement, background OCR/vector workers, real whole-machine witness runs, and Windows/macOS service validation remain not complete. |
 
 ## Command Log
 
@@ -2103,6 +2106,118 @@ Sub-agent review fix:
 Scope note:
 
 - S43 does not add a long-running scheduler loop, authenticated import command IPC, progress streaming, cancellation, background OCR/vector workers, multi-process stress proof, real whole-machine witness scans, or Windows/macOS service validation. Those remain incomplete.
+
+### S44
+
+Design note:
+
+- S44 adds `resume-daemon run --foreground --work-imports` as a long-running
+  local import scheduler. It polls queued import tasks after startup, keeps
+  new queued tasks immediately claimable, applies a fixed retry backoff to
+  retryable failures so bad roots are not hot-looped, records terminal task
+  status at import finish time, heartbeats active `Running` import tasks, and
+  recovers stale `Running` import tasks to retryable after a daemon crash/stall
+  window.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_processes_task_enqueued_after_startup -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store import_worker_claim_respects_retryable_due_time_without_delaying_queued_tasks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store stale_running_import_tasks_can_be_recovered_for_worker_retry -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store running_import_task_heartbeat_prevents_stale_recovery -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_backs_off_retryable_failures -- --exact
+```
+
+Output summary:
+
+- Before implementation, the scheduler test failed because `resume-daemon run`
+  did not accept `--work-imports`.
+- Before implementation, the retry-due and stale-running meta-store tests
+  failed because the worker claim API had no retryable due cutoff and there was
+  no stale running import recovery API.
+- Before implementation, the running-task heartbeat test failed because there
+  was no worker heartbeat API to keep active long imports out of stale recovery.
+- Before the backoff fix, the bad-root scheduler test failed with 30 retryable
+  failures across 30 worker ticks instead of one failure followed by backoff.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store import_worker_claim_respects_retryable_due_time_without_delaying_queued_tasks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store stale_running_import_tasks_can_be_recovered_for_worker_retry -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store running_import_task_heartbeat_prevents_stale_recovery -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_backs_off_retryable_failures -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_recovers_stale_running_import_task -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_processes_task_enqueued_after_startup -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+```
+
+Output summary:
+
+- The retry-due meta-store test passed and confirms retryable task due time no
+  longer delays fresh queued work.
+- The stale-running meta-store test passed and confirms stale `Running` import
+  tasks can be moved to `FailedRetryable` with finished/updated timestamps.
+- The running-task heartbeat meta-store test passed and confirms active
+  `Running` imports can refresh `updated_at` to avoid stale recovery.
+- The scheduler backoff test passed and confirms a missing root produces one
+  retryable failure across 30 short ticks, without leaking local paths.
+- The scheduler stale recovery test passed and confirms daemon loop recovery
+  emits only redacted counts and leaves the task retryable instead of stuck
+  running.
+- `cargo test -p import-pipeline`: exit 0; import-pipeline tests passed after
+  terminal import-task timestamps were moved to finish time.
+- `cargo test -p meta-store`: exit 0; 35 meta-store tests passed.
+- `cargo test -p resume-daemon`: exit 0; daemon identity, IPC, one-shot worker,
+  long-running scheduler, retry backoff, and stale recovery tests passed.
+
+Workspace acceptance:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-daemon --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `cargo clippy -p meta-store -p import-pipeline -p resume-daemon --all-targets -- -D warnings`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests and doc-tests passed.
+
+Sub-agent review fix:
+
+- Bernoulli/Cicero found a P1 hot retry loop: `--work-imports` reset the
+  attempted set every tick, so a retryable bad root could be retried forever at
+  the worker interval. The implementation now separates queued eligibility
+  from retryable due time and applies a fixed 60-second daemon retry backoff.
+- Cicero also found a P1 stale-running lifecycle gap after daemon crash. The
+  implementation now heartbeats active running import tasks and recovers stale
+  running import tasks after a 15-minute no-heartbeat window in the
+  long-running worker loop. Cicero's P3 child-cleanup test issue was fixed by
+  killing/waiting the daemon child when readiness never appears.
+- Halley found that retry backoff was still measured from import start time for
+  long failed imports, and that stale recovery could steal an active long import
+  without a worker lease. Terminal task status is now stamped at import finish
+  time, and active daemon imports now refresh a running-task heartbeat before
+  they can be considered stale.
+
+Scope note:
+
+- S44 does not combine the IPC status server with the worker loop, add an
+  authenticated import command IPC endpoint, stream import progress, implement
+  user cancellation, make retry policy configurable, enforce a packaged
+  singleton service lifecycle, run OCR/vector workers, execute real
+  whole-machine witness scans, or validate macOS/Windows service lifecycle
+  behavior. Those remain incomplete.
 
 ### S9
 

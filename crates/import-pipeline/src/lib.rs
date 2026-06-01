@@ -61,10 +61,11 @@ pub fn import_root_with_options(
     }
 
     let result = run_import(data_dir, store, task, root, now, options);
+    let finished_at = current_timestamp_or(now);
     match result {
         Ok(summary) => {
             store
-                .update_import_task_status(&task.id, ImportTaskStatus::Completed, now)
+                .update_import_task_status(&task.id, ImportTaskStatus::Completed, finished_at)
                 .map_err(ImportPipelineError::store)?;
             Ok(summary)
         }
@@ -76,7 +77,7 @@ pub fn import_root_with_options(
                 } else {
                     ImportTaskStatus::FailedPermanent
                 },
-                now,
+                finished_at,
             );
             Err(error)
         }
@@ -375,6 +376,15 @@ fn snapshot_unique_suffix(now: UnixTimestamp) -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_else(|_| now.as_unix_seconds() as u128)
+}
+
+fn current_timestamp_or(default: UnixTimestamp) -> UnixTimestamp {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+        .map(UnixTimestamp::from_unix_seconds)
+        .unwrap_or(default)
 }
 
 fn mark_missing_documents_deleted(

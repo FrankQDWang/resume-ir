@@ -1185,6 +1185,19 @@ impl MetaStore {
         updated_at: UnixTimestamp,
         excluded_ids: &[ImportTaskId],
     ) -> Result<Option<ImportTask>> {
+        self.claim_next_import_task_for_worker_excluding_due_at(
+            updated_at,
+            updated_at,
+            excluded_ids,
+        )
+    }
+
+    pub fn claim_next_import_task_for_worker_excluding_due_at(
+        &self,
+        updated_at: UnixTimestamp,
+        retryable_updated_at_or_before: UnixTimestamp,
+        excluded_ids: &[ImportTaskId],
+    ) -> Result<Option<ImportTask>> {
         let connection = self.connection.borrow();
         let excluded_clause = if excluded_ids.is_empty() {
             String::new()
@@ -1207,8 +1220,10 @@ impl MetaStore {
             WHERE rowid = (
                 SELECT rowid
                 FROM import_task
-                WHERE status IN (?, ?)
-                    AND updated_at_seconds <= ?
+                WHERE (
+                        (status = ? AND updated_at_seconds <= ?)
+                        OR (status = ? AND updated_at_seconds <= ?)
+                    )
                     {excluded_clause}
                 ORDER BY CASE WHEN status = ? THEN 0 ELSE 1 END, queued_at_seconds, rowid
                 LIMIT 1
@@ -1217,6 +1232,7 @@ impl MetaStore {
         );
         let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
         let updated_at_seconds = updated_at.as_unix_seconds();
+        let retryable_due_seconds = retryable_updated_at_or_before.as_unix_seconds();
         let queued = import_task_status_to_storage(ImportTaskStatus::Queued);
         let retryable = import_task_status_to_storage(ImportTaskStatus::FailedRetryable);
         let mut values = vec![
@@ -1224,8 +1240,9 @@ impl MetaStore {
             Value::Integer(updated_at_seconds),
             Value::Integer(updated_at_seconds),
             Value::Text(queued.to_string()),
-            Value::Text(retryable.to_string()),
             Value::Integer(updated_at_seconds),
+            Value::Text(retryable.to_string()),
+            Value::Integer(retryable_due_seconds),
         ];
         values.extend(
             excluded_ids
@@ -1241,6 +1258,56 @@ impl MetaStore {
             Some(row) => Ok(Some(read_import_task(row)?)),
             None => Ok(None),
         }
+    }
+
+    pub fn recover_stale_running_import_tasks(
+        &self,
+        updated_at: UnixTimestamp,
+        running_updated_at_or_before: UnixTimestamp,
+    ) -> Result<usize> {
+        let connection = self.connection.borrow();
+        let updated_at_seconds = updated_at.as_unix_seconds();
+        let changed = connection
+            .execute(
+                "\
+                UPDATE import_task
+                SET
+                    status = ?1,
+                    finished_at_seconds = ?2,
+                    updated_at_seconds = ?2
+                WHERE status = ?3 AND updated_at_seconds <= ?4",
+                params![
+                    import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
+                    updated_at_seconds,
+                    import_task_status_to_storage(ImportTaskStatus::Running),
+                    running_updated_at_or_before.as_unix_seconds(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        Ok(changed)
+    }
+
+    pub fn heartbeat_running_import_task(
+        &self,
+        id: &ImportTaskId,
+        updated_at: UnixTimestamp,
+    ) -> Result<bool> {
+        let connection = self.connection.borrow();
+        let updated_at_seconds = updated_at.as_unix_seconds();
+        let changed = connection
+            .execute(
+                "\
+                UPDATE import_task
+                SET updated_at_seconds = ?1
+                WHERE id = ?2 AND status = ?3 AND updated_at_seconds <= ?1",
+                params![
+                    updated_at_seconds,
+                    id.as_str(),
+                    import_task_status_to_storage(ImportTaskStatus::Running),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        Ok(changed > 0)
     }
 
     pub fn upsert_import_scan_scope(&self, scope: &ImportScanScope) -> Result<()> {

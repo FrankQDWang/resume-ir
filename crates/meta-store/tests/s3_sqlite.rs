@@ -1474,6 +1474,125 @@ fn import_worker_claim_atomically_marks_next_task_running_and_skips_attempted_ta
 }
 
 #[test]
+fn import_worker_claim_respects_retryable_due_time_without_delaying_queued_tasks() {
+    let store = migrated_store();
+    let timestamp = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let mut retryable = import_task(
+        "retryable-not-due",
+        "synthetic/import/retryable",
+        ImportTaskStatus::FailedRetryable,
+    );
+    retryable.started_at = Some(timestamp);
+    retryable.finished_at = Some(timestamp);
+    let queued = import_task(
+        "queued-despite-retry-backoff",
+        "synthetic/import/queued",
+        ImportTaskStatus::Queued,
+    );
+
+    store.insert_import_task(&retryable).unwrap();
+    store.insert_import_task(&queued).unwrap();
+
+    let claim_at = UnixTimestamp::from_unix_seconds(1_900_000_000);
+    let retryable_not_due = UnixTimestamp::from_unix_seconds(1_799_999_999);
+    let claimed = store
+        .claim_next_import_task_for_worker_excluding_due_at(claim_at, retryable_not_due, &[])
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, queued.id);
+    assert_eq!(claimed.status, ImportTaskStatus::Running);
+
+    assert!(store
+        .claim_next_import_task_for_worker_excluding_due_at(
+            claim_at,
+            retryable_not_due,
+            std::slice::from_ref(&claimed.id),
+        )
+        .unwrap()
+        .is_none());
+
+    let retryable_due = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let claimed_retryable = store
+        .claim_next_import_task_for_worker_excluding_due_at(
+            claim_at,
+            retryable_due,
+            std::slice::from_ref(&claimed.id),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed_retryable.id, retryable.id);
+    assert_eq!(claimed_retryable.status, ImportTaskStatus::Running);
+}
+
+#[test]
+fn stale_running_import_tasks_can_be_recovered_for_worker_retry() {
+    let store = migrated_store();
+    let started_at = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let fresh_updated_at = UnixTimestamp::from_unix_seconds(1_900_000_000);
+    let recovered_at = UnixTimestamp::from_unix_seconds(2_000_000_000);
+    let stale_cutoff = UnixTimestamp::from_unix_seconds(1_850_000_000);
+    let mut stale_running = import_task(
+        "stale-running",
+        "synthetic/import/stale",
+        ImportTaskStatus::Running,
+    );
+    stale_running.started_at = Some(started_at);
+    let mut fresh_running = import_task(
+        "fresh-running",
+        "synthetic/import/fresh",
+        ImportTaskStatus::Running,
+    );
+    fresh_running.started_at = Some(started_at);
+    fresh_running.updated_at = fresh_updated_at;
+
+    store.insert_import_task(&stale_running).unwrap();
+    store.insert_import_task(&fresh_running).unwrap();
+
+    let recovered = store
+        .recover_stale_running_import_tasks(recovered_at, stale_cutoff)
+        .unwrap();
+    assert_eq!(recovered, 1);
+
+    let stale = store.import_task_by_id(&stale_running.id).unwrap().unwrap();
+    assert_eq!(stale.status, ImportTaskStatus::FailedRetryable);
+    assert_eq!(stale.finished_at, Some(recovered_at));
+    assert_eq!(stale.updated_at, recovered_at);
+    let fresh = store.import_task_by_id(&fresh_running.id).unwrap().unwrap();
+    assert_eq!(fresh.status, ImportTaskStatus::Running);
+    assert_eq!(fresh.finished_at, None);
+}
+
+#[test]
+fn running_import_task_heartbeat_prevents_stale_recovery() {
+    let store = migrated_store();
+    let started_at = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let heartbeat_at = UnixTimestamp::from_unix_seconds(1_900_000_000);
+    let recovered_at = UnixTimestamp::from_unix_seconds(2_000_000_000);
+    let stale_cutoff = UnixTimestamp::from_unix_seconds(1_850_000_000);
+    let mut running = import_task(
+        "heartbeat-running",
+        "synthetic/import/heartbeat",
+        ImportTaskStatus::Running,
+    );
+    running.started_at = Some(started_at);
+
+    store.insert_import_task(&running).unwrap();
+
+    assert!(store
+        .heartbeat_running_import_task(&running.id, heartbeat_at)
+        .unwrap());
+    let recovered = store
+        .recover_stale_running_import_tasks(recovered_at, stale_cutoff)
+        .unwrap();
+    assert_eq!(recovered, 0);
+
+    let task = store.import_task_by_id(&running.id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Running);
+    assert_eq!(task.updated_at, heartbeat_at);
+    assert_eq!(task.finished_at, None);
+}
+
+#[test]
 fn import_task_api_rejects_invalid_lifecycle_timestamps() {
     let store = migrated_store();
     let timestamp = UnixTimestamp::from_unix_seconds(1_800_000_001);

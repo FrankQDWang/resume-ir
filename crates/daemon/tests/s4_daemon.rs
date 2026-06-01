@@ -1,7 +1,8 @@
 use std::fs;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Child, ChildStdout, Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use meta_store::{
     ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
@@ -145,6 +146,161 @@ fn foreground_once_worker_continues_after_retryable_import_failure() {
     remove_dir(&data_dir);
 }
 
+#[test]
+fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
+    let data_dir = temp_dir("daemon-import-scheduler-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--worker-interval-ms",
+            "25",
+            "--max-worker-ticks",
+            "80",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon import scheduler");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    wait_until_metadata_store_ready(&mut child, &data_dir);
+
+    let task_id = seed_queued_import_task(
+        &data_dir,
+        "daemon-import-scheduler",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+
+    let output = wait_daemon(child, BufReader::new(stdout));
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+    assert!(output.stdout.contains("import worker processed: 1"));
+    assert!(output
+        .stdout
+        .contains("import worker searchable documents: 2"));
+    assert!(!output.stdout.contains(path_str(&data_dir)));
+    assert!(!output.stdout.contains(path_str(&fixture_root)));
+    assert!(!output.stdout.contains(path_str(&canonical_fixture_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Completed);
+    assert_eq!(store.status_summary().unwrap().searchable_documents, 2);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn foreground_import_scheduler_backs_off_retryable_failures() {
+    let data_dir = temp_dir("daemon-import-scheduler-backoff-data");
+    let missing_root = temp_dir("daemon-import-scheduler-backoff-missing-root");
+    remove_dir(&missing_root);
+    let task_id = seed_queued_import_task(
+        &data_dir,
+        "daemon-import-scheduler-backoff",
+        &missing_root,
+        1_700_000_000,
+    );
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--worker-interval-ms",
+            "25",
+            "--max-worker-ticks",
+            "30",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon import scheduler");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let output = wait_daemon(child, BufReader::new(stdout));
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout.matches("import worker failed: 1").count(), 1);
+    assert!(!output.stdout.contains(path_str(&data_dir)));
+    assert!(!output.stdout.contains(path_str(&missing_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::FailedRetryable);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn foreground_import_scheduler_recovers_stale_running_import_task() {
+    let data_dir = temp_dir("daemon-import-scheduler-recovery-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let task_id = seed_queued_import_task(
+        &data_dir,
+        "daemon-import-scheduler-stale-running",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .update_import_task_status(
+            &task_id,
+            ImportTaskStatus::Running,
+            UnixTimestamp::from_unix_seconds(1_700_000_010),
+        )
+        .unwrap();
+    drop(store);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--worker-interval-ms",
+            "25",
+            "--max-worker-ticks",
+            "2",
+        ])
+        .output()
+        .expect("run resume-daemon import scheduler");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("import worker recovered stale running: 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&canonical_fixture_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::FailedRetryable);
+    assert!(task.finished_at.is_some());
+
+    remove_dir(&data_dir);
+}
+
 fn seed_queued_import_task(
     data_dir: &Path,
     label: &str,
@@ -214,4 +370,62 @@ fn path_str(path: &Path) -> &str {
 
 fn remove_dir(path: &PathBuf) {
     let _ = fs::remove_dir_all(path);
+}
+
+fn wait_until_metadata_store_ready(child: &mut Child, data_dir: &Path) {
+    let metadata_store = data_dir.join("metadata.sqlite3");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if metadata_store.exists()
+            && MetaStore::open(&metadata_store)
+                .and_then(|store| store.status_summary().map(|_| ()))
+                .is_ok()
+        {
+            return;
+        }
+        if let Some(status) = child.try_wait().expect("poll daemon child") {
+            panic!("daemon exited before metadata store was ready: {status}");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("daemon did not prepare metadata store before timeout");
+}
+
+struct DaemonOutput {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+fn wait_daemon(mut child: Child, mut stdout: BufReader<ChildStdout>) -> DaemonOutput {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        if let Some(status) = child.try_wait().expect("poll daemon child") {
+            let mut stdout_text = String::new();
+            stdout
+                .read_to_string(&mut stdout_text)
+                .expect("read daemon stdout");
+            let mut stderr = String::new();
+            child
+                .stderr
+                .take()
+                .expect("daemon stderr")
+                .read_to_string(&mut stderr)
+                .expect("read daemon stderr");
+            return DaemonOutput {
+                success: status.success(),
+                stdout: stdout_text,
+                stderr,
+            };
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("daemon did not exit after max worker ticks");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
