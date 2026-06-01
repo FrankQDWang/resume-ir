@@ -6,8 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use core_domain::FileExtension;
 use fs_crawler::{
-    crawl_directory, crawl_with_fs, normalize_path, CrawlErrorKind, FileSystem, FsEntry,
-    FsEntryKind, FsMetadata, MAX_TOTAL_SAMPLE_BYTES,
+    crawl_directory, crawl_with_fs, crawl_with_fs_profile, normalize_path, CrawlErrorKind,
+    FileSystem, FsEntry, FsEntryKind, FsMetadata, ScanProfile, MAX_TOTAL_SAMPLE_BYTES,
 };
 
 #[test]
@@ -119,6 +119,65 @@ fn filters_temporary_hidden_and_unsupported_files() {
 
     assert_eq!(names, BTreeSet::from(["notes.txt", "report.pdf"]));
     assert_eq!(report.ignored_count, 7);
+}
+
+#[test]
+fn discovery_profile_skips_system_cache_and_dependency_directories() {
+    let fs = FakeFileSystem::new()
+        .dir("/")
+        .dir("/System")
+        .file("/System/system-resume.pdf", b"%PDF system noise")
+        .dir("/usr")
+        .file("/usr/share-resume.pdf", b"%PDF usr noise")
+        .dir("/Users")
+        .dir("/Users/frank")
+        .dir("/Users/frank/Library")
+        .dir("/Users/frank/Library/Caches")
+        .file(
+            "/Users/frank/Library/Caches/cached-resume.pdf",
+            b"%PDF cache noise",
+        )
+        .dir("/Users/frank/Documents")
+        .file(
+            "/Users/frank/Documents/resume.pdf",
+            b"%PDF synthetic resume",
+        )
+        .dir("/Users/frank/Documents/Target")
+        .file(
+            "/Users/frank/Documents/Target/candidate-resume.pdf",
+            b"%PDF candidate target",
+        )
+        .dir("/Users/frank/project")
+        .dir("/Users/frank/project/node_modules")
+        .file(
+            "/Users/frank/project/node_modules/dependency-resume.pdf",
+            b"%PDF dependency noise",
+        )
+        .dir("/Users/frank/project/target")
+        .file(
+            "/Users/frank/project/target/build-resume.pdf",
+            b"%PDF build noise",
+        );
+
+    let explicit = crawl_with_fs(&fs, Path::new("/")).unwrap();
+    assert_eq!(explicit.files.len(), 7);
+
+    let discovery = crawl_with_fs_profile(&fs, Path::new("/"), ScanProfile::Discovery).unwrap();
+    let discovered_paths = discovery
+        .files
+        .iter()
+        .map(|file| file.normalized_path.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        discovered_paths,
+        vec![
+            "/Users/frank/Documents/Target/candidate-resume.pdf",
+            "/Users/frank/Documents/resume.pdf",
+        ]
+    );
+    assert!(discovery.errors.is_empty());
+    assert!(discovery.ignored_count >= 5);
 }
 
 #[test]

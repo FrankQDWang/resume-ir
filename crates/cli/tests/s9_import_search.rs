@@ -182,6 +182,39 @@ fn import_does_not_take_over_live_running_task() {
     remove_dir(&data_dir);
 }
 
+#[test]
+fn discovery_import_does_not_take_over_live_running_task_for_same_root() {
+    let data_dir = temp_dir("discovery-import-live-running-data");
+    let fixture_root = fixture_root();
+    let pending_task_id = seed_live_running_import_task(&data_dir, &fixture_root);
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+            "--profile",
+            "discovery",
+        ])
+        .output()
+        .expect("run discovery import while task is live");
+
+    assert!(!import.status.success());
+    assert!(import.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&import.stderr);
+    assert!(stderr.contains("import task is already running"));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Running);
+
+    remove_dir(&data_dir);
+}
+
 fn seed_retryable_import_task(data_dir: &Path, fixture_root: &Path) -> ImportTaskId {
     let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
     store.run_migrations().unwrap();

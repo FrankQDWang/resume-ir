@@ -6,7 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use core_domain::{EntityMentionId, SectionType};
 use extractor_rules::{extract_strong_fields, FieldType, RuleMatch};
-use fs_crawler::{crawl_directory, DiscoveredFile};
+pub use fs_crawler::ScanProfile;
+use fs_crawler::{crawl_directory_with_profile, DiscoveredFile, NormalizedPath};
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use meta_store::{
     Document, DocumentStatus, EntityMention, EntityType, FileExtension, ImportTask,
@@ -37,11 +38,22 @@ pub fn import_root(
     root: &Path,
     now: UnixTimestamp,
 ) -> Result<ImportSummary> {
+    import_root_with_options(data_dir, store, task, root, now, ImportOptions::default())
+}
+
+pub fn import_root_with_options(
+    data_dir: &Path,
+    store: &MetaStore,
+    task: &ImportTask,
+    root: &Path,
+    now: UnixTimestamp,
+    options: ImportOptions,
+) -> Result<ImportSummary> {
     store
         .update_import_task_status(&task.id, ImportTaskStatus::Running, now)
         .map_err(ImportPipelineError::store)?;
 
-    let result = run_import(data_dir, store, root, now);
+    let result = run_import(data_dir, store, root, now, options);
     match result {
         Ok(summary) => {
             store
@@ -69,8 +81,12 @@ fn run_import(
     store: &MetaStore,
     root: &Path,
     now: UnixTimestamp,
+    options: ImportOptions,
 ) -> Result<ImportSummary> {
-    let report = crawl_directory(root).map_err(ImportPipelineError::crawl)?;
+    let report = crawl_directory_with_profile(root, options.scan_profile)
+        .map_err(ImportPipelineError::crawl)?;
+    let scanned_directories = report.scanned_directories.clone();
+    let skipped_directories = report.skipped_directories.clone();
     let mut summary = ImportSummary {
         files_discovered: report.files.len(),
         scan_errors: report.errors.len(),
@@ -111,8 +127,15 @@ fn run_import(
     }
 
     if can_propagate_deletions {
-        summary.deleted_documents =
-            mark_missing_documents_deleted(store, root, &discovered_doc_ids, now)?;
+        summary.deleted_documents = mark_missing_documents_deleted(
+            store,
+            root,
+            options.scan_profile,
+            &scanned_directories,
+            &skipped_directories,
+            &discovered_doc_ids,
+            now,
+        )?;
     }
     let pending_doc_ids = pending_index_documents
         .iter()
@@ -145,6 +168,11 @@ fn run_import(
     update_index_state(store, now, snapshot_token)?;
 
     Ok(summary)
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImportOptions {
+    pub scan_profile: ScanProfile,
 }
 
 pub fn rebuild_full_text_index(
@@ -209,6 +237,9 @@ fn snapshot_unique_suffix(now: UnixTimestamp) -> u128 {
 fn mark_missing_documents_deleted(
     store: &MetaStore,
     root: &Path,
+    scan_profile: ScanProfile,
+    scanned_directories: &[NormalizedPath],
+    skipped_directories: &[NormalizedPath],
     discovered_doc_ids: &BTreeSet<String>,
     now: UnixTimestamp,
 ) -> Result<usize> {
@@ -218,7 +249,13 @@ fn mark_missing_documents_deleted(
     let mut deleted_count = 0_usize;
 
     for document in documents {
-        if !document_path_is_under_root(&document.normalized_path, root) {
+        if !document_path_is_deletion_candidate(
+            &document.normalized_path,
+            root,
+            scan_profile,
+            scanned_directories,
+            skipped_directories,
+        ) {
             continue;
         }
         if discovered_doc_ids.contains(document.id.as_str()) {
@@ -236,8 +273,56 @@ fn mark_missing_documents_deleted(
     Ok(deleted_count)
 }
 
+fn document_path_is_deletion_candidate(
+    document_path: &str,
+    root: &Path,
+    scan_profile: ScanProfile,
+    scanned_directories: &[NormalizedPath],
+    skipped_directories: &[NormalizedPath],
+) -> bool {
+    if !document_path_is_under_root(document_path, root) {
+        return false;
+    }
+
+    if scan_profile == ScanProfile::Explicit {
+        return true;
+    }
+
+    document_parent_is_scanned(document_path, scanned_directories)
+        && !document_path_is_under_any_normalized_root(document_path, skipped_directories)
+}
+
 fn document_path_is_under_root(document_path: &str, root: &Path) -> bool {
     Path::new(document_path).starts_with(root)
+}
+
+fn document_path_is_under_any_normalized_root(
+    document_path: &str,
+    roots: &[NormalizedPath],
+) -> bool {
+    let document_path = Path::new(document_path);
+    roots
+        .iter()
+        .any(|root| document_path.starts_with(Path::new(root.as_str())))
+}
+
+fn document_parent_is_scanned(document_path: &str, scanned_directories: &[NormalizedPath]) -> bool {
+    let Some(parent_path) = normalized_parent_path(document_path) else {
+        return false;
+    };
+
+    scanned_directories
+        .iter()
+        .any(|directory| directory.as_str() == parent_path)
+}
+
+fn normalized_parent_path(path: &str) -> Option<&str> {
+    let (parent, _) = path.rsplit_once('/')?;
+    if parent.is_empty() {
+        Some("/")
+    } else {
+        Some(parent)
+    }
 }
 
 fn persisted_index_documents(
@@ -724,4 +809,63 @@ enum ImportPipelineErrorKind {
     Crawl,
     Index,
     Privacy,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use fs_crawler::{normalize_path, NormalizedPath, ScanProfile};
+
+    use super::document_path_is_deletion_candidate;
+
+    #[test]
+    fn discovery_deletion_requires_direct_parent_directory_to_be_scanned() {
+        let root = Path::new("/fixture");
+        let scanned_directories = vec![normalized_path("/fixture")];
+
+        assert!(document_path_is_deletion_candidate(
+            "/fixture/root-resume.pdf",
+            root,
+            ScanProfile::Discovery,
+            &scanned_directories,
+            &[],
+        ));
+        assert!(!document_path_is_deletion_candidate(
+            "/fixture/unreadable/resume.pdf",
+            root,
+            ScanProfile::Discovery,
+            &scanned_directories,
+            &[],
+        ));
+    }
+
+    #[test]
+    fn discovery_deletion_excludes_skipped_subtrees_even_when_parent_was_seen() {
+        let root = Path::new("/fixture");
+        let scanned_directories = vec![
+            normalized_path("/fixture"),
+            normalized_path("/fixture/Documents"),
+        ];
+        let skipped_directories = vec![normalized_path("/fixture/node_modules")];
+
+        assert!(document_path_is_deletion_candidate(
+            "/fixture/Documents/resume.pdf",
+            root,
+            ScanProfile::Discovery,
+            &scanned_directories,
+            &skipped_directories,
+        ));
+        assert!(!document_path_is_deletion_candidate(
+            "/fixture/node_modules/resume.pdf",
+            root,
+            ScanProfile::Discovery,
+            &scanned_directories,
+            &skipped_directories,
+        ));
+    }
+
+    fn normalized_path(path: &str) -> NormalizedPath {
+        normalize_path(path).unwrap()
+    }
 }

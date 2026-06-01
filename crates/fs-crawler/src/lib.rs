@@ -22,7 +22,23 @@ pub fn crawl_directory(root: impl AsRef<Path>) -> Result<ScanReport> {
     crawl_with_fs(&fs, root.as_ref())
 }
 
+pub fn crawl_directory_with_profile(
+    root: impl AsRef<Path>,
+    profile: ScanProfile,
+) -> Result<ScanReport> {
+    let fs = StdFileSystem;
+    crawl_with_fs_profile(&fs, root.as_ref(), profile)
+}
+
 pub fn crawl_with_fs(file_system: &impl FileSystem, root: &Path) -> Result<ScanReport> {
+    crawl_with_fs_profile(file_system, root, ScanProfile::Explicit)
+}
+
+pub fn crawl_with_fs_profile(
+    file_system: &impl FileSystem,
+    root: &Path,
+    profile: ScanProfile,
+) -> Result<ScanReport> {
     let root_metadata = file_system
         .metadata(root)
         .map_err(|error| CrawlError::from_io(root, FsOperation::ReadMetadata, error))?;
@@ -50,13 +66,16 @@ pub fn crawl_with_fs(file_system: &impl FileSystem, root: &Path) -> Result<ScanR
                 continue;
             }
         };
+        if let Ok(normalized_directory) = normalize_path(&directory) {
+            report.scanned_directories.push(normalized_directory);
+        }
 
         entries.sort_by_key(|entry| path_sort_key(&entry.path));
 
         for entry in entries {
             match entry.kind {
                 FsEntryKind::Directory => {
-                    if ignored_directory(&entry.path, &mut report) {
+                    if ignored_directory(&entry.path, profile, &mut report) {
                         report.ignored_count += 1;
                     } else {
                         directories.push(entry.path);
@@ -71,6 +90,10 @@ pub fn crawl_with_fs(file_system: &impl FileSystem, root: &Path) -> Result<ScanR
     report
         .files
         .sort_by(|left, right| left.normalized_path.cmp(&right.normalized_path));
+    report.scanned_directories.sort();
+    report.scanned_directories.dedup();
+    report.skipped_directories.sort();
+    report.skipped_directories.dedup();
     report.errors.sort_by_key(|error| error.sort_key());
 
     Ok(report)
@@ -222,9 +245,16 @@ fn read_up_to(reader: &mut dyn Read, max_bytes: usize) -> io::Result<Vec<u8>> {
     Ok(output)
 }
 
-fn ignored_directory(path: &Path, report: &mut ScanReport) -> bool {
+fn ignored_directory(path: &Path, profile: ScanProfile, report: &mut ScanReport) -> bool {
     match normalize_path(path) {
-        Ok(normalized_path) => ignored_path_name(&normalized_path),
+        Ok(normalized_path) => {
+            let ignored = ignored_path_name(&normalized_path)
+                || profile_ignored_directory(&normalized_path, profile);
+            if ignored {
+                report.skipped_directories.push(normalized_path);
+            }
+            ignored
+        }
         Err(error) => {
             report.errors.push(CrawlError::from_normalize_error(
                 path,
@@ -234,6 +264,79 @@ fn ignored_directory(path: &Path, report: &mut ScanReport) -> bool {
             true
         }
     }
+}
+
+fn profile_ignored_directory(path: &NormalizedPath, profile: ScanProfile) -> bool {
+    profile == ScanProfile::Discovery
+        && (discovery_system_directory(path) || discovery_dependency_directory(path))
+}
+
+fn discovery_system_directory(path: &NormalizedPath) -> bool {
+    let lower_path = path.as_str().to_ascii_lowercase();
+    if matches!(
+        lower_path.as_str(),
+        "/applications"
+            | "/bin"
+            | "/boot"
+            | "/cores"
+            | "/dev"
+            | "/etc"
+            | "/library"
+            | "/network"
+            | "/opt"
+            | "/private"
+            | "/proc"
+            | "/run"
+            | "/sbin"
+            | "/system"
+            | "/tmp"
+            | "/usr"
+            | "/var"
+            | "/volumes"
+    ) {
+        return true;
+    }
+
+    let parts = lower_path
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() == 3 && parts[0] == "users" && parts[2] == "library" {
+        return true;
+    }
+
+    parts.len() == 2
+        && parts[0].ends_with(':')
+        && matches!(
+            parts[1],
+            "$recycle.bin"
+                | "program files"
+                | "program files (x86)"
+                | "system volume information"
+                | "windows"
+        )
+}
+
+fn discovery_dependency_directory(path: &NormalizedPath) -> bool {
+    let Some(file_name) = path.file_name() else {
+        return true;
+    };
+
+    matches!(
+        file_name,
+        "__pycache__"
+            | "build"
+            | "cache"
+            | "caches"
+            | "dist"
+            | "env"
+            | "node_modules"
+            | "target"
+            | "temp"
+            | "tmp"
+            | "vendor"
+            | "venv"
+    )
 }
 
 fn ignored_path_name(path: &NormalizedPath) -> bool {
@@ -369,11 +472,29 @@ fn classify_io_error(kind: io::ErrorKind, operation: FsOperation) -> CrawlErrorK
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScanProfile {
+    #[default]
+    Explicit,
+    Discovery,
+}
+
+impl ScanProfile {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::Discovery => "discovery",
+        }
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct ScanReport {
     pub files: Vec<DiscoveredFile>,
     pub errors: Vec<CrawlError>,
     pub ignored_count: usize,
+    pub scanned_directories: Vec<NormalizedPath>,
+    pub skipped_directories: Vec<NormalizedPath>,
 }
 
 #[derive(Clone, PartialEq, Eq)]

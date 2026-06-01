@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use import_pipeline::{import_root, rebuild_full_text_index};
+use import_pipeline::{
+    import_root_with_options, rebuild_full_text_index, ImportOptions, ScanProfile,
+};
 use index_fulltext::{
     inspect_snapshot_root, FullTextIndex, SearchHit, SearchQuery, SnapshotReadTarget,
     SnapshotRootState,
@@ -245,11 +247,9 @@ struct IpcStatusEndpoint {
 }
 
 fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    if args.len() != 2 || args.first().map(String::as_str) != Some("--root") {
-        return Err(CliError::usage("usage: resume-cli import --root <path>"));
-    }
+    let import_args = parse_import_args(args)?;
 
-    let requested_root = PathBuf::from(&args[1]);
+    let requested_root = import_args.root;
     let requested_root_path = requested_root.as_os_str().to_string_lossy().into_owned();
     let metadata = fs::metadata(&requested_root)
         .map_err(|_| CliError::user("import root must exist and be a directory"))?;
@@ -282,11 +282,22 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
         }
     };
 
-    let summary = import_root(data_dir, &store, &task, &root, now).map_err(CliError::import)?;
+    let summary = import_root_with_options(
+        data_dir,
+        &store,
+        &task,
+        &root,
+        now,
+        ImportOptions {
+            scan_profile: import_args.profile,
+        },
+    )
+    .map_err(CliError::import)?;
 
     println!("import task submitted");
     println!("task id: {}", task.id);
     println!("status: completed");
+    println!("scan profile: {}", import_args.profile.label());
     println!("files discovered: {}", summary.files_discovered);
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr required documents: {}", summary.ocr_required_documents);
@@ -296,6 +307,64 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("scan errors: {}", summary.scan_errors);
 
     Ok(())
+}
+
+struct ImportArgs {
+    root: PathBuf,
+    profile: ScanProfile,
+}
+
+fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
+    let mut root = None;
+    let mut profile = ScanProfile::Explicit;
+    let mut profile_seen = false;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--root" => {
+                if root.is_some() {
+                    return Err(import_usage());
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(import_usage());
+                };
+                root = Some(PathBuf::from(value));
+            }
+            "--profile" => {
+                if profile_seen {
+                    return Err(import_usage());
+                }
+                profile_seen = true;
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(import_usage());
+                };
+                profile = parse_scan_profile(value)?;
+            }
+            _ => return Err(import_usage()),
+        }
+        index += 1;
+    }
+
+    let Some(root) = root else {
+        return Err(import_usage());
+    };
+
+    Ok(ImportArgs { root, profile })
+}
+
+fn parse_scan_profile(value: &str) -> Result<ScanProfile> {
+    match value {
+        "explicit" => Ok(ScanProfile::Explicit),
+        "discovery" => Ok(ScanProfile::Discovery),
+        _ => Err(import_usage()),
+    }
+}
+
+fn import_usage() -> CliError {
+    CliError::usage("usage: resume-cli import --root <path> [--profile explicit|discovery]")
 }
 
 fn pending_import_task(

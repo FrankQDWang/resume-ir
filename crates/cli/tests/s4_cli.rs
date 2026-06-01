@@ -60,6 +60,53 @@ fn import_root_submits_persistent_task_without_path_leak() {
 }
 
 #[test]
+fn import_rejects_duplicate_root_and_profile_flags_without_path_leak() {
+    let data_dir = temp_dir("duplicate-import-data");
+    let root_dir = temp_dir("duplicate-import-root-private-name");
+
+    let duplicate_root = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&root_dir),
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run duplicate root import");
+    assert!(!duplicate_root.status.success());
+    assert!(duplicate_root.stdout.is_empty());
+    let duplicate_root_stderr = String::from_utf8_lossy(&duplicate_root.stderr);
+    assert!(duplicate_root_stderr.contains("usage: resume-cli import"));
+    assert!(!duplicate_root_stderr.contains(path_str(&root_dir)));
+
+    let duplicate_profile = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&root_dir),
+            "--profile",
+            "explicit",
+            "--profile",
+            "discovery",
+        ])
+        .output()
+        .expect("run duplicate profile import");
+    assert!(!duplicate_profile.status.success());
+    assert!(duplicate_profile.stdout.is_empty());
+    let duplicate_profile_stderr = String::from_utf8_lossy(&duplicate_profile.stderr);
+    assert!(duplicate_profile_stderr.contains("usage: resume-cli import"));
+    assert!(!duplicate_profile_stderr.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
 fn search_without_index_returns_unavailable_message_without_echoing_query() {
     let data_dir = temp_path("search-data");
     let sensitive_query = "Java PRIVATE_TOKEN";

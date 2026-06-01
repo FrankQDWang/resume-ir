@@ -93,6 +93,94 @@ fn reimport_marks_missing_files_deleted_and_default_search_hides_stale_hits() {
 }
 
 #[test]
+fn discovery_profile_reuses_root_scan_without_deleting_skipped_directories() {
+    let data_dir = temp_dir("discovery-reimport-data");
+    let fixture_root = temp_dir("discovery-reimport-fixtures");
+    fs::create_dir_all(fixture_root.join("Documents")).unwrap();
+    fs::create_dir_all(fixture_root.join("node_modules")).unwrap();
+    fs::copy(
+        fixture_file("synthetic-java-platform.pdf"),
+        fixture_root
+            .join("Documents")
+            .join("synthetic-java-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_file("synthetic-java-engineer.docx"),
+        fixture_root
+            .join("node_modules")
+            .join("synthetic-java-engineer.docx"),
+    )
+    .unwrap();
+
+    import_fixtures(&data_dir, &fixture_root);
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 2"));
+
+    let discovery = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+            "--profile",
+            "discovery",
+        ])
+        .output()
+        .expect("run discovery profile import");
+    assert!(
+        discovery.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&discovery.stdout),
+        String::from_utf8_lossy(&discovery.stderr)
+    );
+    assert!(discovery.stderr.is_empty());
+    let discovery_stdout = String::from_utf8_lossy(&discovery.stdout);
+    assert!(discovery_stdout.contains("scan profile: discovery"));
+    assert!(discovery_stdout.contains("files discovered: 1"));
+    assert!(!discovery_stdout.contains(path_str(&fixture_root)));
+
+    let after = search(&data_dir, "Java");
+    assert!(after.contains("results: 2"));
+    assert!(after.contains("synthetic-java-platform.pdf"));
+    assert!(after.contains("synthetic-java-engineer.docx"));
+
+    fs::remove_file(
+        fixture_root
+            .join("Documents")
+            .join("synthetic-java-platform.pdf"),
+    )
+    .unwrap();
+    let discovery_after_delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+            "--profile",
+            "discovery",
+        ])
+        .output()
+        .expect("run discovery profile import after delete");
+    assert!(
+        discovery_after_delete.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&discovery_after_delete.stdout),
+        String::from_utf8_lossy(&discovery_after_delete.stderr)
+    );
+
+    let after_delete = search(&data_dir, "Java");
+    assert!(after_delete.contains("results: 1"));
+    assert!(!after_delete.contains("synthetic-java-platform.pdf"));
+    assert!(after_delete.contains("synthetic-java-engineer.docx"));
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
+}
+
+#[test]
 fn default_search_hydrates_metadata_to_hide_deleted_stale_index_hits() {
     let data_dir = temp_dir("stale-index-delete-data");
     let fixture_root = fixture_root();
@@ -181,6 +269,10 @@ fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("tests/fixtures/resumes")
+}
+
+fn fixture_file(name: &str) -> PathBuf {
+    fixture_root().join(name)
 }
 
 fn temp_dir(label: &str) -> PathBuf {
