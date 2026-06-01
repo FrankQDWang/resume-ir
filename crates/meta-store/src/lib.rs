@@ -23,6 +23,7 @@ const SCHEMA_VERSION_V8: u32 = 8;
 const SCHEMA_VERSION_V9: u32 = 9;
 const SCHEMA_VERSION_V10: u32 = 10;
 const SCHEMA_VERSION_V11: u32 = 11;
+const SCHEMA_VERSION_V12: u32 = 12;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -119,6 +120,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V9, SCHEMA_V9),
             (SCHEMA_VERSION_V10, SCHEMA_V10),
             (SCHEMA_VERSION_V11, SCHEMA_V11),
+            (SCHEMA_VERSION_V12, SCHEMA_V12),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -867,6 +869,105 @@ impl MetaStore {
         Ok(EnqueuedIngestJob { job, inserted })
     }
 
+    pub fn enqueue_embedding_job_for_resume_version(
+        &self,
+        document_id: &DocumentId,
+        resume_version_id: &ResumeVersionId,
+        queued_at: UnixTimestamp,
+    ) -> Result<EnqueuedIngestJob> {
+        let version = self
+            .resume_version_by_id(resume_version_id)?
+            .ok_or_else(|| MetaStoreError::not_found("resume_version"))?;
+        if &version.document_id != document_id {
+            return Err(MetaStoreError::invalid_value(
+                "ingest_job.resume_version_id",
+            ));
+        }
+
+        let id = IngestJobId::from_non_secret_parts(&[
+            "embedding-version",
+            document_id.as_str(),
+            resume_version_id.as_str(),
+        ]);
+        let job = IngestJob {
+            id,
+            document_id: document_id.clone(),
+            resume_version_id: Some(resume_version_id.clone()),
+            kind: IngestJobKind::UpdateIndex,
+            status: IngestJobStatus::Queued,
+            attempt_count: 0,
+            max_attempts: 3,
+            queued_at,
+            started_at: None,
+            finished_at: None,
+            updated_at: queued_at,
+        };
+        let inserted = {
+            let mut connection = self.connection.borrow_mut();
+            let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+            let existing_id = {
+                let mut statement = transaction
+                    .prepare(
+                        "\
+                        SELECT id
+                        FROM ingest_job
+                        WHERE resume_version_id = ?1 AND kind = ?2
+                        ORDER BY rowid
+                        LIMIT 1",
+                    )
+                    .map_err(MetaStoreError::storage)?;
+                let mut rows = statement
+                    .query(params![
+                        resume_version_id.as_str(),
+                        ingest_job_kind_to_storage(IngestJobKind::UpdateIndex),
+                    ])
+                    .map_err(MetaStoreError::storage)?;
+
+                match rows.next().map_err(MetaStoreError::storage)? {
+                    Some(row) => Some(read_string(row, 0)?),
+                    None => None,
+                }
+            };
+
+            if existing_id.is_some() {
+                transaction.commit().map_err(MetaStoreError::storage)?;
+                false
+            } else {
+                transaction
+                    .execute(
+                        "\
+                        INSERT INTO ingest_job (
+                            id, document_id, resume_version_id, kind, status, attempt_count,
+                            max_attempts, queued_at_seconds, started_at_seconds,
+                            finished_at_seconds, updated_at_seconds
+                        )
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                        params![
+                            job.id.as_str(),
+                            job.document_id.as_str(),
+                            job.resume_version_id.as_ref().map(ResumeVersionId::as_str),
+                            ingest_job_kind_to_storage(job.kind),
+                            ingest_job_status_to_storage(job.status),
+                            u32_to_i64(job.attempt_count),
+                            u32_to_i64(job.max_attempts),
+                            job.queued_at.as_unix_seconds(),
+                            job.started_at.map(UnixTimestamp::as_unix_seconds),
+                            job.finished_at.map(UnixTimestamp::as_unix_seconds),
+                            job.updated_at.as_unix_seconds(),
+                        ],
+                    )
+                    .map_err(MetaStoreError::storage)?;
+                transaction.commit().map_err(MetaStoreError::storage)?;
+                true
+            }
+        };
+
+        let job = self
+            .embedding_job_for_resume_version(resume_version_id)?
+            .ok_or_else(|| MetaStoreError::not_found("ingest_job"))?;
+        Ok(EnqueuedIngestJob { job, inserted })
+    }
+
     fn ocr_job_for_document(&self, document_id: &DocumentId) -> Result<Option<IngestJob>> {
         let connection = self.connection.borrow();
         let sql = format!(
@@ -882,6 +983,33 @@ impl MetaStore {
             .query(params![
                 document_id.as_str(),
                 ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+            ])
+            .map_err(MetaStoreError::storage)?;
+
+        match rows.next().map_err(MetaStoreError::storage)? {
+            Some(row) => Ok(Some(read_ingest_job(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn embedding_job_for_resume_version(
+        &self,
+        resume_version_id: &ResumeVersionId,
+    ) -> Result<Option<IngestJob>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {INGEST_JOB_COLUMNS}
+            FROM ingest_job
+            WHERE resume_version_id = ?1 AND kind = ?2
+            ORDER BY rowid
+            LIMIT 1"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                resume_version_id.as_str(),
+                ingest_job_kind_to_storage(IngestJobKind::UpdateIndex),
             ])
             .map_err(MetaStoreError::storage)?;
 
@@ -957,7 +1085,7 @@ impl MetaStore {
     }
 
     pub fn claim_next_job(&self, now: UnixTimestamp) -> Result<Option<IngestJob>> {
-        self.claim_next_job_matching(None, now)
+        self.claim_next_job_matching(None, false, now)
     }
 
     pub fn claim_next_job_by_kind(
@@ -965,12 +1093,17 @@ impl MetaStore {
         kind: IngestJobKind,
         now: UnixTimestamp,
     ) -> Result<Option<IngestJob>> {
-        self.claim_next_job_matching(Some(kind), now)
+        self.claim_next_job_matching(Some(kind), false, now)
+    }
+
+    pub fn claim_next_embedding_job(&self, now: UnixTimestamp) -> Result<Option<IngestJob>> {
+        self.claim_next_job_matching(Some(IngestJobKind::UpdateIndex), true, now)
     }
 
     fn claim_next_job_matching(
         &self,
         kind: Option<IngestJobKind>,
+        require_resume_version_id: bool,
         now: UnixTimestamp,
     ) -> Result<Option<IngestJob>> {
         let kind_filter = kind.map(ingest_job_kind_to_storage);
@@ -988,6 +1121,7 @@ impl MetaStore {
                                 OR (status = ?3 AND attempt_count < max_attempts)
                             )
                             AND (?4 IS NULL OR kind = ?4)
+                            AND (?5 = 0 OR resume_version_id IS NOT NULL)
                         ORDER BY queued_at_seconds, rowid
                         LIMIT 1",
                     )
@@ -998,6 +1132,7 @@ impl MetaStore {
                         ingest_job_status_to_storage(IngestJobStatus::Interrupted),
                         ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
                         kind_filter,
+                        bool_to_i64(require_resume_version_id),
                     ])
                     .map_err(MetaStoreError::storage)?;
 
@@ -1028,7 +1163,8 @@ impl MetaStore {
                             status IN (?4, ?5)
                             OR (status = ?6 AND attempt_count < max_attempts)
                         )
-                        AND (?7 IS NULL OR kind = ?7)",
+                        AND (?7 IS NULL OR kind = ?7)
+                        AND (?8 = 0 OR resume_version_id IS NOT NULL)",
                     params![
                         ingest_job_status_to_storage(IngestJobStatus::Running),
                         now_seconds,
@@ -1037,6 +1173,7 @@ impl MetaStore {
                         ingest_job_status_to_storage(IngestJobStatus::Interrupted),
                         ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
                         kind_filter,
+                        bool_to_i64(require_resume_version_id),
                     ],
                 )
                 .map_err(MetaStoreError::storage)?;
@@ -1706,8 +1843,7 @@ impl MetaStore {
                     COALESCE(SUM(CASE WHEN status = 'indexed_partial' THEN 1 ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN status = 'failed_retryable' THEN 1 ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN status = 'failed_permanent' THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN status = 'ocr_required' THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN status = 'fields_extracted' THEN 1 ELSE 0 END), 0)
+                    COALESCE(SUM(CASE WHEN status = 'ocr_required' THEN 1 ELSE 0 END), 0)
                 FROM document
                 WHERE is_deleted = 0 AND status <> 'deleted'",
                 [],
@@ -1719,7 +1855,6 @@ impl MetaStore {
                         failed_retryable: row.get(3)?,
                         failed_permanent: row.get(4)?,
                         ocr_queue_depth: row.get(5)?,
-                        embedding_queue_depth: row.get(6)?,
                     })
                 },
             )
@@ -1751,6 +1886,33 @@ impl MetaStore {
                     )",
                 params![
                     ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                    ingest_job_status_to_storage(IngestJobStatus::Queued),
+                    ingest_job_status_to_storage(IngestJobStatus::Interrupted),
+                    ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?;
+        let embedding_jobs_queued = connection
+            .query_row(
+                "\
+                SELECT COUNT(*)
+                FROM ingest_job AS job
+                JOIN document AS document ON document.id = job.document_id
+                JOIN resume_version AS version ON version.id = job.resume_version_id
+                WHERE job.kind = ?1
+                    AND job.resume_version_id IS NOT NULL
+                    AND document.is_deleted = 0
+                    AND document.status <> ?2
+                    AND version.visibility <> ?3
+                    AND (
+                        job.status IN (?4, ?5)
+                        OR (job.status = ?6 AND job.attempt_count < job.max_attempts)
+                    )",
+                params![
+                    ingest_job_kind_to_storage(IngestJobKind::UpdateIndex),
+                    document_status_to_storage(DocumentStatus::Deleted),
+                    resume_visibility_to_storage(ResumeVisibility::Hidden),
                     ingest_job_status_to_storage(IngestJobStatus::Queued),
                     ingest_job_status_to_storage(IngestJobStatus::Interrupted),
                     ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
@@ -1843,7 +2005,7 @@ impl MetaStore {
             )?,
             ocr_queue_depth: i64_to_u64(document_counts.ocr_queue_depth, "status.ocr_queue_depth")?,
             embedding_queue_depth: i64_to_u64(
-                document_counts.embedding_queue_depth,
+                embedding_jobs_queued,
                 "status.embedding_queue_depth",
             )?,
             recovery_queue_depth: i64_to_u64(recovery_queue_depth, "status.recovery_queue_depth")?,
@@ -2321,7 +2483,6 @@ struct DocumentStatusCounts {
     failed_retryable: i64,
     failed_permanent: i64,
     ocr_queue_depth: i64,
-    embedding_queue_depth: i64,
 }
 
 impl fmt::Debug for IngestJob {
@@ -2844,6 +3005,16 @@ CREATE TABLE import_scan_error (
     PRIMARY KEY (import_task_id, error_index),
     FOREIGN KEY (import_task_id) REFERENCES import_task(id) ON DELETE CASCADE
 );
+"#;
+
+const SCHEMA_V12: &str = r#"
+CREATE UNIQUE INDEX ingest_job_embedding_version_unique_idx
+    ON ingest_job(resume_version_id, kind)
+    WHERE kind = 'update_index' AND resume_version_id IS NOT NULL;
+
+CREATE INDEX ingest_job_embedding_queue_idx
+    ON ingest_job(kind, status, attempt_count, max_attempts, queued_at_seconds)
+    WHERE kind = 'update_index' AND resume_version_id IS NOT NULL;
 "#;
 
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {

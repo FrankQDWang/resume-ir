@@ -23,9 +23,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     );
-    assert_eq!(store.schema_version().unwrap(), 11);
+    assert_eq!(store.schema_version().unwrap(), 12);
 
     for table_name in [
         "candidate",
@@ -45,7 +45,7 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 11);
+    assert_eq!(store.schema_version().unwrap(), 12);
 }
 
 #[test]
@@ -797,6 +797,84 @@ fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
 }
 
 #[test]
+fn embedding_update_jobs_are_durable_idempotent_and_claimable_by_resume_version() {
+    let db_path = temp_db_path("embedding-update-job-placeholder");
+    let document = document(
+        "embedding-update-document-placeholder",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let version = resume_version("embedding-update-version-placeholder", document.id.clone());
+    let first_queued_at = UnixTimestamp::from_unix_seconds(1_800_000_610);
+    let second_queued_at = UnixTimestamp::from_unix_seconds(1_800_000_611);
+    let claim_at = UnixTimestamp::from_unix_seconds(1_800_000_710);
+    let complete_at = UnixTimestamp::from_unix_seconds(1_800_000_720);
+    let first_job_id;
+
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+        store.upsert_document(&document).unwrap();
+        store.upsert_resume_version(&version).unwrap();
+        let mut unrelated_update_index = job(
+            "embedding-update-unrelated-placeholder",
+            &document.id,
+            IngestJobStatus::Queued,
+            0,
+            3,
+        );
+        unrelated_update_index.kind = IngestJobKind::UpdateIndex;
+        store.insert_ingest_job(&unrelated_update_index).unwrap();
+
+        let first = store
+            .enqueue_embedding_job_for_resume_version(&document.id, &version.id, first_queued_at)
+            .unwrap();
+        let second = store
+            .enqueue_embedding_job_for_resume_version(&document.id, &version.id, second_queued_at)
+            .unwrap();
+
+        assert!(first.inserted);
+        assert!(!second.inserted);
+        assert_eq!(first.job.id, second.job.id);
+        assert_eq!(first.job.kind, IngestJobKind::UpdateIndex);
+        assert_eq!(first.job.resume_version_id, Some(version.id.clone()));
+        assert_eq!(store.status_summary().unwrap().embedding_queue_depth, 1);
+        first_job_id = first.job.id;
+    }
+
+    {
+        let reopened = MetaStore::open(&db_path).unwrap();
+        reopened.run_migrations().unwrap();
+        let claimed = reopened
+            .claim_next_embedding_job(claim_at)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(claimed.id, first_job_id);
+        assert_eq!(claimed.kind, IngestJobKind::UpdateIndex);
+        assert_eq!(claimed.resume_version_id, Some(version.id));
+        assert_eq!(claimed.status, IngestJobStatus::Running);
+        assert_eq!(claimed.attempt_count, 1);
+        assert_eq!(reopened.status_summary().unwrap().embedding_queue_depth, 0);
+
+        reopened
+            .update_job_status(&claimed.id, IngestJobStatus::Completed, complete_at)
+            .unwrap();
+        assert_eq!(
+            reopened
+                .ingest_job_by_id(&claimed.id)
+                .unwrap()
+                .unwrap()
+                .status,
+            IngestJobStatus::Completed
+        );
+        assert_eq!(reopened.claim_next_embedding_job(claim_at).unwrap(), None);
+    }
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
 fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
     let store = migrated_store();
     let key = OcrPageCacheKey::new(
@@ -1108,7 +1186,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7]);
-        assert_eq!(reopened.schema_version().unwrap(), 11);
+        assert_eq!(reopened.schema_version().unwrap(), 12);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1325,11 +1403,17 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
         failed_retryable,
         failed_permanent,
         ocr_required,
-        embedding_waiting,
+        embedding_waiting.clone(),
         deleted,
     ] {
         store.upsert_document(&document).unwrap();
     }
+    let embedding_version =
+        resume_version("status-embedding-version", embedding_waiting.id.clone());
+    store.upsert_resume_version(&embedding_version).unwrap();
+    store
+        .enqueue_embedding_job_for_resume_version(&embedding_waiting.id, &embedding_version.id, now)
+        .unwrap();
 
     let running = job(
         "status-running-placeholder",
@@ -1401,7 +1485,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 11);
+        assert_eq!(reopened.schema_version().unwrap(), 12);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -1760,7 +1844,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
-        assert_eq!(reopened.schema_version().unwrap(), 11);
+        assert_eq!(reopened.schema_version().unwrap(), 12);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -1792,7 +1876,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 11);
+        assert_eq!(reopened.schema_version().unwrap(), 12);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

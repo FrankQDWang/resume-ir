@@ -203,9 +203,7 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         print_ocr_worker_summary(&ocr_summary)?;
     }
     if options.work_embeddings_once {
-        let mut excluded_version_ids = BTreeSet::new();
-        let embedding_summary =
-            run_embedding_worker_once(data_dir, &store, &options, &mut excluded_version_ids)?;
+        let embedding_summary = run_embedding_worker_once(data_dir, &store, &options)?;
         print_embedding_worker_summary(&embedding_summary)?;
     }
 
@@ -496,7 +494,6 @@ fn run_worker_loop(
 ) -> Result<()> {
     let interval = Duration::from_millis(options.worker_interval_ms.unwrap_or(1_000));
     let mut ticks = 0_usize;
-    let mut embedded_version_ids = BTreeSet::new();
 
     loop {
         if stop_signal
@@ -528,8 +525,7 @@ fn run_worker_loop(
             }
         }
         if options.work_embeddings {
-            let embedding_summary =
-                run_embedding_worker_once(data_dir, store, options, &mut embedded_version_ids)?;
+            let embedding_summary = run_embedding_worker_once(data_dir, store, options)?;
             if embedding_summary.has_activity() {
                 print_embedding_worker_summary(&embedding_summary)?;
             }
@@ -826,7 +822,6 @@ fn run_embedding_worker_once(
     data_dir: &Path,
     store: &MetaStore,
     options: &RunOptions,
-    excluded_version_ids: &mut BTreeSet<String>,
 ) -> Result<EmbeddingWorkerSummary> {
     let Some(command) = options.embedding_command.clone() else {
         return Err(DaemonError::user(
@@ -840,10 +835,30 @@ fn run_embedding_worker_once(
     let dimension = options
         .embedding_dimension
         .ok_or_else(|| DaemonError::usage(run_usage()))?;
-    let candidates = embedding_candidates(store, options.embedding_max_docs, excluded_version_ids)?;
-    let documents_considered = candidates.len();
-    if candidates.is_empty() {
+    let now = current_timestamp()?;
+    enqueue_embedding_jobs_for_candidates(store, options.embedding_max_docs, now)?;
+    let jobs = claim_embedding_jobs(store, options.embedding_max_docs, now)?;
+    let documents_considered = jobs.len();
+    if jobs.is_empty() {
         return Ok(EmbeddingWorkerSummary::default());
+    }
+
+    let mut candidates = Vec::new();
+    for job in jobs {
+        match embedding_candidate_for_job(store, &job)? {
+            Some(candidate) => candidates.push((job, candidate)),
+            None => store
+                .update_job_status(&job.id, IngestJobStatus::Completed, now)
+                .map_err(DaemonError::store)?,
+        }
+    }
+    if candidates.is_empty() {
+        return Ok(EmbeddingWorkerSummary {
+            documents_considered,
+            processed: 0,
+            vector_writes: 0,
+            failed: 0,
+        });
     }
 
     let embedder = LocalEmbeddingCommandEmbedder::new(
@@ -854,21 +869,25 @@ fn run_embedding_worker_once(
     );
     let inputs = candidates
         .iter()
-        .map(|candidate| {
+        .map(|(_, candidate)| {
             EmbeddingInput::new(candidate.version_id.as_str(), candidate.text.as_str())
         })
         .collect::<Vec<_>>();
-    let vectors = embedder
-        .embed_batch(
-            &inputs,
-            EmbeddingBudget::new(options.embedding_max_docs, options.embedding_max_text_bytes),
-        )
-        .map_err(DaemonError::embedding)?;
+    let vectors = match embedder.embed_batch(
+        &inputs,
+        EmbeddingBudget::new(options.embedding_max_docs, options.embedding_max_text_bytes),
+    ) {
+        Ok(vectors) => vectors,
+        Err(error) => {
+            mark_embedding_jobs_failed_retryable(store, &candidates, now)?;
+            return Err(DaemonError::embedding(error));
+        }
+    };
     let vector_writes = vectors.len();
     let vector_documents = vectors
         .into_iter()
         .zip(candidates.iter())
-        .map(|(vector, candidate)| {
+        .map(|(vector, (_, candidate))| {
             VectorDocument::new(
                 format!("{}:{}", vector.model_id(), vector.id()),
                 candidate.document_id.as_str(),
@@ -877,14 +896,22 @@ fn run_embedding_worker_once(
             .map_err(DaemonError::vector)
         })
         .collect::<Result<Vec<_>>>()?;
-    let index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
-        .map_err(DaemonError::vector)?;
-    index
-        .upsert(vector_documents)
-        .map_err(DaemonError::vector)?;
+    let index = match PersistentVectorIndex::open(data_dir.join("vector-index"), dimension) {
+        Ok(index) => index,
+        Err(error) => {
+            mark_embedding_jobs_failed_retryable(store, &candidates, now)?;
+            return Err(DaemonError::vector(error));
+        }
+    };
+    if let Err(error) = index.upsert(vector_documents) {
+        mark_embedding_jobs_failed_retryable(store, &candidates, now)?;
+        return Err(DaemonError::vector(error));
+    }
 
-    for candidate in &candidates {
-        excluded_version_ids.insert(candidate.version_id.to_string());
+    for (job, _) in &candidates {
+        store
+            .update_job_status(&job.id, IngestJobStatus::Completed, now)
+            .map_err(DaemonError::store)?;
     }
 
     Ok(EmbeddingWorkerSummary {
@@ -895,12 +922,12 @@ fn run_embedding_worker_once(
     })
 }
 
-fn embedding_candidates(
+fn enqueue_embedding_jobs_for_candidates(
     store: &MetaStore,
     max_docs: usize,
-    excluded_version_ids: &BTreeSet<String>,
-) -> Result<Vec<EmbeddingWorkerCandidate>> {
-    let mut candidates = Vec::new();
+    now: UnixTimestamp,
+) -> Result<usize> {
+    let mut pending_jobs = 0_usize;
     for document in store.visible_documents().map_err(DaemonError::store)? {
         if !matches!(
             document.status,
@@ -919,30 +946,114 @@ fn embedding_candidates(
             if version.visibility != ResumeVisibility::Searchable {
                 continue;
             }
-            if excluded_version_ids.contains(version.id.as_str()) {
-                continue;
-            }
-            let Some(text) = version
-                .clean_text
-                .as_deref()
-                .or(version.raw_text.as_deref())
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-            else {
+            if embedding_text_for_version(&version).is_none() {
                 continue;
             };
-            candidates.push(EmbeddingWorkerCandidate {
-                document_id: document.id.clone(),
-                version_id: version.id,
-                text: text.to_string(),
-            });
-            if candidates.len() == max_docs {
-                return Ok(candidates);
+            let enqueued = store
+                .enqueue_embedding_job_for_resume_version(&document.id, &version.id, now)
+                .map_err(DaemonError::store)?;
+            if embedding_job_is_retryable(&enqueued.job) {
+                pending_jobs += 1;
+                if pending_jobs == max_docs {
+                    return Ok(pending_jobs);
+                }
             }
         }
     }
 
-    Ok(candidates)
+    Ok(pending_jobs)
+}
+
+fn claim_embedding_jobs(
+    store: &MetaStore,
+    max_docs: usize,
+    now: UnixTimestamp,
+) -> Result<Vec<IngestJob>> {
+    let mut jobs = Vec::new();
+    while jobs.len() < max_docs {
+        let Some(job) = store
+            .claim_next_embedding_job(now)
+            .map_err(DaemonError::store)?
+        else {
+            break;
+        };
+        jobs.push(job);
+    }
+    Ok(jobs)
+}
+
+fn embedding_candidate_for_job(
+    store: &MetaStore,
+    job: &IngestJob,
+) -> Result<Option<EmbeddingWorkerCandidate>> {
+    let Some(version_id) = job.resume_version_id.as_ref() else {
+        return Ok(None);
+    };
+    let Some(document) = store
+        .document_by_id(&job.document_id)
+        .map_err(DaemonError::store)?
+    else {
+        return Ok(None);
+    };
+    if document.is_deleted
+        || document.status == DocumentStatus::Deleted
+        || !matches!(
+            document.status,
+            DocumentStatus::FieldsExtracted
+                | DocumentStatus::EmbeddingDone
+                | DocumentStatus::IndexedPartial
+                | DocumentStatus::Searchable
+        )
+    {
+        return Ok(None);
+    }
+    let Some(version) = store
+        .resume_version_by_id(version_id)
+        .map_err(DaemonError::store)?
+    else {
+        return Ok(None);
+    };
+    if version.document_id != document.id || version.visibility != ResumeVisibility::Searchable {
+        return Ok(None);
+    }
+    let Some(text) = embedding_text_for_version(&version) else {
+        return Ok(None);
+    };
+    Ok(Some(EmbeddingWorkerCandidate {
+        document_id: document.id,
+        version_id: version.id,
+        text,
+    }))
+}
+
+fn embedding_text_for_version(version: &ResumeVersion) -> Option<String> {
+    version
+        .clean_text
+        .as_deref()
+        .or(version.raw_text.as_deref())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn embedding_job_is_retryable(job: &IngestJob) -> bool {
+    matches!(
+        job.status,
+        IngestJobStatus::Queued | IngestJobStatus::Interrupted
+    ) || (job.status == IngestJobStatus::FailedRetryable && job.attempt_count < job.max_attempts)
+}
+
+fn mark_embedding_jobs_failed_retryable(
+    store: &MetaStore,
+    candidates: &[(IngestJob, EmbeddingWorkerCandidate)],
+    now: UnixTimestamp,
+) -> Result<()> {
+    for (job, _) in candidates {
+        store
+            .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+            .map_err(DaemonError::store)?;
+    }
+    Ok(())
 }
 
 fn recover_stale_import_tasks(store: &MetaStore, now: UnixTimestamp) -> Result<usize> {
