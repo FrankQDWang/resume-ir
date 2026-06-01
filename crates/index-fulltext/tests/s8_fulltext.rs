@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{
-    inspect_snapshot_root, publish_snapshot, FullTextIndex, IndexDocument, IndexSection,
-    SearchQuery, SnapshotReadTarget, SnapshotRootState,
+    inspect_snapshot_root, publish_snapshot, redact_contact_values, FullTextIndex, IndexDocument,
+    IndexSection, SearchQuery, SnapshotReadTarget, SnapshotRootState,
 };
 use tantivy::collector::TopDocs;
 use tantivy::query::AllQuery;
@@ -236,6 +236,19 @@ fn snippets_redact_contact_values_near_query_matches() {
     assert!(!hits[0].snippet.contains("Shared.Candidate"));
     assert!(!hits[0].snippet.contains("415"));
     remove_dir(&index_dir);
+}
+
+#[test]
+fn redaction_removes_common_local_path_shapes() {
+    let text = "paths /Users/frank/private/resume.pdf file:///private/tmp/resume.pdf C:\\Users\\frank\\resume.pdf and email candidate@example.test";
+    let redacted = redact_contact_values(text);
+
+    assert!(!redacted.contains("/Users/frank"));
+    assert!(!redacted.contains("file:///private"));
+    assert!(!redacted.contains("C:\\Users\\frank"));
+    assert!(!redacted.contains("candidate@example.test"));
+    assert!(redacted.contains("<redacted-path>"));
+    assert!(redacted.contains("<redacted-email>"));
 }
 
 #[test]

@@ -532,6 +532,40 @@ fn visible_document_query_excludes_deleted_documents_by_default() {
 }
 
 #[test]
+fn latest_visible_resume_version_for_document_uses_latest_inserted_non_hidden_version() {
+    let store = migrated_store();
+    let document = document(
+        "latest-version-placeholder",
+        false,
+        DocumentStatus::Searchable,
+    );
+    store.upsert_document(&document).unwrap();
+    let mut old_visible = resume_version("latest-old-version-placeholder", document.id.clone());
+    old_visible.clean_text = Some("OLD_VERSION_SHOULD_NOT_APPEAR".to_string());
+    let mut latest_hidden =
+        resume_version("latest-hidden-version-placeholder", document.id.clone());
+    latest_hidden.visibility = ResumeVisibility::Hidden;
+    latest_hidden.clean_text = Some("HIDDEN_VERSION_SHOULD_NOT_APPEAR".to_string());
+    let mut latest_visible = resume_version("latest-new-version-placeholder", document.id.clone());
+    latest_visible.clean_text = Some("LATEST_VERSION_SHOULD_APPEAR".to_string());
+
+    store.upsert_resume_version(&old_visible).unwrap();
+    store.upsert_resume_version(&latest_hidden).unwrap();
+    store.upsert_resume_version(&latest_visible).unwrap();
+
+    let selected = store
+        .latest_visible_resume_version_for_document(&document.id)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(selected.id, latest_visible.id);
+    assert_eq!(
+        selected.clean_text.as_deref(),
+        Some("LATEST_VERSION_SHOULD_APPEAR")
+    );
+}
+
+#[test]
 fn mark_document_deleted_sets_tombstone_hides_versions_and_status_counts() {
     let store = migrated_store();
     let now = UnixTimestamp::from_unix_seconds(1_800_000_500);

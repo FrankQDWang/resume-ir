@@ -19,9 +19,10 @@ use import_pipeline::{
 };
 use index_fulltext::{redact_contact_values, FullTextIndex, SearchHit, SearchQuery};
 use meta_store::{
-    DocumentId, DocumentStatus, EntityType, ImportRootKind, ImportRootPreset, ImportScanBudgetKind,
-    ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
-    IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension, ImportRootKind,
+    ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask,
+    ImportTaskId, ImportTaskStatus, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, UnixTimestamp,
 };
 use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
@@ -614,6 +615,13 @@ fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
         return handle_search_command_ipc(data_dir, &request, &mut stream);
     }
 
+    if request.method == "POST"
+        && request.path == "/details"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_detail_command_ipc(data_dir, &request, &mut stream);
+    }
+
     write_http_response(&mut stream, 404, "text/plain", "not found")
 }
 
@@ -745,6 +753,15 @@ fn handle_import_command_ipc(
             .to_string();
             write_http_response(stream, 409, "application/json", &body)
         }
+        Err(IpcCommandError::NotFound(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "not_found",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 404, "application/json", &body)
+        }
         Err(IpcCommandError::Internal(error)) => Err(error),
     }
 }
@@ -797,6 +814,61 @@ fn handle_search_command_ipc(
             })
             .to_string();
             write_http_response(stream, 409, "application/json", &body)
+        }
+        Err(IpcCommandError::NotFound(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "not_found",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 404, "application/json", &body)
+        }
+        Err(IpcCommandError::Internal(error)) => Err(error),
+    }
+}
+
+fn handle_detail_command_ipc(
+    data_dir: &Path,
+    request: &IpcRequest,
+    stream: &mut TcpStream,
+) -> Result<()> {
+    if !ipc_command_authorized(data_dir, &request.headers)? {
+        let body = serde_json::json!({
+            "schema_version": "daemon.error.v1",
+            "status": "unauthorized",
+        })
+        .to_string();
+        return write_http_response(stream, 401, "application/json", &body);
+    }
+
+    match execute_detail_command(data_dir, &request.body) {
+        Ok(body) => write_http_response(stream, 200, "application/json", &body),
+        Err(IpcCommandError::BadRequest(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "bad_request",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 400, "application/json", &body)
+        }
+        Err(IpcCommandError::Conflict(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "conflict",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 409, "application/json", &body)
+        }
+        Err(IpcCommandError::NotFound(_message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "not_found",
+            })
+            .to_string();
+            write_http_response(stream, 404, "application/json", &body)
         }
         Err(IpcCommandError::Internal(error)) => Err(error),
     }
@@ -1073,6 +1145,149 @@ fn daemon_persisted_profile(
         profile = profile.with_years_experience(years_experience);
     }
     Ok(profile)
+}
+
+fn execute_detail_command(
+    data_dir: &Path,
+    body: &[u8],
+) -> std::result::Result<String, IpcCommandError> {
+    let payload = serde_json::from_slice::<serde_json::Value>(body)
+        .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
+    let args = parse_detail_command(&payload)?;
+    let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
+    let detail = build_daemon_resume_detail(&store, &args.document_id)?
+        .ok_or(IpcCommandError::NotFound("detail document was not found"))?;
+    let fields = detail
+        .fields
+        .iter()
+        .map(|field| {
+            serde_json::json!({
+                "type": field.field_type,
+                "value": field.value,
+                "confidence": field.confidence,
+                "evidence": field.evidence,
+                "extractor": field.extractor,
+            })
+        })
+        .collect::<Vec<_>>();
+    let body = serde_json::json!({
+        "schema_version": "daemon.detail.v1",
+        "status": "ok",
+        "document": {
+            "doc_id": detail.doc_id,
+            "version_id": detail.version_id,
+            "file_name": detail.file_name,
+            "extension": detail.extension,
+            "document_status": detail.document_status,
+            "visibility": detail.visibility,
+            "byte_size": detail.byte_size,
+            "fields": fields,
+            "snippet": detail.snippet,
+        }
+    });
+    Ok(body.to_string())
+}
+
+fn parse_detail_command(
+    payload: &serde_json::Value,
+) -> std::result::Result<DaemonDetailArgs, IpcCommandError> {
+    let doc_id = payload
+        .get("doc_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|doc_id| !doc_id.trim().is_empty())
+        .ok_or(IpcCommandError::BadRequest(
+            "doc_id must be a non-empty string",
+        ))?;
+    let document_id = DocumentId::from_str(doc_id)
+        .map_err(|_| IpcCommandError::BadRequest("doc_id is invalid"))?;
+    Ok(DaemonDetailArgs { document_id })
+}
+
+fn build_daemon_resume_detail(
+    store: &MetaStore,
+    document_id: &DocumentId,
+) -> std::result::Result<Option<DaemonResumeDetail>, IpcCommandError> {
+    let Some(document) = store
+        .document_by_id(document_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Ok(None);
+    };
+    if document.is_deleted || document.status == DocumentStatus::Deleted {
+        return Ok(None);
+    }
+    let Some(version) = select_daemon_detail_version(store, document_id)? else {
+        return Ok(None);
+    };
+    let fields = store
+        .entity_mentions_for_version(&version.id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+        .iter()
+        .map(daemon_detail_field_from_mention)
+        .collect::<Vec<_>>();
+    let snippet = version
+        .clean_text
+        .as_deref()
+        .or(version.raw_text.as_deref())
+        .map(|text| redact_short_text(text, 240))
+        .unwrap_or_else(|| "none".to_string());
+
+    Ok(Some(DaemonResumeDetail {
+        doc_id: document.id.to_string(),
+        version_id: version.id.to_string(),
+        file_name: redact_short_text(&document.file_name, 160),
+        extension: file_extension_label(&document.extension).to_string(),
+        document_status: document_status_label(document.status).to_string(),
+        visibility: resume_visibility_label(version.visibility).to_string(),
+        byte_size: document.byte_size,
+        fields,
+        snippet,
+    }))
+}
+
+fn select_daemon_detail_version(
+    store: &MetaStore,
+    document_id: &DocumentId,
+) -> std::result::Result<Option<ResumeVersion>, IpcCommandError> {
+    store
+        .latest_visible_resume_version_for_document(document_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)
+}
+
+fn daemon_detail_field_from_mention(mention: &EntityMention) -> DaemonResumeDetailField {
+    let value = mention
+        .normalized_value
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&mention.raw_value);
+    DaemonResumeDetailField {
+        field_type: entity_type_label(&mention.entity_type),
+        value: redact_short_text(value, 120),
+        confidence: f64::from(mention.confidence.clamp(0.0, 1.0)),
+        evidence: redact_short_text(&mention.raw_value, 120),
+        extractor: redact_short_text(&mention.extractor, 80),
+    }
+}
+
+fn redact_short_text(value: &str, max_chars: usize) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let redacted = redact_contact_values(&compact);
+    truncate_chars(&redacted, max_chars)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut output = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index == max_chars {
+            output.push_str("...");
+            return output;
+        }
+        output.push(ch);
+    }
+    output
 }
 
 fn daemon_candidate_fold_key(version: &ResumeVersion) -> String {
@@ -1483,6 +1698,7 @@ impl IpcRequest {
 enum IpcCommandError {
     BadRequest(&'static str),
     Conflict(&'static str),
+    NotFound(&'static str),
     Internal(DaemonError),
 }
 
@@ -1504,6 +1720,30 @@ struct DaemonSearchHit {
     version_id: String,
     file_name: String,
     snippet: String,
+}
+
+struct DaemonDetailArgs {
+    document_id: DocumentId,
+}
+
+struct DaemonResumeDetail {
+    doc_id: String,
+    version_id: String,
+    file_name: String,
+    extension: String,
+    document_status: String,
+    visibility: String,
+    byte_size: u64,
+    fields: Vec<DaemonResumeDetailField>,
+    snippet: String,
+}
+
+struct DaemonResumeDetailField {
+    field_type: String,
+    value: String,
+    confidence: f64,
+    evidence: String,
+    extractor: String,
 }
 
 fn status_json(data_dir: &Path) -> Result<String> {
@@ -1670,6 +1910,67 @@ fn index_health_label(status: IndexStateStatus) -> &'static str {
         IndexStateStatus::Building => "building",
         IndexStateStatus::Ready => "ready",
         IndexStateStatus::Stale => "stale",
+    }
+}
+
+fn file_extension_label(extension: &FileExtension) -> &str {
+    match extension {
+        FileExtension::Docx => "docx",
+        FileExtension::Pdf => "pdf",
+        FileExtension::Doc => "doc",
+        FileExtension::Txt => "txt",
+        FileExtension::Image => "image",
+        FileExtension::Other(_) => "other",
+    }
+}
+
+fn document_status_label(status: DocumentStatus) -> &'static str {
+    match status {
+        DocumentStatus::Discovered => "discovered",
+        DocumentStatus::Fingerprinted => "fingerprinted",
+        DocumentStatus::ParseQueued => "parse_queued",
+        DocumentStatus::ParseRunning => "parse_running",
+        DocumentStatus::TextExtracted => "text_extracted",
+        DocumentStatus::OcrRequired => "ocr_required",
+        DocumentStatus::OcrRunning => "ocr_running",
+        DocumentStatus::OcrDone => "ocr_done",
+        DocumentStatus::TextCleaned => "text_cleaned",
+        DocumentStatus::FieldsExtracted => "fields_extracted",
+        DocumentStatus::EmbeddingDone => "embedding_done",
+        DocumentStatus::IndexedPartial => "indexed_partial",
+        DocumentStatus::Searchable => "searchable",
+        DocumentStatus::FailedRetryable => "failed_retryable",
+        DocumentStatus::FailedPermanent => "failed_permanent",
+        DocumentStatus::Deleted => "deleted",
+    }
+}
+
+fn resume_visibility_label(visibility: ResumeVisibility) -> &'static str {
+    match visibility {
+        ResumeVisibility::Searchable => "searchable",
+        ResumeVisibility::Partial => "partial",
+        ResumeVisibility::Hidden => "hidden",
+    }
+}
+
+fn entity_type_label(entity_type: &EntityType) -> String {
+    match entity_type {
+        EntityType::Name => "name".to_string(),
+        EntityType::Email => "email".to_string(),
+        EntityType::Phone => "phone".to_string(),
+        EntityType::School => "school".to_string(),
+        EntityType::Degree => "degree".to_string(),
+        EntityType::Company => "company".to_string(),
+        EntityType::Title => "title".to_string(),
+        EntityType::Education => "education".to_string(),
+        EntityType::Skills => "skills".to_string(),
+        EntityType::Skill => "skill".to_string(),
+        EntityType::Certificate => "certificate".to_string(),
+        EntityType::Date => "date".to_string(),
+        EntityType::DateRange => "date_range".to_string(),
+        EntityType::YearsExperience => "years_experience".to_string(),
+        EntityType::Location => "location".to_string(),
+        EntityType::Other(_) => "other".to_string(),
     }
 }
 

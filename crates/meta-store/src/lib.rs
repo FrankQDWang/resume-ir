@@ -514,6 +514,33 @@ impl MetaStore {
         Ok(versions)
     }
 
+    pub fn latest_visible_resume_version_for_document(
+        &self,
+        document_id: &DocumentId,
+    ) -> Result<Option<ResumeVersion>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {RESUME_VERSION_COLUMNS}
+            FROM resume_version
+            WHERE document_id = ?1 AND visibility <> ?2
+            ORDER BY rowid DESC
+            LIMIT 1"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                document_id.as_str(),
+                resume_visibility_to_storage(ResumeVisibility::Hidden)
+            ])
+            .map_err(MetaStoreError::storage)?;
+
+        match rows.next().map_err(MetaStoreError::storage)? {
+            Some(row) => Ok(Some(read_resume_version(row)?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn replace_entity_mentions(
         &self,
         version_id: &ResumeVersionId,

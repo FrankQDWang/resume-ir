@@ -24,12 +24,12 @@ use index_vector::{
     PersistentVectorSnapshotState, QueryVector, VectorDocument, VectorHit, VectorIndex,
 };
 use meta_store::{
-    Document, DocumentId, DocumentStatus, EntityType, ImportRootKind as StoreImportRootKind,
-    ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
-    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
-    ImportTaskStatus, IndexStateStatus, IngestJobKind, IngestJobStatus, MetaStore,
-    OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion, ResumeVersionId, ResumeVisibility,
-    UnixTimestamp, WorkerTaskKind,
+    Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
+    ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
+    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanProfile as StoreImportScanProfile,
+    ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobKind,
+    IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
@@ -62,7 +62,7 @@ fn run() -> Result<()> {
     let data_dir = take_data_dir(&mut args)?;
     let Some(command) = args.first().map(String::as_str) else {
         return Err(CliError::usage(
-            "expected command: status, import, search, delete, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
+            "expected command: status, import, search, detail, delete, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
         ));
     };
 
@@ -70,6 +70,7 @@ fn run() -> Result<()> {
         "status" => status_command(&data_dir, &args[1..]),
         "import" => import_command(&data_dir, &args[1..]),
         "search" => search_command(&data_dir, &args[1..]),
+        "detail" => detail_command(&data_dir, &args[1..]),
         "delete" => delete_command(&data_dir, &args[1..]),
         "pause" => task_control_command(&data_dir, &args[1..], true),
         "resume" => task_control_command(&data_dir, &args[1..], false),
@@ -83,7 +84,7 @@ fn run() -> Result<()> {
         }
         "export-diagnostics" => export_diagnostics_command(&data_dir, &args[1..]),
         _ => Err(CliError::usage(
-            "expected command: status, import, search, delete, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
+            "expected command: status, import, search, detail, delete, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
         )),
     }
 }
@@ -299,6 +300,11 @@ struct IpcImportEndpoint {
 
 #[derive(Clone)]
 struct IpcSearchEndpoint {
+    addr: SocketAddr,
+}
+
+#[derive(Clone)]
+struct IpcDetailEndpoint {
     addr: SocketAddr,
 }
 
@@ -1128,6 +1134,329 @@ fn print_search_hits(hits: Vec<SearchOutputHit>) {
         println!("file_name: {}", hit.file_name);
         println!("snippet: {}", hit.snippet);
     }
+}
+
+fn detail_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let detail_args = parse_detail_args(args)?;
+    if let Some(endpoint) = &detail_args.ipc_endpoint {
+        return detail_ipc_command(endpoint, &detail_args);
+    }
+
+    let document_id = DocumentId::from_str(&detail_args.doc_id)
+        .map_err(|_| CliError::user("detail doc id is invalid"))?;
+    let store = open_store(data_dir)?;
+    let detail = build_resume_detail(&store, &document_id)?
+        .ok_or_else(|| CliError::user("detail document was not found"))?;
+    print_resume_detail(&detail);
+    Ok(())
+}
+
+fn detail_ipc_command(endpoint: &IpcDetailEndpoint, detail_args: &DetailArgs) -> Result<()> {
+    let token_file = detail_args
+        .ipc_token_file
+        .as_ref()
+        .ok_or_else(|| CliError::usage(detail_usage()))?;
+    let token = fs::read_to_string(token_file)
+        .map_err(|_| CliError::user("unable to read daemon detail ipc token"))?;
+    let token = validate_daemon_ipc_token(&token, "daemon detail ipc token is invalid")?;
+    let body = serde_json::json!({
+        "doc_id": detail_args.doc_id.as_str(),
+    })
+    .to_string();
+
+    let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
+        .map_err(|_| CliError::user("unable to connect to daemon detail ipc"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon detail ipc"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon detail ipc"))?;
+    let request = format!(
+        "POST /details HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        endpoint.addr,
+        token,
+        body.len(),
+        body
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|_| CliError::user("unable to request daemon detail ipc"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|_| CliError::user("unable to read daemon detail ipc"))?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| CliError::user("daemon detail ipc response is invalid"))?;
+    let status_line = headers.lines().next().unwrap_or_default();
+    if !status_line.starts_with("HTTP/1.1 200 ") && !status_line.starts_with("HTTP/1.0 200 ") {
+        return Err(CliError::user("daemon detail ipc returned an error"));
+    }
+
+    let body: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| CliError::user("daemon detail ipc returned invalid json"))?;
+    render_detail_ipc_result(&body, detail_args.doc_id.as_str())?;
+    Ok(())
+}
+
+fn render_detail_ipc_result(body: &serde_json::Value, expected_doc_id: &str) -> Result<()> {
+    if json_str(body, "schema_version") != Some("daemon.detail.v1")
+        || json_str(body, "status") != Some("ok")
+    {
+        return Err(CliError::user(
+            "daemon detail ipc returned invalid protocol",
+        ));
+    }
+    let document = body
+        .get("document")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let doc_id = json_str(document, "doc_id")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    if doc_id != expected_doc_id || DocumentId::from_str(doc_id).is_err() {
+        return Err(CliError::user(
+            "daemon detail ipc returned invalid protocol",
+        ));
+    }
+    let version_id = json_str(document, "version_id")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    if ResumeVersionId::from_str(version_id).is_err() {
+        return Err(CliError::user(
+            "daemon detail ipc returned invalid protocol",
+        ));
+    }
+    let file_name = json_str(document, "file_name")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let extension = json_str(document, "extension")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    if !is_valid_detail_extension_label(extension) {
+        return Err(CliError::user(
+            "daemon detail ipc returned invalid protocol",
+        ));
+    }
+    let document_status = json_str(document, "document_status")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    if !is_valid_detail_document_status_label(document_status) {
+        return Err(CliError::user(
+            "daemon detail ipc returned invalid protocol",
+        ));
+    }
+    let visibility = json_str(document, "visibility")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    if !matches!(visibility, "searchable" | "partial") {
+        return Err(CliError::user(
+            "daemon detail ipc returned invalid protocol",
+        ));
+    }
+    let byte_size = document
+        .get("byte_size")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let snippet = json_str(document, "snippet")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let fields = document
+        .get("fields")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+
+    let fields = fields
+        .iter()
+        .map(parse_detail_ipc_field)
+        .collect::<Result<Vec<_>>>()?;
+    let detail = ResumeDetail {
+        doc_id: doc_id.to_string(),
+        version_id: version_id.to_string(),
+        file_name: redact_short_text(file_name, 160),
+        extension: extension.to_string(),
+        document_status: document_status.to_string(),
+        visibility: visibility.to_string(),
+        byte_size,
+        fields,
+        snippet: redact_short_text(snippet, 240),
+    };
+    print_resume_detail(&detail);
+    Ok(())
+}
+
+fn parse_detail_ipc_field(value: &serde_json::Value) -> Result<ResumeDetailField> {
+    let field_type = json_str(value, "type")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    if !is_valid_detail_field_type_label(field_type) {
+        return Err(CliError::user(
+            "daemon detail ipc returned invalid protocol",
+        ));
+    }
+    let field_value = json_str(value, "value")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let evidence = json_str(value, "evidence")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let extractor = json_str(value, "extractor")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let confidence = value
+        .get("confidence")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
+        return Err(CliError::user(
+            "daemon detail ipc returned invalid protocol",
+        ));
+    }
+
+    Ok(ResumeDetailField {
+        field_type: field_type.to_string(),
+        value: redact_short_text(field_value, 120),
+        confidence,
+        evidence: redact_short_text(evidence, 120),
+        extractor: redact_short_text(extractor, 80),
+    })
+}
+
+fn is_valid_detail_extension_label(value: &str) -> bool {
+    matches!(value, "docx" | "pdf" | "doc" | "txt" | "image" | "other")
+}
+
+fn is_valid_detail_document_status_label(value: &str) -> bool {
+    matches!(
+        value,
+        "discovered"
+            | "fingerprinted"
+            | "parse_queued"
+            | "parse_running"
+            | "text_extracted"
+            | "ocr_required"
+            | "ocr_running"
+            | "ocr_done"
+            | "text_cleaned"
+            | "fields_extracted"
+            | "embedding_done"
+            | "indexed_partial"
+            | "searchable"
+            | "failed_retryable"
+            | "failed_permanent"
+    )
+}
+
+fn is_valid_detail_field_type_label(value: &str) -> bool {
+    matches!(
+        value,
+        "name"
+            | "email"
+            | "phone"
+            | "school"
+            | "degree"
+            | "company"
+            | "title"
+            | "education"
+            | "skills"
+            | "skill"
+            | "certificate"
+            | "date"
+            | "date_range"
+            | "years_experience"
+            | "location"
+            | "other"
+    )
+}
+
+fn build_resume_detail(
+    store: &MetaStore,
+    document_id: &DocumentId,
+) -> Result<Option<ResumeDetail>> {
+    let Some(document) = store.document_by_id(document_id).map_err(CliError::store)? else {
+        return Ok(None);
+    };
+    if document.is_deleted || document.status == DocumentStatus::Deleted {
+        return Ok(None);
+    }
+    let Some(version) = select_detail_version(store, document_id)? else {
+        return Ok(None);
+    };
+    let fields = store
+        .entity_mentions_for_version(&version.id)
+        .map_err(CliError::store)?
+        .iter()
+        .map(resume_detail_field_from_mention)
+        .collect::<Vec<_>>();
+    let snippet = version
+        .clean_text
+        .as_deref()
+        .or(version.raw_text.as_deref())
+        .map(|text| redact_short_text(text, 240))
+        .unwrap_or_else(|| "none".to_string());
+
+    Ok(Some(ResumeDetail {
+        doc_id: document.id.to_string(),
+        version_id: version.id.to_string(),
+        file_name: redact_short_text(&document.file_name, 160),
+        extension: file_extension_label(&document.extension).to_string(),
+        document_status: document_status_label(document.status).to_string(),
+        visibility: resume_visibility_label(version.visibility).to_string(),
+        byte_size: document.byte_size,
+        fields,
+        snippet,
+    }))
+}
+
+fn select_detail_version(
+    store: &MetaStore,
+    document_id: &DocumentId,
+) -> Result<Option<ResumeVersion>> {
+    store
+        .latest_visible_resume_version_for_document(document_id)
+        .map_err(CliError::store)
+}
+
+fn resume_detail_field_from_mention(mention: &EntityMention) -> ResumeDetailField {
+    let value = mention
+        .normalized_value
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&mention.raw_value);
+    ResumeDetailField {
+        field_type: entity_type_label(&mention.entity_type),
+        value: redact_short_text(value, 120),
+        confidence: f64::from(mention.confidence.clamp(0.0, 1.0)),
+        evidence: redact_short_text(&mention.raw_value, 120),
+        extractor: redact_short_text(&mention.extractor, 80),
+    }
+}
+
+fn print_resume_detail(detail: &ResumeDetail) {
+    println!("resume detail");
+    println!("doc_id: {}", detail.doc_id);
+    println!("version_id: {}", detail.version_id);
+    println!("file_name: {}", detail.file_name);
+    println!("extension: {}", detail.extension);
+    println!("document status: {}", detail.document_status);
+    println!("visibility: {}", detail.visibility);
+    println!("byte_size: {}", detail.byte_size);
+    println!("fields: {}", detail.fields.len());
+    for field in &detail.fields {
+        println!(
+            "field: {} | value: {} | confidence: {:.2} | evidence: {} | extractor: {}",
+            field.field_type, field.value, field.confidence, field.evidence, field.extractor
+        );
+    }
+    println!("snippet: {}", detail.snippet);
+}
+
+fn redact_short_text(value: &str, max_chars: usize) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let redacted = redact_contact_values(&compact);
+    truncate_chars(&redacted, max_chars)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut output = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index == max_chars {
+            output.push_str("...");
+            return output;
+        }
+        output.push(ch);
+    }
+    output
 }
 
 fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -2129,6 +2458,85 @@ fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
     Ok(IpcSearchEndpoint { addr })
 }
 
+fn parse_detail_args(args: &[String]) -> Result<DetailArgs> {
+    let mut doc_id = None;
+    let mut ipc_endpoint = None;
+    let mut ipc_token_file = None;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--doc-id" => {
+                if doc_id.is_some() {
+                    return Err(CliError::usage(detail_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(detail_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(detail_usage()));
+                }
+                doc_id = Some(value.clone());
+                index += 2;
+            }
+            "--ipc" => {
+                if ipc_endpoint.is_some() {
+                    return Err(CliError::usage(detail_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(detail_usage()));
+                };
+                ipc_endpoint = Some(parse_detail_ipc_endpoint(value)?);
+                index += 2;
+            }
+            "--ipc-token-file" => {
+                if ipc_token_file.is_some() {
+                    return Err(CliError::usage(detail_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(detail_usage()));
+                };
+                ipc_token_file = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(detail_usage())),
+        }
+    }
+
+    if ipc_endpoint.is_some() != ipc_token_file.is_some() {
+        return Err(CliError::usage(detail_usage()));
+    }
+
+    Ok(DetailArgs {
+        doc_id: doc_id.ok_or_else(|| CliError::usage(detail_usage()))?,
+        ipc_endpoint,
+        ipc_token_file,
+    })
+}
+
+fn detail_usage() -> &'static str {
+    "usage: resume-cli detail --doc-id <doc_id> [--ipc <http://127.0.0.1:port/details|/status> --ipc-token-file <path>]"
+}
+
+fn parse_detail_ipc_endpoint(value: &str) -> Result<IpcDetailEndpoint> {
+    let rest = value
+        .strip_prefix("http://")
+        .ok_or_else(|| CliError::usage(detail_usage()))?;
+    let (authority, path) = rest
+        .split_once('/')
+        .ok_or_else(|| CliError::usage(detail_usage()))?;
+    if path != "details" && path != "status" {
+        return Err(CliError::usage(detail_usage()));
+    }
+
+    let addr = SocketAddr::from_str(authority).map_err(|_| CliError::usage(detail_usage()))?;
+    if !addr.ip().is_loopback() {
+        return Err(CliError::usage("detail ipc endpoint must be loopback"));
+    }
+
+    Ok(IpcDetailEndpoint { addr })
+}
+
 fn run_semantic_search(
     data_dir: &Path,
     store: &MetaStore,
@@ -2524,6 +2932,32 @@ struct SearchArgs {
     ipc_token_file: Option<PathBuf>,
 }
 
+struct DetailArgs {
+    doc_id: String,
+    ipc_endpoint: Option<IpcDetailEndpoint>,
+    ipc_token_file: Option<PathBuf>,
+}
+
+struct ResumeDetail {
+    doc_id: String,
+    version_id: String,
+    file_name: String,
+    extension: String,
+    document_status: String,
+    visibility: String,
+    byte_size: u64,
+    fields: Vec<ResumeDetailField>,
+    snippet: String,
+}
+
+struct ResumeDetailField {
+    field_type: String,
+    value: String,
+    confidence: f64,
+    evidence: String,
+    extractor: String,
+}
+
 fn inspect_search_index(data_dir: &Path) -> SearchIndexDiagnostic {
     let index_root = data_dir.join("search-index");
     let inspection = match inspect_snapshot_root(&index_root) {
@@ -2770,6 +3204,67 @@ fn index_health_label(status: IndexStateStatus) -> &'static str {
         IndexStateStatus::Building => "building",
         IndexStateStatus::Ready => "ready",
         IndexStateStatus::Stale => "stale",
+    }
+}
+
+fn file_extension_label(extension: &FileExtension) -> &str {
+    match extension {
+        FileExtension::Docx => "docx",
+        FileExtension::Pdf => "pdf",
+        FileExtension::Doc => "doc",
+        FileExtension::Txt => "txt",
+        FileExtension::Image => "image",
+        FileExtension::Other(_) => "other",
+    }
+}
+
+fn document_status_label(status: DocumentStatus) -> &'static str {
+    match status {
+        DocumentStatus::Discovered => "discovered",
+        DocumentStatus::Fingerprinted => "fingerprinted",
+        DocumentStatus::ParseQueued => "parse_queued",
+        DocumentStatus::ParseRunning => "parse_running",
+        DocumentStatus::TextExtracted => "text_extracted",
+        DocumentStatus::OcrRequired => "ocr_required",
+        DocumentStatus::OcrRunning => "ocr_running",
+        DocumentStatus::OcrDone => "ocr_done",
+        DocumentStatus::TextCleaned => "text_cleaned",
+        DocumentStatus::FieldsExtracted => "fields_extracted",
+        DocumentStatus::EmbeddingDone => "embedding_done",
+        DocumentStatus::IndexedPartial => "indexed_partial",
+        DocumentStatus::Searchable => "searchable",
+        DocumentStatus::FailedRetryable => "failed_retryable",
+        DocumentStatus::FailedPermanent => "failed_permanent",
+        DocumentStatus::Deleted => "deleted",
+    }
+}
+
+fn resume_visibility_label(visibility: ResumeVisibility) -> &'static str {
+    match visibility {
+        ResumeVisibility::Searchable => "searchable",
+        ResumeVisibility::Partial => "partial",
+        ResumeVisibility::Hidden => "hidden",
+    }
+}
+
+fn entity_type_label(entity_type: &EntityType) -> String {
+    match entity_type {
+        EntityType::Name => "name".to_string(),
+        EntityType::Email => "email".to_string(),
+        EntityType::Phone => "phone".to_string(),
+        EntityType::School => "school".to_string(),
+        EntityType::Degree => "degree".to_string(),
+        EntityType::Company => "company".to_string(),
+        EntityType::Title => "title".to_string(),
+        EntityType::Education => "education".to_string(),
+        EntityType::Skills => "skills".to_string(),
+        EntityType::Skill => "skill".to_string(),
+        EntityType::Certificate => "certificate".to_string(),
+        EntityType::Date => "date".to_string(),
+        EntityType::DateRange => "date_range".to_string(),
+        EntityType::YearsExperience => "years_experience".to_string(),
+        EntityType::Location => "location".to_string(),
+        EntityType::Other(_) => "other".to_string(),
     }
 }
 

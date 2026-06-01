@@ -741,6 +741,7 @@ pub fn redact_contact_values(text: &str) -> String {
     static EMAIL_REGEX: OnceLock<Regex> = OnceLock::new();
     static PHONE_REGEX: OnceLock<Regex> = OnceLock::new();
     static COMPACT_PHONE_REGEX: OnceLock<Regex> = OnceLock::new();
+    static LOCAL_PATH_REGEX: OnceLock<Regex> = OnceLock::new();
 
     let email_redacted = EMAIL_REGEX
         .get_or_init(|| Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap())
@@ -761,9 +762,27 @@ pub fn redact_contact_values(text: &str) -> String {
             .unwrap()
         })
         .replace_all(&email_redacted, "<redacted-phone>");
-    COMPACT_PHONE_REGEX
+    let compact_phone_redacted = COMPACT_PHONE_REGEX
         .get_or_init(|| Regex::new(r"\+?(?:1)?\d{10}\b").unwrap())
-        .replace_all(&phone_redacted, "<redacted-phone>")
+        .replace_all(&phone_redacted, "<redacted-phone>");
+    LOCAL_PATH_REGEX
+        .get_or_init(|| {
+            Regex::new(
+                r"(?ix)
+                (?:
+                    file://\S+
+                    |
+                    (?:~|/Users|/home|/private|/var|/tmp|[A-Z]:[\\/])\S*
+                    |
+                    \b[A-Z]:\\\S+
+                    |
+                    \S*(?:/Users/|/home/|/private/|\\Users\\)\S*
+                )
+                ",
+            )
+            .unwrap()
+        })
+        .replace_all(&compact_phone_redacted, "<redacted-path>")
         .into_owned()
 }
 
