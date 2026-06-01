@@ -19,6 +19,7 @@ const SCHEMA_VERSION_V4: u32 = 4;
 const SCHEMA_VERSION_V5: u32 = 5;
 const SCHEMA_VERSION_V6: u32 = 6;
 const SCHEMA_VERSION_V7: u32 = 7;
+const SCHEMA_VERSION_V8: u32 = 8;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -40,6 +41,7 @@ const ENTITY_MENTION_COLUMNS: &str = "\
 const OCR_PAGE_CACHE_COLUMNS: &str = "\
     file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile, text, confidence, \
     engine_profile, duration_ms, status, error_kind, updated_at_seconds";
+const WORKER_TASK_CONTROL_COLUMNS: &str = "task_kind, paused, updated_at_seconds";
 
 pub fn crate_name() -> &'static str {
     "meta-store"
@@ -102,6 +104,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V5, SCHEMA_V5),
             (SCHEMA_VERSION_V6, SCHEMA_V6),
             (SCHEMA_VERSION_V7, SCHEMA_V7),
+            (SCHEMA_VERSION_V8, SCHEMA_V8),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -642,6 +645,57 @@ impl MetaStore {
             Some(row) => Ok(Some(read_ocr_page_cache_entry(row)?)),
             None => Ok(None),
         }
+    }
+
+    pub fn worker_task_control(&self, task: WorkerTaskKind) -> Result<WorkerTaskControl> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {WORKER_TASK_CONTROL_COLUMNS}
+            FROM worker_task_control
+            WHERE task_kind = ?1"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![worker_task_kind_to_storage(task)])
+            .map_err(MetaStoreError::storage)?;
+
+        match rows.next().map_err(MetaStoreError::storage)? {
+            Some(row) => read_worker_task_control(row),
+            None => Ok(WorkerTaskControl {
+                task,
+                paused: false,
+                updated_at: UnixTimestamp::from_unix_seconds(0),
+            }),
+        }
+    }
+
+    pub fn set_worker_task_paused(
+        &self,
+        task: WorkerTaskKind,
+        paused: bool,
+        updated_at: UnixTimestamp,
+    ) -> Result<()> {
+        let connection = self.connection.borrow();
+        connection
+            .execute(
+                "\
+                INSERT INTO worker_task_control (
+                    task_kind, paused, updated_at_seconds
+                )
+                VALUES (?1, ?2, ?3)
+                ON CONFLICT(task_kind) DO UPDATE SET
+                    paused = excluded.paused,
+                    updated_at_seconds = excluded.updated_at_seconds",
+                params![
+                    worker_task_kind_to_storage(task),
+                    bool_to_i64(paused),
+                    updated_at.as_unix_seconds(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+
+        Ok(())
     }
 
     pub fn insert_ingest_job(&self, job: &IngestJob) -> Result<()> {
@@ -1635,6 +1689,18 @@ pub enum ImportTaskStatus {
     FailedPermanent,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkerTaskKind {
+    Ocr,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkerTaskControl {
+    pub task: WorkerTaskKind,
+    pub paused: bool,
+    pub updated_at: UnixTimestamp,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoreStatusSummary {
     pub indexed_documents: u64,
@@ -2105,6 +2171,14 @@ CREATE INDEX ocr_page_cache_content_idx
     ON ocr_page_cache(file_content_hash, status, updated_at_seconds);
 "#;
 
+const SCHEMA_V8: &str = r#"
+CREATE TABLE worker_task_control (
+    task_kind TEXT PRIMARY KEY CHECK (task_kind IN ('ocr')),
+    paused INTEGER NOT NULL CHECK (paused IN (0, 1)),
+    updated_at_seconds INTEGER NOT NULL
+);
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -2244,6 +2318,14 @@ fn read_ocr_page_cache_entry(row: &Row<'_>) -> Result<OcrPageCacheEntry> {
     };
     validate_ocr_page_cache_entry(&entry)?;
     Ok(entry)
+}
+
+fn read_worker_task_control(row: &Row<'_>) -> Result<WorkerTaskControl> {
+    Ok(WorkerTaskControl {
+        task: worker_task_kind_from_storage(&read_string(row, 0)?)?,
+        paused: i64_to_bool(read_i64(row, 1)?, "worker_task_control.paused")?,
+        updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 2)?),
+    })
 }
 
 fn read_import_task(row: &Row<'_>) -> Result<ImportTask> {
@@ -2604,6 +2686,14 @@ fn bool_to_i64(value: bool) -> i64 {
     }
 }
 
+fn i64_to_bool(value: i64, field: &'static str) -> Result<bool> {
+    match value {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(MetaStoreError::invalid_value(field)),
+    }
+}
+
 fn file_extension_to_storage(extension: &FileExtension) -> String {
     match extension {
         FileExtension::Docx => "docx".to_string(),
@@ -2793,6 +2883,21 @@ fn ocr_page_cache_status_from_storage(value: &str) -> Result<OcrPageCacheStatus>
         "failed_retryable" => Ok(OcrPageCacheStatus::FailedRetryable),
         "failed_permanent" => Ok(OcrPageCacheStatus::FailedPermanent),
         _ => Err(MetaStoreError::invalid_value("ocr_page_cache.status")),
+    }
+}
+
+fn worker_task_kind_to_storage(task: WorkerTaskKind) -> &'static str {
+    match task {
+        WorkerTaskKind::Ocr => "ocr",
+    }
+}
+
+fn worker_task_kind_from_storage(value: &str) -> Result<WorkerTaskKind> {
+    match value {
+        "ocr" => Ok(WorkerTaskKind::Ocr),
+        _ => Err(MetaStoreError::invalid_value(
+            "worker_task_control.task_kind",
+        )),
     }
 }
 

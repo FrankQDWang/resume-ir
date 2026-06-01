@@ -8,7 +8,7 @@ use meta_store::{
     EntityMentionId, EntityType, FileExtension, ImportTask, ImportTaskId, ImportTaskStatus,
     IndexState, IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus,
     MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion,
-    ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
 };
 use rusqlite::{params, Connection};
 
@@ -19,8 +19,8 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5, 6, 7]);
-    assert_eq!(store.schema_version().unwrap(), 7);
+    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(store.schema_version().unwrap(), 8);
 
     for table_name in [
         "candidate",
@@ -31,13 +31,73 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "import_task",
         "entity_mention",
         "ocr_page_cache",
+        "worker_task_control",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 7);
+    assert_eq!(store.schema_version().unwrap(), 8);
+}
+
+#[test]
+fn worker_task_control_defaults_to_running_and_persists_pause_state() {
+    let db_path = temp_db_path("worker-task-control-placeholder");
+    let pause_at = UnixTimestamp::from_unix_seconds(1_800_000_330);
+    let resume_at = UnixTimestamp::from_unix_seconds(1_800_000_360);
+
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+        assert_eq!(
+            store.worker_task_control(WorkerTaskKind::Ocr).unwrap(),
+            WorkerTaskControl {
+                task: WorkerTaskKind::Ocr,
+                paused: false,
+                updated_at: UnixTimestamp::from_unix_seconds(0),
+            }
+        );
+
+        store
+            .set_worker_task_paused(WorkerTaskKind::Ocr, true, pause_at)
+            .unwrap();
+        assert_eq!(
+            store.worker_task_control(WorkerTaskKind::Ocr).unwrap(),
+            WorkerTaskControl {
+                task: WorkerTaskKind::Ocr,
+                paused: true,
+                updated_at: pause_at,
+            }
+        );
+    }
+
+    {
+        let reopened = MetaStore::open(&db_path).unwrap();
+        reopened.run_migrations().unwrap();
+        assert_eq!(
+            reopened.worker_task_control(WorkerTaskKind::Ocr).unwrap(),
+            WorkerTaskControl {
+                task: WorkerTaskKind::Ocr,
+                paused: true,
+                updated_at: pause_at,
+            }
+        );
+
+        reopened
+            .set_worker_task_paused(WorkerTaskKind::Ocr, false, resume_at)
+            .unwrap();
+        assert_eq!(
+            reopened.worker_task_control(WorkerTaskKind::Ocr).unwrap(),
+            WorkerTaskControl {
+                task: WorkerTaskKind::Ocr,
+                paused: false,
+                updated_at: resume_at,
+            }
+        );
+    }
+
+    remove_temp_db(&db_path);
 }
 
 #[test]
@@ -802,7 +862,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7]);
-        assert_eq!(reopened.schema_version().unwrap(), 7);
+        assert_eq!(reopened.schema_version().unwrap(), 8);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1095,7 +1155,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 7);
+        assert_eq!(reopened.schema_version().unwrap(), 8);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -1250,6 +1310,9 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
         connection.execute("DROP TABLE candidate", []).unwrap();
         connection.execute("DROP TABLE ocr_page_cache", []).unwrap();
         connection
+            .execute("DROP TABLE worker_task_control", [])
+            .unwrap();
+        connection
             .execute(
                 "DROP INDEX IF EXISTS ingest_job_ocr_document_unique_idx",
                 [],
@@ -1260,7 +1323,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             .unwrap();
         connection
             .execute(
-                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7)",
+                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8)",
                 [],
             )
             .unwrap();
@@ -1269,8 +1332,8 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6, 7]);
-        assert_eq!(reopened.schema_version().unwrap(), 7);
+        assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(reopened.schema_version().unwrap(), 8);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -1302,7 +1365,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 7);
+        assert_eq!(reopened.schema_version().unwrap(), 8);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

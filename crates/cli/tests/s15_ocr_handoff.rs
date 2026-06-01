@@ -137,6 +137,104 @@ fn ocr_worker_without_command_reports_blocked_and_leaves_job_queued() {
 
 #[cfg(unix)]
 #[test]
+fn pause_and_resume_ocr_task_persistently_controls_worker_claims() {
+    let data_dir = temp_dir("ocr-worker-pause-resume-data");
+    let fixture_root = fixture_root();
+    let command = write_fixture_executable(
+        "fixture-ocr-worker-paused",
+        r#"#!/bin/sh
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.81\n'
+printf 'text:\n'
+printf 'OCRS33PauseResumeToken worker text\n'
+"#,
+    );
+    import_fixtures(&data_dir, &fixture_root);
+
+    let pause = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "pause", "--task", "ocr"])
+        .output()
+        .expect("pause ocr task");
+    assert!(pause.status.success());
+    assert!(pause.stderr.is_empty());
+    let pause_stdout = String::from_utf8_lossy(&pause.stdout);
+    assert!(pause_stdout.contains("task: ocr"));
+    assert!(pause_stdout.contains("status: paused"));
+    assert!(!pause_stdout.contains(path_str(&data_dir)));
+
+    let paused_worker = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+        ])
+        .output()
+        .expect("run paused ocr worker");
+    assert!(paused_worker.status.success());
+    assert!(paused_worker.stderr.is_empty());
+    let paused_stdout = String::from_utf8_lossy(&paused_worker.stdout);
+    assert!(paused_stdout.contains("ocr worker: paused"));
+    assert!(paused_stdout.contains("documents processed: 0"));
+    assert!(paused_stdout.contains("cache writes: 0"));
+    assert!(!paused_stdout.contains("OCRS33PauseResumeToken"));
+    assert!(!paused_stdout.contains(path_str(&data_dir)));
+    assert!(!paused_stdout.contains(path_str(&fixture_root)));
+
+    {
+        let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+        store.run_migrations().unwrap();
+        assert_eq!(scanned_document(&store).status, DocumentStatus::OcrRequired);
+        let retryable = store.retryable_jobs().unwrap();
+        assert_eq!(retryable.len(), 1);
+        assert_eq!(retryable[0].status, IngestJobStatus::Queued);
+    }
+
+    let resume = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "resume", "--task", "ocr"])
+        .output()
+        .expect("resume ocr task");
+    assert!(resume.status.success());
+    assert!(resume.stderr.is_empty());
+    let resume_stdout = String::from_utf8_lossy(&resume.stdout);
+    assert!(resume_stdout.contains("task: ocr"));
+    assert!(resume_stdout.contains("status: running"));
+    assert!(!resume_stdout.contains(path_str(&data_dir)));
+
+    let resumed_worker = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+        ])
+        .output()
+        .expect("run resumed ocr worker");
+    assert!(
+        resumed_worker.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&resumed_worker.stdout),
+        String::from_utf8_lossy(&resumed_worker.stderr)
+    );
+    let resumed_stdout = String::from_utf8_lossy(&resumed_worker.stdout);
+    assert!(resumed_stdout.contains("ocr worker: completed"));
+    assert!(resumed_stdout.contains("documents processed: 1"));
+    assert!(!resumed_stdout.contains("OCRS33PauseResumeToken"));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    assert_eq!(scanned_document(&store).status, DocumentStatus::OcrDone);
+    assert!(store.retryable_jobs().unwrap().is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn ocr_worker_executes_local_command_and_persists_page_cache_without_searchable_text() {
     let data_dir = temp_dir("ocr-worker-command-data");
     let fixture_root = fixture_root();

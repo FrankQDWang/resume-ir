@@ -18,6 +18,7 @@ use meta_store::{
     DocumentId, DocumentStatus, EntityType, ImportTask, ImportTaskId, ImportTaskStatus,
     IndexStateStatus, IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry,
     OcrPageCacheKey, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    WorkerTaskKind,
 };
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
@@ -47,7 +48,7 @@ fn run() -> Result<()> {
     let data_dir = take_data_dir(&mut args)?;
     let Some(command) = args.first().map(String::as_str) else {
         return Err(CliError::usage(
-            "expected command: status, import, search, delete, ocr-worker, doctor, or export-diagnostics",
+            "expected command: status, import, search, delete, pause, resume, ocr-worker, doctor, or export-diagnostics",
         ));
     };
 
@@ -56,6 +57,8 @@ fn run() -> Result<()> {
         "import" => import_command(&data_dir, &args[1..]),
         "search" => search_command(&data_dir, &args[1..]),
         "delete" => delete_command(&data_dir, &args[1..]),
+        "pause" => task_control_command(&data_dir, &args[1..], true),
+        "resume" => task_control_command(&data_dir, &args[1..], false),
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
         "doctor" => {
             if args.len() != 1 {
@@ -65,7 +68,7 @@ fn run() -> Result<()> {
         }
         "export-diagnostics" => export_diagnostics_command(&data_dir, &args[1..]),
         _ => Err(CliError::usage(
-            "expected command: status, import, search, delete, ocr-worker, doctor, or export-diagnostics",
+            "expected command: status, import, search, delete, pause, resume, ocr-worker, doctor, or export-diagnostics",
         )),
     }
 }
@@ -93,6 +96,9 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
+    let ocr_task = store
+        .worker_task_control(WorkerTaskKind::Ocr)
+        .map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
 
     println!("resume-ir status");
@@ -104,6 +110,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("ocr queue: {}", summary.ocr_queue_depth);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
+    println!("ocr task: {}", worker_task_status_label(ocr_task.paused));
     println!("embedding queue: {}", summary.embedding_queue_depth);
     println!("entity mentions: {}", summary.entity_mentions);
     println!("import tasks queued: {}", summary.import_tasks_queued);
@@ -630,16 +637,75 @@ fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn task_control_command(data_dir: &Path, args: &[String], paused: bool) -> Result<()> {
+    let task = parse_worker_task_control_args(args)?;
+    let store = open_store(data_dir)?;
+    let now = current_timestamp()?;
+    store
+        .set_worker_task_paused(task, paused, now)
+        .map_err(CliError::store)?;
+
+    println!("task: {}", worker_task_label(task));
+    println!("status: {}", worker_task_status_label(paused));
+
+    Ok(())
+}
+
+fn parse_worker_task_control_args(args: &[String]) -> Result<WorkerTaskKind> {
+    if args.len() != 2 || args.first().map(String::as_str) != Some("--task") {
+        return Err(task_control_usage());
+    }
+
+    parse_worker_task_kind(&args[1])
+}
+
+fn parse_worker_task_kind(value: &str) -> Result<WorkerTaskKind> {
+    match value {
+        "ocr" => Ok(WorkerTaskKind::Ocr),
+        _ => Err(task_control_usage()),
+    }
+}
+
+fn worker_task_label(task: WorkerTaskKind) -> &'static str {
+    match task {
+        WorkerTaskKind::Ocr => "ocr",
+    }
+}
+
+fn worker_task_status_label(paused: bool) -> &'static str {
+    if paused {
+        "paused"
+    } else {
+        "running"
+    }
+}
+
+fn task_control_usage() -> CliError {
+    CliError::usage("usage: resume-cli pause --task ocr OR resume --task ocr")
+}
+
 fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let worker_args = parse_ocr_worker_args(args)?;
+    let store = open_store(data_dir)?;
+    let now = current_timestamp()?;
+    if store
+        .worker_task_control(WorkerTaskKind::Ocr)
+        .map_err(CliError::store)?
+        .paused
+    {
+        println!("ocr worker: paused");
+        println!("documents processed: 0");
+        println!("cache writes: 0");
+        println!("cache hits: 0");
+        return Ok(());
+    }
+
     let Some(command) = worker_args.command.clone() else {
         return Err(CliError::user(
             "ocr worker blocked: local OCR command not configured",
         ));
     };
 
-    let store = open_store(data_dir)?;
-    let now = current_timestamp()?;
     let Some(job) = store
         .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
         .map_err(CliError::store)?
