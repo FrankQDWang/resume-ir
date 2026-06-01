@@ -27,7 +27,22 @@ pub fn crawl_directory_with_profile(
     profile: ScanProfile,
 ) -> Result<ScanReport> {
     let fs = StdFileSystem;
-    crawl_with_fs_profile(&fs, root.as_ref(), profile)
+    crawl_with_fs_options(
+        &fs,
+        root.as_ref(),
+        ScanOptions {
+            profile,
+            ..ScanOptions::default()
+        },
+    )
+}
+
+pub fn crawl_directory_with_options(
+    root: impl AsRef<Path>,
+    options: ScanOptions,
+) -> Result<ScanReport> {
+    let fs = StdFileSystem;
+    crawl_with_fs_options(&fs, root.as_ref(), options)
 }
 
 pub fn crawl_with_fs(file_system: &impl FileSystem, root: &Path) -> Result<ScanReport> {
@@ -38,6 +53,21 @@ pub fn crawl_with_fs_profile(
     file_system: &impl FileSystem,
     root: &Path,
     profile: ScanProfile,
+) -> Result<ScanReport> {
+    crawl_with_fs_options(
+        file_system,
+        root,
+        ScanOptions {
+            profile,
+            ..ScanOptions::default()
+        },
+    )
+}
+
+pub fn crawl_with_fs_options(
+    file_system: &impl FileSystem,
+    root: &Path,
+    options: ScanOptions,
 ) -> Result<ScanReport> {
     let root_metadata = file_system
         .metadata(root)
@@ -55,6 +85,9 @@ pub fn crawl_with_fs_profile(
     let mut directories = vec![root.to_path_buf()];
 
     while let Some(directory) = directories.pop() {
+        if scan_file_budget_reached(&mut report, options.max_files) {
+            break;
+        }
         let mut entries = match file_system.read_dir(&directory) {
             Ok(entries) => entries,
             Err(error) => {
@@ -73,9 +106,13 @@ pub fn crawl_with_fs_profile(
         entries.sort_by_key(|entry| path_sort_key(&entry.path));
 
         for entry in entries {
+            if scan_file_budget_reached(&mut report, options.max_files) {
+                directories.clear();
+                break;
+            }
             match entry.kind {
                 FsEntryKind::Directory => {
-                    if ignored_directory(&entry.path, profile, &mut report) {
+                    if ignored_directory(&entry.path, options.profile, &mut report) {
                         report.ignored_count += 1;
                     } else {
                         directories.push(entry.path);
@@ -97,6 +134,22 @@ pub fn crawl_with_fs_profile(
     report.errors.sort_by_key(|error| error.sort_key());
 
     Ok(report)
+}
+
+fn scan_file_budget_reached(report: &mut ScanReport, max_files: Option<usize>) -> bool {
+    let Some(limit) = max_files else {
+        return false;
+    };
+    if report.files.len() < limit {
+        return false;
+    }
+
+    report.budget_exhausted.get_or_insert(ScanBudgetExhausted {
+        kind: ScanBudgetKind::Files,
+        limit,
+        observed: report.files.len(),
+    });
+    true
 }
 
 pub fn normalize_path(
@@ -488,6 +541,24 @@ impl ScanProfile {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScanOptions {
+    pub profile: ScanProfile,
+    pub max_files: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScanBudgetExhausted {
+    pub kind: ScanBudgetKind,
+    pub limit: usize,
+    pub observed: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScanBudgetKind {
+    Files,
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct ScanReport {
     pub files: Vec<DiscoveredFile>,
@@ -495,6 +566,7 @@ pub struct ScanReport {
     pub ignored_count: usize,
     pub scanned_directories: Vec<NormalizedPath>,
     pub skipped_directories: Vec<NormalizedPath>,
+    pub budget_exhausted: Option<ScanBudgetExhausted>,
 }
 
 #[derive(Clone, PartialEq, Eq)]

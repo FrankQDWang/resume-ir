@@ -7,7 +7,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use core_domain::FileExtension;
 use fs_crawler::{
     crawl_directory, crawl_with_fs, crawl_with_fs_profile, normalize_path, CrawlErrorKind,
-    FileSystem, FsEntry, FsEntryKind, FsMetadata, ScanProfile, MAX_TOTAL_SAMPLE_BYTES,
+    FileSystem, FsEntry, FsEntryKind, FsMetadata, ScanBudgetKind, ScanOptions, ScanProfile,
+    MAX_TOTAL_SAMPLE_BYTES,
 };
 
 #[test]
@@ -178,6 +179,33 @@ fn discovery_profile_skips_system_cache_and_dependency_directories() {
     );
     assert!(discovery.errors.is_empty());
     assert!(discovery.ignored_count >= 5);
+}
+
+#[test]
+fn scan_options_stop_after_file_budget_without_path_leakage() {
+    let fs = FakeFileSystem::new()
+        .dir("/fixture")
+        .file("/fixture/a.docx", b"synthetic a")
+        .file("/fixture/b.pdf", b"synthetic b")
+        .file("/fixture/c.pdf", b"synthetic c");
+
+    let report = fs_crawler::crawl_with_fs_options(
+        &fs,
+        Path::new("/fixture"),
+        ScanOptions {
+            profile: ScanProfile::Explicit,
+            max_files: Some(2),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(report.files.len(), 2);
+    assert!(report.errors.is_empty());
+    let budget = report.budget_exhausted.expect("file budget exhausted");
+    assert_eq!(budget.kind, ScanBudgetKind::Files);
+    assert_eq!(budget.limit, 2);
+    assert_eq!(budget.observed, 2);
+    assert!(!format!("{budget:?}").contains("/fixture"));
 }
 
 #[test]

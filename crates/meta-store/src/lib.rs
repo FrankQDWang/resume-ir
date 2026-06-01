@@ -21,6 +21,7 @@ const SCHEMA_VERSION_V6: u32 = 6;
 const SCHEMA_VERSION_V7: u32 = 7;
 const SCHEMA_VERSION_V8: u32 = 8;
 const SCHEMA_VERSION_V9: u32 = 9;
+const SCHEMA_VERSION_V10: u32 = 10;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -47,7 +48,8 @@ const IMPORT_SCAN_SCOPE_COLUMNS: &str = "\
     import_task_id, root_kind, root_preset, scan_profile, requested_root_path, \
     canonical_root_path, files_discovered, ignored_entries, scan_errors, \
     searchable_documents, ocr_required_documents, ocr_jobs_queued, failed_documents, \
-    deleted_documents, updated_at_seconds";
+    deleted_documents, scan_budget_kind, scan_budget_limit, scan_budget_observed, \
+    scan_budget_exhausted, updated_at_seconds";
 
 pub fn crate_name() -> &'static str {
     "meta-store"
@@ -112,6 +114,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V7, SCHEMA_V7),
             (SCHEMA_VERSION_V8, SCHEMA_V8),
             (SCHEMA_VERSION_V9, SCHEMA_V9),
+            (SCHEMA_VERSION_V10, SCHEMA_V10),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -1177,9 +1180,13 @@ impl MetaStore {
                     import_task_id, root_kind, root_preset, scan_profile, requested_root_path,
                     canonical_root_path, files_discovered, ignored_entries, scan_errors,
                     searchable_documents, ocr_required_documents, ocr_jobs_queued,
-                    failed_documents, deleted_documents, updated_at_seconds
+                    failed_documents, deleted_documents, scan_budget_kind, scan_budget_limit,
+                    scan_budget_observed, scan_budget_exhausted, updated_at_seconds
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+                    ?18, ?19
+                )
                 ON CONFLICT(import_task_id) DO UPDATE SET
                     root_kind = excluded.root_kind,
                     root_preset = excluded.root_preset,
@@ -1194,6 +1201,10 @@ impl MetaStore {
                     ocr_jobs_queued = excluded.ocr_jobs_queued,
                     failed_documents = excluded.failed_documents,
                     deleted_documents = excluded.deleted_documents,
+                    scan_budget_kind = excluded.scan_budget_kind,
+                    scan_budget_limit = excluded.scan_budget_limit,
+                    scan_budget_observed = excluded.scan_budget_observed,
+                    scan_budget_exhausted = excluded.scan_budget_exhausted,
                     updated_at_seconds = excluded.updated_at_seconds",
                 params![
                     scope.import_task_id.as_str(),
@@ -1219,6 +1230,18 @@ impl MetaStore {
                         scope.deleted_documents,
                         "import_scan_scope.deleted_documents"
                     )?,
+                    scope
+                        .scan_budget_kind
+                        .map(import_scan_budget_kind_to_storage),
+                    scope
+                        .scan_budget_limit
+                        .map(|value| u64_to_i64(value, "import_scan_scope.scan_budget_limit"))
+                        .transpose()?,
+                    scope
+                        .scan_budget_observed
+                        .map(|value| u64_to_i64(value, "import_scan_scope.scan_budget_observed"))
+                        .transpose()?,
+                    bool_to_i64(scope.scan_budget_exhausted),
                     scope.updated_at.as_unix_seconds(),
                 ],
             )
@@ -1807,6 +1830,10 @@ pub struct ImportScanScope {
     pub ocr_jobs_queued: u64,
     pub failed_documents: u64,
     pub deleted_documents: u64,
+    pub scan_budget_kind: Option<ImportScanBudgetKind>,
+    pub scan_budget_limit: Option<u64>,
+    pub scan_budget_observed: Option<u64>,
+    pub scan_budget_exhausted: bool,
     pub updated_at: UnixTimestamp,
 }
 
@@ -1828,6 +1855,10 @@ impl fmt::Debug for ImportScanScope {
             .field("ocr_jobs_queued", &self.ocr_jobs_queued)
             .field("failed_documents", &self.failed_documents)
             .field("deleted_documents", &self.deleted_documents)
+            .field("scan_budget_kind", &self.scan_budget_kind)
+            .field("scan_budget_limit", &self.scan_budget_limit)
+            .field("scan_budget_observed", &self.scan_budget_observed)
+            .field("scan_budget_exhausted", &self.scan_budget_exhausted)
             .field("updated_at", &self.updated_at)
             .finish()
     }
@@ -1848,6 +1879,11 @@ pub enum ImportRootPreset {
 pub enum ImportScanProfile {
     Explicit,
     Discovery,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportScanBudgetKind {
+    Files,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2384,6 +2420,28 @@ CREATE INDEX import_scan_scope_updated_idx
     ON import_scan_scope(updated_at_seconds);
 "#;
 
+const SCHEMA_V10: &str = r#"
+ALTER TABLE import_scan_scope
+    ADD COLUMN scan_budget_kind TEXT CHECK (
+        scan_budget_kind IS NULL OR scan_budget_kind IN ('files')
+    );
+
+ALTER TABLE import_scan_scope
+    ADD COLUMN scan_budget_limit INTEGER CHECK (
+        scan_budget_limit IS NULL OR scan_budget_limit >= 0
+    );
+
+ALTER TABLE import_scan_scope
+    ADD COLUMN scan_budget_observed INTEGER CHECK (
+        scan_budget_observed IS NULL OR scan_budget_observed >= 0
+    );
+
+ALTER TABLE import_scan_scope
+    ADD COLUMN scan_budget_exhausted INTEGER NOT NULL DEFAULT 0 CHECK (
+        scan_budget_exhausted IN (0, 1)
+    );
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -2570,7 +2628,21 @@ fn read_import_scan_scope(row: &Row<'_>) -> Result<ImportScanScope> {
         ocr_jobs_queued: i64_to_u64(read_i64(row, 11)?, "import_scan_scope.ocr_jobs_queued")?,
         failed_documents: i64_to_u64(read_i64(row, 12)?, "import_scan_scope.failed_documents")?,
         deleted_documents: i64_to_u64(read_i64(row, 13)?, "import_scan_scope.deleted_documents")?,
-        updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 14)?),
+        scan_budget_kind: read_optional_string(row, 14)?
+            .as_deref()
+            .map(import_scan_budget_kind_from_storage)
+            .transpose()?,
+        scan_budget_limit: read_optional_i64(row, 15)?
+            .map(|value| i64_to_u64(value, "import_scan_scope.scan_budget_limit"))
+            .transpose()?,
+        scan_budget_observed: read_optional_i64(row, 16)?
+            .map(|value| i64_to_u64(value, "import_scan_scope.scan_budget_observed"))
+            .transpose()?,
+        scan_budget_exhausted: i64_to_bool(
+            read_i64(row, 17)?,
+            "import_scan_scope.scan_budget_exhausted",
+        )?,
+        updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 18)?),
     };
     validate_import_scan_scope(&scope)?;
     Ok(scope)
@@ -2791,8 +2863,20 @@ fn validate_import_scan_scope(scope: &ImportScanScope) -> Result<()> {
     }
 
     match (scope.root_kind, scope.root_preset) {
-        (ImportRootKind::Explicit, None) | (ImportRootKind::Preset, Some(_)) => Ok(()),
-        _ => Err(MetaStoreError::invalid_value("import_scan_scope.root")),
+        (ImportRootKind::Explicit, None) | (ImportRootKind::Preset, Some(_)) => {}
+        _ => return Err(MetaStoreError::invalid_value("import_scan_scope.root")),
+    };
+
+    match (
+        scope.scan_budget_kind,
+        scope.scan_budget_limit,
+        scope.scan_budget_observed,
+        scope.scan_budget_exhausted,
+    ) {
+        (None, None, None, false) | (Some(_), Some(_), Some(_), true) => Ok(()),
+        _ => Err(MetaStoreError::invalid_value(
+            "import_scan_scope.scan_budget",
+        )),
     }
 }
 
@@ -3198,6 +3282,21 @@ fn import_scan_profile_from_storage(value: &str) -> Result<ImportScanProfile> {
         "discovery" => Ok(ImportScanProfile::Discovery),
         _ => Err(MetaStoreError::invalid_value(
             "import_scan_scope.scan_profile",
+        )),
+    }
+}
+
+fn import_scan_budget_kind_to_storage(kind: ImportScanBudgetKind) -> &'static str {
+    match kind {
+        ImportScanBudgetKind::Files => "files",
+    }
+}
+
+fn import_scan_budget_kind_from_storage(value: &str) -> Result<ImportScanBudgetKind> {
+    match value {
+        "files" => Ok(ImportScanBudgetKind::Files),
+        _ => Err(MetaStoreError::invalid_value(
+            "import_scan_scope.scan_budget_kind",
         )),
     }
 }

@@ -7,7 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use core_domain::{EntityMentionId, SectionType};
 use extractor_rules::{extract_strong_fields, FieldType, RuleMatch};
 pub use fs_crawler::ScanProfile;
-use fs_crawler::{crawl_directory_with_profile, DiscoveredFile, NormalizedPath};
+use fs_crawler::{
+    crawl_directory_with_options, DiscoveredFile, NormalizedPath, ScanBudgetKind, ScanOptions,
+};
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use meta_store::{
     Document, DocumentStatus, EntityMention, EntityType, FileExtension, ImportTask,
@@ -83,10 +85,17 @@ fn run_import(
     now: UnixTimestamp,
     options: ImportOptions,
 ) -> Result<ImportSummary> {
-    let report = crawl_directory_with_profile(root, options.scan_profile)
-        .map_err(ImportPipelineError::crawl)?;
+    let report = crawl_directory_with_options(
+        root,
+        ScanOptions {
+            profile: options.scan_profile,
+            max_files: options.max_files,
+        },
+    )
+    .map_err(ImportPipelineError::crawl)?;
     let scanned_directories = report.scanned_directories.clone();
     let skipped_directories = report.skipped_directories.clone();
+    let scan_budget_exhausted = report.budget_exhausted;
     let mut summary = ImportSummary {
         files_discovered: report.files.len(),
         scan_errors: report.errors.len(),
@@ -96,10 +105,11 @@ fn run_import(
         ocr_jobs_queued: 0,
         failed_documents: 0,
         deleted_documents: 0,
+        scan_budget: scan_budget_exhausted.map(ImportScanBudget::from),
     };
     let mut pending_index_documents = Vec::new();
     let sectionizer = Sectionizer::default();
-    let can_propagate_deletions = report.errors.is_empty();
+    let can_propagate_deletions = report.errors.is_empty() && scan_budget_exhausted.is_none();
     let discovered_doc_ids = report
         .files
         .iter()
@@ -174,6 +184,7 @@ fn run_import(
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ImportOptions {
     pub scan_profile: ScanProfile,
+    pub max_files: Option<usize>,
 }
 
 pub fn rebuild_full_text_index(
@@ -736,6 +747,33 @@ pub struct ImportSummary {
     pub ocr_jobs_queued: usize,
     pub failed_documents: usize,
     pub deleted_documents: usize,
+    pub scan_budget: Option<ImportScanBudget>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImportScanBudget {
+    pub kind: ImportScanBudgetKind,
+    pub limit: usize,
+    pub observed: usize,
+    pub exhausted: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportScanBudgetKind {
+    Files,
+}
+
+impl From<fs_crawler::ScanBudgetExhausted> for ImportScanBudget {
+    fn from(value: fs_crawler::ScanBudgetExhausted) -> Self {
+        Self {
+            kind: match value.kind {
+                ScanBudgetKind::Files => ImportScanBudgetKind::Files,
+            },
+            limit: value.limit,
+            observed: value.observed,
+            exhausted: true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

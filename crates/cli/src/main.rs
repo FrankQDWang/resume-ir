@@ -8,7 +8,8 @@ use std::str::FromStr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use import_pipeline::{
-    import_root_with_options, rebuild_full_text_index, ImportOptions, ImportSummary, ScanProfile,
+    import_root_with_options, rebuild_full_text_index, ImportOptions,
+    ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, FullTextIndex, SearchHit, SearchQuery, SnapshotReadTarget,
@@ -16,10 +17,11 @@ use index_fulltext::{
 };
 use meta_store::{
     DocumentId, DocumentStatus, EntityType, ImportRootKind as StoreImportRootKind,
-    ImportRootPreset as StoreImportRootPreset, ImportScanProfile as StoreImportScanProfile,
-    ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobKind,
-    IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp, WorkerTaskKind,
+    ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
+    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexStateStatus, IngestJobKind, IngestJobStatus, MetaStore,
+    OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion, ResumeVersionId, ResumeVisibility,
+    UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
@@ -324,6 +326,7 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
             now,
             ImportOptions {
                 scan_profile: import_args.profile,
+                max_files: import_args.max_files,
             },
         )
         .map_err(CliError::import)?;
@@ -353,6 +356,21 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("failed documents: {}", summary.failed_documents);
     println!("deleted documents: {}", summary.deleted_documents);
     println!("scan errors: {}", summary.scan_errors);
+    println!(
+        "scan budget exhausted: {}",
+        if summary.scan_budget.is_some_and(|budget| budget.exhausted) {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    println!(
+        "scan file limit: {}",
+        import_args
+            .max_files
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string())
+    );
 
     Ok(())
 }
@@ -366,6 +384,9 @@ fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
     total.ocr_jobs_queued += next.ocr_jobs_queued;
     total.failed_documents += next.failed_documents;
     total.deleted_documents += next.deleted_documents;
+    if total.scan_budget.is_none() {
+        total.scan_budget = next.scan_budget;
+    }
 }
 
 fn upsert_import_scan_scope(
@@ -393,6 +414,18 @@ fn upsert_import_scan_scope(
             ocr_jobs_queued: usize_to_u64(summary.ocr_jobs_queued)?,
             failed_documents: usize_to_u64(summary.failed_documents)?,
             deleted_documents: usize_to_u64(summary.deleted_documents)?,
+            scan_budget_kind: summary
+                .scan_budget
+                .map(|budget| import_scan_budget_kind(budget.kind)),
+            scan_budget_limit: summary
+                .scan_budget
+                .map(|budget| usize_to_u64(budget.limit))
+                .transpose()?,
+            scan_budget_observed: summary
+                .scan_budget
+                .map(|budget| usize_to_u64(budget.observed))
+                .transpose()?,
+            scan_budget_exhausted: summary.scan_budget.is_some_and(|budget| budget.exhausted),
             updated_at,
         })
         .map_err(CliError::store)
@@ -417,6 +450,12 @@ fn import_scan_profile(profile: ScanProfile) -> StoreImportScanProfile {
     }
 }
 
+fn import_scan_budget_kind(kind: PipelineImportScanBudgetKind) -> StoreImportScanBudgetKind {
+    match kind {
+        PipelineImportScanBudgetKind::Files => StoreImportScanBudgetKind::Files,
+    }
+}
+
 fn usize_to_u64(value: usize) -> Result<u64> {
     u64::try_from(value).map_err(|_| CliError::user("import summary count is too large"))
 }
@@ -434,6 +473,7 @@ fn path_string(path: &Path) -> String {
 struct ImportArgs {
     root_selection: ImportRootSelection,
     profile: ScanProfile,
+    max_files: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -460,6 +500,7 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
     let mut root_preset = None;
     let mut profile = None;
     let mut profile_seen = false;
+    let mut max_files = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -499,6 +540,16 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
                 };
                 profile = Some(parse_scan_profile(value)?);
             }
+            "--max-files" => {
+                if max_files.is_some() {
+                    return Err(import_usage());
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(import_usage());
+                };
+                max_files = Some(parse_positive_usize(value)?);
+            }
             _ => return Err(import_usage()),
         }
         index += 1;
@@ -518,6 +569,7 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
     Ok(ImportArgs {
         root_selection,
         profile: profile.unwrap_or(default_profile),
+        max_files,
     })
 }
 
@@ -536,9 +588,17 @@ fn parse_scan_profile(value: &str) -> Result<ScanProfile> {
     }
 }
 
+fn parse_positive_usize(value: &str) -> Result<usize> {
+    let parsed = value.parse::<usize>().map_err(|_| import_usage())?;
+    if parsed == 0 {
+        return Err(import_usage());
+    }
+    Ok(parsed)
+}
+
 fn import_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli import (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery]",
+        "usage: resume-cli import (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]",
     )
 }
 

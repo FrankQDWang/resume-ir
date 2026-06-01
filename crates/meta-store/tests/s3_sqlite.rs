@@ -6,10 +6,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use meta_store::{
     Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
     EntityMentionId, EntityType, FileExtension, ImportRootKind, ImportRootPreset,
-    ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
-    IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus, MetaStore,
-    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
+    ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexState, IndexStateStatus, IngestJob, IngestJobId, IngestJobKind,
+    IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus,
+    ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskControl,
+    WorkerTaskKind,
 };
 use rusqlite::{params, Connection};
 
@@ -20,8 +21,8 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    assert_eq!(store.schema_version().unwrap(), 9);
+    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert_eq!(store.schema_version().unwrap(), 10);
 
     for table_name in [
         "candidate",
@@ -40,7 +41,7 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 9);
+    assert_eq!(store.schema_version().unwrap(), 10);
 }
 
 #[test]
@@ -127,6 +128,10 @@ fn import_scan_scope_persists_root_profile_and_redacted_progress_counts() {
         ocr_jobs_queued: 0,
         failed_documents: 0,
         deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
         updated_at: queued_at,
     };
     let completed_scope = ImportScanScope {
@@ -138,6 +143,10 @@ fn import_scan_scope_persists_root_profile_and_redacted_progress_counts() {
         ocr_jobs_queued: 1,
         failed_documents: 1,
         deleted_documents: 1,
+        scan_budget_kind: Some(ImportScanBudgetKind::Files),
+        scan_budget_limit: Some(10),
+        scan_budget_observed: Some(10),
+        scan_budget_exhausted: true,
         updated_at,
         ..initial_scope.clone()
     };
@@ -936,7 +945,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7]);
-        assert_eq!(reopened.schema_version().unwrap(), 9);
+        assert_eq!(reopened.schema_version().unwrap(), 10);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1229,7 +1238,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 9);
+        assert_eq!(reopened.schema_version().unwrap(), 10);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -1400,7 +1409,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             .unwrap();
         connection
             .execute(
-                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9)",
+                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10)",
                 [],
             )
             .unwrap();
@@ -1409,8 +1418,8 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6, 7, 8, 9]);
-        assert_eq!(reopened.schema_version().unwrap(), 9);
+        assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(reopened.schema_version().unwrap(), 10);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -1442,7 +1451,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 9);
+        assert_eq!(reopened.schema_version().unwrap(), 10);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

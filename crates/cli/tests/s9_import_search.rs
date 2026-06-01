@@ -4,8 +4,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    ImportRootKind, ImportRootPreset, ImportScanProfile, ImportTask, ImportTaskId,
-    ImportTaskStatus, MetaStore, UnixTimestamp,
+    ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportTask,
+    ImportTaskId, ImportTaskStatus, MetaStore, UnixTimestamp,
 };
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
@@ -251,6 +251,72 @@ fn local_discovery_root_preset_uses_discovery_profile_without_path_leak() {
 
     remove_dir(&data_dir);
     remove_dir(&local_root);
+}
+
+#[test]
+fn import_max_files_limits_scan_and_persists_budget_state_without_path_leak() {
+    let data_dir = temp_dir("budgeted-import-data");
+    let private_root = temp_dir("budgeted-import-private-root");
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        private_root.join("a-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-engineer.docx"),
+        private_root.join("b-engineer.docx"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-scanned-resume.pdf"),
+        private_root.join("c-scanned.pdf"),
+    )
+    .unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+            "--max-files",
+            "1",
+        ])
+        .output()
+        .expect("run budgeted import");
+
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    assert!(import_stdout.contains("files discovered: 1"));
+    assert!(import_stdout.contains("scan budget exhausted: yes"));
+    assert!(import_stdout.contains("scan file limit: 1"));
+    assert!(!import_stdout.contains(path_str(&private_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_private_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scope = store
+        .latest_import_scan_scope()
+        .unwrap()
+        .expect("scan scope persisted");
+    assert_eq!(scope.root_kind, ImportRootKind::Explicit);
+    assert_eq!(scope.scan_budget_kind, Some(ImportScanBudgetKind::Files));
+    assert_eq!(scope.scan_budget_limit, Some(1));
+    assert_eq!(scope.scan_budget_observed, Some(1));
+    assert!(scope.scan_budget_exhausted);
+    assert_eq!(scope.files_discovered, 1);
+    assert!(!format!("{scope:?}").contains(path_str(&private_root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
 }
 
 #[test]

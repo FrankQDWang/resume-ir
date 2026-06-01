@@ -93,6 +93,50 @@ fn reimport_marks_missing_files_deleted_and_default_search_hides_stale_hits() {
 }
 
 #[test]
+fn budgeted_reimport_does_not_mark_unscanned_missing_files_deleted() {
+    let data_dir = temp_dir("budgeted-reimport-delete-data");
+    let fixture_root = temp_dir("budgeted-reimport-fixtures");
+    copy_fixture_tree(&fixture_root);
+
+    import_fixtures(&data_dir, &fixture_root);
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 2"));
+
+    fs::remove_file(fixture_root.join("synthetic-java-engineer.docx")).unwrap();
+    let budgeted = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+            "--max-files",
+            "1",
+        ])
+        .output()
+        .expect("run budgeted reimport");
+    assert!(
+        budgeted.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&budgeted.stdout),
+        String::from_utf8_lossy(&budgeted.stderr)
+    );
+    assert!(budgeted.stderr.is_empty());
+    let budgeted_stdout = String::from_utf8_lossy(&budgeted.stdout);
+    assert!(budgeted_stdout.contains("scan budget exhausted: yes"));
+    assert!(budgeted_stdout.contains("deleted documents: 0"));
+    assert!(!budgeted_stdout.contains(path_str(&fixture_root)));
+
+    let after = search(&data_dir, "Java");
+    assert!(after.contains("results: 2"));
+    assert!(after.contains("synthetic-java-engineer.docx"));
+    assert!(after.contains("synthetic-java-platform.pdf"));
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
+}
+
+#[test]
 fn multi_root_reimport_marks_missing_files_deleted_per_root() {
     let data_dir = temp_dir("multi-root-reimport-delete-data");
     let first_root = temp_dir("multi-root-delete-a");
