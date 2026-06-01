@@ -64,6 +64,58 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.5,0
 
 #[cfg(unix)]
 #[test]
+fn daemon_embedding_worker_once_writes_section_vectors_inside_one_version_job() {
+    let data_dir = temp_dir("embedding-jobs-section-data");
+    let (private_root, document_id, version_id) = seed_sectionized_resume_version(&data_dir);
+    let command = write_fixture_executable(
+        "fixture-daemon-embedding-jobs-section",
+        r#"#!/bin/sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.5,0.5,0.5,0.5\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+
+    let output = run_embedding_worker_once(&data_dir, &command);
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("embedding worker processed: 1"), "{stdout}");
+    assert!(
+        stdout.contains("embedding worker vector writes: 3"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("embedding worker failed: 0"), "{stdout}");
+    assert!(!stdout.contains("S52PrivateMarker"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&command)));
+
+    assert_vector_snapshot(&data_dir, 4, 3);
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let job_id = embedding_job_id(&document_id, &version_id, "fixture-local-model", 4);
+    let job = store
+        .ingest_job_by_id(&job_id)
+        .unwrap()
+        .expect("embedding job persisted");
+    assert_eq!(job.status, IngestJobStatus::Completed);
+    assert_eq!(job.attempt_count, 1);
+    assert_eq!(store.status_summary().unwrap().embedding_queue_depth, 0);
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn daemon_embedding_worker_once_skips_completed_jobs_after_restart() {
     let data_dir = temp_dir("embedding-jobs-restart-data");
     let (_private_root, _versions) = seed_searchable_resume_versions(&data_dir);
@@ -249,6 +301,58 @@ fn seed_searchable_resume_versions(
     }
 
     (private_root, versions)
+}
+
+fn seed_sectionized_resume_version(data_dir: &Path) -> (PathBuf, DocumentId, ResumeVersionId) {
+    let now = UnixTimestamp::from_unix_seconds(1_800_052_100);
+    let private_root = data_dir.join("private-section-resumes");
+    fs::create_dir_all(&private_root).unwrap();
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+
+    let file_name = "synthetic-s52-section-embedding.pdf";
+    let document_path = private_root.join(file_name);
+    fs::write(&document_path, b"%PDF-1.4 synthetic section resume").unwrap();
+    let doc_id = DocumentId::from_non_secret_parts(&["s52", "section", "embedding"]);
+    let version_id =
+        ResumeVersionId::from_non_secret_parts(&["s52", "section", "version", doc_id.as_str()]);
+    store
+        .upsert_document(&Document {
+            id: doc_id.clone(),
+            source_uri: format!("file://{}", path_str(&document_path)),
+            normalized_path: path_str(&document_path).to_string(),
+            file_name: file_name.to_string(),
+            extension: FileExtension::Pdf,
+            byte_size: fs::metadata(&document_path).unwrap().len(),
+            mtime: now,
+            content_hash: Some("s52-section-content-hash".to_string()),
+            text_hash: Some("s52-section-text-hash".to_string()),
+            is_deleted: false,
+            created_at: now,
+            updated_at: now,
+            status: DocumentStatus::Searchable,
+        })
+        .unwrap();
+    store
+        .upsert_resume_version(&ResumeVersion {
+            id: version_id.clone(),
+            document_id: doc_id.clone(),
+            candidate_id: None,
+            parse_version: "s52-fixture-parser".to_string(),
+            schema_version: "s52-fixture-schema".to_string(),
+            language_set: vec!["en".to_string()],
+            page_count: Some(1),
+            raw_text: None,
+            clean_text: Some(
+                "Summary\nS52PrivateMarkerAlpha synthetic overview.\n\nExperience\nS52PrivateMarkerBeta synthetic delivery record."
+                    .to_string(),
+            ),
+            quality_score: Some(0.91),
+            visibility: ResumeVisibility::Searchable,
+        })
+        .unwrap();
+
+    (private_root, doc_id, version_id)
 }
 
 fn embedding_job_id(

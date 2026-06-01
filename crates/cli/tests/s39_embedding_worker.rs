@@ -83,6 +83,8 @@ printf 'metadata=synthetic-fixture\n'
     assert!(stdout.contains("dimension: 4"));
     assert!(stdout.contains("documents considered: 2"));
     assert!(stdout.contains("documents embedded: 2"));
+    assert!(stdout.contains("vector inputs: "));
+    assert!(stdout_value(&stdout, "vector inputs: ") > 2);
     assert!(stdout.contains("vector index: available (vector snapshot)"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
@@ -96,7 +98,7 @@ printf 'metadata=synthetic-fixture\n'
     let status_stdout = String::from_utf8_lossy(&status.stdout);
     assert!(status_stdout.contains("searchable documents: 2"));
     assert!(status_stdout.contains("vector index: available (vector snapshot)"));
-    assert!(status_stdout.contains("vector index vectors: 2"));
+    assert!(stdout_value(&status_stdout, "vector index vectors: ") > 2);
     assert!(!status_stdout.contains(path_str(&data_dir)));
     assert!(!status_stdout.contains(path_str(&fixture_root)));
 
@@ -366,6 +368,163 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
     remove_dir(&data_dir);
 }
 
+#[cfg(unix)]
+#[test]
+fn semantic_and_hybrid_search_can_rank_section_vectors_over_document_vectors() {
+    let data_dir = temp_dir("semantic-section-vector-data");
+    let document_only_id = DocumentId::from_non_secret_parts(&["s55", "document-only-doc"]);
+    let document_only_version_id =
+        ResumeVersionId::from_non_secret_parts(&["s55", "document-only-version"]);
+    let section_match_id = DocumentId::from_non_secret_parts(&["s55", "section-match-doc"]);
+    let section_match_version_id =
+        ResumeVersionId::from_non_secret_parts(&["s55", "section-match-version"]);
+    let document_only_text = "Profile\nSynthetic operations platform summary.";
+    let section_match_text = "\
+Summary
+Synthetic general profile.
+
+Experience
+Synthetic section-level retrieval specialist.
+";
+    seed_searchable_metadata(
+        &data_dir,
+        &document_only_id,
+        &document_only_version_id,
+        "synthetic-document-vector.pdf",
+        document_only_text,
+    );
+    seed_searchable_metadata(
+        &data_dir,
+        &section_match_id,
+        &section_match_version_id,
+        "synthetic-section-vector.pdf",
+        section_match_text,
+    );
+    seed_fulltext_index(
+        &data_dir,
+        [
+            IndexDocument {
+                doc_id: document_only_id.to_string(),
+                version_id: document_only_version_id.to_string(),
+                file_name: "synthetic-document-vector.pdf".to_string(),
+                clean_text: document_only_text.to_string(),
+                sections: vec![IndexSection {
+                    section_type: "profile".to_string(),
+                    text: document_only_text.to_string(),
+                }],
+                is_deleted: false,
+            },
+            IndexDocument {
+                doc_id: section_match_id.to_string(),
+                version_id: section_match_version_id.to_string(),
+                file_name: "synthetic-section-vector.pdf".to_string(),
+                clean_text: section_match_text.to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: section_match_text.to_string(),
+                }],
+                is_deleted: false,
+            },
+        ],
+    );
+
+    let command_body = format!(
+        r#"#!/bin/sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-section-model\n'
+printf 'dimension=4\n'
+awk -F '\t' -v doc_a='{document_only_version_id}' -v doc_b='{section_match_version_id}' '/^input=/ {{
+  id=$1
+  sub(/^input=/, "", id)
+  values="0,0,1,0"
+  if (id == "query") {{
+    values="1,0,0,0"
+  }} else if (index(id, doc_b ":section:") == 1) {{
+    values="1,0,0,0"
+  }} else if (id == doc_a) {{
+    values="0.8,0.6,0,0"
+  }} else if (id == doc_b) {{
+    values="0,1,0,0"
+  }}
+  printf "vector=%s\t%s\n", id, values
+}}' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#
+    );
+    let command = write_fixture_executable("fixture-section-vector-embedding", &command_body);
+
+    let embed = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "embed-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+            "--model-id",
+            "fixture-section-model",
+            "--dimension",
+            "4",
+            "--max-docs",
+            "8",
+            "--max-text-bytes",
+            "100000",
+        ])
+        .output()
+        .expect("run embed worker before section semantic search");
+    assert!(
+        embed.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&embed.stdout),
+        String::from_utf8_lossy(&embed.stderr)
+    );
+
+    for mode in ["semantic", "hybrid"] {
+        let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .args([
+                "--data-dir",
+                path_str(&data_dir),
+                "search",
+                "NeedleVectorQuery",
+                "--mode",
+                mode,
+                "--embedding-command",
+                path_str(&command),
+                "--model-id",
+                "fixture-section-model",
+                "--dimension",
+                "4",
+                "--vector-top-k",
+                "1",
+                "--top-k",
+                "1",
+            ])
+            .output()
+            .expect("run semantic or hybrid section search");
+
+        assert!(
+            search.status.success(),
+            "mode: {mode}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&search.stdout),
+            String::from_utf8_lossy(&search.stderr)
+        );
+        assert!(search.stderr.is_empty());
+        let stdout = String::from_utf8_lossy(&search.stdout);
+        assert!(stdout.contains("results: 1"), "mode: {mode}\n{stdout}");
+        assert!(
+            stdout.contains("synthetic-section-vector.pdf"),
+            "mode: {mode}\n{stdout}"
+        );
+        assert!(
+            !stdout.contains("synthetic-document-vector.pdf"),
+            "mode: {mode}\n{stdout}"
+        );
+        assert!(!stdout.contains("NeedleVectorQuery"));
+        assert!(!stdout.contains(path_str(&data_dir)));
+    }
+
+    remove_dir(&data_dir);
+}
+
 fn import_fixtures(data_dir: &Path, fixture_root: &Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -457,6 +616,14 @@ fn path_str(path: &Path) -> &str {
 
 fn remove_dir(path: &Path) {
     let _ = std::fs::remove_dir_all(path);
+}
+
+fn stdout_value(output: &str, prefix: &str) -> usize {
+    output
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or_else(|| panic!("missing numeric line with prefix {prefix:?} in:\n{output}"))
 }
 
 #[cfg(unix)]

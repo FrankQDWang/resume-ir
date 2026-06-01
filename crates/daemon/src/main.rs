@@ -36,6 +36,7 @@ use ocr_client::{
 };
 use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
+use sectionizer::Sectionizer;
 
 const IMPORT_RETRY_BACKOFF_SECONDS: i64 = 60;
 const IMPORT_TASK_HEARTBEAT_SECONDS: u64 = 30;
@@ -873,15 +874,14 @@ fn run_embedding_worker_once(
             .with_timeout_ms(options.embedding_timeout_ms)
             .map_err(DaemonError::embedding)?,
     );
-    let inputs = candidates
+    let vector_inputs = embedding_inputs_for_candidates(&candidates);
+    let inputs = vector_inputs
         .iter()
-        .map(|(_, candidate)| {
-            EmbeddingInput::new(candidate.version_id.as_str(), candidate.text.as_str())
-        })
+        .map(|input| EmbeddingInput::new(input.input_id.as_str(), input.text.as_str()))
         .collect::<Vec<_>>();
     let vectors = match embedder.embed_batch(
         &inputs,
-        EmbeddingBudget::new(options.embedding_max_docs, options.embedding_max_text_bytes),
+        EmbeddingBudget::new(inputs.len(), options.embedding_max_text_bytes),
     ) {
         Ok(vectors) => vectors,
         Err(error) => {
@@ -892,12 +892,12 @@ fn run_embedding_worker_once(
     let vector_writes = vectors.len();
     let vector_documents = vectors
         .into_iter()
-        .zip(candidates.iter())
-        .map(|(vector, (_, candidate))| {
+        .zip(vector_inputs.iter())
+        .map(|(vector, input)| {
             VectorDocument::new_for_model(
                 vector.model_id(),
                 format!("{}:{}", vector.model_id(), vector.id()),
-                candidate.document_id.as_str(),
+                input.document_id.as_str(),
                 vector.values().to_vec(),
             )
             .map_err(DaemonError::vector)
@@ -923,7 +923,7 @@ fn run_embedding_worker_once(
 
     Ok(EmbeddingWorkerSummary {
         documents_considered,
-        processed: inputs.len(),
+        processed: candidates.len(),
         vector_writes,
         failed: 0,
     })
@@ -1051,6 +1051,73 @@ fn embedding_text_for_version(version: &ResumeVersion) -> Option<String> {
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .map(str::to_string)
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct EmbeddingWorkerInput {
+    document_id: DocumentId,
+    input_id: String,
+    text: String,
+}
+
+impl fmt::Debug for EmbeddingWorkerInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmbeddingWorkerInput")
+            .field("document_id", &self.document_id)
+            .field("input_id", &self.input_id)
+            .field("text", &"<redacted>")
+            .field("text_bytes", &self.text.len())
+            .finish()
+    }
+}
+
+fn embedding_inputs_for_candidates(
+    candidates: &[(IngestJob, EmbeddingWorkerCandidate)],
+) -> Vec<EmbeddingWorkerInput> {
+    let sectionizer = Sectionizer::default();
+    candidates
+        .iter()
+        .flat_map(|(_, candidate)| embedding_inputs_for_candidate(candidate, &sectionizer))
+        .collect()
+}
+
+fn embedding_inputs_for_candidate(
+    candidate: &EmbeddingWorkerCandidate,
+    sectionizer: &Sectionizer,
+) -> Vec<EmbeddingWorkerInput> {
+    let mut inputs = vec![EmbeddingWorkerInput {
+        document_id: candidate.document_id.clone(),
+        input_id: candidate.version_id.to_string(),
+        text: candidate.text.clone(),
+    }];
+    let sections = sectionizer.sectionize(&candidate.text);
+    let full_text = candidate.text.trim();
+    let should_embed_sections = sections.len() > 1
+        || sections
+            .iter()
+            .any(|section| section.text.trim() != full_text);
+
+    if should_embed_sections {
+        inputs.extend(sections.into_iter().filter_map(|section| {
+            let text = section.text.trim();
+            if text.is_empty() {
+                return None;
+            }
+
+            Some(EmbeddingWorkerInput {
+                document_id: candidate.document_id.clone(),
+                input_id: section_embedding_input_id(&candidate.version_id, section.order_no),
+                text: text.to_string(),
+            })
+        }));
+    }
+
+    inputs
+}
+
+fn section_embedding_input_id(version_id: &ResumeVersionId, order_no: u32) -> String {
+    format!("{version_id}:section:{order_no}")
 }
 
 fn embedding_job_is_retryable(job: &IngestJob) -> bool {

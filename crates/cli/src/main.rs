@@ -40,6 +40,7 @@ use rank_fusion::{
     fuse_hybrid_rrf, DegreeLevel, HybridRecall, RankedHit, ResumeProfile, SearchFilters,
 };
 use search_planner::plan_search;
+use sectionizer::Sectionizer;
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 const LOCAL_DISCOVERY_DEFAULT_MAX_FILES: usize = 10_000;
@@ -1866,26 +1867,25 @@ fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
             .with_timeout_ms(worker_args.timeout_ms)
             .map_err(CliError::embedding)?,
     );
-    let inputs = candidates
+    let vector_inputs = embedding_inputs_for_candidates(&candidates);
+    let inputs = vector_inputs
         .iter()
-        .map(|candidate| {
-            EmbeddingInput::new(candidate.version_id.as_str(), candidate.text.as_str())
-        })
+        .map(|input| EmbeddingInput::new(input.input_id.as_str(), input.text.as_str()))
         .collect::<Vec<_>>();
     let vectors = embedder
         .embed_batch(
             &inputs,
-            EmbeddingBudget::new(worker_args.max_docs, worker_args.max_text_bytes),
+            EmbeddingBudget::new(inputs.len(), worker_args.max_text_bytes),
         )
         .map_err(CliError::embedding)?;
     let vector_documents = vectors
         .into_iter()
-        .zip(candidates.iter())
-        .map(|(vector, candidate)| {
+        .zip(vector_inputs.iter())
+        .map(|(vector, input)| {
             VectorDocument::new_for_model(
                 vector.model_id(),
                 format!("{}:{}", vector.model_id(), vector.id()),
-                candidate.document_id.as_str(),
+                input.document_id.as_str(),
                 vector.values().to_vec(),
             )
             .map_err(CliError::vector)
@@ -1900,7 +1900,8 @@ fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("model id: {model_id}");
     println!("dimension: {dimension}");
     println!("documents considered: {documents_considered}");
-    println!("documents embedded: {}", inputs.len());
+    println!("documents embedded: {}", candidates.len());
+    println!("vector inputs: {}", inputs.len());
     println!("vector index: {}", vector_diagnostic.index_label());
 
     Ok(())
@@ -1966,6 +1967,71 @@ fn embedding_candidates(store: &MetaStore, max_docs: usize) -> Result<Vec<EmbedW
     }
 
     Ok(candidates)
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct EmbedWorkerInput {
+    document_id: DocumentId,
+    input_id: String,
+    text: String,
+}
+
+impl fmt::Debug for EmbedWorkerInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmbedWorkerInput")
+            .field("document_id", &self.document_id)
+            .field("input_id", &self.input_id)
+            .field("text", &"<redacted>")
+            .field("text_bytes", &self.text.len())
+            .finish()
+    }
+}
+
+fn embedding_inputs_for_candidates(candidates: &[EmbedWorkerCandidate]) -> Vec<EmbedWorkerInput> {
+    let sectionizer = Sectionizer::default();
+    candidates
+        .iter()
+        .flat_map(|candidate| embedding_inputs_for_candidate(candidate, &sectionizer))
+        .collect()
+}
+
+fn embedding_inputs_for_candidate(
+    candidate: &EmbedWorkerCandidate,
+    sectionizer: &Sectionizer,
+) -> Vec<EmbedWorkerInput> {
+    let mut inputs = vec![EmbedWorkerInput {
+        document_id: candidate.document_id.clone(),
+        input_id: candidate.version_id.to_string(),
+        text: candidate.text.clone(),
+    }];
+    let sections = sectionizer.sectionize(&candidate.text);
+    let full_text = candidate.text.trim();
+    let should_embed_sections = sections.len() > 1
+        || sections
+            .iter()
+            .any(|section| section.text.trim() != full_text);
+
+    if should_embed_sections {
+        inputs.extend(sections.into_iter().filter_map(|section| {
+            let text = section.text.trim();
+            if text.is_empty() {
+                return None;
+            }
+
+            Some(EmbedWorkerInput {
+                document_id: candidate.document_id.clone(),
+                input_id: section_embedding_input_id(&candidate.version_id, section.order_no),
+                text: text.to_string(),
+            })
+        }));
+    }
+
+    inputs
+}
+
+fn section_embedding_input_id(version_id: &ResumeVersionId, order_no: u32) -> String {
+    format!("{version_id}:section:{order_no}")
 }
 
 #[derive(Clone, PartialEq, Eq)]
