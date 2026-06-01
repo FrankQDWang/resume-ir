@@ -10,6 +10,9 @@ use meta_store::{
     IndexState, IndexStateStatus, MetaStore, UnixTimestamp,
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 #[test]
 fn daemon_serves_redacted_status_over_loopback_ipc() {
     let data_dir = temp_dir("ipc-status-data");
@@ -109,6 +112,357 @@ fn daemon_returns_404_for_non_status_ipc_path() {
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_requires_bearer_token_for_import_command_ipc() {
+    let data_dir = temp_dir("ipc-import-auth-required-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let response = http_post_import_command(&endpoint, None, &fixture_root, Some(1));
+
+    assert!(response.contains("HTTP/1.1 401 Unauthorized"));
+    assert!(response.contains("\"status\":\"unauthorized\""));
+    assert!(!response.contains(path_str(&data_dir)));
+    assert!(!response.contains(path_str(&fixture_root)));
+    assert!(!response.contains(path_str(&canonical_fixture_root)));
+    assert!(!response.contains("raw_resume_text"));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    assert_eq!(store.status_summary().unwrap().import_tasks_queued, 0);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_authenticates_and_queues_import_command_over_ipc() {
+    let data_dir = temp_dir("ipc-import-command-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "2",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
+    let status_response = http_get(&endpoint);
+
+    assert!(response.contains("HTTP/1.1 202 Accepted"));
+    assert!(response.contains("\"schema_version\":\"daemon.import.v1\""));
+    assert!(response.contains("\"status\":\"accepted\""));
+    assert!(response.contains("\"accepted_roots\":1"));
+    assert!(response.contains("\"new_tasks\":1"));
+    assert!(response.contains("\"scan_profile\":\"explicit\""));
+    assert!(response.contains("\"scan_file_limit\":1"));
+    assert!(!response.contains(path_str(&data_dir)));
+    assert!(!response.contains(path_str(&fixture_root)));
+    assert!(!response.contains(path_str(&canonical_fixture_root)));
+    assert!(!response.contains(&token));
+    assert!(!response.contains("PRIVATE"));
+    assert!(status_response.contains("\"import_tasks_queued\":1"));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let summary = store.status_summary().unwrap();
+    assert_eq!(summary.import_tasks_queued, 1);
+    let scope = store.latest_import_scan_scope().unwrap().unwrap();
+    assert_eq!(scope.root_kind, ImportRootKind::Explicit);
+    assert_eq!(scope.scan_profile, ImportScanProfile::Explicit);
+    assert_eq!(scope.requested_root_path, path_str(&fixture_root));
+    assert_eq!(scope.canonical_root_path, path_str(&canonical_fixture_root));
+    assert_eq!(scope.scan_budget_limit, Some(1));
+    let task = store
+        .import_task_by_id(&scope.import_task_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Queued);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_rejects_wrong_bearer_token_for_import_command_ipc() {
+    let data_dir = temp_dir("ipc-import-wrong-token-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let response = http_post_import_command(
+        &endpoint,
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        &fixture_root,
+        Some(1),
+    );
+
+    assert!(response.contains("HTTP/1.1 401 Unauthorized"));
+    assert!(!response.contains(path_str(&data_dir)));
+    assert!(!response.contains(path_str(&fixture_root)));
+    assert!(!response.contains(path_str(&canonical_fixture_root)));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    assert_eq!(store.status_summary().unwrap().import_tasks_queued, 0);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_rejects_malformed_ipc_request_without_stopping() {
+    let data_dir = temp_dir("ipc-malformed-request-data");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "2",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let malformed = raw_ipc_request(
+        &endpoint,
+        b"POST /imports HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: nope\r\n\r\n",
+    );
+    let status_response = http_get(&endpoint);
+
+    assert!(malformed.contains("HTTP/1.1 400 Bad Request"));
+    assert!(status_response.contains("HTTP/1.1 200 OK"));
+    assert!(status_response.contains("\"status\":\"ok\""));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
+    let data_dir = temp_dir("ipc-import-running-conflict-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let task_id = seed_running_import_task(
+        &data_dir,
+        "ipc-running-conflict",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
+
+    assert!(response.contains("HTTP/1.1 409 Conflict"));
+    assert!(response.contains("\"status\":\"conflict\""));
+    assert!(!response.contains(path_str(&data_dir)));
+    assert!(!response.contains(path_str(&fixture_root)));
+    assert!(!response.contains(path_str(&canonical_fixture_root)));
+    assert!(!response.contains(&token));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Running);
+    let scope = store
+        .import_scan_scope_by_task_id(&task_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(scope.scan_budget_limit, None);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
+    let data_dir = temp_dir("ipc-import-command-worker-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--worker-interval-ms",
+            "25",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "40",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc plus import worker");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, None);
+    assert!(response.contains("HTTP/1.1 202 Accepted"));
+
+    let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 39);
+    let used_requests = 1 + worker_requests;
+    drain_status_requests(&endpoint, 40 - used_requests);
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scope = store.latest_import_scan_scope().unwrap().unwrap();
+    let task = store
+        .import_task_by_id(&scope.import_task_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Completed);
+    assert_eq!(store.status_summary().unwrap().searchable_documents, 2);
+    assert!(!response.contains(path_str(&data_dir)));
+    assert!(!response.contains(path_str(&fixture_root)));
+    assert!(!response.contains(path_str(&canonical_fixture_root)));
+    assert!(!response.contains(&token));
+    assert!(!completed_response.contains(path_str(&data_dir)));
+    assert!(!completed_response.contains(path_str(&fixture_root)));
+    assert!(!completed_response.contains(path_str(&canonical_fixture_root)));
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_repairs_existing_weak_ipc_token_permissions() {
+    let data_dir = temp_dir("ipc-token-permissions-data");
+    let token = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
+    fs::write(data_dir.join("ipc.auth"), token).unwrap();
+    fs::set_permissions(data_dir.join("ipc.auth"), fs::Permissions::from_mode(0o644)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let response = http_get(&endpoint);
+
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+    let permissions = fs::metadata(data_dir.join("ipc.auth"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(permissions & 0o777, 0o600);
 
     remove_dir(&data_dir);
 }
@@ -308,6 +662,56 @@ fn http_get_path(endpoint: &str, request_path: &str) -> String {
     response
 }
 
+fn http_post_import_command(
+    endpoint: &str,
+    token: Option<&str>,
+    root: &Path,
+    max_files: Option<usize>,
+) -> String {
+    let rest = endpoint
+        .strip_prefix("http://")
+        .expect("endpoint has http scheme");
+    let (addr, _path) = rest.split_once('/').expect("endpoint has path");
+    let body = serde_json::json!({
+        "roots": [path_str(root)],
+        "profile": "explicit",
+        "max_files": max_files,
+    })
+    .to_string();
+    let authorization = token
+        .map(|token| format!("Authorization: Bearer {token}\r\n"))
+        .unwrap_or_default();
+    let mut stream = TcpStream::connect(addr).expect("connect daemon ipc");
+    write!(
+        stream,
+        "POST /imports HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("write request");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+    response
+}
+
+fn raw_ipc_request(endpoint: &str, request: &[u8]) -> String {
+    let rest = endpoint
+        .strip_prefix("http://")
+        .expect("endpoint has http scheme");
+    let (addr, _path) = rest.split_once('/').expect("endpoint has path");
+    let mut stream = TcpStream::connect(addr).expect("connect daemon ipc");
+    stream.write_all(request).expect("write raw request");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+    response
+}
+
+fn read_ipc_auth_token(data_dir: &Path) -> String {
+    let token = fs::read_to_string(data_dir.join("ipc.auth")).expect("read daemon ipc auth token");
+    let token = token.trim().to_string();
+    assert!(token.len() >= 64);
+    token
+}
+
 fn seed_snapshot_state(data_dir: &Path) {
     let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
     store.run_migrations().unwrap();
@@ -338,6 +742,53 @@ fn seed_queued_import_task(
             status: ImportTaskStatus::Queued,
             queued_at: now,
             started_at: None,
+            finished_at: None,
+            updated_at: now,
+        })
+        .unwrap();
+    store
+        .upsert_import_scan_scope(&ImportScanScope {
+            import_task_id: task_id.clone(),
+            root_kind: ImportRootKind::Explicit,
+            root_preset: None,
+            scan_profile: ImportScanProfile::Explicit,
+            requested_root_path: path_str(canonical_root).to_string(),
+            canonical_root_path: path_str(canonical_root).to_string(),
+            files_discovered: 0,
+            ignored_entries: 0,
+            scan_errors: 0,
+            searchable_documents: 0,
+            ocr_required_documents: 0,
+            ocr_jobs_queued: 0,
+            failed_documents: 0,
+            deleted_documents: 0,
+            scan_budget_kind: None,
+            scan_budget_limit: None,
+            scan_budget_observed: None,
+            scan_budget_exhausted: false,
+            updated_at: now,
+        })
+        .unwrap();
+    task_id
+}
+
+fn seed_running_import_task(
+    data_dir: &Path,
+    label: &str,
+    canonical_root: &Path,
+    started_at_seconds: i64,
+) -> ImportTaskId {
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(started_at_seconds);
+    let task_id = ImportTaskId::from_non_secret_parts(&["s46", label]);
+    store
+        .insert_import_task(&ImportTask {
+            id: task_id.clone(),
+            root_path: path_str(canonical_root).to_string(),
+            status: ImportTaskStatus::Running,
+            queued_at: now,
+            started_at: Some(now),
             finished_at: None,
             updated_at: now,
         })

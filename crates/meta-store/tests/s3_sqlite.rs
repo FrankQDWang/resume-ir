@@ -205,6 +205,49 @@ fn import_scan_scope_persists_root_profile_and_redacted_progress_counts() {
 }
 
 #[test]
+fn import_task_and_scan_scope_insert_atomically_for_daemon_command_ipc() {
+    let store = migrated_store();
+    let task = import_task(
+        "atomic-command-import",
+        "/private/root/Documents",
+        ImportTaskStatus::Queued,
+    );
+    let scope = ImportScanScope {
+        import_task_id: task.id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: "/private/root".to_string(),
+        canonical_root_path: "/private/root/Documents".to_string(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: Some(ImportScanBudgetKind::Files),
+        scan_budget_limit: Some(10),
+        scan_budget_observed: Some(0),
+        scan_budget_exhausted: false,
+        updated_at: UnixTimestamp::from_unix_seconds(1_800_000_020),
+    };
+
+    store
+        .insert_import_task_with_scan_scope(&task, &scope)
+        .unwrap();
+
+    assert_eq!(store.import_task_by_id(&task.id).unwrap(), Some(task));
+    assert_eq!(
+        store
+            .import_scan_scope_by_task_id(&scope.import_task_id)
+            .unwrap(),
+        Some(scope)
+    );
+}
+
+#[test]
 fn import_scan_errors_replace_and_query_without_exposing_path_digest() {
     let store = migrated_store();
     let task = import_task(

@@ -1133,6 +1133,102 @@ impl MetaStore {
         Ok(())
     }
 
+    pub fn insert_import_task_with_scan_scope(
+        &self,
+        task: &ImportTask,
+        scope: &ImportScanScope,
+    ) -> Result<()> {
+        validate_import_task(task)?;
+        validate_import_scan_scope(scope)?;
+        if scope.import_task_id != task.id {
+            return Err(MetaStoreError::invalid_value(
+                "import_scan_scope.import_task_id",
+            ));
+        }
+        if scope.canonical_root_path != task.root_path {
+            return Err(MetaStoreError::invalid_value("import_task.root_path"));
+        }
+
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        transaction
+            .execute(
+                "\
+                INSERT INTO import_task (
+                    id, root_path, status, queued_at_seconds, started_at_seconds,
+                    finished_at_seconds, updated_at_seconds
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    task.id.as_str(),
+                    task.root_path,
+                    import_task_status_to_storage(task.status),
+                    task.queued_at.as_unix_seconds(),
+                    task.started_at.map(UnixTimestamp::as_unix_seconds),
+                    task.finished_at.map(UnixTimestamp::as_unix_seconds),
+                    task.updated_at.as_unix_seconds(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction
+            .execute(
+                "\
+                INSERT INTO import_scan_scope (
+                    import_task_id, root_kind, root_preset, scan_profile, requested_root_path,
+                    canonical_root_path, files_discovered, ignored_entries, scan_errors,
+                    searchable_documents, ocr_required_documents, ocr_jobs_queued,
+                    failed_documents, deleted_documents, scan_budget_kind, scan_budget_limit,
+                    scan_budget_observed, scan_budget_exhausted, updated_at_seconds
+                )
+                VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+                    ?18, ?19
+                )",
+                params![
+                    scope.import_task_id.as_str(),
+                    import_root_kind_to_storage(scope.root_kind),
+                    scope.root_preset.map(import_root_preset_to_storage),
+                    import_scan_profile_to_storage(scope.scan_profile),
+                    scope.requested_root_path.as_str(),
+                    scope.canonical_root_path.as_str(),
+                    u64_to_i64(scope.files_discovered, "import_scan_scope.files_discovered")?,
+                    u64_to_i64(scope.ignored_entries, "import_scan_scope.ignored_entries")?,
+                    u64_to_i64(scope.scan_errors, "import_scan_scope.scan_errors")?,
+                    u64_to_i64(
+                        scope.searchable_documents,
+                        "import_scan_scope.searchable_documents"
+                    )?,
+                    u64_to_i64(
+                        scope.ocr_required_documents,
+                        "import_scan_scope.ocr_required_documents"
+                    )?,
+                    u64_to_i64(scope.ocr_jobs_queued, "import_scan_scope.ocr_jobs_queued")?,
+                    u64_to_i64(scope.failed_documents, "import_scan_scope.failed_documents")?,
+                    u64_to_i64(
+                        scope.deleted_documents,
+                        "import_scan_scope.deleted_documents"
+                    )?,
+                    scope
+                        .scan_budget_kind
+                        .map(import_scan_budget_kind_to_storage),
+                    scope
+                        .scan_budget_limit
+                        .map(|value| u64_to_i64(value, "import_scan_scope.scan_budget_limit"))
+                        .transpose()?,
+                    scope
+                        .scan_budget_observed
+                        .map(|value| u64_to_i64(value, "import_scan_scope.scan_budget_observed"))
+                        .transpose()?,
+                    bool_to_i64(scope.scan_budget_exhausted),
+                    scope.updated_at.as_unix_seconds(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+
+        Ok(())
+    }
+
     pub fn import_task_by_id(&self, id: &ImportTaskId) -> Result<Option<ImportTask>> {
         let connection = self.connection.borrow();
         let sql = format!("SELECT {IMPORT_TASK_COLUMNS} FROM import_task WHERE id = ?1");

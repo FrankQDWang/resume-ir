@@ -1,5 +1,5 @@
 use std::fmt;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -17,13 +17,19 @@ use import_pipeline::{
     ImportSummary, ScanProfile,
 };
 use meta_store::{
-    ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTaskId, ImportTaskStatus,
-    IndexStateStatus, MetaStore, UnixTimestamp,
+    ImportRootKind, ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask,
+    ImportTaskId, ImportTaskStatus, IndexStateStatus, MetaStore, UnixTimestamp,
 };
 
 const IMPORT_RETRY_BACKOFF_SECONDS: i64 = 60;
 const IMPORT_TASK_HEARTBEAT_SECONDS: u64 = 30;
 const STALE_IMPORT_TASK_SECONDS: i64 = 15 * 60;
+const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
+const IPC_AUTH_TOKEN_BYTES: usize = 32;
+const IPC_MAX_REQUEST_BYTES: usize = 64 * 1024;
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 fn main() {
     if let Err(error) = run() {
@@ -235,7 +241,7 @@ fn run_import_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<(
     let ipc_addr = options
         .ipc_listen
         .expect("validated combined worker/ipc mode has ipc address");
-    let listener = bind_ipc_listener(ipc_addr)?;
+    let listener = bind_ipc_listener(data_dir, ipc_addr)?;
     listener
         .set_nonblocking(true)
         .map_err(|_| DaemonError::user("unable to configure daemon ipc listener"))?;
@@ -493,11 +499,12 @@ fn parse_loopback_addr(value: &str) -> Result<SocketAddr> {
 }
 
 fn serve_ipc(data_dir: &Path, addr: SocketAddr, max_requests: Option<usize>) -> Result<()> {
-    let listener = bind_ipc_listener(addr)?;
+    let listener = bind_ipc_listener(data_dir, addr)?;
     serve_ipc_listener(data_dir, &listener, max_requests)
 }
 
-fn bind_ipc_listener(addr: SocketAddr) -> Result<TcpListener> {
+fn bind_ipc_listener(data_dir: &Path, addr: SocketAddr) -> Result<TcpListener> {
+    let _ = load_or_create_ipc_auth_token(data_dir)?;
     let listener = TcpListener::bind(addr)
         .map_err(|_| DaemonError::user("unable to bind daemon ipc listener"))?;
     let local_addr = listener
@@ -570,33 +577,564 @@ fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .map_err(|_| DaemonError::user("unable to set daemon ipc timeout"))?;
+    let request = match read_ipc_request(&mut stream)? {
+        IpcReadOutcome::Request(request) => request,
+        IpcReadOutcome::TooLarge => {
+            return write_http_response(&mut stream, 413, "text/plain", "request too large")
+        }
+        IpcReadOutcome::BadRequest => {
+            return write_http_response(&mut stream, 400, "text/plain", "bad request")
+        }
+    };
+
+    if request.method == "GET"
+        && request.path == "/status"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        let body = status_json(data_dir)?;
+        return write_http_response(&mut stream, 200, "application/json", &body);
+    }
+
+    if request.method == "POST"
+        && request.path == "/imports"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_import_command_ipc(data_dir, &request, &mut stream);
+    }
+
+    write_http_response(&mut stream, 404, "text/plain", "not found")
+}
+
+fn read_ipc_request(stream: &mut TcpStream) -> Result<IpcReadOutcome> {
     let mut request = Vec::new();
     let mut buffer = [0_u8; 512];
+    let header_end = loop {
+        let read = match stream.read(&mut buffer) {
+            Ok(read) => read,
+            Err(_) => return Ok(IpcReadOutcome::BadRequest),
+        };
+        if read == 0 {
+            break None;
+        }
+        request.extend_from_slice(&buffer[..read]);
+        if request.len() > IPC_MAX_REQUEST_BYTES {
+            return Ok(IpcReadOutcome::TooLarge);
+        }
+        if let Some(header_end) = find_http_header_end(&request) {
+            break Some(header_end);
+        }
+    };
 
-    loop {
-        let read = stream
-            .read(&mut buffer)
-            .map_err(|_| DaemonError::user("unable to read daemon ipc request"))?;
+    let Some(header_end) = header_end else {
+        return Ok(IpcReadOutcome::Request(IpcRequest::empty()));
+    };
+    let Ok(header_text) = std::str::from_utf8(&request[..header_end]) else {
+        return Ok(IpcReadOutcome::BadRequest);
+    };
+    let mut lines = header_text.lines();
+    let first_line = lines.next().unwrap_or_default();
+    let mut first_line_parts = first_line.split_whitespace();
+    let method = first_line_parts.next().unwrap_or_default().to_string();
+    let path = first_line_parts.next().unwrap_or_default().to_string();
+    let version = first_line_parts.next().unwrap_or_default().to_string();
+    let headers = lines
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            Some((name.trim().to_string(), value.trim().to_string()))
+        })
+        .collect::<Vec<_>>();
+    let content_length = match header_value(&headers, "content-length") {
+        Some(value) => {
+            let Some(content_length) = parse_content_length(value) else {
+                return Ok(IpcReadOutcome::BadRequest);
+            };
+            content_length
+        }
+        None => 0,
+    };
+    let Some(request_end) = header_end.checked_add(content_length) else {
+        return Ok(IpcReadOutcome::TooLarge);
+    };
+
+    if request_end > IPC_MAX_REQUEST_BYTES {
+        return Ok(IpcReadOutcome::TooLarge);
+    }
+
+    while request.len() < request_end {
+        let read = match stream.read(&mut buffer) {
+            Ok(read) => read,
+            Err(_) => return Ok(IpcReadOutcome::BadRequest),
+        };
         if read == 0 {
             break;
         }
         request.extend_from_slice(&buffer[..read]);
-        if request.windows(4).any(|window| window == b"\r\n\r\n") {
-            break;
-        }
-        if request.len() > 8_192 {
-            return write_http_response(&mut stream, 413, "text/plain", "request too large");
+        if request.len() > IPC_MAX_REQUEST_BYTES {
+            return Ok(IpcReadOutcome::TooLarge);
         }
     }
 
-    let request = String::from_utf8_lossy(&request);
-    let first_line = request.lines().next().unwrap_or_default();
-    if first_line != "GET /status HTTP/1.1" && first_line != "GET /status HTTP/1.0" {
-        return write_http_response(&mut stream, 404, "text/plain", "not found");
+    if request.len() < request_end {
+        return Ok(IpcReadOutcome::BadRequest);
+    }
+    let body = request[header_end..request_end].to_vec();
+
+    Ok(IpcReadOutcome::Request(IpcRequest {
+        method,
+        path,
+        version,
+        headers,
+        body,
+    }))
+}
+
+fn find_http_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
+}
+
+fn parse_content_length(value: &str) -> Option<usize> {
+    value.parse::<usize>().ok()
+}
+
+fn handle_import_command_ipc(
+    data_dir: &Path,
+    request: &IpcRequest,
+    stream: &mut TcpStream,
+) -> Result<()> {
+    if !import_command_authorized(data_dir, &request.headers)? {
+        let body = serde_json::json!({
+            "schema_version": "daemon.error.v1",
+            "status": "unauthorized",
+        })
+        .to_string();
+        return write_http_response(stream, 401, "application/json", &body);
     }
 
-    let body = status_json(data_dir)?;
-    write_http_response(&mut stream, 200, "application/json", &body)
+    match enqueue_import_command(data_dir, &request.body) {
+        Ok(body) => write_http_response(stream, 202, "application/json", &body),
+        Err(IpcCommandError::BadRequest(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "bad_request",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 400, "application/json", &body)
+        }
+        Err(IpcCommandError::Conflict(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "conflict",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 409, "application/json", &body)
+        }
+        Err(IpcCommandError::Internal(error)) => Err(error),
+    }
+}
+
+fn import_command_authorized(data_dir: &Path, headers: &[(String, String)]) -> Result<bool> {
+    let expected = load_or_create_ipc_auth_token(data_dir)?;
+    let Some(header) = header_value(headers, "authorization") else {
+        return Ok(false);
+    };
+    let Some(token) = header.strip_prefix("Bearer ") else {
+        return Ok(false);
+    };
+
+    Ok(constant_time_eq(
+        token.trim().as_bytes(),
+        expected.as_bytes(),
+    ))
+}
+
+fn enqueue_import_command(
+    data_dir: &Path,
+    body: &[u8],
+) -> std::result::Result<String, IpcCommandError> {
+    let payload = serde_json::from_slice::<serde_json::Value>(body)
+        .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
+    let roots = parse_import_command_roots(&payload)?;
+    let profile = parse_import_command_profile(&payload)?;
+    let max_files = parse_import_command_max_files(&payload)?;
+    let canonical_roots = canonical_import_roots(&roots)?;
+    let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
+    let now = current_timestamp().map_err(IpcCommandError::Internal)?;
+    let mut task_ids = Vec::new();
+    let mut new_tasks = 0_usize;
+
+    for (root_index, root) in canonical_roots.iter().enumerate() {
+        let canonical_root_path = path_string(&root.canonical);
+        let requested_root_path = path_string(&root.requested);
+        let task = match store
+            .pending_import_task_by_root(&canonical_root_path)
+            .map_err(DaemonError::store)
+            .map_err(IpcCommandError::Internal)?
+        {
+            Some(task) if task.status == ImportTaskStatus::Running => {
+                return Err(IpcCommandError::Conflict("import task is already running"));
+            }
+            Some(task) => {
+                let scope = import_command_scan_scope(
+                    &task.id,
+                    requested_root_path,
+                    canonical_root_path,
+                    profile,
+                    max_files,
+                    now,
+                )?;
+                store
+                    .upsert_import_scan_scope(&scope)
+                    .map_err(DaemonError::store)
+                    .map_err(IpcCommandError::Internal)?;
+                task
+            }
+            None => {
+                let task = ImportTask {
+                    id: new_import_task_id(root_index).map_err(IpcCommandError::Internal)?,
+                    root_path: canonical_root_path.clone(),
+                    status: ImportTaskStatus::Queued,
+                    queued_at: now,
+                    started_at: None,
+                    finished_at: None,
+                    updated_at: now,
+                };
+                let scope = import_command_scan_scope(
+                    &task.id,
+                    requested_root_path,
+                    canonical_root_path,
+                    profile,
+                    max_files,
+                    now,
+                )?;
+                store
+                    .insert_import_task_with_scan_scope(&task, &scope)
+                    .map_err(DaemonError::store)
+                    .map_err(IpcCommandError::Internal)?;
+                new_tasks += 1;
+                task
+            }
+        };
+
+        task_ids.push(task.id.to_string());
+    }
+
+    let body = serde_json::json!({
+        "schema_version": "daemon.import.v1",
+        "status": "accepted",
+        "accepted_roots": canonical_roots.len(),
+        "new_tasks": new_tasks,
+        "task_ids": task_ids,
+        "scan_profile": import_scan_profile_label(profile),
+        "scan_file_limit": max_files,
+    });
+    Ok(body.to_string())
+}
+
+fn import_command_scan_scope(
+    task_id: &ImportTaskId,
+    requested_root_path: String,
+    canonical_root_path: String,
+    profile: ImportScanProfile,
+    max_files: Option<usize>,
+    updated_at: UnixTimestamp,
+) -> std::result::Result<ImportScanScope, IpcCommandError> {
+    Ok(ImportScanScope {
+        import_task_id: task_id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: profile,
+        requested_root_path,
+        canonical_root_path,
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: max_files.map(|_| ImportScanBudgetKind::Files),
+        scan_budget_limit: max_files
+            .map(usize_to_u64)
+            .transpose()
+            .map_err(IpcCommandError::Internal)?,
+        scan_budget_observed: max_files.map(|_| 0),
+        scan_budget_exhausted: false,
+        updated_at,
+    })
+}
+
+fn parse_import_command_roots(
+    payload: &serde_json::Value,
+) -> std::result::Result<Vec<PathBuf>, IpcCommandError> {
+    let roots = payload
+        .get("roots")
+        .and_then(serde_json::Value::as_array)
+        .filter(|roots| !roots.is_empty())
+        .ok_or(IpcCommandError::BadRequest(
+            "roots must be a non-empty array",
+        ))?;
+    if roots.len() > 64 {
+        return Err(IpcCommandError::BadRequest("too many roots"));
+    }
+    roots
+        .iter()
+        .map(|root| {
+            let value = root
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or(IpcCommandError::BadRequest("roots must be strings"))?;
+            Ok(PathBuf::from(value))
+        })
+        .collect()
+}
+
+fn parse_import_command_profile(
+    payload: &serde_json::Value,
+) -> std::result::Result<ImportScanProfile, IpcCommandError> {
+    match payload
+        .get("profile")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("explicit")
+    {
+        "explicit" => Ok(ImportScanProfile::Explicit),
+        "discovery" => Ok(ImportScanProfile::Discovery),
+        _ => Err(IpcCommandError::BadRequest("invalid profile")),
+    }
+}
+
+fn parse_import_command_max_files(
+    payload: &serde_json::Value,
+) -> std::result::Result<Option<usize>, IpcCommandError> {
+    let Some(value) = payload.get("max_files") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let value = value
+        .as_u64()
+        .filter(|value| *value > 0)
+        .ok_or(IpcCommandError::BadRequest("max_files must be positive"))?;
+    let value = usize::try_from(value)
+        .map_err(|_| IpcCommandError::BadRequest("max_files is too large"))?;
+    Ok(Some(value))
+}
+
+fn canonical_import_roots(
+    requested_roots: &[PathBuf],
+) -> std::result::Result<Vec<CanonicalImportRoot>, IpcCommandError> {
+    let mut roots = requested_roots
+        .iter()
+        .map(|requested_root| {
+            let metadata = fs::metadata(requested_root).map_err(|_| {
+                IpcCommandError::BadRequest("import root must exist and be a directory")
+            })?;
+            if !metadata.is_dir() {
+                return Err(IpcCommandError::BadRequest(
+                    "import root must exist and be a directory",
+                ));
+            }
+            let canonical = fs::canonicalize(requested_root).map_err(|_| {
+                IpcCommandError::BadRequest("import root must exist and be a directory")
+            })?;
+            Ok(CanonicalImportRoot {
+                requested: requested_root.clone(),
+                canonical,
+            })
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    roots.sort_by(|left, right| left.canonical.cmp(&right.canonical));
+    for window in roots.windows(2) {
+        let [left, right] = window else {
+            continue;
+        };
+        if left.canonical == right.canonical || right.canonical.starts_with(&left.canonical) {
+            return Err(IpcCommandError::BadRequest(
+                "import roots must be distinct and non-overlapping",
+            ));
+        }
+    }
+    Ok(roots)
+}
+
+fn new_import_task_id(root_index: usize) -> Result<ImportTaskId> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| DaemonError::user("system clock is before unix epoch"))?;
+    let nanos = duration.as_nanos().to_string();
+    let pid = std::process::id().to_string();
+    let root_index = root_index.to_string();
+
+    Ok(ImportTaskId::from_non_secret_parts(&[
+        "s46-import-task",
+        &nanos,
+        &pid,
+        &root_index,
+    ]))
+}
+
+fn path_string(path: &Path) -> String {
+    path.as_os_str().to_string_lossy().into_owned()
+}
+
+fn import_scan_profile_label(profile: ImportScanProfile) -> &'static str {
+    match profile {
+        ImportScanProfile::Explicit => "explicit",
+        ImportScanProfile::Discovery => "discovery",
+    }
+}
+
+fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+fn load_or_create_ipc_auth_token(data_dir: &Path) -> Result<String> {
+    fs::create_dir_all(data_dir)
+        .map_err(|_| DaemonError::user("unable to prepare local metadata directory"))?;
+    let path = data_dir.join(IPC_AUTH_TOKEN_FILE);
+    match fs::read_to_string(&path) {
+        Ok(token) => {
+            ensure_ipc_auth_token_permissions(&path)?;
+            validate_ipc_auth_token(&token)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => create_ipc_auth_token(&path),
+        Err(_) => Err(DaemonError::user("unable to read daemon ipc auth token")),
+    }
+}
+
+fn create_ipc_auth_token(path: &Path) -> Result<String> {
+    let token = random_hex_token()?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(token.as_bytes())
+                .and_then(|_| file.write_all(b"\n"))
+                .map_err(|_| DaemonError::user("unable to write daemon ipc auth token"))?;
+            Ok(token)
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            ensure_ipc_auth_token_permissions(path)?;
+            let token = fs::read_to_string(path)
+                .map_err(|_| DaemonError::user("unable to read daemon ipc auth token"))?;
+            validate_ipc_auth_token(&token)
+        }
+        Err(_) => Err(DaemonError::user("unable to create daemon ipc auth token")),
+    }
+}
+
+#[cfg(unix)]
+fn ensure_ipc_auth_token_permissions(path: &Path) -> Result<()> {
+    let permissions = fs::metadata(path)
+        .map_err(|_| DaemonError::user("unable to inspect daemon ipc auth token"))?
+        .permissions();
+    if permissions.mode() & 0o077 == 0 {
+        return Ok(());
+    }
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|_| DaemonError::user("unable to secure daemon ipc auth token"))?;
+    let repaired = fs::metadata(path)
+        .map_err(|_| DaemonError::user("unable to inspect daemon ipc auth token"))?
+        .permissions();
+    if repaired.mode() & 0o077 != 0 {
+        return Err(DaemonError::user(
+            "daemon ipc auth token permissions are unsafe",
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_ipc_auth_token_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn validate_ipc_auth_token(token: &str) -> Result<String> {
+    let token = token.trim();
+    if token.len() != IPC_AUTH_TOKEN_BYTES * 2
+        || !token.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(DaemonError::user("daemon ipc auth token is invalid"));
+    }
+    Ok(token.to_string())
+}
+
+fn random_hex_token() -> Result<String> {
+    let mut bytes = [0_u8; IPC_AUTH_TOKEN_BYTES];
+    getrandom::getrandom(&mut bytes)
+        .map_err(|_| DaemonError::user("unable to create daemon ipc auth token"))?;
+    let mut token = String::with_capacity(IPC_AUTH_TOKEN_BYTES * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut token, "{byte:02x}")
+            .map_err(|_| DaemonError::user("unable to create daemon ipc auth token"))?;
+    }
+    Ok(token)
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut diff = 0_u8;
+    for (left, right) in left.iter().zip(right.iter()) {
+        diff |= left ^ right;
+    }
+    diff == 0
+}
+
+enum IpcReadOutcome {
+    Request(IpcRequest),
+    TooLarge,
+    BadRequest,
+}
+
+struct IpcRequest {
+    method: String,
+    path: String,
+    version: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl IpcRequest {
+    fn empty() -> Self {
+        Self {
+            method: String::new(),
+            path: String::new(),
+            version: String::new(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        }
+    }
+}
+
+enum IpcCommandError {
+    BadRequest(&'static str),
+    Conflict(&'static str),
+    Internal(DaemonError),
+}
+
+struct CanonicalImportRoot {
+    requested: PathBuf,
+    canonical: PathBuf,
 }
 
 fn status_json(data_dir: &Path) -> Result<String> {
@@ -634,7 +1172,11 @@ fn write_http_response(
 ) -> Result<()> {
     let reason = match status_code {
         200 => "OK",
+        202 => "Accepted",
+        400 => "Bad Request",
+        401 => "Unauthorized",
         404 => "Not Found",
+        409 => "Conflict",
         413 => "Payload Too Large",
         _ => "Error",
     };

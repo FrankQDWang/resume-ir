@@ -10,6 +10,7 @@ name = "resume-daemon"
 path = "src/main.rs"
 
 [dependencies]
+getrandom = "0.2"
 import-pipeline = { path = "../import-pipeline" }
 meta-store = { path = "../meta-store" }
 serde_json = "1"
