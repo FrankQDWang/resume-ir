@@ -1,7 +1,9 @@
 # Progress
 
-This file tracks long-running Goal execution against
-`02_execution_plan_执行方案/10_长时间Goal执行清单.md`.
+This file tracks long-running production Goal execution against `GOAL.md`, the
+system design docs, the execution docs, and this running evidence log. The old
+S0-S13 long-running checklist is historical bootstrap context only, not the
+production-ready scope source.
 
 ## Execution Boundaries
 

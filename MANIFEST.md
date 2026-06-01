@@ -25,6 +25,4 @@
 - `02_execution_plan_执行方案/08_依赖许可与参考资料.md`
 - `02_execution_plan_执行方案/09_一页版执行清单.md`
 - `02_execution_plan_执行方案/10_长时间Goal执行清单.md`
-- `docs/superpowers/specs/2026-05-30-long-running-goal-execution.md`
-- `docs/superpowers/plans/2026-05-30-long-running-goal-execution.md`
 - `GOAL.md`

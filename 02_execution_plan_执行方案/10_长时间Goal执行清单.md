@@ -345,9 +345,9 @@ cargo run -p resume-cli -- export-diagnostics --redact
 
 先阅读 GOAL.md、MANIFEST.md、01_system_design_系统设计/00_阅读顺序.md、02_execution_plan_执行方案/00_阅读顺序.md、02_execution_plan_执行方案/10_长时间Goal执行清单.md。
 
-目标：按 10_长时间Goal执行清单.md 的 slice 顺序尽可能多完成可验收工作。先做 S0-S9；如果全部通过且还有时间，再继续 S10-S13。
+目标：以 GOAL.md、系统设计文档和执行方案为 production-ready 范围来源，按 PROGRESS.md 记录的已完成切片继续补齐真实产品闭环；不要把本清单的早期 S0-S13 bootstrap 范围当成产品完成标准。
 
-执行方式：把 docs/superpowers/specs/2026-05-30-long-running-goal-execution.md 和 docs/superpowers/plans/2026-05-30-long-running-goal-execution.md 当作已通过 fw-plan-review 的规格和计划，使用 fw-build 的执行纪律推进；不要进入 push、PR、release、签名或真实数据导入。
+执行方式：使用 fw-build 的工程纪律推进，但产品范围以 GOAL.md、01_system_design_系统设计、02_execution_plan_执行方案和 PROGRESS.md 为准；不要引用已删除的 Superpowers bootstrap plan 作为产品计划；不要进入 push、PR、release、签名或未经授权的真实数据导入。
 
 规则：
 - 当前目录若还不是 Git 仓库，先 git init 并提交现有文档基线。
