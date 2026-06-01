@@ -4,7 +4,14 @@ pub fn crate_name() -> &'static str {
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+const SNAPSHOT_FILE: &str = "vector.snapshot";
+const SNAPSHOT_TMP_FILE: &str = "vector.snapshot.tmp";
+const SNAPSHOT_HEADER: &str = "resume-ir-vector-index-v1";
 
 pub trait VectorIndex {
     fn upsert(&self, vectors: Vec<VectorDocument>) -> Result<(), VectorIndexError>;
@@ -25,6 +32,142 @@ impl InMemoryVectorIndex {
             dimension,
             state: Mutex::new(IndexState::default()),
         }
+    }
+}
+
+pub struct PersistentVectorIndex {
+    dimension: usize,
+    snapshot_path: PathBuf,
+    temp_path: PathBuf,
+    state: Mutex<IndexState>,
+}
+
+impl PersistentVectorIndex {
+    pub fn open(root: impl AsRef<Path>, dimension: usize) -> Result<Self, VectorIndexError> {
+        if dimension == 0 {
+            return Err(VectorIndexError::InvalidDimension {
+                expected: 1,
+                actual: 0,
+            });
+        }
+
+        let root = root.as_ref();
+        fs::create_dir_all(root).map_err(|_| VectorIndexError::Storage)?;
+        let snapshot_path = root.join(SNAPSHOT_FILE);
+        let temp_path = root.join(SNAPSHOT_TMP_FILE);
+        let state = if snapshot_path.exists() {
+            read_snapshot(&snapshot_path, dimension)?
+        } else {
+            IndexState::default()
+        };
+
+        Ok(Self {
+            dimension,
+            snapshot_path,
+            temp_path,
+            state: Mutex::new(state),
+        })
+    }
+
+    fn persist_state(&self, state: &IndexState) -> Result<(), VectorIndexError> {
+        write_snapshot(&self.temp_path, self.dimension, state)?;
+        fs::rename(&self.temp_path, &self.snapshot_path).map_err(|_| VectorIndexError::Storage)?;
+        Ok(())
+    }
+}
+
+pub fn inspect_persistent_vector_snapshot(
+    root: impl AsRef<Path>,
+) -> PersistentVectorSnapshotInspection {
+    let snapshot_path = root.as_ref().join(SNAPSHOT_FILE);
+    if !snapshot_path.exists() {
+        return PersistentVectorSnapshotInspection {
+            state: PersistentVectorSnapshotState::Missing,
+            snapshot: None,
+        };
+    }
+
+    match read_snapshot_unchecked_dimension(&snapshot_path) {
+        Ok((dimension, state)) => PersistentVectorSnapshotInspection {
+            state: PersistentVectorSnapshotState::Ready,
+            snapshot: Some(snapshot_from_state(&state, dimension)),
+        },
+        Err(VectorIndexError::Storage) => PersistentVectorSnapshotInspection {
+            state: PersistentVectorSnapshotState::Unreadable,
+            snapshot: None,
+        },
+        Err(_) => PersistentVectorSnapshotInspection {
+            state: PersistentVectorSnapshotState::Corrupt,
+            snapshot: None,
+        },
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PersistentVectorSnapshotInspection {
+    state: PersistentVectorSnapshotState,
+    snapshot: Option<VectorSnapshot>,
+}
+
+impl PersistentVectorSnapshotInspection {
+    pub fn state(self) -> PersistentVectorSnapshotState {
+        self.state
+    }
+
+    pub fn snapshot(self) -> Option<VectorSnapshot> {
+        self.snapshot
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PersistentVectorSnapshotState {
+    Missing,
+    Ready,
+    Corrupt,
+    Unreadable,
+}
+
+impl fmt::Debug for PersistentVectorIndex {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PersistentVectorIndex")
+            .field("snapshot_path", &"<redacted>")
+            .field("dimension", &self.dimension)
+            .finish_non_exhaustive()
+    }
+}
+
+impl VectorIndex for PersistentVectorIndex {
+    fn upsert(&self, vectors: Vec<VectorDocument>) -> Result<(), VectorIndexError> {
+        for vector in &vectors {
+            validate_dimension(self.dimension, vector.values())?;
+        }
+
+        let mut state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
+        for vector in vectors {
+            state.deleted.remove(vector.vector_id());
+            state.vectors.insert(vector.vector_id().to_string(), vector);
+        }
+        self.persist_state(&state)
+    }
+
+    fn mark_deleted(&self, vector_ids: &[&str]) -> Result<(), VectorIndexError> {
+        let mut state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
+        for vector_id in vector_ids {
+            state.deleted.insert((*vector_id).to_string());
+        }
+        self.persist_state(&state)
+    }
+
+    fn knn(&self, query: QueryVector, k: usize) -> Result<Vec<VectorHit>, VectorIndexError> {
+        validate_dimension(self.dimension, query.values())?;
+        let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
+        Ok(knn_from_state(&state, query.values(), k))
+    }
+
+    fn snapshot(&self) -> Result<VectorSnapshot, VectorIndexError> {
+        let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
+        Ok(snapshot_from_state(&state, self.dimension))
     }
 }
 
@@ -50,36 +193,12 @@ impl VectorIndex for InMemoryVectorIndex {
     fn knn(&self, query: QueryVector, k: usize) -> Result<Vec<VectorHit>, VectorIndexError> {
         validate_dimension(self.dimension, query.values())?;
         let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        let mut hits = state
-            .vectors
-            .values()
-            .filter(|vector| !state.deleted.contains(vector.vector_id()))
-            .map(|vector| {
-                VectorHit::new(
-                    vector.vector_id().to_string(),
-                    vector.doc_id().to_string(),
-                    cosine_similarity(query.values(), vector.values()),
-                )
-            })
-            .collect::<Vec<_>>();
-        hits.sort_by(|left, right| {
-            right
-                .score()
-                .partial_cmp(&left.score())
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| left.doc_id().cmp(right.doc_id()))
-        });
-        hits.truncate(k);
-        Ok(hits)
+        Ok(knn_from_state(&state, query.values(), k))
     }
 
     fn snapshot(&self) -> Result<VectorSnapshot, VectorIndexError> {
         let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(VectorSnapshot {
-            vector_count: state.vectors.len(),
-            deleted_count: state.deleted.len(),
-            dimension: self.dimension,
-        })
+        Ok(snapshot_from_state(&state, self.dimension))
     }
 }
 
@@ -236,6 +355,8 @@ impl VectorSnapshot {
 pub enum VectorIndexError {
     InvalidDimension { expected: usize, actual: usize },
     Poisoned,
+    Storage,
+    CorruptSnapshot,
 }
 
 impl fmt::Display for VectorIndexError {
@@ -246,6 +367,8 @@ impl fmt::Display for VectorIndexError {
                 "vector dimension must be {expected}, got {actual}"
             ),
             Self::Poisoned => formatter.write_str("vector index state is unavailable"),
+            Self::Storage => formatter.write_str("vector index storage is unavailable"),
+            Self::CorruptSnapshot => formatter.write_str("vector index snapshot is corrupt"),
         }
     }
 }
@@ -261,6 +384,186 @@ fn validate_dimension(expected: usize, values: &[f32]) -> Result<(), VectorIndex
             actual: values.len(),
         })
     }
+}
+
+fn knn_from_state(state: &IndexState, query: &[f32], k: usize) -> Vec<VectorHit> {
+    let mut hits = state
+        .vectors
+        .values()
+        .filter(|vector| !state.deleted.contains(vector.vector_id()))
+        .map(|vector| {
+            VectorHit::new(
+                vector.vector_id().to_string(),
+                vector.doc_id().to_string(),
+                cosine_similarity(query, vector.values()),
+            )
+        })
+        .collect::<Vec<_>>();
+    hits.sort_by(|left, right| {
+        right
+            .score()
+            .partial_cmp(&left.score())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.doc_id().cmp(right.doc_id()))
+    });
+    hits.truncate(k);
+    hits
+}
+
+fn snapshot_from_state(state: &IndexState, dimension: usize) -> VectorSnapshot {
+    VectorSnapshot {
+        vector_count: state.vectors.len(),
+        deleted_count: state.deleted.len(),
+        dimension,
+    }
+}
+
+fn read_snapshot(path: &Path, expected_dimension: usize) -> Result<IndexState, VectorIndexError> {
+    let (actual_dimension, state) = read_snapshot_unchecked_dimension(path)?;
+    if actual_dimension != expected_dimension {
+        return Err(VectorIndexError::InvalidDimension {
+            expected: expected_dimension,
+            actual: actual_dimension,
+        });
+    }
+
+    Ok(state)
+}
+
+fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState), VectorIndexError> {
+    let file = File::open(path).map_err(|_| VectorIndexError::Storage)?;
+    let mut lines = BufReader::new(file).lines();
+    let header = lines
+        .next()
+        .ok_or(VectorIndexError::CorruptSnapshot)?
+        .map_err(|_| VectorIndexError::Storage)?;
+    let mut header_parts = header.split('\t');
+    if header_parts.next() != Some(SNAPSHOT_HEADER) || header_parts.next() != Some("dimension") {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    let actual_dimension = header_parts
+        .next()
+        .ok_or(VectorIndexError::CorruptSnapshot)?
+        .parse::<usize>()
+        .map_err(|_| VectorIndexError::CorruptSnapshot)?;
+    if header_parts.next().is_some() {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+
+    let mut state = IndexState::default();
+    for line in lines {
+        let line = line.map_err(|_| VectorIndexError::Storage)?;
+        let mut parts = line.split('\t');
+        match parts.next() {
+            Some("V") => {
+                let vector_id =
+                    decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
+                let doc_id = decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
+                let values = decode_values(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
+                if parts.next().is_some() {
+                    return Err(VectorIndexError::CorruptSnapshot);
+                }
+                validate_dimension(actual_dimension, &values)?;
+                let document = VectorDocument::new(vector_id.clone(), doc_id, values)?;
+                state.vectors.insert(vector_id, document);
+            }
+            Some("D") => {
+                let vector_id =
+                    decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
+                if parts.next().is_some() {
+                    return Err(VectorIndexError::CorruptSnapshot);
+                }
+                state.deleted.insert(vector_id);
+            }
+            _ => return Err(VectorIndexError::CorruptSnapshot),
+        }
+    }
+
+    Ok((actual_dimension, state))
+}
+
+fn write_snapshot(
+    path: &Path,
+    dimension: usize,
+    state: &IndexState,
+) -> Result<(), VectorIndexError> {
+    let mut file = File::create(path).map_err(|_| VectorIndexError::Storage)?;
+    writeln!(file, "{SNAPSHOT_HEADER}\tdimension\t{dimension}")
+        .map_err(|_| VectorIndexError::Storage)?;
+    for vector in state.vectors.values() {
+        writeln!(
+            file,
+            "V\t{}\t{}\t{}",
+            encode_field(vector.vector_id()),
+            encode_field(vector.doc_id()),
+            encode_values(vector.values())
+        )
+        .map_err(|_| VectorIndexError::Storage)?;
+    }
+    for vector_id in &state.deleted {
+        writeln!(file, "D\t{}", encode_field(vector_id)).map_err(|_| VectorIndexError::Storage)?;
+    }
+    file.sync_all().map_err(|_| VectorIndexError::Storage)?;
+    Ok(())
+}
+
+fn encode_values(values: &[f32]) -> String {
+    values
+        .iter()
+        .map(|value| format!("{:08x}", value.to_bits()))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn decode_values(value: &str) -> Result<Vec<f32>, VectorIndexError> {
+    if value.is_empty() {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    value
+        .split(',')
+        .map(|part| {
+            if part.len() != 8 {
+                return Err(VectorIndexError::CorruptSnapshot);
+            }
+            let bits =
+                u32::from_str_radix(part, 16).map_err(|_| VectorIndexError::CorruptSnapshot)?;
+            Ok(f32::from_bits(bits))
+        })
+        .collect()
+}
+
+fn encode_field(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' | b'.' => {
+                output.push(char::from(*byte));
+            }
+            _ => output.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    output
+}
+
+fn decode_field(value: &str) -> Result<String, VectorIndexError> {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let Some(hex) = value.get(index + 1..index + 3) else {
+                return Err(VectorIndexError::CorruptSnapshot);
+            };
+            let byte =
+                u8::from_str_radix(hex, 16).map_err(|_| VectorIndexError::CorruptSnapshot)?;
+            output.push(byte);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(output).map_err(|_| VectorIndexError::CorruptSnapshot)
 }
 
 fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {

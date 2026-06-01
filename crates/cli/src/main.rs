@@ -15,6 +15,10 @@ use index_fulltext::{
     inspect_snapshot_root, FullTextIndex, SearchHit, SearchQuery, SnapshotReadTarget,
     SnapshotRootState,
 };
+use index_vector::{
+    inspect_persistent_vector_snapshot, PersistentVectorSnapshotInspection,
+    PersistentVectorSnapshotState,
+};
 use meta_store::{
     DocumentId, DocumentStatus, EntityType, ImportRootKind as StoreImportRootKind,
     ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
@@ -103,6 +107,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .worker_task_control(WorkerTaskKind::Ocr)
         .map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
+    let vector_diagnostic = inspect_vector_index(data_dir);
 
     println!("resume-ir status");
     println!("indexed documents: {}", summary.indexed_documents);
@@ -130,6 +135,12 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
         summary.last_snapshot_id.as_deref().unwrap_or("none")
     );
     println!("search index: {}", index_diagnostic.index_label());
+    println!("vector index: {}", vector_diagnostic.index_label());
+    println!("vector index vectors: {}", vector_diagnostic.vector_count());
+    println!(
+        "vector index tombstones: {}",
+        vector_diagnostic.deleted_count()
+    );
 
     Ok(())
 }
@@ -1110,6 +1121,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
+    let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
 
     println!("resume-ir doctor");
@@ -1132,6 +1144,12 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
         }
     );
     println!("search index: {}", index_diagnostic.index_label());
+    println!("vector index: {}", vector_diagnostic.index_label());
+    println!("vector index vectors: {}", vector_diagnostic.vector_count());
+    println!(
+        "vector index tombstones: {}",
+        vector_diagnostic.deleted_count()
+    );
     println!(
         "search index read target: {}",
         index_diagnostic.read_target_label()
@@ -1160,6 +1178,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
+    let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
 
     println!("{{");
@@ -1193,6 +1212,18 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!(
         "  \"search_index_state\": \"{}\",",
         index_diagnostic.state_label()
+    );
+    println!(
+        "  \"vector_index_state\": \"{}\",",
+        vector_diagnostic.state_label()
+    );
+    println!(
+        "  \"vector_index_vectors\": {},",
+        vector_diagnostic.vector_count()
+    );
+    println!(
+        "  \"vector_index_tombstones\": {},",
+        vector_diagnostic.deleted_count()
     );
     println!(
         "  \"search_index_read_target\": \"{}\",",
@@ -1613,6 +1644,51 @@ impl SearchIndexDiagnostic {
             Self::Corrupt { .. } => "skipped_index_unavailable",
             Self::Available { .. } => "ok",
         }
+    }
+}
+
+fn inspect_vector_index(data_dir: &Path) -> VectorIndexDiagnostic {
+    VectorIndexDiagnostic {
+        inspection: inspect_persistent_vector_snapshot(data_dir.join("vector-index")),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct VectorIndexDiagnostic {
+    inspection: PersistentVectorSnapshotInspection,
+}
+
+impl VectorIndexDiagnostic {
+    fn index_label(self) -> &'static str {
+        match self.inspection.state() {
+            PersistentVectorSnapshotState::Missing => "unavailable",
+            PersistentVectorSnapshotState::Ready => "available (vector snapshot)",
+            PersistentVectorSnapshotState::Corrupt => "corrupt",
+            PersistentVectorSnapshotState::Unreadable => "unreadable",
+        }
+    }
+
+    fn state_label(self) -> &'static str {
+        match self.inspection.state() {
+            PersistentVectorSnapshotState::Missing => "unavailable",
+            PersistentVectorSnapshotState::Ready => "available",
+            PersistentVectorSnapshotState::Corrupt => "corrupt",
+            PersistentVectorSnapshotState::Unreadable => "unreadable",
+        }
+    }
+
+    fn vector_count(self) -> usize {
+        self.inspection
+            .snapshot()
+            .map(|snapshot| snapshot.vector_count())
+            .unwrap_or(0)
+    }
+
+    fn deleted_count(self) -> usize {
+        self.inspection
+            .snapshot()
+            .map(|snapshot| snapshot.deleted_count())
+            .unwrap_or(0)
     }
 }
 

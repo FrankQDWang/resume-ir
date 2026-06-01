@@ -4,6 +4,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
+use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{IndexState, IndexStateStatus, MetaStore, UnixTimestamp};
 
 #[test]
@@ -21,6 +22,7 @@ fn doctor_reports_no_index_without_path_or_fake_benchmark() {
     assert!(stdout.contains("resume-ir doctor"));
     assert!(stdout.contains("metadata: ok"));
     assert!(stdout.contains("search index: unavailable"));
+    assert!(stdout.contains("vector index: unavailable"));
     assert!(stdout.contains("query smoke: skipped (no full-text index)"));
     assert!(stdout.contains("contact hash key: missing"));
     assert!(stdout.contains("fault simulations: available"));
@@ -77,6 +79,7 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
     assert!(stdout.contains("\"redacted\": true"));
     assert!(stdout.contains("\"raw_paths\": \"<redacted>\""));
     assert!(stdout.contains("\"search_index_state\": \"unavailable\""));
+    assert!(stdout.contains("\"vector_index_state\": \"unavailable\""));
     assert!(stdout.contains("\"contact_hash_key\": \"missing\""));
     assert!(stdout.contains("\"daemon_restart\""));
     assert!(stdout.contains("\"disk_space_low\""));
@@ -85,6 +88,52 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
         .join("secrets")
         .join("contact-hash-key-v1")
         .exists());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_values() {
+    let data_dir = temp_dir("diagnostics-vector-private-data");
+    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
+    vector_index
+        .upsert(vec![
+            VectorDocument::new("vec_java", "doc_java", vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
+            VectorDocument::new("vec_data", "doc_data", vec![0.0, 1.0, 0.0, 0.0]).unwrap(),
+        ])
+        .unwrap();
+    vector_index.mark_deleted(&["vec_data"]).unwrap();
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with vector index");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("vector index: available (vector snapshot)"));
+    assert!(stdout.contains("vector index vectors: 2"));
+    assert!(stdout.contains("vector index tombstones: 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains("1.0"));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with vector index");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"vector_index_state\": \"available\""));
+    assert!(stdout.contains("\"vector_index_vectors\": 2"));
+    assert!(stdout.contains("\"vector_index_tombstones\": 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains("1.0"));
 
     remove_dir(&data_dir);
 }

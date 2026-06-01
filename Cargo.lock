@@ -1045,6 +1045,7 @@ version = "0.1.0"
 dependencies = [
  "import-pipeline",
  "index-fulltext",
+ "index-vector",
  "meta-store",
  "ocr-client",
  "privacy",
