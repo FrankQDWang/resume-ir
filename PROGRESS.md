@@ -6,7 +6,7 @@ This file tracks long-running Goal execution against
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S39 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S40 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -54,6 +54,7 @@ This file tracks long-running Goal execution against
 | S37 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-cli -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this redacted persisted scan-error slice; live progress streaming, user-triggered import cancellation, time/byte/CPU budgets, file-level UI/UX, real whole-machine witness runs, encrypted path metadata, keyed path-error correlation, and Windows/macOS full-disk validation remain not complete. |
 | S38 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p index-vector -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this persisted vector snapshot slice; real licensed embedding model selection/distribution, import-time embedding queue integration, CLI semantic/hybrid query execution, vector snapshot GC/repair, quality benchmarks, real data validation, and cross-platform validation remain not complete or BLOCKED. |
 | S39 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli embed_worker_debug_output_redacts_candidate_text_and_command_path`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p embedder`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p embedder -p index-vector --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this CLI local embedding worker slice; real licensed embedding model selection/distribution, OS-enforced no-network sandboxing for user-provided commands, daemon-loop embedding execution, import-time embedding job state, CLI semantic/hybrid query execution, vector snapshot GC/repair, quality benchmarks, real data validation, and cross-platform command validation remain not complete or BLOCKED. |
+| S40 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this local-discovery default budget and multi-root budget-summary slice; live progress streaming, user cancellation, time/byte/CPU budgets, user-facing partial-result UX, real whole-machine witness runs, and Windows/macOS full-disk validation remain not complete. |
 
 ## Command Log
 
@@ -1809,6 +1810,70 @@ Output summary:
 Scope note:
 
 - S39 adds `resume-cli embed-worker --once`, an explicit local embedding command requirement, model/dimension/budget/timeout parsing, visible searchable resume-version candidate selection, local command execution through the S34 embedder protocol, persistent local vector snapshot writes, and redacted Debug output for embedding worker candidates/args. It does not choose, bundle, license, download, or install a concrete embedding model; the configured command is trusted to be local/offline and OS-enforced no-network sandboxing is not yet implemented. It does not add daemon-loop embedding, semantic/hybrid query execution, vector snapshot GC/repair, real-data validation, or cross-platform command validation.
+
+### S40
+
+Design note:
+
+- Whole-machine scanning remains a root-selection case over the existing import scanner. This slice does not add a second scanning pipeline; it makes the existing `local-discovery` preset safer by adding a default file-count budget that explicit roots do not inherit and that users can override with `--max-files`.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search local_discovery_root_preset_uses_discovery_profile_without_path_leak -- --exact
+```
+
+Output summary:
+
+- Before implementation, the focused CLI test failed because `--root-preset local-discovery` printed `scan file limit: none` and did not persist budget metadata when the default discovery scan was not exhausted.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store import_scan_scope_persists_root_profile_and_redacted_progress_counts -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search local_discovery_root_preset_uses_discovery_profile_without_path_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search local_discovery_root_preset_allows_explicit_file_budget_override_without_path_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search explicit_root_import_without_max_files_has_no_default_scan_budget -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search multi_root_import_reports_budget_exhausted_when_later_root_hits_file_limit -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-cli --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `cargo test -p meta-store import_scan_scope_persists_root_profile_and_redacted_progress_counts -- --exact`: exit 0; the scan-scope test now covers configured but not exhausted file budgets.
+- `cargo test -p resume-cli --test s9_import_search local_discovery_root_preset_uses_discovery_profile_without_path_leak -- --exact`: exit 0; the preset now reports `scan file limit: 10000`, persists the non-exhausted file budget, and does not leak local roots.
+- `cargo test -p resume-cli --test s9_import_search local_discovery_root_preset_allows_explicit_file_budget_override_without_path_leak -- --exact`: exit 0; explicit `--max-files 1` still overrides the preset default and records an exhausted budget without path leakage.
+- `cargo test -p resume-cli --test s9_import_search explicit_root_import_without_max_files_has_no_default_scan_budget -- --exact`: exit 0; explicit roots without `--max-files` still report `scan file limit: none` and persist no scan budget.
+- `cargo test -p resume-cli --test s9_import_search multi_root_import_reports_budget_exhausted_when_later_root_hits_file_limit -- --exact`: exit 0 after a sub-agent review found and the implementation fixed aggregate multi-root budget reporting when a later root exhausts the file limit.
+- `cargo test -p meta-store`: exit 0; 31 meta-store tests passed.
+- `cargo test -p import-pipeline`: exit 0; 2 import-pipeline tests passed.
+- `cargo test -p resume-cli --test s9_import_search`: exit 0; 13 import/search tests passed.
+- `cargo test -p resume-cli`: exit 0; all CLI tests passed.
+- `cargo clippy -p meta-store -p import-pipeline -p resume-cli --all-targets -- -D warnings`: exit 0.
+
+Workspace acceptance:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+```
+
+Output summary:
+
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+Scope note:
+
+- S40 sets `local-discovery` to a default 10,000 file budget, keeps explicit `--root` imports unbudgeted unless `--max-files` is supplied, allows user override of the preset budget, persists configured file-budget metadata even when the scan is not exhausted, and reports aggregate multi-root budget exhaustion if any root exhausts the file limit. It does not add progress streaming, user cancellation, time/byte/CPU budgets, a UI for partial results, real whole-machine witness scans, encrypted path metadata, or Windows/macOS full-disk validation.
 
 ### S9
 

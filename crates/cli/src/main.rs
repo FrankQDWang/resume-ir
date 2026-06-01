@@ -40,6 +40,7 @@ use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
+const LOCAL_DISCOVERY_DEFAULT_MAX_FILES: usize = 10_000;
 
 fn main() {
     if let Err(error) = run() {
@@ -405,7 +406,9 @@ fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
     total.ocr_jobs_queued += next.ocr_jobs_queued;
     total.failed_documents += next.failed_documents;
     total.deleted_documents += next.deleted_documents;
-    if total.scan_budget.is_none() {
+    if next.scan_budget.is_some()
+        && (total.scan_budget.is_none() || next.scan_budget.is_some_and(|budget| budget.exhausted))
+    {
         total.scan_budget = next.scan_budget;
     }
 }
@@ -585,6 +588,13 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
         )
     } else {
         return Err(import_usage());
+    };
+
+    let max_files = match (&root_selection, max_files) {
+        (ImportRootSelection::Preset(RootPreset::LocalDiscovery), None) => {
+            Some(LOCAL_DISCOVERY_DEFAULT_MAX_FILES)
+        }
+        (_, max_files) => max_files,
     };
 
     Ok(ImportArgs {

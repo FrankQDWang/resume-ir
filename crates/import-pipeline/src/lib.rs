@@ -100,6 +100,12 @@ fn run_import(
     let skipped_directories = report.skipped_directories.clone();
     let scan_errors = import_scan_errors_from_crawl(&task.id, &report.errors, now);
     let scan_budget_exhausted = report.budget_exhausted;
+    let scan_budget = options.max_files.map(|limit| ImportScanBudget {
+        kind: ImportScanBudgetKind::Files,
+        limit,
+        observed: report.files.len(),
+        exhausted: scan_budget_exhausted.is_some(),
+    });
     let mut summary = ImportSummary {
         files_discovered: report.files.len(),
         scan_errors: report.errors.len(),
@@ -109,7 +115,7 @@ fn run_import(
         ocr_jobs_queued: 0,
         failed_documents: 0,
         deleted_documents: 0,
-        scan_budget: scan_budget_exhausted.map(ImportScanBudget::from),
+        scan_budget,
     };
     store
         .replace_import_scan_errors(&task.id, &scan_errors)

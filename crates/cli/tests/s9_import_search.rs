@@ -173,6 +173,58 @@ fn import_multiple_roots_builds_searchable_index_without_path_leak() {
 }
 
 #[test]
+fn explicit_root_import_without_max_files_has_no_default_scan_budget() {
+    let data_dir = temp_dir("explicit-root-no-budget-data");
+    let private_root = temp_dir("explicit-root-no-budget-private-root");
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        private_root.join("synthetic-java-platform.pdf"),
+    )
+    .unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run explicit root import without max-files");
+
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    assert!(import_stdout.contains("scan profile: explicit"));
+    assert!(import_stdout.contains("scan budget exhausted: no"));
+    assert!(import_stdout.contains("scan file limit: none"));
+    assert!(!import_stdout.contains(path_str(&private_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_private_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scope = store
+        .latest_import_scan_scope()
+        .unwrap()
+        .expect("scan scope persisted");
+    assert_eq!(scope.root_kind, ImportRootKind::Explicit);
+    assert_eq!(scope.scan_budget_kind, None);
+    assert_eq!(scope.scan_budget_limit, None);
+    assert_eq!(scope.scan_budget_observed, None);
+    assert!(!scope.scan_budget_exhausted);
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
 fn local_discovery_root_preset_uses_discovery_profile_without_path_leak() {
     let data_dir = temp_dir("local-discovery-import-data");
     let local_root = temp_dir("local-discovery-private-root");
@@ -218,6 +270,8 @@ fn local_discovery_root_preset_uses_discovery_profile_without_path_leak() {
     assert!(import_stdout.contains("scan profile: discovery"));
     assert!(import_stdout.contains("roots scanned: 1"));
     assert!(import_stdout.contains("files discovered: 1"));
+    assert!(import_stdout.contains("scan budget exhausted: no"));
+    assert!(import_stdout.contains("scan file limit: 10000"));
     assert!(import_stdout.contains("searchable documents: 1"));
     assert!(!import_stdout.contains(path_str(&local_root)));
     assert!(!import_stdout.contains(path_str(&canonical_local_root)));
@@ -244,10 +298,82 @@ fn local_discovery_root_preset_uses_discovery_profile_without_path_leak() {
     assert_eq!(scope.scan_profile, ImportScanProfile::Discovery);
     assert_eq!(scope.files_discovered, 1);
     assert_eq!(scope.ignored_entries, 1);
+    assert_eq!(scope.scan_budget_kind, Some(ImportScanBudgetKind::Files));
+    assert_eq!(scope.scan_budget_limit, Some(10000));
+    assert_eq!(scope.scan_budget_observed, Some(1));
+    assert!(!scope.scan_budget_exhausted);
     assert_eq!(scope.searchable_documents, 1);
     assert_eq!(scope.ocr_required_documents, 0);
     assert_eq!(scope.canonical_root_path, path_str(&canonical_local_root));
     assert_eq!(scope.requested_root_path, path_str(&local_root));
+    assert!(!format!("{scope:?}").contains(path_str(&local_root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&local_root);
+}
+
+#[test]
+fn local_discovery_root_preset_allows_explicit_file_budget_override_without_path_leak() {
+    let data_dir = temp_dir("local-discovery-budgeted-data");
+    let local_root = temp_dir("local-discovery-budgeted-private-root");
+    let canonical_local_root = fs::canonicalize(&local_root).unwrap();
+    fs::create_dir_all(local_root.join("Documents")).unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        local_root
+            .join("Documents")
+            .join("synthetic-java-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-engineer.docx"),
+        local_root
+            .join("Documents")
+            .join("synthetic-java-engineer.docx"),
+    )
+    .unwrap();
+
+    let root_override = std::env::join_paths([&local_root]).unwrap();
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env(LOCAL_DISCOVERY_ROOTS_ENV, root_override)
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root-preset",
+            "local-discovery",
+            "--max-files",
+            "1",
+        ])
+        .output()
+        .expect("run budgeted local discovery preset import");
+
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    assert!(import_stdout.contains("files discovered: 1"));
+    assert!(import_stdout.contains("scan budget exhausted: yes"));
+    assert!(import_stdout.contains("scan file limit: 1"));
+    assert!(!import_stdout.contains(path_str(&local_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_local_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scope = store
+        .latest_import_scan_scope()
+        .unwrap()
+        .expect("scan scope persisted");
+    assert_eq!(scope.root_kind, ImportRootKind::Preset);
+    assert_eq!(scope.root_preset, Some(ImportRootPreset::LocalDiscovery));
+    assert_eq!(scope.scan_budget_kind, Some(ImportScanBudgetKind::Files));
+    assert_eq!(scope.scan_budget_limit, Some(1));
+    assert_eq!(scope.scan_budget_observed, Some(1));
+    assert!(scope.scan_budget_exhausted);
     assert!(!format!("{scope:?}").contains(path_str(&local_root)));
 
     remove_dir(&data_dir);
@@ -318,6 +444,66 @@ fn import_max_files_limits_scan_and_persists_budget_state_without_path_leak() {
 
     remove_dir(&data_dir);
     remove_dir(&private_root);
+}
+
+#[test]
+fn multi_root_import_reports_budget_exhausted_when_later_root_hits_file_limit() {
+    let data_dir = temp_dir("multi-root-budgeted-data");
+    let first_root = temp_dir("multi-root-budgeted-first-private-root");
+    let second_root = temp_dir("multi-root-budgeted-second-private-root");
+    let canonical_first_root = fs::canonicalize(&first_root).unwrap();
+    let canonical_second_root = fs::canonicalize(&second_root).unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        first_root.join("synthetic-java-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        second_root.join("a-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-engineer.docx"),
+        second_root.join("b-engineer.docx"),
+    )
+    .unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&first_root),
+            "--root",
+            path_str(&second_root),
+            "--max-files",
+            "1",
+        ])
+        .output()
+        .expect("run budgeted multi-root import");
+
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    assert!(import_stdout.contains("roots scanned: 2"));
+    assert!(import_stdout.contains("files discovered: 2"));
+    assert!(import_stdout.contains("scan budget exhausted: yes"));
+    assert!(import_stdout.contains("scan file limit: 1"));
+    assert!(!import_stdout.contains(path_str(&first_root)));
+    assert!(!import_stdout.contains(path_str(&second_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_first_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_second_root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&first_root);
+    remove_dir(&second_root);
 }
 
 #[cfg(unix)]

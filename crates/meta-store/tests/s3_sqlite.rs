@@ -154,6 +154,15 @@ fn import_scan_scope_persists_root_profile_and_redacted_progress_counts() {
         updated_at,
         ..initial_scope.clone()
     };
+    let budgeted_not_exhausted_scope = ImportScanScope {
+        files_discovered: 7,
+        scan_budget_kind: Some(ImportScanBudgetKind::Files),
+        scan_budget_limit: Some(10),
+        scan_budget_observed: Some(7),
+        scan_budget_exhausted: false,
+        updated_at,
+        ..initial_scope.clone()
+    };
 
     {
         let store = MetaStore::open(&db_path).unwrap();
@@ -163,7 +172,15 @@ fn import_scan_scope_persists_root_profile_and_redacted_progress_counts() {
         store.upsert_import_scan_scope(&initial_scope).unwrap();
         assert_eq!(
             store.import_scan_scope_by_task_id(&task.id).unwrap(),
-            Some(initial_scope)
+            Some(initial_scope.clone())
+        );
+
+        store
+            .upsert_import_scan_scope(&budgeted_not_exhausted_scope)
+            .unwrap();
+        assert_eq!(
+            store.import_scan_scope_by_task_id(&task.id).unwrap(),
+            Some(budgeted_not_exhausted_scope)
         );
 
         store.upsert_import_scan_scope(&completed_scope).unwrap();

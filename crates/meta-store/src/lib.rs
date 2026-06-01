@@ -3030,7 +3030,7 @@ fn validate_import_scan_scope(scope: &ImportScanScope) -> Result<()> {
         scope.scan_budget_observed,
         scope.scan_budget_exhausted,
     ) {
-        (None, None, None, false) | (Some(_), Some(_), Some(_), true) => Ok(()),
+        (None, None, None, false) | (Some(_), Some(_), Some(_), false | true) => Ok(()),
         _ => Err(MetaStoreError::invalid_value(
             "import_scan_scope.scan_budget",
         )),
