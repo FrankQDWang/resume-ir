@@ -349,30 +349,71 @@ where
 
 pub fn inspect_snapshot_root(index_root: &Path) -> Result<SnapshotRootInspection> {
     let staging_orphans = staging_orphan_count(index_root)?;
-    let active_snapshot = read_active_snapshot(index_root)?;
+    match read_active_snapshot_pointer(index_root)? {
+        ActiveSnapshotPointer::Valid(snapshot_name) => {
+            let snapshot_dir = index_root.join(SNAPSHOTS_DIR).join(&snapshot_name);
+            if snapshot_dir.join("meta.json").exists() && snapshot_is_usable(&snapshot_dir) {
+                return Ok(SnapshotRootInspection {
+                    state: SnapshotRootState::Ready,
+                    read_target: Some(SnapshotReadTarget::PublishedSnapshot),
+                    active_snapshot: Some(snapshot_name),
+                    fallback_snapshot: None,
+                    staging_orphans,
+                });
+            }
 
-    if let Some(snapshot_name) = active_snapshot {
-        let snapshot_dir = index_root.join(SNAPSHOTS_DIR).join(&snapshot_name);
-        if !snapshot_dir.join("meta.json").exists() {
+            if let Some(fallback_snapshot) = last_good_snapshot(index_root, Some(&snapshot_name))? {
+                return Ok(SnapshotRootInspection {
+                    state: SnapshotRootState::Recovered,
+                    read_target: Some(SnapshotReadTarget::PublishedSnapshot),
+                    active_snapshot: Some(snapshot_name),
+                    fallback_snapshot: Some(fallback_snapshot),
+                    staging_orphans,
+                });
+            }
+
             return Ok(SnapshotRootInspection {
-                state: SnapshotRootState::ActiveMissing,
+                state: if snapshot_dir.join("meta.json").exists() {
+                    SnapshotRootState::Corrupt
+                } else {
+                    SnapshotRootState::ActiveMissing
+                },
                 read_target: None,
                 active_snapshot: Some(snapshot_name),
+                fallback_snapshot: None,
                 staging_orphans,
             });
         }
+        ActiveSnapshotPointer::Invalid => {
+            if let Some(fallback_snapshot) = last_good_snapshot(index_root, None)? {
+                return Ok(SnapshotRootInspection {
+                    state: SnapshotRootState::Recovered,
+                    read_target: Some(SnapshotReadTarget::PublishedSnapshot),
+                    active_snapshot: None,
+                    fallback_snapshot: Some(fallback_snapshot),
+                    staging_orphans,
+                });
+            }
 
-        let state = if FullTextIndex::open(&snapshot_dir).is_ok() {
-            SnapshotRootState::Ready
-        } else {
-            SnapshotRootState::Corrupt
-        };
-        return Ok(SnapshotRootInspection {
-            state,
-            read_target: Some(SnapshotReadTarget::PublishedSnapshot),
-            active_snapshot: Some(snapshot_name),
-            staging_orphans,
-        });
+            return Ok(SnapshotRootInspection {
+                state: SnapshotRootState::Corrupt,
+                read_target: None,
+                active_snapshot: None,
+                fallback_snapshot: None,
+                staging_orphans,
+            });
+        }
+        ActiveSnapshotPointer::Missing => {
+            if let Some(fallback_snapshot) = last_good_snapshot(index_root, None)? {
+                return Ok(SnapshotRootInspection {
+                    state: SnapshotRootState::Recovered,
+                    read_target: Some(SnapshotReadTarget::PublishedSnapshot),
+                    active_snapshot: None,
+                    fallback_snapshot: Some(fallback_snapshot),
+                    staging_orphans,
+                });
+            }
+        }
     }
 
     if index_root.join("meta.json").exists() {
@@ -385,6 +426,7 @@ pub fn inspect_snapshot_root(index_root: &Path) -> Result<SnapshotRootInspection
             state,
             read_target: Some(SnapshotReadTarget::LegacyRoot),
             active_snapshot: None,
+            fallback_snapshot: None,
             staging_orphans,
         });
     }
@@ -393,6 +435,7 @@ pub fn inspect_snapshot_root(index_root: &Path) -> Result<SnapshotRootInspection
         state: SnapshotRootState::Missing,
         read_target: None,
         active_snapshot: None,
+        fallback_snapshot: None,
         staging_orphans,
     })
 }
@@ -402,6 +445,7 @@ pub struct SnapshotRootInspection {
     state: SnapshotRootState,
     read_target: Option<SnapshotReadTarget>,
     active_snapshot: Option<String>,
+    fallback_snapshot: Option<String>,
     staging_orphans: usize,
 }
 
@@ -418,6 +462,10 @@ impl SnapshotRootInspection {
         self.active_snapshot.as_deref()
     }
 
+    pub fn fallback_snapshot(&self) -> Option<&str> {
+        self.fallback_snapshot.as_deref()
+    }
+
     pub fn staging_orphans(&self) -> usize {
         self.staging_orphans
     }
@@ -427,6 +475,7 @@ impl SnapshotRootInspection {
 pub enum SnapshotRootState {
     Missing,
     Ready,
+    Recovered,
     Corrupt,
     ActiveMissing,
 }
@@ -436,6 +485,7 @@ impl SnapshotRootState {
         match self {
             Self::Missing => "missing",
             Self::Ready => "ready",
+            Self::Recovered => "recovered",
             Self::Corrupt => "corrupt",
             Self::ActiveMissing => "active_missing",
         }
@@ -458,26 +508,46 @@ impl SnapshotReadTarget {
 }
 
 fn active_index_dir(index_root: &Path) -> Result<Option<PathBuf>> {
-    let Some(snapshot_name) = read_active_snapshot(index_root)? else {
-        if index_root.join("meta.json").exists() {
-            return Ok(Some(index_root.to_path_buf()));
+    let inspection = inspect_snapshot_root(index_root)?;
+    match inspection.state() {
+        SnapshotRootState::Ready | SnapshotRootState::Recovered => match inspection.read_target() {
+            Some(SnapshotReadTarget::PublishedSnapshot) => {
+                let snapshot_name = inspection
+                    .fallback_snapshot()
+                    .or_else(|| inspection.active_snapshot())
+                    .ok_or_else(|| FullTextError::internal("full-text snapshot pointer missing"))?;
+                Ok(Some(index_root.join(SNAPSHOTS_DIR).join(snapshot_name)))
+            }
+            Some(SnapshotReadTarget::LegacyRoot) => Ok(Some(index_root.to_path_buf())),
+            None => Err(FullTextError::internal("full-text snapshot target missing")),
+        },
+        SnapshotRootState::Missing => Ok(None),
+        SnapshotRootState::Corrupt | SnapshotRootState::ActiveMissing => {
+            Err(FullTextError::internal("full-text snapshot is unavailable"))
         }
-        return Ok(None);
-    };
-
-    Ok(Some(index_root.join(SNAPSHOTS_DIR).join(snapshot_name)))
+    }
 }
 
-fn read_active_snapshot(index_root: &Path) -> Result<Option<String>> {
+enum ActiveSnapshotPointer {
+    Missing,
+    Valid(String),
+    Invalid,
+}
+
+fn read_active_snapshot_pointer(index_root: &Path) -> Result<ActiveSnapshotPointer> {
     let path = index_root.join(ACTIVE_SNAPSHOT_FILE);
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(ActiveSnapshotPointer::Missing);
+        }
         Err(error) => return Err(FullTextError::io(error)),
     };
     let snapshot_name = content.trim();
-    validate_snapshot_name(snapshot_name)?;
-    Ok(Some(snapshot_name.to_string()))
+    if validate_snapshot_name(snapshot_name).is_err() {
+        return Ok(ActiveSnapshotPointer::Invalid);
+    }
+    Ok(ActiveSnapshotPointer::Valid(snapshot_name.to_string()))
 }
 
 fn write_active_snapshot(index_root: &Path, snapshot_name: &str) -> Result<()> {
@@ -511,6 +581,66 @@ fn staging_orphan_count(index_root: &Path) -> Result<usize> {
         }
     }
     Ok(count)
+}
+
+fn last_good_snapshot(
+    index_root: &Path,
+    excluded_snapshot: Option<&str>,
+) -> Result<Option<String>> {
+    let snapshots_root = index_root.join(SNAPSHOTS_DIR);
+    let entries = match fs::read_dir(snapshots_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(FullTextError::io(error)),
+    };
+
+    let mut snapshots = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(FullTextError::io)?;
+        if !entry.file_type().map_err(FullTextError::io)?.is_dir() {
+            continue;
+        }
+        let Ok(snapshot_name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if excluded_snapshot == Some(snapshot_name.as_str())
+            || validate_snapshot_name(&snapshot_name).is_err()
+        {
+            continue;
+        }
+        snapshots.push(snapshot_name);
+    }
+    snapshots.sort_by(|left, right| right.cmp(left));
+
+    for snapshot_name in snapshots {
+        let snapshot_dir = index_root.join(SNAPSHOTS_DIR).join(&snapshot_name);
+        if snapshot_is_usable(&snapshot_dir) {
+            return Ok(Some(snapshot_name));
+        }
+    }
+
+    Ok(None)
+}
+
+fn snapshot_is_usable(snapshot_dir: &Path) -> bool {
+    if !snapshot_metadata_looks_valid(snapshot_dir) {
+        return false;
+    }
+
+    FullTextIndex::open(snapshot_dir)
+        .and_then(|index| {
+            index
+                .search(SearchQuery::new("diagnostic").with_limit(1))
+                .map(|_| ())
+        })
+        .is_ok()
+}
+
+fn snapshot_metadata_looks_valid(snapshot_dir: &Path) -> bool {
+    let Ok(meta_json) = fs::read_to_string(snapshot_dir.join("meta.json")) else {
+        return false;
+    };
+    meta_json.trim_start().starts_with('{')
 }
 
 fn validate_snapshot_name(snapshot_name: &str) -> Result<()> {

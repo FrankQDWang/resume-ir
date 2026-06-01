@@ -415,6 +415,10 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
         index_diagnostic.read_target_label()
     );
     println!("query smoke: {}", index_diagnostic.query_smoke_label());
+    println!(
+        "snapshot fallback: {}",
+        index_diagnostic.snapshot_fallback_label()
+    );
     println!("staging orphans: {}", index_diagnostic.staging_orphans());
     println!("contact hash key: {}", contact_key.state().label());
     println!("fault simulations: available");
@@ -479,6 +483,10 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!(
         "  \"staging_orphans\": {},",
         index_diagnostic.staging_orphans()
+    );
+    println!(
+        "  \"snapshot_fallback\": \"{}\",",
+        index_diagnostic.snapshot_fallback_label()
     );
     println!(
         "  \"query_smoke\": \"{}\",",
@@ -721,6 +729,7 @@ fn inspect_search_index(data_dir: &Path) -> SearchIndexDiagnostic {
         Err(_) => {
             return SearchIndexDiagnostic::Corrupt {
                 read_target: None,
+                fallback_used: false,
                 staging_orphans: 0,
             };
         }
@@ -735,15 +744,18 @@ fn inspect_search_index(data_dir: &Path) -> SearchIndexDiagnostic {
         SnapshotRootState::Corrupt | SnapshotRootState::ActiveMissing => {
             return SearchIndexDiagnostic::Corrupt {
                 read_target: inspection.read_target(),
+                fallback_used: inspection.fallback_snapshot().is_some(),
                 staging_orphans: inspection.staging_orphans(),
             };
         }
-        SnapshotRootState::Ready => {}
+        SnapshotRootState::Ready | SnapshotRootState::Recovered => {}
     }
 
+    let fallback_used = inspection.fallback_snapshot().is_some();
     let Ok(Some(index)) = FullTextIndex::open_active(&index_root) else {
         return SearchIndexDiagnostic::Corrupt {
             read_target: inspection.read_target(),
+            fallback_used,
             staging_orphans: inspection.staging_orphans(),
         };
     };
@@ -754,10 +766,12 @@ fn inspect_search_index(data_dir: &Path) -> SearchIndexDiagnostic {
             elapsed_ms: started_at.elapsed().as_millis(),
             results: hits.len(),
             read_target: inspection.read_target(),
+            fallback_used,
             staging_orphans: inspection.staging_orphans(),
         },
         Err(_) => SearchIndexDiagnostic::Corrupt {
             read_target: inspection.read_target(),
+            fallback_used,
             staging_orphans: inspection.staging_orphans(),
         },
     }
@@ -770,12 +784,14 @@ enum SearchIndexDiagnostic {
     },
     Corrupt {
         read_target: Option<SnapshotReadTarget>,
+        fallback_used: bool,
         staging_orphans: usize,
     },
     Available {
         elapsed_ms: u128,
         results: usize,
         read_target: Option<SnapshotReadTarget>,
+        fallback_used: bool,
         staging_orphans: usize,
     },
 }
@@ -784,7 +800,14 @@ impl SearchIndexDiagnostic {
     fn index_label(self) -> String {
         match self {
             Self::Unavailable { .. } => "unavailable".to_string(),
+            Self::Corrupt { fallback_used, .. } if fallback_used => {
+                "recovered (full-text snapshot)".to_string()
+            }
             Self::Corrupt { .. } => "corrupt".to_string(),
+            Self::Available {
+                fallback_used: true,
+                ..
+            } => "recovered (full-text snapshot)".to_string(),
             Self::Available {
                 read_target: Some(SnapshotReadTarget::PublishedSnapshot),
                 ..
@@ -796,6 +819,11 @@ impl SearchIndexDiagnostic {
     fn state_label(self) -> &'static str {
         match self {
             Self::Unavailable { .. } => "unavailable",
+            Self::Corrupt { fallback_used, .. } | Self::Available { fallback_used, .. }
+                if fallback_used =>
+            {
+                "recovered"
+            }
             Self::Corrupt { .. } => "corrupt",
             Self::Available { .. } => "available",
         }
@@ -806,6 +834,19 @@ impl SearchIndexDiagnostic {
             Self::Unavailable { .. } => "none",
             Self::Corrupt { read_target, .. } | Self::Available { read_target, .. } => {
                 read_target.map(SnapshotReadTarget::label).unwrap_or("none")
+            }
+        }
+    }
+
+    fn snapshot_fallback_label(self) -> &'static str {
+        match self {
+            Self::Unavailable { .. } => "none",
+            Self::Corrupt { fallback_used, .. } | Self::Available { fallback_used, .. } => {
+                if fallback_used {
+                    "used"
+                } else {
+                    "none"
+                }
             }
         }
     }

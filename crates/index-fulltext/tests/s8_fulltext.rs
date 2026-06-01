@@ -339,6 +339,69 @@ fn published_snapshot_becomes_active_without_reading_staging_orphans() {
     remove_dir(&index_root);
 }
 
+#[test]
+fn active_snapshot_corruption_falls_back_to_last_good_snapshot() {
+    let index_root = temp_dir("snapshot-fallback");
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800001000-1-0-0",
+        [java_payment_document(false)],
+    )
+    .unwrap();
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800002000-1-0-0",
+        [IndexDocument {
+            doc_id: "doc_rust_snapshot".to_string(),
+            version_id: "ver_rust_snapshot".to_string(),
+            file_name: "synthetic-rust-snapshot.pdf".to_string(),
+            clean_text: "Rust snapshot that will be corrupted".to_string(),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: "Rust snapshot".to_string(),
+            }],
+            is_deleted: false,
+        }],
+    )
+    .unwrap();
+    fs::write(
+        index_root
+            .join("snapshots")
+            .join("fulltext-1800002000-1-0-0")
+            .join("meta.json"),
+        b"not a valid active snapshot",
+    )
+    .unwrap();
+
+    let inspection = inspect_snapshot_root(&index_root).unwrap();
+    assert_eq!(inspection.state(), SnapshotRootState::Recovered);
+    assert_eq!(
+        inspection.read_target(),
+        Some(SnapshotReadTarget::PublishedSnapshot)
+    );
+    assert_eq!(
+        inspection.active_snapshot(),
+        Some("fulltext-1800002000-1-0-0")
+    );
+    assert_eq!(
+        inspection.fallback_snapshot(),
+        Some("fulltext-1800001000-1-0-0")
+    );
+
+    let index = FullTextIndex::open_active(&index_root).unwrap().unwrap();
+    let recovered_hits = index
+        .search(SearchQuery::new("Java payment").with_limit(5))
+        .unwrap();
+    assert_eq!(recovered_hits.len(), 1);
+    assert_eq!(recovered_hits[0].doc_id, "doc_java_payment");
+    assert!(index
+        .search(SearchQuery::new("corrupted").with_limit(5))
+        .unwrap()
+        .is_empty());
+
+    remove_dir(&index_root);
+}
+
 fn java_payment_document(is_deleted: bool) -> IndexDocument {
     IndexDocument {
         doc_id: "doc_java_payment".to_string(),

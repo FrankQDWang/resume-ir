@@ -237,6 +237,147 @@ fn doctor_and_diagnostics_report_metadata_index_health_with_active_snapshot() {
     remove_dir(&data_dir);
 }
 
+#[test]
+fn doctor_and_search_use_last_good_snapshot_after_active_snapshot_corruption() {
+    let data_dir = temp_dir("diagnostics-snapshot-recovered");
+    let index_root = data_dir.join("search-index");
+    let (recovered_doc_id, recovered_version_id) = seed_searchable_metadata(&data_dir);
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800003000-1-0-0",
+        [IndexDocument {
+            doc_id: recovered_doc_id.clone(),
+            version_id: recovered_version_id,
+            file_name: "synthetic-recovered.pdf".to_string(),
+            clean_text: "diagnostic recovered Java snapshot".to_string(),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: "diagnostic recovered Java".to_string(),
+            }],
+            is_deleted: false,
+        }],
+    )
+    .unwrap();
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800004000-1-0-0",
+        [IndexDocument {
+            doc_id: "doc_corrupt_active".to_string(),
+            version_id: "ver_corrupt_active".to_string(),
+            file_name: "synthetic-corrupt-active.pdf".to_string(),
+            clean_text: "diagnostic corrupt active Rust snapshot".to_string(),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: "diagnostic corrupt active Rust".to_string(),
+            }],
+            is_deleted: false,
+        }],
+    )
+    .unwrap();
+    fs::write(
+        index_root
+            .join("snapshots")
+            .join("fulltext-1800004000-1-0-0")
+            .join("meta.json"),
+        b"not a valid active snapshot",
+    )
+    .unwrap();
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "search", "Java"])
+        .output()
+        .expect("run resume-cli search with recovered snapshot");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains(&format!("doc_id: {recovered_doc_id}")));
+    assert!(!stdout.contains("doc_corrupt_active"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with recovered snapshot");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("search index: recovered (full-text snapshot)"));
+    assert!(stdout.contains("search index read target: published_snapshot"));
+    assert!(stdout.contains("snapshot fallback: used"));
+    assert!(stdout.contains("query smoke: ok"));
+    assert!(!stdout.contains("fulltext-1800004000-1-0-0"));
+    assert!(!stdout.contains("fulltext-1800003000-1-0-0"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with recovered snapshot");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"search_index_state\": \"recovered\""));
+    assert!(stdout.contains("\"snapshot_fallback\": \"used\""));
+    assert!(!stdout.contains("fulltext-1800004000-1-0-0"));
+    assert!(!stdout.contains("fulltext-1800003000-1-0-0"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    remove_dir(&data_dir);
+}
+
+fn seed_searchable_metadata(data_dir: &Path) -> (String, String) {
+    use meta_store::{
+        Document, DocumentId, DocumentStatus, FileExtension, ResumeVersion, ResumeVersionId,
+        ResumeVisibility,
+    };
+
+    let now = UnixTimestamp::from_unix_seconds(1_800_003_000);
+    let document_id = DocumentId::from_non_secret_parts(&["s26", "recovered"]);
+    let version_id = ResumeVersionId::from_non_secret_parts(&["s26", "recovered-version"]);
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .upsert_document(&Document {
+            id: document_id.clone(),
+            source_uri: "synthetic://recovered".to_string(),
+            normalized_path: "synthetic/recovered.pdf".to_string(),
+            file_name: "synthetic-recovered.pdf".to_string(),
+            extension: FileExtension::Pdf,
+            byte_size: 128,
+            mtime: now,
+            content_hash: Some("synthetic-recovered-content-hash".to_string()),
+            text_hash: Some("synthetic-recovered-text-hash".to_string()),
+            is_deleted: false,
+            created_at: now,
+            updated_at: now,
+            status: DocumentStatus::Searchable,
+        })
+        .unwrap();
+    store
+        .upsert_resume_version(&ResumeVersion {
+            id: version_id.clone(),
+            document_id: document_id.clone(),
+            candidate_id: None,
+            parse_version: "parser-v1".to_string(),
+            schema_version: "schema-v1".to_string(),
+            language_set: vec!["en".to_string()],
+            page_count: Some(1),
+            raw_text: Some("diagnostic recovered Java snapshot".to_string()),
+            clean_text: Some("diagnostic recovered Java snapshot".to_string()),
+            quality_score: Some(0.8),
+            visibility: ResumeVisibility::Searchable,
+        })
+        .unwrap();
+
+    (document_id.to_string(), version_id.to_string())
+}
+
 fn temp_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
