@@ -5,10 +5,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
     Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
-    EntityMentionId, EntityType, FileExtension, ImportTask, ImportTaskId, ImportTaskStatus,
-    IndexState, IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus,
-    MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion,
-    ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
+    EntityMentionId, EntityType, FileExtension, ImportRootKind, ImportRootPreset,
+    ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
+    IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus, MetaStore,
+    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
 };
 use rusqlite::{params, Connection};
 
@@ -19,8 +20,8 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5, 6, 7, 8]);
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(store.schema_version().unwrap(), 9);
 
     for table_name in [
         "candidate",
@@ -32,13 +33,14 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "entity_mention",
         "ocr_page_cache",
         "worker_task_control",
+        "import_scan_scope",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(store.schema_version().unwrap(), 9);
 }
 
 #[test]
@@ -95,6 +97,78 @@ fn worker_task_control_defaults_to_running_and_persists_pause_state() {
                 updated_at: resume_at,
             }
         );
+    }
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
+fn import_scan_scope_persists_root_profile_and_redacted_progress_counts() {
+    let db_path = temp_db_path("import-scan-scope-placeholder");
+    let task = import_task(
+        "scan-scope-task",
+        "/private/root/Documents",
+        ImportTaskStatus::Queued,
+    );
+    let queued_at = UnixTimestamp::from_unix_seconds(1_800_000_010);
+    let updated_at = UnixTimestamp::from_unix_seconds(1_800_000_020);
+    let initial_scope = ImportScanScope {
+        import_task_id: task.id.clone(),
+        root_kind: ImportRootKind::Preset,
+        root_preset: Some(ImportRootPreset::LocalDiscovery),
+        scan_profile: ImportScanProfile::Discovery,
+        requested_root_path: "/private/root".to_string(),
+        canonical_root_path: "/private/root/Documents".to_string(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        updated_at: queued_at,
+    };
+    let completed_scope = ImportScanScope {
+        files_discovered: 7,
+        ignored_entries: 2,
+        scan_errors: 1,
+        searchable_documents: 4,
+        ocr_required_documents: 1,
+        ocr_jobs_queued: 1,
+        failed_documents: 1,
+        deleted_documents: 1,
+        updated_at,
+        ..initial_scope.clone()
+    };
+
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+        store.insert_import_task(&task).unwrap();
+
+        store.upsert_import_scan_scope(&initial_scope).unwrap();
+        assert_eq!(
+            store.import_scan_scope_by_task_id(&task.id).unwrap(),
+            Some(initial_scope)
+        );
+
+        store.upsert_import_scan_scope(&completed_scope).unwrap();
+        assert_eq!(store.status_summary().unwrap().import_scan_scopes, 1);
+    }
+
+    {
+        let reopened = MetaStore::open(&db_path).unwrap();
+        reopened.run_migrations().unwrap();
+        let persisted = reopened
+            .latest_import_scan_scope()
+            .unwrap()
+            .expect("latest import scan scope");
+
+        assert_eq!(persisted, completed_scope);
+        let debug = format!("{persisted:?}");
+        assert!(!debug.contains("/private/root"));
+        assert!(debug.contains("files_discovered"));
     }
 
     remove_temp_db(&db_path);
@@ -862,7 +936,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7]);
-        assert_eq!(reopened.schema_version().unwrap(), 8);
+        assert_eq!(reopened.schema_version().unwrap(), 9);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1155,7 +1229,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 8);
+        assert_eq!(reopened.schema_version().unwrap(), 9);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -1313,6 +1387,9 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             .execute("DROP TABLE worker_task_control", [])
             .unwrap();
         connection
+            .execute("DROP TABLE import_scan_scope", [])
+            .unwrap();
+        connection
             .execute(
                 "DROP INDEX IF EXISTS ingest_job_ocr_document_unique_idx",
                 [],
@@ -1323,7 +1400,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             .unwrap();
         connection
             .execute(
-                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8)",
+                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9)",
                 [],
             )
             .unwrap();
@@ -1332,8 +1409,8 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(reopened.schema_version().unwrap(), 8);
+        assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(reopened.schema_version().unwrap(), 9);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -1365,7 +1442,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 8);
+        assert_eq!(reopened.schema_version().unwrap(), 9);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

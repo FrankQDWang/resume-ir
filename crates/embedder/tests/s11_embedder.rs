@@ -131,21 +131,26 @@ printf 'not the schema\nPRIVATE embedding text\n'
 #[cfg(unix)]
 #[test]
 fn local_command_embedder_times_out_and_keeps_input_file_private() {
+    let permission_marker = inputs_temp_dir_root().join("permissions.txt");
+    std::fs::create_dir_all(permission_marker.parent().unwrap()).unwrap();
     let slow_command = write_fixture_executable(
         "fixture-embedding-slow",
         r#"#!/bin/sh
 permissions="$(stat -f '%Lp' "$RESUME_IR_EMBEDDING_INPUT_PATH" 2>/dev/null || stat -c '%a' "$RESUME_IR_EMBEDDING_INPUT_PATH")"
-if [ "$permissions" != "600" ]; then
-  exit 9
-fi
+printf '%s' "$permissions" > "$1"
 sleep 5
 "#,
     );
     let embedder = LocalEmbeddingCommandEmbedder::new(
-        LocalEmbeddingCommandSpec::new(slow_command, Vec::<String>::new(), "fixture-model", 2)
-            .unwrap()
-            .with_timeout_ms(100)
-            .unwrap(),
+        LocalEmbeddingCommandSpec::new(
+            slow_command,
+            [permission_marker.to_string_lossy().into_owned()],
+            "fixture-model",
+            2,
+        )
+        .unwrap()
+        .with_timeout_ms(1_000)
+        .unwrap(),
     );
     let error = embedder
         .embed_batch(
@@ -154,6 +159,7 @@ sleep 5
         )
         .unwrap_err();
     assert_eq!(error, EmbeddingError::Timeout);
+    assert_eq!(std::fs::read_to_string(permission_marker).unwrap(), "600");
     assert!(!format!("{error:?}").contains("PRIVATE"));
 }
 

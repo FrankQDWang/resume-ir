@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{ImportTask, ImportTaskId, ImportTaskStatus, MetaStore, UnixTimestamp};
+use meta_store::{
+    ImportRootKind, ImportRootPreset, ImportScanProfile, ImportTask, ImportTaskId,
+    ImportTaskStatus, MetaStore, UnixTimestamp,
+};
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 
@@ -228,6 +231,23 @@ fn local_discovery_root_preset_uses_discovery_profile_without_path_leak() {
     assert!(search_stdout.contains("results: 1"));
     assert!(search_stdout.contains("synthetic-java-platform.pdf"));
     assert!(!search_stdout.contains("synthetic-java-engineer.docx"));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scope = store
+        .latest_import_scan_scope()
+        .unwrap()
+        .expect("scan scope persisted");
+    assert_eq!(scope.root_kind, ImportRootKind::Preset);
+    assert_eq!(scope.root_preset, Some(ImportRootPreset::LocalDiscovery));
+    assert_eq!(scope.scan_profile, ImportScanProfile::Discovery);
+    assert_eq!(scope.files_discovered, 1);
+    assert_eq!(scope.ignored_entries, 1);
+    assert_eq!(scope.searchable_documents, 1);
+    assert_eq!(scope.ocr_required_documents, 0);
+    assert_eq!(scope.canonical_root_path, path_str(&canonical_local_root));
+    assert_eq!(scope.requested_root_path, path_str(&local_root));
+    assert!(!format!("{scope:?}").contains(path_str(&local_root)));
 
     remove_dir(&data_dir);
     remove_dir(&local_root);

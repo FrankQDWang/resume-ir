@@ -15,10 +15,11 @@ use index_fulltext::{
     SnapshotRootState,
 };
 use meta_store::{
-    DocumentId, DocumentStatus, EntityType, ImportTask, ImportTaskId, ImportTaskStatus,
-    IndexStateStatus, IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry,
-    OcrPageCacheKey, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
-    WorkerTaskKind,
+    DocumentId, DocumentStatus, EntityType, ImportRootKind as StoreImportRootKind,
+    ImportRootPreset as StoreImportRootPreset, ImportScanProfile as StoreImportScanProfile,
+    ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobKind,
+    IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
@@ -118,6 +119,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "import tasks recoverable: {}",
         summary.import_tasks_recoverable
     );
+    println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("active profile: balanced");
     println!("index health: {}", index_health_label(summary.index_health));
     println!(
@@ -225,6 +227,10 @@ fn render_ipc_status(body: &serde_json::Value) {
         json_u64(body, "import_tasks_recoverable")
     );
     println!(
+        "import scan scopes: {}",
+        json_u64(body, "import_scan_scopes")
+    );
+    println!(
         "active profile: {}",
         json_str(body, "active_profile").unwrap_or("unknown")
     );
@@ -302,6 +308,14 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     let mut summary = ImportSummary::default();
     for (task, root) in tasks.iter().zip(roots.iter()) {
+        upsert_import_scan_scope(
+            &store,
+            task,
+            root,
+            &import_args,
+            &ImportSummary::default(),
+            now,
+        )?;
         let root_summary = import_root_with_options(
             data_dir,
             &store,
@@ -313,6 +327,7 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
             },
         )
         .map_err(CliError::import)?;
+        upsert_import_scan_scope(&store, task, root, &import_args, &root_summary, now)?;
         merge_import_summary(&mut summary, root_summary);
     }
 
@@ -351,6 +366,59 @@ fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
     total.ocr_jobs_queued += next.ocr_jobs_queued;
     total.failed_documents += next.failed_documents;
     total.deleted_documents += next.deleted_documents;
+}
+
+fn upsert_import_scan_scope(
+    store: &MetaStore,
+    task: &ImportTask,
+    root: &CanonicalImportRoot,
+    import_args: &ImportArgs,
+    summary: &ImportSummary,
+    updated_at: UnixTimestamp,
+) -> Result<()> {
+    let (root_kind, root_preset) = import_scan_scope_root(&import_args.root_selection);
+    store
+        .upsert_import_scan_scope(&ImportScanScope {
+            import_task_id: task.id.clone(),
+            root_kind,
+            root_preset,
+            scan_profile: import_scan_profile(import_args.profile),
+            requested_root_path: path_string(&root.requested),
+            canonical_root_path: path_string(&root.canonical),
+            files_discovered: usize_to_u64(summary.files_discovered)?,
+            ignored_entries: usize_to_u64(summary.ignored_entries)?,
+            scan_errors: usize_to_u64(summary.scan_errors)?,
+            searchable_documents: usize_to_u64(summary.searchable_documents)?,
+            ocr_required_documents: usize_to_u64(summary.ocr_required_documents)?,
+            ocr_jobs_queued: usize_to_u64(summary.ocr_jobs_queued)?,
+            failed_documents: usize_to_u64(summary.failed_documents)?,
+            deleted_documents: usize_to_u64(summary.deleted_documents)?,
+            updated_at,
+        })
+        .map_err(CliError::store)
+}
+
+fn import_scan_scope_root(
+    selection: &ImportRootSelection,
+) -> (StoreImportRootKind, Option<StoreImportRootPreset>) {
+    match selection {
+        ImportRootSelection::Explicit(_) => (StoreImportRootKind::Explicit, None),
+        ImportRootSelection::Preset(RootPreset::LocalDiscovery) => (
+            StoreImportRootKind::Preset,
+            Some(StoreImportRootPreset::LocalDiscovery),
+        ),
+    }
+}
+
+fn import_scan_profile(profile: ScanProfile) -> StoreImportScanProfile {
+    match profile {
+        ScanProfile::Explicit => StoreImportScanProfile::Explicit,
+        ScanProfile::Discovery => StoreImportScanProfile::Discovery,
+    }
+}
+
+fn usize_to_u64(value: usize) -> Result<u64> {
+    u64::try_from(value).map_err(|_| CliError::user("import summary count is too large"))
 }
 
 #[derive(Clone)]
@@ -986,6 +1054,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("ocr queue: {}", summary.ocr_queue_depth);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("entity mentions: {}", summary.entity_mentions);
+    println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("index health: {}", index_health_label(summary.index_health));
     println!(
@@ -1042,6 +1111,10 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("    \"ocr_queue_depth\": {},", summary.ocr_queue_depth);
     println!("    \"ocr_jobs_queued\": {},", summary.ocr_jobs_queued);
     println!("    \"entity_mentions\": {},", summary.entity_mentions);
+    println!(
+        "    \"import_scan_scopes\": {},",
+        summary.import_scan_scopes
+    );
     println!(
         "    \"recovery_queue_depth\": {}",
         summary.recovery_queue_depth

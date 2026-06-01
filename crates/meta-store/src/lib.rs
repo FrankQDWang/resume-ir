@@ -20,6 +20,7 @@ const SCHEMA_VERSION_V5: u32 = 5;
 const SCHEMA_VERSION_V6: u32 = 6;
 const SCHEMA_VERSION_V7: u32 = 7;
 const SCHEMA_VERSION_V8: u32 = 8;
+const SCHEMA_VERSION_V9: u32 = 9;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -42,6 +43,11 @@ const OCR_PAGE_CACHE_COLUMNS: &str = "\
     file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile, text, confidence, \
     engine_profile, duration_ms, status, error_kind, updated_at_seconds";
 const WORKER_TASK_CONTROL_COLUMNS: &str = "task_kind, paused, updated_at_seconds";
+const IMPORT_SCAN_SCOPE_COLUMNS: &str = "\
+    import_task_id, root_kind, root_preset, scan_profile, requested_root_path, \
+    canonical_root_path, files_discovered, ignored_entries, scan_errors, \
+    searchable_documents, ocr_required_documents, ocr_jobs_queued, failed_documents, \
+    deleted_documents, updated_at_seconds";
 
 pub fn crate_name() -> &'static str {
     "meta-store"
@@ -105,6 +111,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V6, SCHEMA_V6),
             (SCHEMA_VERSION_V7, SCHEMA_V7),
             (SCHEMA_VERSION_V8, SCHEMA_V8),
+            (SCHEMA_VERSION_V9, SCHEMA_V9),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -1159,6 +1166,104 @@ impl MetaStore {
         }
     }
 
+    pub fn upsert_import_scan_scope(&self, scope: &ImportScanScope) -> Result<()> {
+        validate_import_scan_scope(scope)?;
+
+        let connection = self.connection.borrow();
+        connection
+            .execute(
+                "\
+                INSERT INTO import_scan_scope (
+                    import_task_id, root_kind, root_preset, scan_profile, requested_root_path,
+                    canonical_root_path, files_discovered, ignored_entries, scan_errors,
+                    searchable_documents, ocr_required_documents, ocr_jobs_queued,
+                    failed_documents, deleted_documents, updated_at_seconds
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                ON CONFLICT(import_task_id) DO UPDATE SET
+                    root_kind = excluded.root_kind,
+                    root_preset = excluded.root_preset,
+                    scan_profile = excluded.scan_profile,
+                    requested_root_path = excluded.requested_root_path,
+                    canonical_root_path = excluded.canonical_root_path,
+                    files_discovered = excluded.files_discovered,
+                    ignored_entries = excluded.ignored_entries,
+                    scan_errors = excluded.scan_errors,
+                    searchable_documents = excluded.searchable_documents,
+                    ocr_required_documents = excluded.ocr_required_documents,
+                    ocr_jobs_queued = excluded.ocr_jobs_queued,
+                    failed_documents = excluded.failed_documents,
+                    deleted_documents = excluded.deleted_documents,
+                    updated_at_seconds = excluded.updated_at_seconds",
+                params![
+                    scope.import_task_id.as_str(),
+                    import_root_kind_to_storage(scope.root_kind),
+                    scope.root_preset.map(import_root_preset_to_storage),
+                    import_scan_profile_to_storage(scope.scan_profile),
+                    scope.requested_root_path.as_str(),
+                    scope.canonical_root_path.as_str(),
+                    u64_to_i64(scope.files_discovered, "import_scan_scope.files_discovered")?,
+                    u64_to_i64(scope.ignored_entries, "import_scan_scope.ignored_entries")?,
+                    u64_to_i64(scope.scan_errors, "import_scan_scope.scan_errors")?,
+                    u64_to_i64(
+                        scope.searchable_documents,
+                        "import_scan_scope.searchable_documents"
+                    )?,
+                    u64_to_i64(
+                        scope.ocr_required_documents,
+                        "import_scan_scope.ocr_required_documents"
+                    )?,
+                    u64_to_i64(scope.ocr_jobs_queued, "import_scan_scope.ocr_jobs_queued")?,
+                    u64_to_i64(scope.failed_documents, "import_scan_scope.failed_documents")?,
+                    u64_to_i64(
+                        scope.deleted_documents,
+                        "import_scan_scope.deleted_documents"
+                    )?,
+                    scope.updated_at.as_unix_seconds(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+
+        Ok(())
+    }
+
+    pub fn import_scan_scope_by_task_id(
+        &self,
+        id: &ImportTaskId,
+    ) -> Result<Option<ImportScanScope>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "SELECT {IMPORT_SCAN_SCOPE_COLUMNS} FROM import_scan_scope WHERE import_task_id = ?1"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![id.as_str()])
+            .map_err(MetaStoreError::storage)?;
+
+        match rows.next().map_err(MetaStoreError::storage)? {
+            Some(row) => Ok(Some(read_import_scan_scope(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn latest_import_scan_scope(&self) -> Result<Option<ImportScanScope>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {IMPORT_SCAN_SCOPE_COLUMNS}
+            FROM import_scan_scope
+            ORDER BY updated_at_seconds DESC, rowid DESC
+            LIMIT 1"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement.query([]).map_err(MetaStoreError::storage)?;
+
+        match rows.next().map_err(MetaStoreError::storage)? {
+            Some(row) => Ok(Some(read_import_scan_scope(row)?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn update_import_task_status(
         &self,
         id: &ImportTaskId,
@@ -1310,6 +1415,11 @@ impl MetaStore {
                 |row| row.get::<_, i64>(0),
             )
             .map_err(MetaStoreError::storage)?;
+        let import_scan_scopes = connection
+            .query_row("SELECT COUNT(*) FROM import_scan_scope", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(MetaStoreError::storage)?;
         let entity_mentions = connection
             .query_row(
                 "\
@@ -1377,6 +1487,7 @@ impl MetaStore {
                 import_tasks_recoverable,
                 "status.import_tasks_recoverable",
             )?,
+            import_scan_scopes: i64_to_u64(import_scan_scopes, "status.import_scan_scopes")?,
             ocr_jobs_queued: i64_to_u64(ocr_jobs_queued, "status.ocr_jobs_queued")?,
             entity_mentions: i64_to_u64(entity_mentions, "status.entity_mentions")?,
             index_health,
@@ -1680,6 +1791,65 @@ impl fmt::Debug for ImportTask {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct ImportScanScope {
+    pub import_task_id: ImportTaskId,
+    pub root_kind: ImportRootKind,
+    pub root_preset: Option<ImportRootPreset>,
+    pub scan_profile: ImportScanProfile,
+    pub requested_root_path: String,
+    pub canonical_root_path: String,
+    pub files_discovered: u64,
+    pub ignored_entries: u64,
+    pub scan_errors: u64,
+    pub searchable_documents: u64,
+    pub ocr_required_documents: u64,
+    pub ocr_jobs_queued: u64,
+    pub failed_documents: u64,
+    pub deleted_documents: u64,
+    pub updated_at: UnixTimestamp,
+}
+
+impl fmt::Debug for ImportScanScope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportScanScope")
+            .field("import_task_id", &self.import_task_id)
+            .field("root_kind", &self.root_kind)
+            .field("root_preset", &self.root_preset)
+            .field("scan_profile", &self.scan_profile)
+            .field("requested_root_path", &"<redacted>")
+            .field("canonical_root_path", &"<redacted>")
+            .field("files_discovered", &self.files_discovered)
+            .field("ignored_entries", &self.ignored_entries)
+            .field("scan_errors", &self.scan_errors)
+            .field("searchable_documents", &self.searchable_documents)
+            .field("ocr_required_documents", &self.ocr_required_documents)
+            .field("ocr_jobs_queued", &self.ocr_jobs_queued)
+            .field("failed_documents", &self.failed_documents)
+            .field("deleted_documents", &self.deleted_documents)
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportRootKind {
+    Explicit,
+    Preset,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportRootPreset {
+    LocalDiscovery,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportScanProfile {
+    Explicit,
+    Discovery,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportTaskStatus {
     Queued,
@@ -1713,6 +1883,7 @@ pub struct StoreStatusSummary {
     pub recovery_queue_depth: u64,
     pub import_tasks_queued: u64,
     pub import_tasks_recoverable: u64,
+    pub import_scan_scopes: u64,
     pub ocr_jobs_queued: u64,
     pub entity_mentions: u64,
     pub index_health: IndexStateStatus,
@@ -2179,6 +2350,40 @@ CREATE TABLE worker_task_control (
 );
 "#;
 
+const SCHEMA_V9: &str = r#"
+CREATE TABLE import_scan_scope (
+    import_task_id TEXT PRIMARY KEY,
+    root_kind TEXT NOT NULL CHECK (root_kind IN ('explicit', 'preset')),
+    root_preset TEXT CHECK (root_preset IS NULL OR root_preset IN ('local_discovery')),
+    scan_profile TEXT NOT NULL CHECK (scan_profile IN ('explicit', 'discovery')),
+    requested_root_path TEXT NOT NULL,
+    canonical_root_path TEXT NOT NULL,
+    files_discovered INTEGER NOT NULL DEFAULT 0 CHECK (files_discovered >= 0),
+    ignored_entries INTEGER NOT NULL DEFAULT 0 CHECK (ignored_entries >= 0),
+    scan_errors INTEGER NOT NULL DEFAULT 0 CHECK (scan_errors >= 0),
+    searchable_documents INTEGER NOT NULL DEFAULT 0 CHECK (searchable_documents >= 0),
+    ocr_required_documents INTEGER NOT NULL DEFAULT 0 CHECK (ocr_required_documents >= 0),
+    ocr_jobs_queued INTEGER NOT NULL DEFAULT 0 CHECK (ocr_jobs_queued >= 0),
+    failed_documents INTEGER NOT NULL DEFAULT 0 CHECK (failed_documents >= 0),
+    deleted_documents INTEGER NOT NULL DEFAULT 0 CHECK (deleted_documents >= 0),
+    updated_at_seconds INTEGER NOT NULL,
+    FOREIGN KEY (import_task_id) REFERENCES import_task(id) ON DELETE CASCADE,
+    CHECK (
+        (
+            root_kind = 'explicit'
+            AND root_preset IS NULL
+        )
+        OR (
+            root_kind = 'preset'
+            AND root_preset IS NOT NULL
+        )
+    )
+);
+
+CREATE INDEX import_scan_scope_updated_idx
+    ON import_scan_scope(updated_at_seconds);
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -2338,6 +2543,37 @@ fn read_import_task(row: &Row<'_>) -> Result<ImportTask> {
         finished_at: read_optional_timestamp(row, 5)?,
         updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 6)?),
     })
+}
+
+fn read_import_scan_scope(row: &Row<'_>) -> Result<ImportScanScope> {
+    let scope = ImportScanScope {
+        import_task_id: read_id::<ImportTaskId>(row, 0, "import_scan_scope.import_task_id")?,
+        root_kind: import_root_kind_from_storage(&read_string(row, 1)?)?,
+        root_preset: read_optional_string(row, 2)?
+            .as_deref()
+            .map(import_root_preset_from_storage)
+            .transpose()?,
+        scan_profile: import_scan_profile_from_storage(&read_string(row, 3)?)?,
+        requested_root_path: read_string(row, 4)?,
+        canonical_root_path: read_string(row, 5)?,
+        files_discovered: i64_to_u64(read_i64(row, 6)?, "import_scan_scope.files_discovered")?,
+        ignored_entries: i64_to_u64(read_i64(row, 7)?, "import_scan_scope.ignored_entries")?,
+        scan_errors: i64_to_u64(read_i64(row, 8)?, "import_scan_scope.scan_errors")?,
+        searchable_documents: i64_to_u64(
+            read_i64(row, 9)?,
+            "import_scan_scope.searchable_documents",
+        )?,
+        ocr_required_documents: i64_to_u64(
+            read_i64(row, 10)?,
+            "import_scan_scope.ocr_required_documents",
+        )?,
+        ocr_jobs_queued: i64_to_u64(read_i64(row, 11)?, "import_scan_scope.ocr_jobs_queued")?,
+        failed_documents: i64_to_u64(read_i64(row, 12)?, "import_scan_scope.failed_documents")?,
+        deleted_documents: i64_to_u64(read_i64(row, 13)?, "import_scan_scope.deleted_documents")?,
+        updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 14)?),
+    };
+    validate_import_scan_scope(&scope)?;
+    Ok(scope)
 }
 
 fn upsert_candidate_in_connection(connection: &Connection, candidate: &Candidate) -> Result<()> {
@@ -2540,6 +2776,24 @@ fn validate_import_task(task: &ImportTask) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn validate_import_scan_scope(scope: &ImportScanScope) -> Result<()> {
+    if scope.requested_root_path.trim().is_empty() {
+        return Err(MetaStoreError::invalid_value(
+            "import_scan_scope.requested_root_path",
+        ));
+    }
+    if scope.canonical_root_path.trim().is_empty() {
+        return Err(MetaStoreError::invalid_value(
+            "import_scan_scope.canonical_root_path",
+        ));
+    }
+
+    match (scope.root_kind, scope.root_preset) {
+        (ImportRootKind::Explicit, None) | (ImportRootKind::Preset, Some(_)) => Ok(()),
+        _ => Err(MetaStoreError::invalid_value("import_scan_scope.root")),
+    }
 }
 
 fn validate_entity_mention(version_id: &ResumeVersionId, mention: &EntityMention) -> Result<()> {
@@ -2897,6 +3151,53 @@ fn worker_task_kind_from_storage(value: &str) -> Result<WorkerTaskKind> {
         "ocr" => Ok(WorkerTaskKind::Ocr),
         _ => Err(MetaStoreError::invalid_value(
             "worker_task_control.task_kind",
+        )),
+    }
+}
+
+fn import_root_kind_to_storage(kind: ImportRootKind) -> &'static str {
+    match kind {
+        ImportRootKind::Explicit => "explicit",
+        ImportRootKind::Preset => "preset",
+    }
+}
+
+fn import_root_kind_from_storage(value: &str) -> Result<ImportRootKind> {
+    match value {
+        "explicit" => Ok(ImportRootKind::Explicit),
+        "preset" => Ok(ImportRootKind::Preset),
+        _ => Err(MetaStoreError::invalid_value("import_scan_scope.root_kind")),
+    }
+}
+
+fn import_root_preset_to_storage(preset: ImportRootPreset) -> &'static str {
+    match preset {
+        ImportRootPreset::LocalDiscovery => "local_discovery",
+    }
+}
+
+fn import_root_preset_from_storage(value: &str) -> Result<ImportRootPreset> {
+    match value {
+        "local_discovery" => Ok(ImportRootPreset::LocalDiscovery),
+        _ => Err(MetaStoreError::invalid_value(
+            "import_scan_scope.root_preset",
+        )),
+    }
+}
+
+fn import_scan_profile_to_storage(profile: ImportScanProfile) -> &'static str {
+    match profile {
+        ImportScanProfile::Explicit => "explicit",
+        ImportScanProfile::Discovery => "discovery",
+    }
+}
+
+fn import_scan_profile_from_storage(value: &str) -> Result<ImportScanProfile> {
+    match value {
+        "explicit" => Ok(ImportScanProfile::Explicit),
+        "discovery" => Ok(ImportScanProfile::Discovery),
+        _ => Err(MetaStoreError::invalid_value(
+            "import_scan_scope.scan_profile",
         )),
     }
 }
