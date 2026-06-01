@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 meta-store = { path = "../meta-store" }
+serde_json = "1"
 
 [lints]
 workspace = true

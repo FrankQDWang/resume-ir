@@ -15,6 +15,7 @@ index-fulltext = { path = "../index-fulltext" }
 meta-store = { path = "../meta-store" }
 rank-fusion = { path = "../rank-fusion" }
 search-planner = { path = "../search-planner" }
+serde_json = "1"
 
 [lints]
 workspace = true

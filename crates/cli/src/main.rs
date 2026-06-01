@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use import_pipeline::{import_root, rebuild_full_text_index};
 use index_fulltext::{FullTextIndex, SearchHit, SearchQuery};
@@ -37,12 +39,7 @@ fn run() -> Result<()> {
     };
 
     match command {
-        "status" => {
-            if args.len() != 1 {
-                return Err(CliError::usage("usage: resume-cli status"));
-            }
-            status_command(&data_dir)
-        }
+        "status" => status_command(&data_dir, &args[1..]),
         "import" => import_command(&data_dir, &args[1..]),
         "search" => search_command(&data_dir, &args[1..]),
         "delete" => delete_command(&data_dir, &args[1..]),
@@ -75,7 +72,11 @@ fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn status_command(data_dir: &Path) -> Result<()> {
+fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    if let Some(endpoint) = parse_status_ipc_arg(args)? {
+        return status_ipc_command(&endpoint);
+    }
+
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
 
@@ -108,6 +109,138 @@ fn status_command(data_dir: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_status_ipc_arg(args: &[String]) -> Result<Option<IpcStatusEndpoint>> {
+    if args.is_empty() {
+        return Ok(None);
+    }
+    if args.len() != 2 || args.first().map(String::as_str) != Some("--ipc") {
+        return Err(CliError::usage(status_usage()));
+    }
+
+    parse_status_ipc_endpoint(&args[1]).map(Some)
+}
+
+fn status_usage() -> &'static str {
+    "usage: resume-cli status [--ipc <http://127.0.0.1:port/status>]"
+}
+
+fn parse_status_ipc_endpoint(value: &str) -> Result<IpcStatusEndpoint> {
+    let rest = value
+        .strip_prefix("http://")
+        .ok_or_else(|| CliError::usage(status_usage()))?;
+    let (authority, path) = rest
+        .split_once('/')
+        .ok_or_else(|| CliError::usage(status_usage()))?;
+    if path != "status" {
+        return Err(CliError::usage(status_usage()));
+    }
+
+    let addr = SocketAddr::from_str(authority).map_err(|_| CliError::usage(status_usage()))?;
+    if !addr.ip().is_loopback() {
+        return Err(CliError::usage("status ipc endpoint must be loopback"));
+    }
+
+    Ok(IpcStatusEndpoint { addr })
+}
+
+fn status_ipc_command(endpoint: &IpcStatusEndpoint) -> Result<()> {
+    let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
+        .map_err(|_| CliError::user("unable to connect to daemon status ipc"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon status ipc"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon status ipc"))?;
+    let request = format!(
+        "GET /status HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        endpoint.addr
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|_| CliError::user("unable to request daemon status ipc"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|_| CliError::user("unable to read daemon status ipc"))?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| CliError::user("daemon status ipc response is invalid"))?;
+    let status_line = headers.lines().next().unwrap_or_default();
+    if !status_line.starts_with("HTTP/1.1 200 ") && !status_line.starts_with("HTTP/1.0 200 ") {
+        return Err(CliError::user("daemon status ipc returned an error"));
+    }
+
+    let body: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| CliError::user("daemon status ipc returned invalid json"))?;
+    render_ipc_status(&body);
+    Ok(())
+}
+
+fn render_ipc_status(body: &serde_json::Value) {
+    println!("resume-ir status");
+    println!("indexed documents: {}", json_u64(body, "indexed_documents"));
+    println!(
+        "searchable documents: {}",
+        json_u64(body, "searchable_documents")
+    );
+    println!("partial documents: {}", json_u64(body, "partial_documents"));
+    println!("failed retryable: {}", json_u64(body, "failed_retryable"));
+    println!("failed permanent: {}", json_u64(body, "failed_permanent"));
+    println!("recovery queue: {}", json_u64(body, "recovery_queue_depth"));
+    println!("ocr queue: {}", json_u64(body, "ocr_queue_depth"));
+    println!("ocr jobs queued: {}", json_u64(body, "ocr_jobs_queued"));
+    println!(
+        "embedding queue: {}",
+        json_u64(body, "embedding_queue_depth")
+    );
+    println!("entity mentions: {}", json_u64(body, "entity_mentions"));
+    println!(
+        "import tasks queued: {}",
+        json_u64(body, "import_tasks_queued")
+    );
+    println!(
+        "import tasks recoverable: {}",
+        json_u64(body, "import_tasks_recoverable")
+    );
+    println!(
+        "active profile: {}",
+        json_str(body, "active_profile").unwrap_or("unknown")
+    );
+    println!(
+        "index health: {}",
+        json_str(body, "index_health").unwrap_or("unknown")
+    );
+    let snapshot_label = if json_bool(body, "snapshot_present") {
+        "present"
+    } else {
+        "none"
+    };
+    println!("last snapshot: {snapshot_label}");
+    println!("search index: daemon ipc (full-text state reported by daemon)");
+}
+
+fn json_u64(body: &serde_json::Value, key: &str) -> u64 {
+    body.get(key)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn json_str<'a>(body: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    body.get(key).and_then(serde_json::Value::as_str)
+}
+
+fn json_bool(body: &serde_json::Value, key: &str) -> bool {
+    body.get(key)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+struct IpcStatusEndpoint {
+    addr: SocketAddr,
 }
 
 fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {

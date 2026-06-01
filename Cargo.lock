@@ -967,6 +967,7 @@ dependencies = [
  "meta-store",
  "rank-fusion",
  "search-planner",
+ "serde_json",
 ]
 
 [[package]]
@@ -974,6 +975,7 @@ name = "resume-daemon"
 version = "0.1.0"
 dependencies = [
  "meta-store",
+ "serde_json",
 ]
 
 [[package]]
