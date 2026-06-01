@@ -107,6 +107,26 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
     assert!(!stdout.contains("Shared.Candidate"));
     assert!(!stdout.contains("shared.candidate@example.test"));
     assert!(!stdout.contains("415-555-0132"));
+
+    for contact_query in [
+        "Shared.Candidate@Example.Test",
+        "shared.candidate@example.test",
+        "(415) 555-0132",
+        "+14155550132",
+    ] {
+        let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .args(["--data-dir", path_str(&data_dir), "search", contact_query])
+            .output()
+            .expect("run resume-cli contact search");
+        assert!(search.status.success());
+        assert!(search.stderr.is_empty());
+        let stdout = String::from_utf8_lossy(&search.stdout);
+        assert!(stdout.contains("results: 0"));
+        assert!(!stdout.contains("Shared.Candidate"));
+        assert!(!stdout.contains("shared.candidate@example.test"));
+        assert!(!stdout.contains("415-555-0132"));
+        assert!(!stdout.contains("+14155550132"));
+    }
     drop(store);
 
     let reimport = Command::new(env!("CARGO_BIN_EXE_resume-cli"))

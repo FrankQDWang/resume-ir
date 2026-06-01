@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{FullTextIndex, IndexDocument, IndexSection, SearchQuery};
+use tantivy::collector::TopDocs;
+use tantivy::query::AllQuery;
+use tantivy::schema::{TantivyDocument, Value};
+use tantivy::Index;
 
 #[test]
 fn exposes_index_fulltext_crate_identity() {
@@ -231,6 +235,65 @@ fn snippets_redact_contact_values_near_query_matches() {
     remove_dir(&index_dir);
 }
 
+#[test]
+fn stored_index_fields_redact_contact_values_before_commit() {
+    let index_dir = temp_dir("stored-contact-redaction");
+    let index = FullTextIndex::open_or_create(&index_dir).unwrap();
+
+    index
+        .replace_documents([IndexDocument {
+            doc_id: "doc_stored_contact".to_string(),
+            version_id: "ver_stored_contact".to_string(),
+            file_name: "synthetic-Shared.Candidate@Example.Test.pdf".to_string(),
+            clean_text: concat!(
+                "Built Java systems. Email: Shared.Candidate@Example.Test ",
+                "Phone: (415) 555-0132 Alt: (415)555-0132 Backup: +1(415)555-0132"
+            )
+            .to_string(),
+            sections: vec![IndexSection {
+                section_type: "contact".to_string(),
+                text: "Contact +14155550132 and Shared.Candidate@Example.Test".to_string(),
+            }],
+            is_deleted: false,
+        }])
+        .unwrap();
+    index.commit().unwrap();
+    drop(index);
+
+    let stored_text = stored_text_dump(&index_dir);
+    assert!(stored_text.contains("Java"));
+    assert!(stored_text.contains("<redacted-email>"));
+    assert!(stored_text.contains("<redacted-phone>"));
+    assert!(!stored_text.contains("Shared.Candidate"));
+    assert!(!stored_text.contains("shared.candidate"));
+    assert!(!stored_text.contains("415"));
+    assert!(!stored_text.contains("+14155550132"));
+
+    let reopened = FullTextIndex::open(&index_dir).unwrap();
+    let hits = reopened
+        .search(SearchQuery::new("Java systems").with_limit(5))
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].snippet.contains("Java"));
+
+    for contact_query in [
+        "Shared.Candidate@Example.Test",
+        "(415) 555-0132",
+        "(415)555-0132",
+        "+1(415)555-0132",
+        "+14155550132",
+    ] {
+        let contact_hits = reopened
+            .search(SearchQuery::new(contact_query).with_limit(5))
+            .unwrap();
+        assert!(
+            contact_hits.is_empty(),
+            "query should not match: {contact_query}"
+        );
+    }
+    remove_dir(&index_dir);
+}
+
 fn java_payment_document(is_deleted: bool) -> IndexDocument {
     IndexDocument {
         doc_id: "doc_java_payment".to_string(),
@@ -263,4 +326,34 @@ fn temp_dir(label: &str) -> PathBuf {
 
 fn remove_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
+}
+
+fn stored_text_dump(index_dir: &Path) -> String {
+    let index = Index::open_in_dir(index_dir).unwrap();
+    let schema = index.schema();
+    let reader = index.reader().unwrap();
+    let searcher = reader.searcher();
+    let fields = [
+        schema.get_field("file_name").unwrap(),
+        schema.get_field("clean_text").unwrap(),
+        schema.get_field("all_sections").unwrap(),
+        schema.get_field("section_text").unwrap(),
+    ];
+
+    let mut values = Vec::new();
+    for (_, address) in searcher
+        .search(&AllQuery, &TopDocs::with_limit(10).order_by_score())
+        .unwrap()
+    {
+        let document = searcher.doc::<TantivyDocument>(address).unwrap();
+        for field in fields {
+            values.extend(
+                document
+                    .get_all(field)
+                    .filter_map(|value| value.as_value().as_str().map(str::to_string)),
+            );
+        }
+    }
+
+    values.join("\n")
 }

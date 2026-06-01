@@ -184,23 +184,36 @@ impl FullTextIndex {
                 continue;
             }
 
+            let file_name = redact_contact_values(&document.file_name);
+            let clean_text = redact_contact_values(&document.clean_text);
+            let sections = document
+                .sections
+                .iter()
+                .map(|section| {
+                    (
+                        section.section_type.as_str(),
+                        redact_contact_values(&section.text),
+                    )
+                })
+                .collect::<Vec<_>>();
             let section_text = document
                 .sections
                 .iter()
-                .map(|section| section.text.as_str())
+                .zip(sections.iter())
+                .map(|(_, (_, text))| text.as_str())
                 .collect::<Vec<_>>()
                 .join("\n");
 
             let mut tantivy_document = TantivyDocument::default();
             tantivy_document.add_text(self.fields.doc_id, &document.doc_id);
             tantivy_document.add_text(self.fields.version_id, &document.version_id);
-            tantivy_document.add_text(self.fields.file_name, &document.file_name);
-            tantivy_document.add_text(self.fields.clean_text, &document.clean_text);
+            tantivy_document.add_text(self.fields.file_name, &file_name);
+            tantivy_document.add_text(self.fields.clean_text, &clean_text);
             tantivy_document.add_text(self.fields.all_sections, &section_text);
             tantivy_document.add_bool(self.fields.is_deleted, false);
-            for section in &document.sections {
-                tantivy_document.add_text(self.fields.section_type, &section.section_type);
-                tantivy_document.add_text(self.fields.section_text, &section.text);
+            for (section_type, text) in &sections {
+                tantivy_document.add_text(self.fields.section_type, section_type);
+                tantivy_document.add_text(self.fields.section_text, text);
             }
             writer
                 .add_document(tantivy_document)
@@ -377,8 +390,18 @@ fn redact_contact_values(text: &str) -> String {
         .replace_all(text, "<redacted-email>");
     let phone_redacted = PHONE_REGEX
         .get_or_init(|| {
-            Regex::new(r"(?x)(?:\+\d{1,3}[\s.-]*)?(?:\(\d{3}\)|\d{3,4})[\s.-]+\d{3,4}[\s.-]+\d{4}")
-                .unwrap()
+            Regex::new(
+                r"(?x)
+                (?:\+\d{1,3}[\s.-]*)?
+                (?:
+                    \(\d{3}\)[\s.-]*
+                    |
+                    \d{3,4}[\s.-]+
+                )
+                \d{3,4}[\s.-]*\d{4}
+                ",
+            )
+            .unwrap()
         })
         .replace_all(&email_redacted, "<redacted-phone>");
     COMPACT_PHONE_REGEX
