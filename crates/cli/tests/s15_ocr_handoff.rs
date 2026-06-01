@@ -3,8 +3,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    DocumentStatus, IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheKey, OcrPageCacheStatus,
-    UnixTimestamp,
+    DocumentStatus, IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey,
+    OcrPageCacheStatus, UnixTimestamp,
 };
 
 #[test]
@@ -227,7 +227,7 @@ printf 'OCRS33PauseResumeToken worker text\n'
 
     let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
     store.run_migrations().unwrap();
-    assert_eq!(scanned_document(&store).status, DocumentStatus::OcrDone);
+    assert_eq!(scanned_document(&store).status, DocumentStatus::Searchable);
     assert!(store.retryable_jobs().unwrap().is_empty());
 
     remove_dir(&data_dir);
@@ -235,7 +235,7 @@ printf 'OCRS33PauseResumeToken worker text\n'
 
 #[cfg(unix)]
 #[test]
-fn ocr_worker_executes_local_command_and_persists_page_cache_without_searchable_text() {
+fn ocr_worker_executes_local_command_persists_cache_and_indexes_searchable_text() {
     let data_dir = temp_dir("ocr-worker-command-data");
     let fixture_root = fixture_root();
     let command = write_fixture_executable(
@@ -282,7 +282,7 @@ printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME
     let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
-    assert_eq!(scanned.status, DocumentStatus::OcrDone);
+    assert_eq!(scanned.status, DocumentStatus::Searchable);
     assert!(store.retryable_jobs().unwrap().is_empty());
     let cache_key = OcrPageCacheKey::new(
         scanned.content_hash.expect("content hash"),
@@ -313,11 +313,190 @@ printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME
         .output()
         .expect("run resume-cli search for cached OCR text");
     assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(
+        search_stdout.contains("results: 1"),
+        "stdout:\n{search_stdout}"
+    );
+    assert!(search_stdout.contains("synthetic-scanned-resume.pdf"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&fixture_root)));
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn ocr_worker_indexes_succeeded_cache_hit_without_invoking_command() {
+    let data_dir = temp_dir("ocr-worker-cache-hit-data");
+    let fixture_root = fixture_root();
+    import_fixtures(&data_dir, &fixture_root);
+
+    {
+        let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+        store.run_migrations().unwrap();
+        let scanned = scanned_document(&store);
+        assert_eq!(scanned.status, DocumentStatus::OcrRequired);
+        let cache_key = OcrPageCacheKey::new(
+            scanned.content_hash.expect("content hash"),
+            1,
+            300,
+            "eng",
+            "balanced",
+        )
+        .unwrap();
+        let cache_entry = OcrPageCacheEntry::succeeded(
+            cache_key,
+            "OCRS41CacheHitToken cached OCR text",
+            0.84,
+            "fixture-cache-engine",
+            7,
+            UnixTimestamp::from_unix_seconds(1_900_000_041),
+        )
+        .unwrap();
+        store.upsert_ocr_page_cache_entry(&cache_entry).unwrap();
+    }
+
+    let command = write_fixture_executable(
+        "fixture-ocr-worker-cache-hit-should-not-run",
+        r#"#!/bin/sh
+printf 'unexpected OCR command invocation\n' >&2
+exit 42
+"#,
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+        ])
+        .output()
+        .expect("run ocr worker against succeeded cache entry");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr worker: completed"));
+    assert!(stdout.contains("documents processed: 1"));
+    assert!(stdout.contains("cache writes: 0"));
+    assert!(stdout.contains("cache hits: 1"));
+    assert!(!stdout.contains("OCRS41CacheHitToken"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    assert_eq!(scanned_document(&store).status, DocumentStatus::Searchable);
+    assert!(store.retryable_jobs().unwrap().is_empty());
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "OCRS41CacheHitToken",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run resume-cli search for cache-hit OCR text");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(
+        search_stdout.contains("results: 1"),
+        "stdout:\n{search_stdout}"
+    );
+    assert!(search_stdout.contains("synthetic-scanned-resume.pdf"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&fixture_root)));
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn ocr_worker_empty_success_keeps_document_non_searchable() {
+    let data_dir = temp_dir("ocr-worker-empty-text-data");
+    let fixture_root = fixture_root();
+    let command = write_fixture_executable(
+        "fixture-ocr-worker-empty-text",
+        r#"#!/bin/sh
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.66\n'
+printf 'text:\n'
+printf '    \n'
+"#,
+    );
+    import_fixtures(&data_dir, &fixture_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+        ])
+        .output()
+        .expect("run ocr worker with empty OCR text");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr worker: completed"));
+    assert!(stdout.contains("documents processed: 1"));
+    assert!(stdout.contains("cache writes: 1"));
+    assert!(stdout.contains("cache hits: 0"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::OcrDone);
+    assert!(store
+        .resume_versions_for_document(&scanned.id)
+        .unwrap()
+        .is_empty());
+    assert!(store.retryable_jobs().unwrap().is_empty());
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "scanned",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run resume-cli search after empty OCR text");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
     let search_stdout = String::from_utf8_lossy(&search.stdout);
     assert!(
         search_stdout.contains("results: 0"),
         "stdout:\n{search_stdout}"
     );
+    assert!(!search_stdout.contains("synthetic-scanned-resume.pdf"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&fixture_root)));
 
     remove_dir(&data_dir);
 }

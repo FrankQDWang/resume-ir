@@ -6,7 +6,7 @@ This file tracks long-running Goal execution against
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S40 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S41 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -55,6 +55,7 @@ This file tracks long-running Goal execution against
 | S38 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p index-vector -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this persisted vector snapshot slice; real licensed embedding model selection/distribution, import-time embedding queue integration, CLI semantic/hybrid query execution, vector snapshot GC/repair, quality benchmarks, real data validation, and cross-platform validation remain not complete or BLOCKED. |
 | S39 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli embed_worker_debug_output_redacts_candidate_text_and_command_path`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p embedder`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p embedder -p index-vector --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this CLI local embedding worker slice; real licensed embedding model selection/distribution, OS-enforced no-network sandboxing for user-provided commands, daemon-loop embedding execution, import-time embedding job state, CLI semantic/hybrid query execution, vector snapshot GC/repair, quality benchmarks, real data validation, and cross-platform command validation remain not complete or BLOCKED. |
 | S40 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this local-discovery default budget and multi-root budget-summary slice; live progress streaming, user cancellation, time/byte/CPU budgets, user-facing partial-result UX, real whole-machine witness runs, and Windows/macOS full-disk validation remain not complete. |
+| S41 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this OCR worker searchable-index slice; multi-page PDF rendering, daemon-loop OCR execution, concrete OCR engine install/license, bbox persistence, real scanned-resume witness runs, encrypted OCR text storage/physical purge, and Windows process-tree validation remain not complete. |
 
 ## Command Log
 
@@ -1874,6 +1875,66 @@ Output summary:
 Scope note:
 
 - S40 sets `local-discovery` to a default 10,000 file budget, keeps explicit `--root` imports unbudgeted unless `--max-files` is supplied, allows user override of the preset budget, persists configured file-budget metadata even when the scan is not exhausted, and reports aggregate multi-root budget exhaustion if any root exhausts the file limit. It does not add progress streaming, user cancellation, time/byte/CPU budgets, a UI for partial results, real whole-machine witness scans, encrypted path metadata, or Windows/macOS full-disk validation.
+
+### S41
+
+Design note:
+
+- Successful OCR output is now part of the same local import/index pipeline as text-layer documents: normalize text, persist a searchable OCR resume version, refresh rule-extracted fields/candidate assignment, mark the document `Searchable`, and rebuild the active full-text snapshot. Whole-machine scanning remains a root-selection case over the existing scanner; explicit directory scanning is retained, and selecting `/`, `/Users`, `C:\`, or `D:\` should use the same scanner with stronger defaults and user-facing guardrails rather than a separate pipeline.
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_executes_local_command_persists_cache_and_indexes_searchable_text -- --exact
+```
+
+Output summary:
+
+- Before implementation, the focused OCR worker test failed because a successful local OCR command left the scanned document in `OcrDone` and searching the OCR-only token returned `results: 0`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_executes_local_command_persists_cache_and_indexes_searchable_text -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff pause_and_resume_ocr_task_persistently_controls_worker_claims -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo clippy -p import-pipeline -p resume-cli --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `cargo test -p import-pipeline`: exit 0; import-pipeline unit tests passed.
+- `cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_executes_local_command_persists_cache_and_indexes_searchable_text -- --exact`: exit 0; the local OCR command writes the page cache, marks the scanned document searchable, and searching the OCR-only token returns one redacted result without leaking local data or fixture paths.
+- `cargo test -p resume-cli --test s15_ocr_handoff pause_and_resume_ocr_task_persistently_controls_worker_claims -- --exact`: exit 0; pause/resume still controls worker claims and the eventual successful OCR output becomes searchable.
+- `cargo test -p resume-cli --test s15_ocr_handoff`: exit 0; 7 OCR handoff tests passed, including direct cache-hit indexing and empty OCR text staying non-searchable.
+- `cargo test -p resume-cli`: exit 0; all CLI tests passed.
+- `cargo clippy -p import-pipeline -p resume-cli --all-targets -- -D warnings`: exit 0.
+
+Workspace acceptance:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+```
+
+Output summary:
+
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+Sub-agent review fix:
+
+- Newton found two P2 issues before commit: `index_ocr_text` promoted the document to `Searchable` before full-text snapshot publish, and tests did not directly cover OCR cache-hit indexing or empty OCR text. The implementation now writes the rebuilt full-text snapshot with pending OCR documents first, then promotes document status and index state after publish succeeds. The S15 handoff suite now covers command success, cache-hit success without invoking the command, and empty successful OCR text remaining `OcrDone` with no searchable version.
+
+Scope note:
+
+- S41 adds `import_pipeline::index_ocr_text`, connects OCR worker cache-hit and command-success paths to OCR text indexing, keeps empty OCR text non-searchable as `OcrDone`, persists OCR text in local SQLite resume versions, reuses existing rule extraction/contact-hash assignment, and rebuilds the full-text index after OCR completion. It does not render multi-page PDF pages, run OCR from the daemon loop, choose/install/license a concrete OCR engine, persist bounding boxes, prove behavior on real scanned resumes, encrypt OCR text at rest, physically purge SQLite/WAL data, or validate Windows process-tree behavior.
 
 ### S9
 

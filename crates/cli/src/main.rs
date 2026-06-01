@@ -12,7 +12,7 @@ use embedder::{
     LocalEmbeddingCommandSpec,
 };
 use import_pipeline::{
-    import_root_with_options, rebuild_full_text_index, ImportOptions,
+    import_root_with_options, index_ocr_text, rebuild_full_text_index, ImportOptions,
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{
@@ -892,7 +892,7 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
 }
 
 fn run_claimed_ocr_job(
-    _data_dir: &Path,
+    data_dir: &Path,
     store: &MetaStore,
     job: &meta_store::IngestJob,
     worker_args: &OcrWorkerArgs,
@@ -926,10 +926,14 @@ fn run_claimed_ocr_job(
         .map_err(CliError::store)?
         .filter(|entry| entry.status() == meta_store::OcrPageCacheStatus::Succeeded)
     {
-        let _ = entry;
-        document.status = DocumentStatus::OcrDone;
-        document.updated_at = now;
-        store.upsert_document(&document).map_err(CliError::store)?;
+        if let Some(text) = entry.text() {
+            let _ = index_ocr_text(data_dir, store, &document.id, text, entry.confidence(), now)
+                .map_err(CliError::import)?;
+        } else {
+            document.status = DocumentStatus::OcrDone;
+            document.updated_at = now;
+            store.upsert_document(&document).map_err(CliError::store)?;
+        }
         store
             .update_job_status(&job.id, IngestJobStatus::Completed, now)
             .map_err(CliError::store)?;
@@ -975,9 +979,15 @@ fn run_claimed_ocr_job(
             store
                 .upsert_ocr_page_cache_entry(&entry)
                 .map_err(CliError::store)?;
-            document.status = DocumentStatus::OcrDone;
-            document.updated_at = now;
-            store.upsert_document(&document).map_err(CliError::store)?;
+            let _ = index_ocr_text(
+                data_dir,
+                store,
+                &document.id,
+                page.text(),
+                Some(page.confidence()),
+                now,
+            )
+            .map_err(CliError::import)?;
             store
                 .update_job_status(&job.id, IngestJobStatus::Completed, now)
                 .map_err(CliError::store)?;

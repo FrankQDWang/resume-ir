@@ -13,10 +13,10 @@ use fs_crawler::{
 };
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use meta_store::{
-    Document, DocumentStatus, EntityMention, EntityType, FileExtension, ImportScanError,
-    ImportScanErrorKind, ImportScanErrorOperation, ImportTask, ImportTaskId, ImportTaskStatus,
-    IndexState, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility,
-    UnixTimestamp,
+    Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
+    ImportScanError, ImportScanErrorKind, ImportScanErrorOperation, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexState, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_docx::DocxParser;
@@ -26,6 +26,7 @@ use sectionizer::{SectionChunk, Sectionizer};
 use text_normalizer::TextNormalizer;
 
 const PARSE_VERSION: &str = "parser-v1";
+const OCR_PARSE_VERSION: &str = "ocr-v1";
 const SCHEMA_VERSION: &str = "resume-ir-s9-v1";
 const INDEX_MANIFEST_VERSION: &str = "fulltext-s9-v1";
 
@@ -205,14 +206,112 @@ pub fn rebuild_full_text_index(
     store: &MetaStore,
     now: UnixTimestamp,
 ) -> Result<IndexRebuildSummary> {
-    let sectionizer = Sectionizer::default();
-    let index_documents = persisted_index_documents(store, &sectionizer, &BTreeSet::new())?;
-    let indexed_documents = index_documents.len();
-    let snapshot_token = index_snapshot_token(now, indexed_documents, 0, 0);
-    write_full_text_index(data_dir, &snapshot_token, index_documents)?;
+    let (snapshot_token, indexed_documents) =
+        write_rebuilt_full_text_index(data_dir, store, now, &BTreeSet::new(), Vec::new())?;
     update_index_state(store, now, snapshot_token)?;
 
     Ok(IndexRebuildSummary { indexed_documents })
+}
+
+pub fn index_ocr_text(
+    data_dir: &Path,
+    store: &MetaStore,
+    document_id: &DocumentId,
+    ocr_text: &str,
+    confidence: Option<f32>,
+    now: UnixTimestamp,
+) -> Result<OcrTextIndexSummary> {
+    let Some(mut document) = store
+        .document_by_id(document_id)
+        .map_err(ImportPipelineError::store)?
+    else {
+        return Err(ImportPipelineError {
+            kind: ImportPipelineErrorKind::Store,
+            retryable: false,
+        });
+    };
+
+    let clean_text = TextNormalizer::normalize(ocr_text).text().to_string();
+    let pending_doc_ids = BTreeSet::from([document.id.as_str().to_string()]);
+    if clean_text.trim().is_empty() {
+        let (snapshot_token, indexed_documents) =
+            write_rebuilt_full_text_index(data_dir, store, now, &pending_doc_ids, Vec::new())?;
+        document.status = DocumentStatus::OcrDone;
+        document.updated_at = now;
+        store
+            .upsert_document(&document)
+            .map_err(ImportPipelineError::store)?;
+        update_index_state(store, now, snapshot_token)?;
+        return Ok(OcrTextIndexSummary {
+            searchable: false,
+            indexed_documents,
+        });
+    }
+
+    let version_id = ResumeVersionId::from_non_secret_parts(&[
+        "ocr",
+        document.id.as_str(),
+        OCR_PARSE_VERSION,
+        SCHEMA_VERSION,
+    ]);
+    let existing_candidate_id = store
+        .resume_version_by_id(&version_id)
+        .map_err(ImportPipelineError::store)?
+        .and_then(|version| version.candidate_id);
+    store
+        .upsert_resume_version(&ResumeVersion {
+            id: version_id.clone(),
+            document_id: document.id.clone(),
+            candidate_id: existing_candidate_id,
+            parse_version: OCR_PARSE_VERSION.to_string(),
+            schema_version: SCHEMA_VERSION.to_string(),
+            language_set: language_set(&clean_text),
+            page_count: Some(1),
+            raw_text: Some(ocr_text.to_string()),
+            clean_text: Some(clean_text.clone()),
+            quality_score: Some(confidence.unwrap_or(0.5)),
+            visibility: ResumeVisibility::Searchable,
+        })
+        .map_err(ImportPipelineError::store)?;
+    let mentions = entity_mentions_from_rules(&version_id, &clean_text);
+    store
+        .replace_entity_mentions(&version_id, &mentions)
+        .map_err(ImportPipelineError::store)?;
+    assign_candidate_from_contact_mentions(data_dir, store, &version_id, &mentions)?;
+
+    let sectionizer = Sectionizer::default();
+    let pending_index_document = IndexDocument {
+        doc_id: document.id.to_string(),
+        version_id: version_id.to_string(),
+        file_name: document.file_name.clone(),
+        clean_text: clean_text.clone(),
+        sections: sections_to_index(sectionizer.sectionize(&clean_text)),
+        is_deleted: document.is_deleted,
+    };
+    let (snapshot_token, indexed_documents) = write_rebuilt_full_text_index(
+        data_dir,
+        store,
+        now,
+        &pending_doc_ids,
+        vec![pending_index_document],
+    )?;
+    document.status = DocumentStatus::Searchable;
+    document.updated_at = now;
+    store
+        .upsert_document(&document)
+        .map_err(ImportPipelineError::store)?;
+    update_index_state(store, now, snapshot_token)?;
+
+    Ok(OcrTextIndexSummary {
+        searchable: true,
+        indexed_documents,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OcrTextIndexSummary {
+    pub searchable: bool,
+    pub indexed_documents: usize,
 }
 
 fn write_full_text_index(
@@ -226,6 +325,23 @@ fn write_full_text_index(
         index_documents,
     )
     .map_err(ImportPipelineError::index)
+}
+
+fn write_rebuilt_full_text_index(
+    data_dir: &Path,
+    store: &MetaStore,
+    now: UnixTimestamp,
+    pending_doc_ids: &BTreeSet<String>,
+    pending_index_documents: Vec<IndexDocument>,
+) -> Result<(String, usize)> {
+    let sectionizer = Sectionizer::default();
+    let mut index_documents = persisted_index_documents(store, &sectionizer, pending_doc_ids)?;
+    index_documents.extend(pending_index_documents);
+    let indexed_documents = index_documents.len();
+    let snapshot_token = index_snapshot_token(now, indexed_documents, 0, 0);
+    write_full_text_index(data_dir, &snapshot_token, index_documents)?;
+
+    Ok((snapshot_token, indexed_documents))
 }
 
 fn update_index_state(store: &MetaStore, now: UnixTimestamp, snapshot_token: String) -> Result<()> {
