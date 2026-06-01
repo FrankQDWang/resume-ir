@@ -13,6 +13,7 @@ path = "src/main.rs"
 import-pipeline = { path = "../import-pipeline" }
 index-fulltext = { path = "../index-fulltext" }
 meta-store = { path = "../meta-store" }
+ocr-client = { path = "../ocr-client" }
 privacy = { path = "../privacy" }
 rank-fusion = { path = "../rank-fusion" }
 search-planner = { path = "../search-planner" }

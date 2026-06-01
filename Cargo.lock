@@ -1046,6 +1046,7 @@ dependencies = [
  "import-pipeline",
  "index-fulltext",
  "meta-store",
+ "ocr-client",
  "privacy",
  "rank-fusion",
  "search-planner",

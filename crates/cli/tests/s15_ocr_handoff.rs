@@ -2,7 +2,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{DocumentStatus, IngestJobKind, IngestJobStatus, MetaStore, UnixTimestamp};
+use meta_store::{
+    DocumentStatus, IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheKey, OcrPageCacheStatus,
+    UnixTimestamp,
+};
 
 #[test]
 fn import_scanned_pdf_creates_durable_ocr_document_job_without_searchable_text() {
@@ -105,6 +108,122 @@ fn repeated_import_does_not_duplicate_existing_ocr_document_jobs() {
     remove_dir(&data_dir);
 }
 
+#[test]
+fn ocr_worker_without_command_reports_blocked_and_leaves_job_queued() {
+    let data_dir = temp_dir("ocr-worker-no-command-data");
+    let fixture_root = fixture_root();
+    import_fixtures(&data_dir, &fixture_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "ocr-worker", "--once"])
+        .output()
+        .expect("run ocr worker without command");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ocr worker blocked: local OCR command not configured"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let retryable = store.retryable_jobs().unwrap();
+    assert_eq!(retryable.len(), 1);
+    assert_eq!(retryable[0].status, IngestJobStatus::Queued);
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn ocr_worker_executes_local_command_and_persists_page_cache_without_searchable_text() {
+    let data_dir = temp_dir("ocr-worker-command-data");
+    let fixture_root = fixture_root();
+    let command = write_fixture_executable(
+        "fixture-ocr-worker",
+        r#"#!/bin/sh
+input_size="$(wc -c < "$RESUME_IR_OCR_INPUT_PATH" | tr -d ' ')"
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.73\n'
+printf 'text:\n'
+printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME_IR_OCR_PAGE_NO"
+"#,
+    );
+    import_fixtures(&data_dir, &fixture_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+            "--engine-profile",
+            "fixture-engine",
+        ])
+        .output()
+        .expect("run ocr worker with local command");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr worker: completed"));
+    assert!(stdout.contains("documents processed: 1"));
+    assert!(stdout.contains("cache writes: 1"));
+    assert!(!stdout.contains("OCRS31UniqueToken"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::OcrDone);
+    assert!(store.retryable_jobs().unwrap().is_empty());
+    let cache_key = OcrPageCacheKey::new(
+        scanned.content_hash.expect("content hash"),
+        1,
+        300,
+        "eng",
+        "balanced",
+    )
+    .unwrap();
+    let cache_entry = store
+        .ocr_page_cache_entry(&cache_key)
+        .unwrap()
+        .expect("OCR cache entry");
+    assert_eq!(cache_entry.status(), OcrPageCacheStatus::Succeeded);
+    assert_eq!(cache_entry.confidence(), Some(0.73));
+    assert_eq!(cache_entry.engine_profile(), Some("fixture-engine"));
+    assert!(cache_entry.text().unwrap().contains("OCRS31UniqueToken"));
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "OCRS31UniqueToken",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run resume-cli search for cached OCR text");
+    assert!(search.status.success());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(
+        search_stdout.contains("results: 0"),
+        "stdout:\n{search_stdout}"
+    );
+
+    remove_dir(&data_dir);
+}
+
 fn import_fixtures(data_dir: &Path, fixture_root: &Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -122,6 +241,15 @@ fn import_fixtures(data_dir: &Path, fixture_root: &Path) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn scanned_document(store: &MetaStore) -> meta_store::Document {
+    store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-scanned-resume.pdf")
+        .expect("scanned synthetic fixture is persisted")
 }
 
 fn fixture_root() -> PathBuf {
@@ -146,4 +274,17 @@ fn path_str(path: &Path) -> &str {
 
 fn remove_dir(path: &Path) {
     let _ = std::fs::remove_dir_all(path);
+}
+
+#[cfg(unix)]
+fn write_fixture_executable(name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = temp_dir("ocr-worker-command-bin");
+    let path = directory.join(name);
+    std::fs::write(&path, body).unwrap();
+    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&path, permissions).unwrap();
+    path
 }
