@@ -836,8 +836,14 @@ fn run_embedding_worker_once(
         .embedding_dimension
         .ok_or_else(|| DaemonError::usage(run_usage()))?;
     let now = current_timestamp()?;
-    enqueue_embedding_jobs_for_candidates(store, options.embedding_max_docs, now)?;
-    let jobs = claim_embedding_jobs(store, options.embedding_max_docs, now)?;
+    enqueue_embedding_jobs_for_candidates(
+        store,
+        options.embedding_max_docs,
+        model_id,
+        dimension,
+        now,
+    )?;
+    let jobs = claim_embedding_jobs(store, options.embedding_max_docs, model_id, dimension, now)?;
     let documents_considered = jobs.len();
     if jobs.is_empty() {
         return Ok(EmbeddingWorkerSummary::default());
@@ -925,6 +931,8 @@ fn run_embedding_worker_once(
 fn enqueue_embedding_jobs_for_candidates(
     store: &MetaStore,
     max_docs: usize,
+    model_id: &str,
+    dimension: usize,
     now: UnixTimestamp,
 ) -> Result<usize> {
     let mut pending_jobs = 0_usize;
@@ -950,7 +958,13 @@ fn enqueue_embedding_jobs_for_candidates(
                 continue;
             };
             let enqueued = store
-                .enqueue_embedding_job_for_resume_version(&document.id, &version.id, now)
+                .enqueue_embedding_job_for_resume_version(
+                    &document.id,
+                    &version.id,
+                    model_id,
+                    dimension,
+                    now,
+                )
                 .map_err(DaemonError::store)?;
             if embedding_job_is_retryable(&enqueued.job) {
                 pending_jobs += 1;
@@ -967,12 +981,14 @@ fn enqueue_embedding_jobs_for_candidates(
 fn claim_embedding_jobs(
     store: &MetaStore,
     max_docs: usize,
+    model_id: &str,
+    dimension: usize,
     now: UnixTimestamp,
 ) -> Result<Vec<IngestJob>> {
     let mut jobs = Vec::new();
     while jobs.len() < max_docs {
         let Some(job) = store
-            .claim_next_embedding_job(now)
+            .claim_next_embedding_job(model_id, dimension, now)
             .map_err(DaemonError::store)?
         else {
             break;

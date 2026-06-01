@@ -24,6 +24,7 @@ const SCHEMA_VERSION_V9: u32 = 9;
 const SCHEMA_VERSION_V10: u32 = 10;
 const SCHEMA_VERSION_V11: u32 = 11;
 const SCHEMA_VERSION_V12: u32 = 12;
+const SCHEMA_VERSION_V13: u32 = 13;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -36,6 +37,10 @@ const RESUME_VERSION_COLUMNS: &str = "\
 const INGEST_JOB_COLUMNS: &str = "\
     id, document_id, resume_version_id, kind, status, attempt_count, max_attempts, \
     queued_at_seconds, started_at_seconds, finished_at_seconds, updated_at_seconds";
+const INGEST_JOB_COLUMNS_JOB_ALIAS: &str = "\
+    job.id, job.document_id, job.resume_version_id, job.kind, job.status, \
+    job.attempt_count, job.max_attempts, job.queued_at_seconds, \
+    job.started_at_seconds, job.finished_at_seconds, job.updated_at_seconds";
 const IMPORT_TASK_COLUMNS: &str = "\
     id, root_path, status, queued_at_seconds, started_at_seconds, finished_at_seconds, \
     updated_at_seconds";
@@ -121,6 +126,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V10, SCHEMA_V10),
             (SCHEMA_VERSION_V11, SCHEMA_V11),
             (SCHEMA_VERSION_V12, SCHEMA_V12),
+            (SCHEMA_VERSION_V13, SCHEMA_V13),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -873,8 +879,11 @@ impl MetaStore {
         &self,
         document_id: &DocumentId,
         resume_version_id: &ResumeVersionId,
+        model_id: &str,
+        dimension: usize,
         queued_at: UnixTimestamp,
     ) -> Result<EnqueuedIngestJob> {
+        validate_embedding_job_spec(model_id, dimension)?;
         let version = self
             .resume_version_by_id(resume_version_id)?
             .ok_or_else(|| MetaStoreError::not_found("resume_version"))?;
@@ -884,10 +893,13 @@ impl MetaStore {
             ));
         }
 
+        let dimension_label = dimension.to_string();
         let id = IngestJobId::from_non_secret_parts(&[
             "embedding-version",
             document_id.as_str(),
             resume_version_id.as_str(),
+            model_id,
+            dimension_label.as_str(),
         ]);
         let job = IngestJob {
             id,
@@ -909,16 +921,21 @@ impl MetaStore {
                 let mut statement = transaction
                     .prepare(
                         "\
-                        SELECT id
-                        FROM ingest_job
-                        WHERE resume_version_id = ?1 AND kind = ?2
-                        ORDER BY rowid
+                        SELECT job.id
+                        FROM ingest_job AS job
+                        JOIN embedding_job_spec AS spec ON spec.ingest_job_id = job.id
+                        WHERE spec.resume_version_id = ?1
+                            AND spec.model_id = ?2
+                            AND spec.dimension = ?3
+                            AND job.kind = ?4
                         LIMIT 1",
                     )
                     .map_err(MetaStoreError::storage)?;
                 let mut rows = statement
                     .query(params![
                         resume_version_id.as_str(),
+                        model_id,
+                        usize_to_i64(dimension, "embedding_job_spec.dimension")?,
                         ingest_job_kind_to_storage(IngestJobKind::UpdateIndex),
                     ])
                     .map_err(MetaStoreError::storage)?;
@@ -957,13 +974,30 @@ impl MetaStore {
                         ],
                     )
                     .map_err(MetaStoreError::storage)?;
+                transaction
+                    .execute(
+                        "\
+                        INSERT INTO embedding_job_spec (
+                            ingest_job_id, resume_version_id, model_id, dimension,
+                            updated_at_seconds
+                        )
+                        VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![
+                            job.id.as_str(),
+                            resume_version_id.as_str(),
+                            model_id,
+                            usize_to_i64(dimension, "embedding_job_spec.dimension")?,
+                            queued_at.as_unix_seconds(),
+                        ],
+                    )
+                    .map_err(MetaStoreError::storage)?;
                 transaction.commit().map_err(MetaStoreError::storage)?;
                 true
             }
         };
 
         let job = self
-            .embedding_job_for_resume_version(resume_version_id)?
+            .embedding_job_for_resume_version(resume_version_id, model_id, dimension)?
             .ok_or_else(|| MetaStoreError::not_found("ingest_job"))?;
         Ok(EnqueuedIngestJob { job, inserted })
     }
@@ -995,20 +1029,28 @@ impl MetaStore {
     fn embedding_job_for_resume_version(
         &self,
         resume_version_id: &ResumeVersionId,
+        model_id: &str,
+        dimension: usize,
     ) -> Result<Option<IngestJob>> {
+        validate_embedding_job_spec(model_id, dimension)?;
         let connection = self.connection.borrow();
         let sql = format!(
             "\
-            SELECT {INGEST_JOB_COLUMNS}
-            FROM ingest_job
-            WHERE resume_version_id = ?1 AND kind = ?2
-            ORDER BY rowid
+            SELECT {INGEST_JOB_COLUMNS_JOB_ALIAS}
+            FROM ingest_job AS job
+            JOIN embedding_job_spec AS spec ON spec.ingest_job_id = job.id
+            WHERE spec.resume_version_id = ?1
+                AND spec.model_id = ?2
+                AND spec.dimension = ?3
+                AND job.kind = ?4
             LIMIT 1"
         );
         let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
         let mut rows = statement
             .query(params![
                 resume_version_id.as_str(),
+                model_id,
+                usize_to_i64(dimension, "embedding_job_spec.dimension")?,
                 ingest_job_kind_to_storage(IngestJobKind::UpdateIndex),
             ])
             .map_err(MetaStoreError::storage)?;
@@ -1096,8 +1138,102 @@ impl MetaStore {
         self.claim_next_job_matching(Some(kind), false, now)
     }
 
-    pub fn claim_next_embedding_job(&self, now: UnixTimestamp) -> Result<Option<IngestJob>> {
-        self.claim_next_job_matching(Some(IngestJobKind::UpdateIndex), true, now)
+    pub fn claim_next_embedding_job(
+        &self,
+        model_id: &str,
+        dimension: usize,
+        now: UnixTimestamp,
+    ) -> Result<Option<IngestJob>> {
+        validate_embedding_job_spec(model_id, dimension)?;
+        let claimed_id = {
+            let mut connection = self.connection.borrow_mut();
+            let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+            let candidate_id = {
+                let mut statement = transaction
+                    .prepare(
+                        "\
+                        SELECT job.id
+                        FROM ingest_job AS job
+                        JOIN embedding_job_spec AS spec ON spec.ingest_job_id = job.id
+                        WHERE (
+                                job.status IN (?1, ?2)
+                                OR (job.status = ?3 AND job.attempt_count < job.max_attempts)
+                            )
+                            AND job.kind = ?4
+                            AND job.resume_version_id IS NOT NULL
+                            AND spec.model_id = ?5
+                            AND spec.dimension = ?6
+                        ORDER BY job.queued_at_seconds, job.rowid
+                        LIMIT 1",
+                    )
+                    .map_err(MetaStoreError::storage)?;
+                let mut rows = statement
+                    .query(params![
+                        ingest_job_status_to_storage(IngestJobStatus::Queued),
+                        ingest_job_status_to_storage(IngestJobStatus::Interrupted),
+                        ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                        ingest_job_kind_to_storage(IngestJobKind::UpdateIndex),
+                        model_id,
+                        usize_to_i64(dimension, "embedding_job_spec.dimension")?,
+                    ])
+                    .map_err(MetaStoreError::storage)?;
+
+                match rows.next().map_err(MetaStoreError::storage)? {
+                    Some(row) => Some(read_string(row, 0)?),
+                    None => None,
+                }
+            };
+
+            let Some(candidate_id) = candidate_id else {
+                transaction.commit().map_err(MetaStoreError::storage)?;
+                return Ok(None);
+            };
+
+            let now_seconds = now.as_unix_seconds();
+            let changed = transaction
+                .execute(
+                    "\
+                    UPDATE ingest_job
+                    SET
+                        status = ?1,
+                        attempt_count = attempt_count + 1,
+                        started_at_seconds = ?2,
+                        finished_at_seconds = NULL,
+                        updated_at_seconds = ?2
+                    WHERE id = ?3
+                        AND (
+                            status IN (?4, ?5)
+                            OR (status = ?6 AND attempt_count < max_attempts)
+                        )
+                        AND kind = ?7
+                        AND resume_version_id IS NOT NULL",
+                    params![
+                        ingest_job_status_to_storage(IngestJobStatus::Running),
+                        now_seconds,
+                        candidate_id,
+                        ingest_job_status_to_storage(IngestJobStatus::Queued),
+                        ingest_job_status_to_storage(IngestJobStatus::Interrupted),
+                        ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                        ingest_job_kind_to_storage(IngestJobKind::UpdateIndex),
+                    ],
+                )
+                .map_err(MetaStoreError::storage)?;
+
+            if changed == 0 {
+                transaction.commit().map_err(MetaStoreError::storage)?;
+                return Ok(None);
+            }
+
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            candidate_id
+        };
+
+        let claimed_id = IngestJobId::from_str(&claimed_id)
+            .map_err(|_| MetaStoreError::invalid_value("ingest_job.id"))?;
+
+        self.ingest_job_by_id(&claimed_id)?
+            .ok_or_else(|| MetaStoreError::not_found("ingest_job"))
+            .map(Some)
     }
 
     fn claim_next_job_matching(
@@ -1898,6 +2034,7 @@ impl MetaStore {
                 "\
                 SELECT COUNT(*)
                 FROM ingest_job AS job
+                JOIN embedding_job_spec AS spec ON spec.ingest_job_id = job.id
                 JOIN document AS document ON document.id = job.document_id
                 JOIN resume_version AS version ON version.id = job.resume_version_id
                 WHERE job.kind = ?1
@@ -3017,6 +3154,31 @@ CREATE INDEX ingest_job_embedding_queue_idx
     WHERE kind = 'update_index' AND resume_version_id IS NOT NULL;
 "#;
 
+const SCHEMA_V13: &str = r#"
+DROP INDEX IF EXISTS ingest_job_embedding_version_unique_idx;
+
+CREATE TABLE embedding_job_spec (
+    ingest_job_id TEXT PRIMARY KEY,
+    resume_version_id TEXT NOT NULL,
+    model_id TEXT NOT NULL CHECK (
+        length(trim(model_id)) > 0
+        AND instr(model_id, char(10)) = 0
+        AND instr(model_id, char(13)) = 0
+        AND instr(model_id, char(9)) = 0
+    ),
+    dimension INTEGER NOT NULL CHECK (dimension > 0),
+    updated_at_seconds INTEGER NOT NULL,
+    FOREIGN KEY (ingest_job_id) REFERENCES ingest_job(id) ON DELETE CASCADE,
+    FOREIGN KEY (resume_version_id) REFERENCES resume_version(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX embedding_job_spec_unique_idx
+    ON embedding_job_spec(resume_version_id, model_id, dimension);
+
+CREATE INDEX embedding_job_spec_model_idx
+    ON embedding_job_spec(model_id, dimension, resume_version_id);
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -3393,6 +3555,23 @@ fn validate_candidate(candidate: &Candidate) -> Result<()> {
         if !merge_confidence.is_finite() || !(0.0..=1.0).contains(&merge_confidence) {
             return Err(MetaStoreError::invalid_value("candidate.merge_confidence"));
         }
+    }
+
+    Ok(())
+}
+
+fn validate_embedding_job_spec(model_id: &str, dimension: usize) -> Result<()> {
+    if model_id.trim().is_empty()
+        || model_id.contains('\n')
+        || model_id.contains('\r')
+        || model_id.contains('\t')
+    {
+        return Err(MetaStoreError::invalid_value("embedding_job_spec.model_id"));
+    }
+    if dimension == 0 {
+        return Err(MetaStoreError::invalid_value(
+            "embedding_job_spec.dimension",
+        ));
     }
 
     Ok(())

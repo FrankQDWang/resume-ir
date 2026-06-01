@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S52 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S53 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -43,14 +43,15 @@ obsolete preliminary files and checklists are not product scope.
   dictionaries, normalization, soft-dedupe scoring, labeled F1 metrics,
   encrypted local storage, and physical purge.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
-  snapshot, linear KNN, RRF helpers, embedding worker, durable per-version
-  embedding jobs, and CLI semantic/hybrid query execution now exist. The
-  daemon can now execute a configured local embedding command in one-shot or
-  long-running worker mode, persist a vector snapshot while serving status IPC,
-  and skip already completed version jobs across daemon restarts. Missing or
-  BLOCKED work includes licensed model selection/distribution, ONNX/HNSW/FAISS
-  or equivalent ANN, model/version invalidation, section vectors, semantic
-  quality metrics, and real performance proof.
+  snapshot, linear KNN, RRF helpers, embedding worker, model/dimension-scoped
+  durable per-version embedding jobs, and CLI semantic/hybrid query execution
+  now exist. The daemon can now execute a configured local embedding command in
+  one-shot or long-running worker mode, persist a vector snapshot while serving
+  status IPC, skip already completed version jobs across daemon restarts, and
+  re-embed completed versions when the configured model id or dimension changes.
+  Missing or BLOCKED work includes licensed model selection/distribution,
+  ONNX/HNSW/FAISS or equivalent ANN, model-scoped vector query isolation,
+  section vectors, semantic quality metrics, and real performance proof.
 - P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
   cache schema, local OCR command client, timeout/cancel/temp cleanup, and OCR
   text indexing exist. The daemon can now claim queued OCR jobs, execute a
@@ -126,8 +127,75 @@ obsolete preliminary files and checklists are not product scope.
 | S50 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this daemon OCR worker slice; real PDF page rendering, multi-page OCR, bbox persistence, concrete OCR engine install/license, OCR backpressure, encrypted OCR text purge, real scanned-resume witness runs, daemon embedding worker, and Windows/macOS service/process validation remain not complete or BLOCKED. |
 | S51 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this daemon local embedding worker slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, durable per-version embedding job state, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 | S52 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this durable embedding job-state slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, model/version invalidation, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
+| S53 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this model/dimension-scoped durable embedding job slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, model-scoped vector query isolation, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S53
+
+Design target:
+
+- S53 fixes daemon embedding job invalidation when the configured model id or
+  dimension changes. The metadata store now has a v13 `embedding_job_spec`
+  table and scopes durable embedding jobs by `resume_version_id`, model id, and
+  dimension.
+- The daemon now enqueues and claims embedding jobs only for the active
+  model/dimension pair, so completed jobs for one model no longer suppress
+  embedding work for a different model or dimension.
+- This slice still requires a user-provided local command, model id, and
+  dimension. It does not choose, bundle, download, license, or claim a
+  production embedding model.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store embedding_update_jobs_are_scoped_by_model_and_dimension -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs daemon_embedding_worker_once_reembeds_completed_jobs_for_new_model -- --exact
+```
+
+Output summary:
+
+- Before implementation, the meta-store test failed to compile because
+  `enqueue_embedding_job_for_resume_version` and `claim_next_embedding_job`
+  did not accept model id or dimension.
+- Before implementation, the daemon model-change test failed because the second
+  run with a different model did not process the completed versions again.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `cargo test -p meta-store`: exit 0; 39 tests passed. Coverage includes v13
+  migration, model/dimension-scoped embedding job idempotence, and
+  model/dimension-filtered embedding-job claim.
+- `cargo test -p resume-daemon --test s52_embedding_jobs`: exit 0; 3 tests
+  passed. Coverage includes restart skip for the same model and re-embedding
+  when the model id changes.
+- `cargo test -p resume-daemon --test s51_embedding_worker`: exit 0; 2 tests
+  passed, preserving daemon embedding worker behavior.
+- `cargo test -p resume-daemon`: exit 0.
+- `cargo clippy --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0.
+
+Scope note:
+
+- S53 does not choose or distribute a licensed model, add ANN/HNSW/FAISS, add
+  model-scoped vector query isolation, create section vectors, run semantic
+  quality metrics, prove production-scale vector performance, enforce OS-level
+  no-network sandboxing for configured commands, or validate Windows/macOS
+  command behavior. Those remain incomplete or BLOCKED.
 
 ### S52
 

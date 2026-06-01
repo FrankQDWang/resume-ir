@@ -23,9 +23,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
     );
-    assert_eq!(store.schema_version().unwrap(), 12);
+    assert_eq!(store.schema_version().unwrap(), 13);
 
     for table_name in [
         "candidate",
@@ -39,13 +39,14 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "worker_task_control",
         "import_scan_scope",
         "import_scan_error",
+        "embedding_job_spec",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 12);
+    assert_eq!(store.schema_version().unwrap(), 13);
 }
 
 #[test]
@@ -827,10 +828,22 @@ fn embedding_update_jobs_are_durable_idempotent_and_claimable_by_resume_version(
         store.insert_ingest_job(&unrelated_update_index).unwrap();
 
         let first = store
-            .enqueue_embedding_job_for_resume_version(&document.id, &version.id, first_queued_at)
+            .enqueue_embedding_job_for_resume_version(
+                &document.id,
+                &version.id,
+                "fixture-local-model",
+                4,
+                first_queued_at,
+            )
             .unwrap();
         let second = store
-            .enqueue_embedding_job_for_resume_version(&document.id, &version.id, second_queued_at)
+            .enqueue_embedding_job_for_resume_version(
+                &document.id,
+                &version.id,
+                "fixture-local-model",
+                4,
+                second_queued_at,
+            )
             .unwrap();
 
         assert!(first.inserted);
@@ -846,7 +859,7 @@ fn embedding_update_jobs_are_durable_idempotent_and_claimable_by_resume_version(
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
         let claimed = reopened
-            .claim_next_embedding_job(claim_at)
+            .claim_next_embedding_job("fixture-local-model", 4, claim_at)
             .unwrap()
             .unwrap();
 
@@ -868,10 +881,108 @@ fn embedding_update_jobs_are_durable_idempotent_and_claimable_by_resume_version(
                 .status,
             IngestJobStatus::Completed
         );
-        assert_eq!(reopened.claim_next_embedding_job(claim_at).unwrap(), None);
+        assert_eq!(
+            reopened
+                .claim_next_embedding_job("fixture-local-model", 4, claim_at)
+                .unwrap(),
+            None
+        );
     }
 
     remove_temp_db(&db_path);
+}
+
+#[test]
+fn embedding_update_jobs_are_scoped_by_model_and_dimension() {
+    let store = migrated_store();
+    let document = document(
+        "embedding-model-scope-document-placeholder",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let version = resume_version(
+        "embedding-model-scope-version-placeholder",
+        document.id.clone(),
+    );
+    let queued_at = UnixTimestamp::from_unix_seconds(1_800_000_730);
+    let claim_at = UnixTimestamp::from_unix_seconds(1_800_000_740);
+    let complete_at = UnixTimestamp::from_unix_seconds(1_800_000_750);
+
+    store.upsert_document(&document).unwrap();
+    store.upsert_resume_version(&version).unwrap();
+
+    let first = store
+        .enqueue_embedding_job_for_resume_version(
+            &document.id,
+            &version.id,
+            "model-a",
+            4,
+            queued_at,
+        )
+        .unwrap();
+    let duplicate = store
+        .enqueue_embedding_job_for_resume_version(
+            &document.id,
+            &version.id,
+            "model-a",
+            4,
+            queued_at,
+        )
+        .unwrap();
+    assert!(first.inserted);
+    assert!(!duplicate.inserted);
+    assert_eq!(first.job.id, duplicate.job.id);
+
+    let claimed_first = store
+        .claim_next_embedding_job("model-a", 4, claim_at)
+        .unwrap()
+        .unwrap();
+    store
+        .update_job_status(&claimed_first.id, IngestJobStatus::Completed, complete_at)
+        .unwrap();
+
+    let second_model = store
+        .enqueue_embedding_job_for_resume_version(
+            &document.id,
+            &version.id,
+            "model-b",
+            4,
+            queued_at,
+        )
+        .unwrap();
+    let second_dimension = store
+        .enqueue_embedding_job_for_resume_version(
+            &document.id,
+            &version.id,
+            "model-a",
+            8,
+            queued_at,
+        )
+        .unwrap();
+
+    assert!(second_model.inserted);
+    assert!(second_dimension.inserted);
+    assert_ne!(second_model.job.id, first.job.id);
+    assert_ne!(second_dimension.job.id, first.job.id);
+    assert_eq!(store.status_summary().unwrap().embedding_queue_depth, 2);
+
+    let claimed_second_model = store
+        .claim_next_embedding_job("model-b", 4, claim_at)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed_second_model.id, second_model.job.id);
+    assert_eq!(
+        store
+            .claim_next_embedding_job("model-b", 4, claim_at)
+            .unwrap(),
+        None
+    );
+
+    let claimed_second_dimension = store
+        .claim_next_embedding_job("model-a", 8, claim_at)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed_second_dimension.id, second_dimension.job.id);
 }
 
 #[test]
@@ -1186,7 +1297,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7]);
-        assert_eq!(reopened.schema_version().unwrap(), 12);
+        assert_eq!(reopened.schema_version().unwrap(), 13);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1412,7 +1523,13 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
         resume_version("status-embedding-version", embedding_waiting.id.clone());
     store.upsert_resume_version(&embedding_version).unwrap();
     store
-        .enqueue_embedding_job_for_resume_version(&embedding_waiting.id, &embedding_version.id, now)
+        .enqueue_embedding_job_for_resume_version(
+            &embedding_waiting.id,
+            &embedding_version.id,
+            "fixture-local-model",
+            4,
+            now,
+        )
         .unwrap();
 
     let running = job(
@@ -1485,7 +1602,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 12);
+        assert_eq!(reopened.schema_version().unwrap(), 13);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -1824,6 +1941,9 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             .execute("DROP TABLE import_scan_error", [])
             .unwrap();
         connection
+            .execute("DROP TABLE embedding_job_spec", [])
+            .unwrap();
+        connection
             .execute(
                 "DROP INDEX IF EXISTS ingest_job_ocr_document_unique_idx",
                 [],
@@ -1834,7 +1954,16 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             .unwrap();
         connection
             .execute(
-                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11)",
+                "DROP INDEX IF EXISTS ingest_job_embedding_version_unique_idx",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute("DROP INDEX IF EXISTS ingest_job_embedding_queue_idx", [])
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)",
                 [],
             )
             .unwrap();
@@ -1843,8 +1972,11 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
-        assert_eq!(reopened.schema_version().unwrap(), 12);
+        assert_eq!(
+            report.applied_versions(),
+            &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        );
+        assert_eq!(reopened.schema_version().unwrap(), 13);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -1876,7 +2008,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 12);
+        assert_eq!(reopened.schema_version().unwrap(), 13);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

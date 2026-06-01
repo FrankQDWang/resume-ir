@@ -46,7 +46,7 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.5,0
     let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
     store.run_migrations().unwrap();
     for (document_id, version_id) in &versions {
-        let job_id = embedding_job_id(document_id, version_id);
+        let job_id = embedding_job_id(document_id, version_id, "fixture-local-model", 4);
         let job = store
             .ingest_job_by_id(&job_id)
             .unwrap()
@@ -109,7 +109,64 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
 }
 
 #[cfg(unix)]
+#[test]
+fn daemon_embedding_worker_once_reembeds_completed_jobs_for_new_model() {
+    let data_dir = temp_dir("embedding-jobs-model-change-data");
+    let (_private_root, _versions) = seed_searchable_resume_versions(&data_dir);
+    let command = write_fixture_executable(
+        "fixture-daemon-embedding-jobs-model-change",
+        r#"#!/bin/sh
+counter="$(dirname "$0")/counter.txt"
+count=0
+if [ -f "$counter" ]; then
+  count="$(cat "$counter")"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$counter"
+model_id="$(awk -F '=' '/^model_id=/ { print $2 }' "$RESUME_IR_EMBEDDING_INPUT_PATH")"
+dimension="$(awk -F '=' '/^dimension=/ { print $2 }' "$RESUME_IR_EMBEDDING_INPUT_PATH")"
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=%s\n' "$model_id"
+printf 'dimension=%s\n' "$dimension"
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.25,0.25,0.25,0.25\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+
+    let first = run_embedding_worker_once_with_model(&data_dir, &command, "fixture-local-model-a");
+    assert!(
+        first.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(String::from_utf8_lossy(&first.stdout).contains("embedding worker processed: 2"));
+    assert_eq!(read_counter(&command), 1);
+
+    let second = run_embedding_worker_once_with_model(&data_dir, &command, "fixture-local-model-b");
+    assert!(
+        second.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert!(String::from_utf8_lossy(&second.stdout).contains("embedding worker processed: 2"));
+    assert_eq!(read_counter(&command), 2);
+    assert_vector_snapshot(&data_dir, 4, 4);
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
 fn run_embedding_worker_once(data_dir: &Path, command: &Path) -> std::process::Output {
+    run_embedding_worker_once_with_model(data_dir, command, "fixture-local-model")
+}
+
+#[cfg(unix)]
+fn run_embedding_worker_once_with_model(
+    data_dir: &Path,
+    command: &Path,
+    model_id: &str,
+) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
             "--data-dir",
@@ -121,7 +178,7 @@ fn run_embedding_worker_once(data_dir: &Path, command: &Path) -> std::process::O
             "--embedding-command",
             path_str(command),
             "--embedding-model-id",
-            "fixture-local-model",
+            model_id,
             "--embedding-dimension",
             "4",
             "--embedding-max-docs",
@@ -194,11 +251,19 @@ fn seed_searchable_resume_versions(
     (private_root, versions)
 }
 
-fn embedding_job_id(document_id: &DocumentId, version_id: &ResumeVersionId) -> IngestJobId {
+fn embedding_job_id(
+    document_id: &DocumentId,
+    version_id: &ResumeVersionId,
+    model_id: &str,
+    dimension: usize,
+) -> IngestJobId {
+    let dimension = dimension.to_string();
     IngestJobId::from_non_secret_parts(&[
         "embedding-version",
         document_id.as_str(),
         version_id.as_str(),
+        model_id,
+        dimension.as_str(),
     ])
 }
 
