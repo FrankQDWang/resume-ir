@@ -6,7 +6,7 @@ This file tracks long-running Goal execution against
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S29 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S30 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -44,6 +44,7 @@ This file tracks long-running Goal execution against
 | S27 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p fs-crawler`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p fs-crawler -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this local discovery-profile slice; default whole-machine root presets, multi-root CLI/UI, progress/cancel/budget limits, persisted scan-profile schema, symlink cycle protection if follow-symlink is later enabled, real local resume witness runs, and cross-platform root/exclusion validation remain not complete. |
 | S28 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this multi-root CLI import slice; automatic default root presets, persisted scan scope metadata, import progress/cancel, per-root partial-failure UX, true atomic multi-root transaction semantics, real local resume witness runs, and cross-platform root path validation remain not complete. |
 | S29 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client`, `/Users/frankqdwang/.cargo/bin/cargo test -p ingest-scheduler`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p ocr-client -p ingest-scheduler --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this local OCR command execution client slice; concrete OCR engine selection/license/install, PDF page rendering, OCR cache persistence, worker queue integration, searchable OCR text indexing, bbox persistence, full pause/resume worker recovery, real scanned-resume witness run, and Windows command execution validation remain not complete or BLOCKED. |
+| S30 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this SQLite OCR page cache slice; PDF page rendering, OCR worker queue integration, cache lookup/write from actual OCR execution, bbox storage, full-text indexing of OCR output, cache GC/retention, real scanned-resume witness run, and SQLCipher/physical purge remain not complete. |
 
 ## Command Log
 
@@ -1394,6 +1395,50 @@ Sub-agent review:
 Scope note:
 
 - S29 adds a production local command OCR client that launches a configured local executable, passes rendered page bytes through a private temporary local input file, supplies page/options via environment variables, parses only `resume-ir-ocr-v1` stdout with valid confidence and text, enforces page timeout, kills on cancellation, terminates Unix descendant processes in the OCR process group, and redacts debug/error surfaces. It does not bundle or license a concrete OCR engine, render PDF pages into images, persist OCR page cache/results, connect the durable OCR queue to this client, index OCR text, persist bbox evidence, run a real scanned-resume witness, implement Windows job-object process-tree termination, or validate Windows command execution.
+
+### S30
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store ocr_page_cache
+```
+
+Output summary:
+
+- Before implementation, `meta-store` failed because `OcrPageCacheKey`, `OcrPageCacheEntry`, `OcrPageCacheStatus`, `MetaStore::upsert_ocr_page_cache_entry`, and `MetaStore::ocr_page_cache_entry` did not exist.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `cargo test -p meta-store`: exit 0; 28 meta-store tests passed, including V7 migration creation, OCR page cache success/failure upsert, redacted Debug output, key lookup, and invalid key/confidence rejection.
+- `cargo clippy -p meta-store --all-targets -- -D warnings`: exit 0.
+
+Workspace acceptance:
+
+```bash
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+```
+
+Output summary:
+
+- `git diff --check`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+Scope note:
+
+- S30 adds a V7 SQLite OCR page cache table plus redacted key/result APIs for success and retryable/permanent failures. It does not connect the cache to real OCR execution, render PDF pages, store bbox evidence, index OCR output, run a scanned-resume witness, implement cache GC/retention, or encrypt/purge the cached OCR text beyond existing local SQLite behavior.
 
 ### S9
 

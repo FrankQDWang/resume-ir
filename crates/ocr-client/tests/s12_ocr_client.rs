@@ -97,7 +97,7 @@ printf 'page=%s dpi=%s lang=%s profile=%s bytes=%s\n' \
     let page = client
         .recognize_page(
             ocr_request(2, b"SYNTHETIC IMAGE BYTES".to_vec()),
-            OcrWorkerBudget::new(1_000).unwrap(),
+            OcrWorkerBudget::new(5_000).unwrap(),
             &CancellationToken::new(),
         )
         .unwrap();
@@ -251,7 +251,7 @@ printf 'mode=%s\n' "$mode"
     let page = client
         .recognize_page(
             ocr_request(1, b"SYNTHETIC IMAGE BYTES".to_vec()),
-            OcrWorkerBudget::new(1_000).unwrap(),
+            OcrWorkerBudget::new(5_000).unwrap(),
             &CancellationToken::new(),
         )
         .unwrap();
@@ -275,7 +275,7 @@ printf 'resume-ir-ocr-v1\r\nconfidence=0.77\r\ntext:\r\ncrlf text\r\n'
     let page = client
         .recognize_page(
             ocr_request(1, b"SYNTHETIC IMAGE BYTES".to_vec()),
-            OcrWorkerBudget::new(1_000).unwrap(),
+            OcrWorkerBudget::new(5_000).unwrap(),
             &CancellationToken::new(),
         )
         .unwrap();
@@ -300,7 +300,7 @@ printf 'plain text from wrong binary\n'
     let error = client
         .recognize_page(
             ocr_request(1, b"SYNTHETIC IMAGE BYTES".to_vec()),
-            OcrWorkerBudget::new(1_000).unwrap(),
+            OcrWorkerBudget::new(5_000).unwrap(),
             &CancellationToken::new(),
         )
         .unwrap_err();
@@ -324,7 +324,7 @@ printf 'resume-ir-ocr-v1\nconfidence=1.5\ntext:\ntext\n'
     let error = client
         .recognize_page(
             ocr_request(1, b"SYNTHETIC IMAGE BYTES".to_vec()),
-            OcrWorkerBudget::new(1_000).unwrap(),
+            OcrWorkerBudget::new(5_000).unwrap(),
             &CancellationToken::new(),
         )
         .unwrap_err();
@@ -348,7 +348,7 @@ printf 'resume-ir-ocr-v1\nconfidence=not-a-number\ntext:\ntext\n'
     let error = client
         .recognize_page(
             ocr_request(1, b"SYNTHETIC IMAGE BYTES".to_vec()),
-            OcrWorkerBudget::new(1_000).unwrap(),
+            OcrWorkerBudget::new(5_000).unwrap(),
             &CancellationToken::new(),
         )
         .unwrap_err();

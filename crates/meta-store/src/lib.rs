@@ -18,6 +18,7 @@ const SCHEMA_VERSION_V3: u32 = 3;
 const SCHEMA_VERSION_V4: u32 = 4;
 const SCHEMA_VERSION_V5: u32 = 5;
 const SCHEMA_VERSION_V6: u32 = 6;
+const SCHEMA_VERSION_V7: u32 = 7;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -36,6 +37,9 @@ const IMPORT_TASK_COLUMNS: &str = "\
 const ENTITY_MENTION_COLUMNS: &str = "\
     id, resume_version_id, section_id, entity_type, raw_value, normalized_value, \
     span_start, span_end, confidence, extractor";
+const OCR_PAGE_CACHE_COLUMNS: &str = "\
+    file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile, text, confidence, \
+    engine_profile, duration_ms, status, error_kind, updated_at_seconds";
 
 pub fn crate_name() -> &'static str {
     "meta-store"
@@ -97,6 +101,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V4, SCHEMA_V4),
             (SCHEMA_VERSION_V5, SCHEMA_V5),
             (SCHEMA_VERSION_V6, SCHEMA_V6),
+            (SCHEMA_VERSION_V7, SCHEMA_V7),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -565,6 +570,78 @@ impl MetaStore {
         }
 
         Ok(mentions)
+    }
+
+    pub fn upsert_ocr_page_cache_entry(&self, entry: &OcrPageCacheEntry) -> Result<()> {
+        validate_ocr_page_cache_entry(entry)?;
+        let connection = self.connection.borrow();
+        connection
+            .execute(
+                "\
+                INSERT INTO ocr_page_cache (
+                    file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile, text,
+                    confidence, engine_profile, duration_ms, status, error_kind, updated_at_seconds
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                ON CONFLICT(file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile)
+                DO UPDATE SET
+                    text = excluded.text,
+                    confidence = excluded.confidence,
+                    engine_profile = excluded.engine_profile,
+                    duration_ms = excluded.duration_ms,
+                    status = excluded.status,
+                    error_kind = excluded.error_kind,
+                    updated_at_seconds = excluded.updated_at_seconds",
+                params![
+                    entry.key.file_content_hash.as_str(),
+                    u32_to_i64(entry.key.page_no),
+                    u32_to_i64(entry.key.render_dpi),
+                    entry.key.ocr_lang.as_str(),
+                    entry.key.ocr_profile.as_str(),
+                    entry.text.as_deref(),
+                    entry.confidence.map(f64::from),
+                    entry.engine_profile.as_deref(),
+                    entry
+                        .duration_ms
+                        .map(|value| u64_to_i64(value, "ocr_page_cache.duration_ms"))
+                        .transpose()?,
+                    ocr_page_cache_status_to_storage(entry.status),
+                    entry.error_kind.as_deref(),
+                    entry.updated_at.as_unix_seconds(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+
+        Ok(())
+    }
+
+    pub fn ocr_page_cache_entry(&self, key: &OcrPageCacheKey) -> Result<Option<OcrPageCacheEntry>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {OCR_PAGE_CACHE_COLUMNS}
+            FROM ocr_page_cache
+            WHERE file_content_hash = ?1
+                AND page_no = ?2
+                AND render_dpi = ?3
+                AND ocr_lang = ?4
+                AND ocr_profile = ?5"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                key.file_content_hash.as_str(),
+                u32_to_i64(key.page_no),
+                u32_to_i64(key.render_dpi),
+                key.ocr_lang.as_str(),
+                key.ocr_profile.as_str(),
+            ])
+            .map_err(MetaStoreError::storage)?;
+
+        match rows.next().map_err(MetaStoreError::storage)? {
+            Some(row) => Ok(Some(read_ocr_page_cache_entry(row)?)),
+            None => Ok(None),
+        }
     }
 
     pub fn insert_ingest_job(&self, job: &IngestJob) -> Result<()> {
@@ -1292,6 +1369,217 @@ impl MigrationReport {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+pub struct OcrPageCacheKey {
+    file_content_hash: String,
+    page_no: u32,
+    render_dpi: u32,
+    ocr_lang: String,
+    ocr_profile: String,
+}
+
+impl OcrPageCacheKey {
+    pub fn new(
+        file_content_hash: impl Into<String>,
+        page_no: u32,
+        render_dpi: u32,
+        ocr_lang: impl Into<String>,
+        ocr_profile: impl Into<String>,
+    ) -> Result<Self> {
+        let file_content_hash = file_content_hash.into();
+        let ocr_lang = ocr_lang.into();
+        let ocr_profile = ocr_profile.into();
+        if file_content_hash.trim().is_empty()
+            || page_no == 0
+            || render_dpi == 0
+            || ocr_lang.trim().is_empty()
+            || ocr_profile.trim().is_empty()
+        {
+            return Err(MetaStoreError::invalid_value("ocr_page_cache.key"));
+        }
+
+        Ok(Self {
+            file_content_hash,
+            page_no,
+            render_dpi,
+            ocr_lang,
+            ocr_profile,
+        })
+    }
+
+    pub fn page_no(&self) -> u32 {
+        self.page_no
+    }
+
+    pub fn render_dpi(&self) -> u32 {
+        self.render_dpi
+    }
+
+    pub fn ocr_lang(&self) -> &str {
+        &self.ocr_lang
+    }
+
+    pub fn ocr_profile(&self) -> &str {
+        &self.ocr_profile
+    }
+}
+
+impl fmt::Debug for OcrPageCacheKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OcrPageCacheKey")
+            .field("file_content_hash", &"<redacted>")
+            .field("page_no", &self.page_no)
+            .field("render_dpi", &self.render_dpi)
+            .field("ocr_lang", &self.ocr_lang)
+            .field("ocr_profile", &self.ocr_profile)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OcrPageCacheStatus {
+    Succeeded,
+    FailedRetryable,
+    FailedPermanent,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct OcrPageCacheEntry {
+    key: OcrPageCacheKey,
+    text: Option<String>,
+    confidence: Option<f32>,
+    engine_profile: Option<String>,
+    duration_ms: Option<u64>,
+    status: OcrPageCacheStatus,
+    error_kind: Option<String>,
+    updated_at: UnixTimestamp,
+}
+
+impl OcrPageCacheEntry {
+    pub fn succeeded(
+        key: OcrPageCacheKey,
+        text: impl Into<String>,
+        confidence: f32,
+        engine_profile: impl Into<String>,
+        duration_ms: u64,
+        updated_at: UnixTimestamp,
+    ) -> Result<Self> {
+        let engine_profile = engine_profile.into();
+        if !confidence.is_finite()
+            || !(0.0..=1.0).contains(&confidence)
+            || engine_profile.trim().is_empty()
+        {
+            return Err(MetaStoreError::invalid_value("ocr_page_cache.success"));
+        }
+
+        Ok(Self {
+            key,
+            text: Some(text.into()),
+            confidence: Some(confidence),
+            engine_profile: Some(engine_profile),
+            duration_ms: Some(duration_ms),
+            status: OcrPageCacheStatus::Succeeded,
+            error_kind: None,
+            updated_at,
+        })
+    }
+
+    pub fn failed_retryable(
+        key: OcrPageCacheKey,
+        error_kind: impl Into<String>,
+        updated_at: UnixTimestamp,
+    ) -> Result<Self> {
+        Self::failed(
+            key,
+            error_kind,
+            OcrPageCacheStatus::FailedRetryable,
+            updated_at,
+        )
+    }
+
+    pub fn failed_permanent(
+        key: OcrPageCacheKey,
+        error_kind: impl Into<String>,
+        updated_at: UnixTimestamp,
+    ) -> Result<Self> {
+        Self::failed(
+            key,
+            error_kind,
+            OcrPageCacheStatus::FailedPermanent,
+            updated_at,
+        )
+    }
+
+    fn failed(
+        key: OcrPageCacheKey,
+        error_kind: impl Into<String>,
+        status: OcrPageCacheStatus,
+        updated_at: UnixTimestamp,
+    ) -> Result<Self> {
+        let error_kind = error_kind.into();
+        if error_kind.trim().is_empty() {
+            return Err(MetaStoreError::invalid_value("ocr_page_cache.error_kind"));
+        }
+
+        Ok(Self {
+            key,
+            text: None,
+            confidence: None,
+            engine_profile: None,
+            duration_ms: None,
+            status,
+            error_kind: Some(error_kind),
+            updated_at,
+        })
+    }
+
+    pub fn key(&self) -> &OcrPageCacheKey {
+        &self.key
+    }
+
+    pub fn text(&self) -> Option<&str> {
+        self.text.as_deref()
+    }
+
+    pub fn confidence(&self) -> Option<f32> {
+        self.confidence
+    }
+
+    pub fn engine_profile(&self) -> Option<&str> {
+        self.engine_profile.as_deref()
+    }
+
+    pub fn duration_ms(&self) -> Option<u64> {
+        self.duration_ms
+    }
+
+    pub fn status(&self) -> OcrPageCacheStatus {
+        self.status
+    }
+
+    pub fn error_kind(&self) -> Option<&str> {
+        self.error_kind.as_deref()
+    }
+}
+
+impl fmt::Debug for OcrPageCacheEntry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OcrPageCacheEntry")
+            .field("key", &self.key)
+            .field("text", &"<redacted>")
+            .field("text_bytes", &self.text.as_ref().map(String::len))
+            .field("confidence", &self.confidence)
+            .field("engine_profile", &self.engine_profile)
+            .field("duration_ms", &self.duration_ms)
+            .field("status", &self.status)
+            .field("error_kind", &"<redacted>")
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct IngestJob {
     pub id: IngestJobId,
     pub document_id: DocumentId,
@@ -1776,6 +2064,47 @@ SET raw_value = '<redacted:phone>',
 WHERE entity_type = 'phone';
 "#;
 
+const SCHEMA_V7: &str = r#"
+CREATE TABLE ocr_page_cache (
+    file_content_hash TEXT NOT NULL,
+    page_no INTEGER NOT NULL CHECK (page_no > 0),
+    render_dpi INTEGER NOT NULL CHECK (render_dpi > 0),
+    ocr_lang TEXT NOT NULL,
+    ocr_profile TEXT NOT NULL,
+    text TEXT,
+    confidence REAL CHECK (confidence IS NULL OR confidence BETWEEN 0 AND 1),
+    engine_profile TEXT,
+    duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+    status TEXT NOT NULL CHECK (
+        status IN ('succeeded', 'failed_retryable', 'failed_permanent')
+    ),
+    error_kind TEXT,
+    updated_at_seconds INTEGER NOT NULL,
+    PRIMARY KEY (file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile),
+    CHECK (
+        (
+            status = 'succeeded'
+            AND text IS NOT NULL
+            AND confidence IS NOT NULL
+            AND engine_profile IS NOT NULL
+            AND duration_ms IS NOT NULL
+            AND error_kind IS NULL
+        )
+        OR (
+            status IN ('failed_retryable', 'failed_permanent')
+            AND text IS NULL
+            AND confidence IS NULL
+            AND engine_profile IS NULL
+            AND duration_ms IS NULL
+            AND error_kind IS NOT NULL
+        )
+    )
+);
+
+CREATE INDEX ocr_page_cache_content_idx
+    ON ocr_page_cache(file_content_hash, status, updated_at_seconds);
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -1888,6 +2217,33 @@ fn read_index_state(row: &Row<'_>) -> Result<IndexState> {
         status: index_state_status_from_storage(&read_string(row, 2)?)?,
         updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 3)?),
     })
+}
+
+fn read_ocr_page_cache_entry(row: &Row<'_>) -> Result<OcrPageCacheEntry> {
+    let page_no = i64_to_u32(read_i64(row, 1)?, "ocr_page_cache.page_no")?;
+    let render_dpi = i64_to_u32(read_i64(row, 2)?, "ocr_page_cache.render_dpi")?;
+    let key = OcrPageCacheKey::new(
+        read_string(row, 0)?,
+        page_no,
+        render_dpi,
+        read_string(row, 3)?,
+        read_string(row, 4)?,
+    )?;
+    let duration_ms = read_optional_i64(row, 8)?
+        .map(|value| i64_to_u64(value, "ocr_page_cache.duration_ms"))
+        .transpose()?;
+    let entry = OcrPageCacheEntry {
+        key,
+        text: read_optional_string(row, 5)?,
+        confidence: read_optional_f64(row, 6)?.map(|value| value as f32),
+        engine_profile: read_optional_string(row, 7)?,
+        duration_ms,
+        status: ocr_page_cache_status_from_storage(&read_string(row, 9)?)?,
+        error_kind: read_optional_string(row, 10)?,
+        updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 11)?),
+    };
+    validate_ocr_page_cache_entry(&entry)?;
+    Ok(entry)
 }
 
 fn read_import_task(row: &Row<'_>) -> Result<ImportTask> {
@@ -2122,6 +2478,38 @@ fn validate_entity_mention(version_id: &ResumeVersionId, mention: &EntityMention
     if let (Some(span_start), Some(span_end)) = (mention.span_start, mention.span_end) {
         if span_start > span_end {
             return Err(MetaStoreError::invalid_value("entity_mention.span"));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_ocr_page_cache_entry(entry: &OcrPageCacheEntry) -> Result<()> {
+    match entry.status {
+        OcrPageCacheStatus::Succeeded => {
+            if entry.text.is_none()
+                || entry.engine_profile.as_deref().is_none_or(str::is_empty)
+                || entry.duration_ms.is_none()
+                || entry.error_kind.is_some()
+            {
+                return Err(MetaStoreError::invalid_value("ocr_page_cache.success"));
+            }
+            let Some(confidence) = entry.confidence else {
+                return Err(MetaStoreError::invalid_value("ocr_page_cache.confidence"));
+            };
+            if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
+                return Err(MetaStoreError::invalid_value("ocr_page_cache.confidence"));
+            }
+        }
+        OcrPageCacheStatus::FailedRetryable | OcrPageCacheStatus::FailedPermanent => {
+            if entry.text.is_some()
+                || entry.confidence.is_some()
+                || entry.engine_profile.is_some()
+                || entry.duration_ms.is_some()
+                || entry.error_kind.as_deref().is_none_or(str::is_empty)
+            {
+                return Err(MetaStoreError::invalid_value("ocr_page_cache.failure"));
+            }
         }
     }
 
@@ -2388,6 +2776,23 @@ fn ingest_job_status_from_storage(value: &str) -> Result<IngestJobStatus> {
         "failed_retryable" => Ok(IngestJobStatus::FailedRetryable),
         "failed_permanent" => Ok(IngestJobStatus::FailedPermanent),
         _ => Err(MetaStoreError::invalid_value("ingest_job.status")),
+    }
+}
+
+fn ocr_page_cache_status_to_storage(status: OcrPageCacheStatus) -> &'static str {
+    match status {
+        OcrPageCacheStatus::Succeeded => "succeeded",
+        OcrPageCacheStatus::FailedRetryable => "failed_retryable",
+        OcrPageCacheStatus::FailedPermanent => "failed_permanent",
+    }
+}
+
+fn ocr_page_cache_status_from_storage(value: &str) -> Result<OcrPageCacheStatus> {
+    match value {
+        "succeeded" => Ok(OcrPageCacheStatus::Succeeded),
+        "failed_retryable" => Ok(OcrPageCacheStatus::FailedRetryable),
+        "failed_permanent" => Ok(OcrPageCacheStatus::FailedPermanent),
+        _ => Err(MetaStoreError::invalid_value("ocr_page_cache.status")),
     }
 }
 

@@ -7,7 +7,8 @@ use meta_store::{
     Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
     EntityMentionId, EntityType, FileExtension, ImportTask, ImportTaskId, ImportTaskStatus,
     IndexState, IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus,
-    MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion,
+    ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
 use rusqlite::{params, Connection};
 
@@ -18,8 +19,8 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5, 6]);
-    assert_eq!(store.schema_version().unwrap(), 6);
+    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(store.schema_version().unwrap(), 7);
 
     for table_name in [
         "candidate",
@@ -29,13 +30,14 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "index_state",
         "import_task",
         "entity_mention",
+        "ocr_page_cache",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 6);
+    assert_eq!(store.schema_version().unwrap(), 7);
 }
 
 #[test]
@@ -489,6 +491,76 @@ fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
 }
 
 #[test]
+fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
+    let store = migrated_store();
+    let key = OcrPageCacheKey::new(
+        "synthetic-content-hash-for-ocr-cache",
+        2,
+        300,
+        "eng+chi_sim",
+        "balanced",
+    )
+    .unwrap();
+    let success = OcrPageCacheEntry::succeeded(
+        key.clone(),
+        "Synthetic OCR text that must stay out of debug",
+        0.87,
+        "fixture-engine",
+        42,
+        UnixTimestamp::from_unix_seconds(1_800_000_800),
+    )
+    .unwrap();
+
+    store.upsert_ocr_page_cache_entry(&success).unwrap();
+
+    assert_eq!(
+        store.ocr_page_cache_entry(&key).unwrap(),
+        Some(success.clone())
+    );
+    let debug = format!("{success:?} {key:?}");
+    assert!(!debug.contains("synthetic-content-hash-for-ocr-cache"));
+    assert!(!debug.contains("Synthetic OCR text"));
+    assert_eq!(
+        success.text(),
+        Some("Synthetic OCR text that must stay out of debug")
+    );
+    assert_eq!(success.status(), OcrPageCacheStatus::Succeeded);
+
+    let retryable = OcrPageCacheEntry::failed_retryable(
+        key.clone(),
+        "WorkerUnavailable",
+        UnixTimestamp::from_unix_seconds(1_800_000_801),
+    )
+    .unwrap();
+    store.upsert_ocr_page_cache_entry(&retryable).unwrap();
+
+    let loaded = store
+        .ocr_page_cache_entry(&key)
+        .unwrap()
+        .expect("ocr cache entry");
+    assert_eq!(loaded.status(), OcrPageCacheStatus::FailedRetryable);
+    assert_eq!(loaded.text(), None);
+    assert_eq!(loaded.error_kind(), Some("WorkerUnavailable"));
+    assert!(!format!("{loaded:?}").contains("WorkerUnavailable"));
+}
+
+#[test]
+fn ocr_page_cache_rejects_invalid_keys_and_confidence() {
+    assert!(OcrPageCacheKey::new("", 1, 300, "eng", "balanced").is_err());
+    assert!(OcrPageCacheKey::new("hash", 0, 300, "eng", "balanced").is_err());
+    let key = OcrPageCacheKey::new("hash", 1, 300, "eng", "balanced").unwrap();
+    assert!(OcrPageCacheEntry::succeeded(
+        key,
+        "text",
+        1.5,
+        "engine",
+        1,
+        UnixTimestamp::from_unix_seconds(1_800_000_802),
+    )
+    .is_err());
+}
+
+#[test]
 fn entity_mentions_replace_query_and_redact_values() {
     let store = migrated_store();
     let document = document("field-mention-document", false, DocumentStatus::Searchable);
@@ -685,7 +757,10 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
     {
         let connection = open_raw_connection(&db_path);
         connection
-            .execute("DELETE FROM schema_migrations WHERE version = 6", [])
+            .execute("DELETE FROM schema_migrations WHERE version IN (6, 7)", [])
+            .unwrap();
+        connection
+            .execute("DROP TABLE IF EXISTS ocr_page_cache", [])
             .unwrap();
         for mention in [&email, &phone, &skill] {
             connection
@@ -726,8 +801,8 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[6]);
-        assert_eq!(reopened.schema_version().unwrap(), 6);
+        assert_eq!(report.applied_versions(), &[6, 7]);
+        assert_eq!(reopened.schema_version().unwrap(), 7);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1020,7 +1095,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 6);
+        assert_eq!(reopened.schema_version().unwrap(), 7);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -1173,6 +1248,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
         connection.execute("DROP TABLE import_task", []).unwrap();
         connection.execute("DROP TABLE entity_mention", []).unwrap();
         connection.execute("DROP TABLE candidate", []).unwrap();
+        connection.execute("DROP TABLE ocr_page_cache", []).unwrap();
         connection
             .execute(
                 "DROP INDEX IF EXISTS ingest_job_ocr_document_unique_idx",
@@ -1184,7 +1260,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             .unwrap();
         connection
             .execute(
-                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6)",
+                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7)",
                 [],
             )
             .unwrap();
@@ -1193,8 +1269,8 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6]);
-        assert_eq!(reopened.schema_version().unwrap(), 6);
+        assert_eq!(report.applied_versions(), &[2, 3, 4, 5, 6, 7]);
+        assert_eq!(reopened.schema_version().unwrap(), 7);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -1226,7 +1302,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 6);
+        assert_eq!(reopened.schema_version().unwrap(), 7);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 
