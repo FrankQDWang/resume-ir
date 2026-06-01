@@ -272,16 +272,22 @@ fn import_ipc_invalid_json_response_does_not_fallback_to_local_store() {
 }
 
 #[test]
-fn import_ipc_connect_failure_does_not_fallback_to_local_store() {
-    let data_dir = temp_path("import-ipc-connect-failure-data");
-    let root_dir = temp_dir("import-ipc-connect-failure-private-root");
-    let token_file = temp_file("import-ipc-connect-failure-token");
+fn import_ipc_transport_failure_does_not_fallback_to_local_store() {
+    let data_dir = temp_path("import-ipc-transport-failure-data");
+    let root_dir = temp_dir("import-ipc-transport-failure-private-root");
+    let token_file = temp_file("import-ipc-transport-failure-token");
     fs::write(
         &token_file,
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
     )
     .unwrap();
-    let import_url = unused_loopback_import_url();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = accept_with_timeout(&listener);
+        let request = read_http_request(&mut stream);
+        assert!(request.starts_with("POST /imports HTTP/1.1"));
+    });
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -289,19 +295,20 @@ fn import_ipc_connect_failure_does_not_fallback_to_local_store() {
             path_str(&data_dir),
             "import",
             "--ipc",
-            &import_url,
+            &format!("http://{addr}/imports"),
             "--ipc-token-file",
             path_str(&token_file),
             "--root",
             path_str(&root_dir),
         ])
         .output()
-        .expect("run resume-cli import --ipc against closed port");
+        .expect("run resume-cli import --ipc against dropped response");
 
+    server.join().expect("fake daemon joined");
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("unable to connect to daemon import ipc"));
+    assert!(stderr.contains("daemon import ipc response is invalid"));
     assert!(!stderr.contains(path_str(&root_dir)));
     assert!(!data_dir.exists());
 
@@ -475,13 +482,6 @@ fn accept_with_timeout(listener: &TcpListener) -> (std::net::TcpStream, std::net
             Err(error) => panic!("accept import request: {error}"),
         }
     }
-}
-
-fn unused_loopback_import_url() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind unused loopback port");
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    format!("http://{addr}/imports")
 }
 
 fn temp_path(label: &str) -> PathBuf {

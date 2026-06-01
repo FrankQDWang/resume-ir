@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S53 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S54 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -44,14 +44,15 @@ obsolete preliminary files and checklists are not product scope.
   encrypted local storage, and physical purge.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, linear KNN, RRF helpers, embedding worker, model/dimension-scoped
-  durable per-version embedding jobs, and CLI semantic/hybrid query execution
-  now exist. The daemon can now execute a configured local embedding command in
-  one-shot or long-running worker mode, persist a vector snapshot while serving
-  status IPC, skip already completed version jobs across daemon restarts, and
-  re-embed completed versions when the configured model id or dimension changes.
+  durable per-version embedding jobs, model-scoped vector query isolation, and
+  CLI semantic/hybrid query execution now exist. The daemon can now execute a
+  configured local embedding command in one-shot or long-running worker mode,
+  persist a vector snapshot while serving status IPC, skip already completed
+  version jobs across daemon restarts, and re-embed completed versions when the
+  configured model id or dimension changes.
   Missing or BLOCKED work includes licensed model selection/distribution,
-  ONNX/HNSW/FAISS or equivalent ANN, model-scoped vector query isolation,
-  section vectors, semantic quality metrics, and real performance proof.
+  ONNX/HNSW/FAISS or equivalent ANN, section vectors, semantic quality metrics,
+  and real performance proof.
 - P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
   cache schema, local OCR command client, timeout/cancel/temp cleanup, and OCR
   text indexing exist. The daemon can now claim queued OCR jobs, execute a
@@ -128,8 +129,91 @@ obsolete preliminary files and checklists are not product scope.
 | S51 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this daemon local embedding worker slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, durable per-version embedding job state, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 | S52 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this durable embedding job-state slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, model/version invalidation, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 | S53 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this model/dimension-scoped durable embedding job slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, model-scoped vector query isolation, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
+| S54 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this model-scoped vector query isolation slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S54
+
+Design target:
+
+- S54 fixes semantic/hybrid query isolation after embedding model changes. The
+  persistent vector snapshot now writes v2 vector records with optional model id
+  metadata while still reading existing v1 snapshots.
+- `VectorIndex::knn_for_model` filters by explicit stored model id and falls
+  back to the legacy vector-id prefix for old snapshots. Unscoped `knn` remains
+  available for existing callers.
+- CLI and daemon embedding workers now write model metadata with each vector,
+  and CLI semantic search uses the requested model id when searching the vector
+  snapshot. Hybrid search inherits the same protection through its semantic
+  channel.
+- During workspace verification, two daemon IPC long-poll tests exposed a
+  request-budget race. Their test request budget now has headroom, with no
+  production daemon behavior change.
+- The workspace run also reproduced an existing CLI import-IPC closed-port
+  race. That test now uses a deterministic local dropped-response fixture
+  instead of relying on an unused port remaining unused.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_filters_knn_by_model_scope_after_reopen -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker semantic_search_uses_only_vectors_for_requested_model -- --exact
+```
+
+Output summary:
+
+- Before implementation, both tests failed to compile because
+  `VectorDocument::new_for_model` and `knn_for_model` did not exist.
+- After implementation, the vector-index test proves a reopened snapshot can
+  exclude a higher-scoring old-model vector. The CLI test proves both semantic
+  and hybrid mode return only the requested model's vector result even when an
+  old-model vector would otherwise win top-1.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+git diff --check
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `cargo test -p index-vector`: exit 0; 6 tests passed. Coverage includes v2
+  model-scoped snapshot persistence after reopen and legacy v1 model-prefix
+  fallback.
+- `cargo test -p resume-cli --test s39_embedding_worker`: exit 0; 5 tests
+  passed. Coverage includes CLI semantic and hybrid model-scoped vector search.
+- `cargo test -p resume-cli --test s47_import_ipc`: exit 0; 7 tests passed.
+  Coverage includes deterministic import-IPC transport failure without local
+  store fallback.
+- `cargo test -p resume-daemon --test s51_embedding_worker`: exit 0; 2 tests
+  passed, preserving daemon vector snapshot writes with the new format.
+- `cargo test -p resume-daemon --test s52_embedding_jobs`: exit 0; 3 tests
+  passed, preserving durable model/dimension-scoped embedding job behavior.
+- `cargo test -p resume-daemon --test s20_ipc`: exit 0; 14 tests passed after
+  increasing long-poll test request budget headroom.
+- `cargo test -p resume-daemon`: exit 0.
+- `cargo clippy --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0.
+
+Scope note:
+
+- S54 does not choose or distribute a licensed model, add ANN/HNSW/FAISS, create
+  section vectors, run semantic quality metrics, prove production-scale vector
+  performance, enforce OS-level no-network sandboxing for configured commands,
+  or validate Windows/macOS command behavior. Those remain incomplete or
+  BLOCKED.
 
 ### S53
 

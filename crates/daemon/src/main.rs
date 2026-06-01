@@ -894,7 +894,8 @@ fn run_embedding_worker_once(
         .into_iter()
         .zip(candidates.iter())
         .map(|(vector, (_, candidate))| {
-            VectorDocument::new(
+            VectorDocument::new_for_model(
+                vector.model_id(),
                 format!("{}:{}", vector.model_id(), vector.id()),
                 candidate.document_id.as_str(),
                 vector.values().to_vec(),

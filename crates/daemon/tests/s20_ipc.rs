@@ -427,6 +427,8 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     let data_dir = temp_dir("ipc-import-command-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let request_limit = 80_usize;
+    let request_limit_arg = request_limit.to_string();
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
             "--data-dir",
@@ -439,7 +441,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "40",
+            request_limit_arg.as_str(),
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -455,7 +457,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
 
     let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 39);
     let used_requests = 1 + worker_requests;
-    drain_status_requests(&endpoint, 40 - used_requests);
+    drain_status_requests(&endpoint, request_limit - used_requests);
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
@@ -527,6 +529,8 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
     let data_dir = temp_dir("ipc-import-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let request_limit = 80_usize;
+    let request_limit_arg = request_limit.to_string();
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
             "--data-dir",
@@ -539,7 +543,7 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "40",
+            request_limit_arg.as_str(),
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -561,7 +565,7 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
     );
     let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 39);
     let used_requests = 1 + worker_requests;
-    drain_status_requests(&endpoint, 40 - used_requests);
+    drain_status_requests(&endpoint, request_limit - used_requests);
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);

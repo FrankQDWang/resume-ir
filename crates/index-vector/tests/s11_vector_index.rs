@@ -120,6 +120,83 @@ fn persistent_vector_index_reopens_snapshot_and_preserves_tombstones_without_pat
 }
 
 #[test]
+fn persistent_vector_index_filters_knn_by_model_scope_after_reopen() {
+    let private_dir = temp_dir("private-model-scoped-vector-index");
+
+    {
+        let index = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+        index
+            .upsert(vec![
+                VectorDocument::new_for_model(
+                    "model-a",
+                    "model-a:vec_legacy",
+                    "doc_legacy_model",
+                    vec![1.0, 0.0, 0.0, 0.0],
+                )
+                .unwrap(),
+                VectorDocument::new_for_model(
+                    "model-b",
+                    "model-b:vec_current",
+                    "doc_current_model",
+                    vec![0.0, 1.0, 0.0, 0.0],
+                )
+                .unwrap(),
+            ])
+            .unwrap();
+    }
+
+    {
+        let reopened = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+        let unscoped = reopened
+            .knn(QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(), 1)
+            .unwrap();
+        assert_eq!(unscoped[0].doc_id(), "doc_legacy_model");
+
+        let scoped = reopened
+            .knn_for_model(
+                QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
+                1,
+                "model-b",
+            )
+            .unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].doc_id(), "doc_current_model");
+        assert_eq!(scoped[0].vector_id(), "model-b:vec_current");
+    }
+
+    remove_dir(&private_dir);
+}
+
+#[test]
+fn persistent_vector_index_filters_legacy_v1_snapshot_by_vector_id_model_prefix() {
+    let private_dir = temp_dir("private-legacy-model-scoped-vector-index");
+    fs::write(
+        private_dir.join("vector.snapshot"),
+        concat!(
+            "resume-ir-vector-index-v1\tdimension\t4\n",
+            "V\tmodel-a%3Avec_legacy\tdoc_legacy_model\t3f800000,00000000,00000000,00000000\n",
+            "V\tmodel-b%3Avec_current\tdoc_current_model\t00000000,3f800000,00000000,00000000\n",
+        ),
+    )
+    .unwrap();
+
+    let index = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    let scoped = index
+        .knn_for_model(
+            QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
+            1,
+            "model-b",
+        )
+        .unwrap();
+
+    assert_eq!(scoped.len(), 1);
+    assert_eq!(scoped[0].doc_id(), "doc_current_model");
+    assert_eq!(index.snapshot().unwrap().vector_count(), 2);
+
+    remove_dir(&private_dir);
+}
+
+#[test]
 fn persistent_vector_index_rejects_corrupt_snapshot_without_path_leakage() {
     let private_dir = temp_dir("private-corrupt-vector-index");
     fs::write(

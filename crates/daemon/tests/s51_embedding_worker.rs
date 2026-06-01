@@ -200,7 +200,7 @@ fn assert_vector_snapshot(data_dir: &Path, expected_dimension: usize, expected_v
     let snapshot = fs::read_to_string(data_dir.join("vector-index").join("vector.snapshot"))
         .expect("read vector snapshot");
     let mut lines = snapshot.lines();
-    let expected_header = format!("resume-ir-vector-index-v1\tdimension\t{expected_dimension}");
+    let expected_header = format!("resume-ir-vector-index-v2\tdimension\t{expected_dimension}");
     assert_eq!(lines.next(), Some(expected_header.as_str()));
     let vectors = lines.filter(|line| line.starts_with("V\t")).count();
     assert_eq!(vectors, expected_vectors);

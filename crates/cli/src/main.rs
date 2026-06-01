@@ -1882,7 +1882,8 @@ fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .into_iter()
         .zip(candidates.iter())
         .map(|(vector, candidate)| {
-            VectorDocument::new(
+            VectorDocument::new_for_model(
+                vector.model_id(),
                 format!("{}:{}", vector.model_id(), vector.id()),
                 candidate.document_id.as_str(),
                 vector.values().to_vec(),
@@ -2572,9 +2573,10 @@ fn run_semantic_search(
         .map_err(CliError::vector)?;
     let vector_limit = search_args.vector_top_k.unwrap_or(candidate_limit);
     let vector_hits = vector_index
-        .knn(
+        .knn_for_model(
             QueryVector::new(query_vector.values().to_vec()).map_err(CliError::vector)?,
             vector_limit,
+            model_id,
         )
         .map_err(CliError::vector)?;
 

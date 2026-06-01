@@ -11,12 +11,19 @@ use std::sync::Mutex;
 
 const SNAPSHOT_FILE: &str = "vector.snapshot";
 const SNAPSHOT_TMP_FILE: &str = "vector.snapshot.tmp";
-const SNAPSHOT_HEADER: &str = "resume-ir-vector-index-v1";
+const SNAPSHOT_HEADER_V1: &str = "resume-ir-vector-index-v1";
+const SNAPSHOT_HEADER_V2: &str = "resume-ir-vector-index-v2";
 
 pub trait VectorIndex {
     fn upsert(&self, vectors: Vec<VectorDocument>) -> Result<(), VectorIndexError>;
     fn mark_deleted(&self, vector_ids: &[&str]) -> Result<(), VectorIndexError>;
     fn knn(&self, query: QueryVector, k: usize) -> Result<Vec<VectorHit>, VectorIndexError>;
+    fn knn_for_model(
+        &self,
+        query: QueryVector,
+        k: usize,
+        model_id: &str,
+    ) -> Result<Vec<VectorHit>, VectorIndexError>;
     fn snapshot(&self) -> Result<VectorSnapshot, VectorIndexError>;
 }
 
@@ -162,7 +169,19 @@ impl VectorIndex for PersistentVectorIndex {
     fn knn(&self, query: QueryVector, k: usize) -> Result<Vec<VectorHit>, VectorIndexError> {
         validate_dimension(self.dimension, query.values())?;
         let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(knn_from_state(&state, query.values(), k))
+        Ok(knn_from_state(&state, query.values(), k, None))
+    }
+
+    fn knn_for_model(
+        &self,
+        query: QueryVector,
+        k: usize,
+        model_id: &str,
+    ) -> Result<Vec<VectorHit>, VectorIndexError> {
+        validate_dimension(self.dimension, query.values())?;
+        validate_model_id(model_id)?;
+        let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
+        Ok(knn_from_state(&state, query.values(), k, Some(model_id)))
     }
 
     fn snapshot(&self) -> Result<VectorSnapshot, VectorIndexError> {
@@ -193,7 +212,19 @@ impl VectorIndex for InMemoryVectorIndex {
     fn knn(&self, query: QueryVector, k: usize) -> Result<Vec<VectorHit>, VectorIndexError> {
         validate_dimension(self.dimension, query.values())?;
         let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(knn_from_state(&state, query.values(), k))
+        Ok(knn_from_state(&state, query.values(), k, None))
+    }
+
+    fn knn_for_model(
+        &self,
+        query: QueryVector,
+        k: usize,
+        model_id: &str,
+    ) -> Result<Vec<VectorHit>, VectorIndexError> {
+        validate_dimension(self.dimension, query.values())?;
+        validate_model_id(model_id)?;
+        let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
+        Ok(knn_from_state(&state, query.values(), k, Some(model_id)))
     }
 
     fn snapshot(&self) -> Result<VectorSnapshot, VectorIndexError> {
@@ -212,6 +243,7 @@ struct IndexState {
 pub struct VectorDocument {
     vector_id: String,
     doc_id: String,
+    model_id: Option<String>,
     values: Vec<f32>,
 }
 
@@ -231,8 +263,22 @@ impl VectorDocument {
         Ok(Self {
             vector_id: vector_id.into(),
             doc_id: doc_id.into(),
+            model_id: None,
             values,
         })
+    }
+
+    pub fn new_for_model(
+        model_id: impl Into<String>,
+        vector_id: impl Into<String>,
+        doc_id: impl Into<String>,
+        values: Vec<f32>,
+    ) -> Result<Self, VectorIndexError> {
+        let model_id = model_id.into();
+        validate_model_id(&model_id)?;
+        let mut document = Self::new(vector_id, doc_id, values)?;
+        document.model_id = Some(model_id);
+        Ok(document)
     }
 
     pub fn vector_id(&self) -> &str {
@@ -241,6 +287,10 @@ impl VectorDocument {
 
     pub fn doc_id(&self) -> &str {
         &self.doc_id
+    }
+
+    pub fn model_id(&self) -> Option<&str> {
+        self.model_id.as_deref()
     }
 
     pub fn values(&self) -> &[f32] {
@@ -254,6 +304,7 @@ impl fmt::Debug for VectorDocument {
             .debug_struct("VectorDocument")
             .field("vector_id", &self.vector_id)
             .field("doc_id", &self.doc_id)
+            .field("model_id", &self.model_id.as_deref().unwrap_or("<legacy>"))
             .field("dimension", &self.values.len())
             .finish()
     }
@@ -354,6 +405,7 @@ impl VectorSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorIndexError {
     InvalidDimension { expected: usize, actual: usize },
+    InvalidModelId,
     Poisoned,
     Storage,
     CorruptSnapshot,
@@ -366,6 +418,7 @@ impl fmt::Display for VectorIndexError {
                 formatter,
                 "vector dimension must be {expected}, got {actual}"
             ),
+            Self::InvalidModelId => formatter.write_str("vector model id is invalid"),
             Self::Poisoned => formatter.write_str("vector index state is unavailable"),
             Self::Storage => formatter.write_str("vector index storage is unavailable"),
             Self::CorruptSnapshot => formatter.write_str("vector index snapshot is corrupt"),
@@ -386,11 +439,33 @@ fn validate_dimension(expected: usize, values: &[f32]) -> Result<(), VectorIndex
     }
 }
 
-fn knn_from_state(state: &IndexState, query: &[f32], k: usize) -> Vec<VectorHit> {
+fn validate_model_id(model_id: &str) -> Result<(), VectorIndexError> {
+    if model_id.trim().is_empty()
+        || model_id.contains('\n')
+        || model_id.contains('\r')
+        || model_id.contains('\t')
+    {
+        Err(VectorIndexError::InvalidModelId)
+    } else {
+        Ok(())
+    }
+}
+
+fn knn_from_state(
+    state: &IndexState,
+    query: &[f32],
+    k: usize,
+    model_id: Option<&str>,
+) -> Vec<VectorHit> {
     let mut hits = state
         .vectors
         .values()
         .filter(|vector| !state.deleted.contains(vector.vector_id()))
+        .filter(|vector| {
+            model_id
+                .map(|model_id| vector_matches_model(vector, model_id))
+                .unwrap_or(true)
+        })
         .map(|vector| {
             VectorHit::new(
                 vector.vector_id().to_string(),
@@ -408,6 +483,20 @@ fn knn_from_state(state: &IndexState, query: &[f32], k: usize) -> Vec<VectorHit>
     });
     hits.truncate(k);
     hits
+}
+
+fn vector_matches_model(vector: &VectorDocument, model_id: &str) -> bool {
+    match vector.model_id() {
+        Some(vector_model_id) => vector_model_id == model_id,
+        None => legacy_vector_model_id(vector.vector_id()) == Some(model_id),
+    }
+}
+
+fn legacy_vector_model_id(vector_id: &str) -> Option<&str> {
+    vector_id
+        .split_once(':')
+        .map(|(model_id, _)| model_id)
+        .filter(|model_id| !model_id.is_empty())
 }
 
 fn snapshot_from_state(state: &IndexState, dimension: usize) -> VectorSnapshot {
@@ -438,7 +527,12 @@ fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState),
         .ok_or(VectorIndexError::CorruptSnapshot)?
         .map_err(|_| VectorIndexError::Storage)?;
     let mut header_parts = header.split('\t');
-    if header_parts.next() != Some(SNAPSHOT_HEADER) || header_parts.next() != Some("dimension") {
+    let snapshot_version = match header_parts.next() {
+        Some(SNAPSHOT_HEADER_V1) => SnapshotVersion::V1,
+        Some(SNAPSHOT_HEADER_V2) => SnapshotVersion::V2,
+        _ => return Err(VectorIndexError::CorruptSnapshot),
+    };
+    if header_parts.next() != Some("dimension") {
         return Err(VectorIndexError::CorruptSnapshot);
     }
     let actual_dimension = header_parts
@@ -459,12 +553,32 @@ fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState),
                 let vector_id =
                     decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
                 let doc_id = decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
-                let values = decode_values(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
-                if parts.next().is_some() {
-                    return Err(VectorIndexError::CorruptSnapshot);
-                }
+                let first_payload =
+                    decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
+                let (model_id, values) = match snapshot_version {
+                    SnapshotVersion::V1 => {
+                        if parts.next().is_some() {
+                            return Err(VectorIndexError::CorruptSnapshot);
+                        }
+                        (None, decode_values(&first_payload)?)
+                    }
+                    SnapshotVersion::V2 => {
+                        let values =
+                            decode_values(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
+                        if parts.next().is_some() {
+                            return Err(VectorIndexError::CorruptSnapshot);
+                        }
+                        if first_payload.is_empty() {
+                            (None, values)
+                        } else {
+                            validate_model_id(&first_payload)?;
+                            (Some(first_payload), values)
+                        }
+                    }
+                };
                 validate_dimension(actual_dimension, &values)?;
-                let document = VectorDocument::new(vector_id.clone(), doc_id, values)?;
+                let mut document = VectorDocument::new(vector_id.clone(), doc_id, values)?;
+                document.model_id = model_id;
                 state.vectors.insert(vector_id, document);
             }
             Some("D") => {
@@ -482,20 +596,27 @@ fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState),
     Ok((actual_dimension, state))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SnapshotVersion {
+    V1,
+    V2,
+}
+
 fn write_snapshot(
     path: &Path,
     dimension: usize,
     state: &IndexState,
 ) -> Result<(), VectorIndexError> {
     let mut file = File::create(path).map_err(|_| VectorIndexError::Storage)?;
-    writeln!(file, "{SNAPSHOT_HEADER}\tdimension\t{dimension}")
+    writeln!(file, "{SNAPSHOT_HEADER_V2}\tdimension\t{dimension}")
         .map_err(|_| VectorIndexError::Storage)?;
     for vector in state.vectors.values() {
         writeln!(
             file,
-            "V\t{}\t{}\t{}",
+            "V\t{}\t{}\t{}\t{}",
             encode_field(vector.vector_id()),
             encode_field(vector.doc_id()),
+            encode_field(vector.model_id().unwrap_or("")),
             encode_values(vector.values())
         )
         .map_err(|_| VectorIndexError::Storage)?;
