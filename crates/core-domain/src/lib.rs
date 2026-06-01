@@ -175,7 +175,7 @@ impl ContactHash {
     /// S2 intentionally does not provide phone/email hashing. Callers must
     /// supply a keyed digest from the privacy boundary responsible for PII.
     pub fn from_keyed_digest(digest: impl Into<String>) -> Result<Self, ContactHashParseError> {
-        let digest = digest.into();
+        let digest = digest.into().to_ascii_lowercase();
         validate_contact_hash(&digest)?;
 
         Ok(Self(digest))

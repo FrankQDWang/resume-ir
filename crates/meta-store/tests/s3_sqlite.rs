@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
-    FileExtension, ImportTask, ImportTaskId, ImportTaskStatus, IndexState, IndexStateStatus,
-    IngestJob, IngestJobId, IngestJobKind, IngestJobStatus, MetaStore, ResumeVersion,
-    ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
+    EntityMentionId, EntityType, FileExtension, ImportTask, ImportTaskId, ImportTaskStatus,
+    IndexState, IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus,
+    MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
 use rusqlite::{params, Connection};
 
@@ -18,10 +18,11 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(first.applied_versions(), &[1, 2, 3, 4]);
-    assert_eq!(store.schema_version().unwrap(), 4);
+    assert_eq!(first.applied_versions(), &[1, 2, 3, 4, 5]);
+    assert_eq!(store.schema_version().unwrap(), 5);
 
     for table_name in [
+        "candidate",
         "document",
         "resume_version",
         "ingest_job",
@@ -34,7 +35,191 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 4);
+    assert_eq!(store.schema_version().unwrap(), 5);
+}
+
+#[test]
+fn candidates_persist_and_are_found_only_by_hashed_contact_material() {
+    let store = migrated_store();
+    let email_hash = contact_hash('a');
+    let phone_hash = contact_hash('b');
+    let candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["s19", "candidate-persist"]),
+        primary_name: Some("Synthetic Candidate".to_string()),
+        phone_hash: Some(phone_hash.clone()),
+        email_hash: Some(email_hash.clone()),
+        dedupe_key: Some("synthetic-key".to_string()),
+        merge_confidence: Some(0.97),
+        version_count: 2,
+    };
+
+    store.upsert_candidate(&candidate).unwrap();
+
+    assert_eq!(
+        store.candidate_by_id(&candidate.id).unwrap(),
+        Some(candidate.clone())
+    );
+    assert_eq!(
+        store
+            .candidate_by_contact_hash(&email_hash)
+            .unwrap()
+            .map(|candidate| candidate.id),
+        Some(candidate.id.clone())
+    );
+    assert_eq!(
+        store
+            .candidate_by_contact_hash(&phone_hash)
+            .unwrap()
+            .map(|candidate| candidate.id),
+        Some(candidate.id.clone())
+    );
+    assert_eq!(
+        store.candidate_by_contact_hash(&contact_hash('c')).unwrap(),
+        None
+    );
+
+    let debug = format!("{candidate:?}");
+    assert!(!debug.contains(email_hash.as_str()));
+    assert!(!debug.contains(phone_hash.as_str()));
+    assert!(!debug.contains("Synthetic Candidate"));
+    assert!(!debug.contains("synthetic-key"));
+}
+
+#[test]
+fn candidate_contact_hash_indexes_are_unique_and_canonicalized() {
+    let store = migrated_store();
+    let lowercase_hash = ContactHash::from_keyed_digest("e".repeat(64)).unwrap();
+    let uppercase_hash = ContactHash::from_keyed_digest("E".repeat(64)).unwrap();
+    assert_eq!(uppercase_hash.as_str(), lowercase_hash.as_str());
+
+    let first = Candidate {
+        id: CandidateId::from_non_secret_parts(&["s19", "candidate-unique-first"]),
+        primary_name: None,
+        phone_hash: None,
+        email_hash: Some(lowercase_hash),
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let duplicate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["s19", "candidate-unique-duplicate"]),
+        primary_name: None,
+        phone_hash: None,
+        email_hash: Some(uppercase_hash),
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+
+    store.upsert_candidate(&first).unwrap();
+    assert!(store.upsert_candidate(&duplicate).is_err());
+}
+
+#[test]
+fn hashed_contact_assignment_reuses_candidate_and_updates_version_count() {
+    let store = migrated_store();
+    let email_hash = contact_hash('d');
+    let first_document = document("candidate-assign-first", false, DocumentStatus::Searchable);
+    let second_document = document("candidate-assign-second", false, DocumentStatus::Searchable);
+    let first_version = resume_version("candidate-assign-first-version", first_document.id.clone());
+    let second_version = resume_version(
+        "candidate-assign-second-version",
+        second_document.id.clone(),
+    );
+
+    store.upsert_document(&first_document).unwrap();
+    store.upsert_document(&second_document).unwrap();
+    store.upsert_resume_version(&first_version).unwrap();
+    store.upsert_resume_version(&second_version).unwrap();
+
+    let first_assignment = store
+        .assign_candidate_from_hashed_contacts(&first_version.id, Some(&email_hash), None)
+        .unwrap()
+        .expect("candidate assignment from hashed contact");
+    assert_eq!(first_assignment.version_count, 1);
+    assert_eq!(
+        store
+            .resume_version_by_id(&first_version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        Some(first_assignment.id.clone())
+    );
+
+    let second_assignment = store
+        .assign_candidate_from_hashed_contacts(&second_version.id, Some(&email_hash), None)
+        .unwrap()
+        .expect("existing candidate assignment from hashed contact");
+    assert_eq!(second_assignment.id, first_assignment.id);
+    assert_eq!(second_assignment.version_count, 2);
+    assert_eq!(
+        store
+            .resume_version_by_id(&second_version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        Some(first_assignment.id.clone())
+    );
+    assert_eq!(
+        store
+            .candidate_by_id(&first_assignment.id)
+            .unwrap()
+            .unwrap()
+            .version_count,
+        2
+    );
+
+    assert_eq!(
+        store
+            .assign_candidate_from_hashed_contacts(&first_version.id, None, None)
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn explicit_candidate_assignment_requires_existing_candidate() {
+    let store = migrated_store();
+    let document = document(
+        "explicit-candidate-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let version = resume_version("explicit-candidate-version", document.id.clone());
+    let missing_candidate_id = CandidateId::from_non_secret_parts(&["s19", "missing-candidate"]);
+    let candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["s19", "explicit-candidate"]),
+        primary_name: None,
+        phone_hash: Some(contact_hash('f')),
+        email_hash: None,
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+
+    store.upsert_document(&document).unwrap();
+    store.upsert_resume_version(&version).unwrap();
+
+    assert!(store
+        .assign_candidate_to_version(&version.id, &missing_candidate_id)
+        .is_err());
+
+    store.upsert_candidate(&candidate).unwrap();
+    let assigned = store
+        .assign_candidate_to_version(&version.id, &candidate.id)
+        .unwrap()
+        .expect("assigned candidate exists");
+
+    assert_eq!(assigned.id, candidate.id);
+    assert_eq!(assigned.version_count, 1);
+    assert_eq!(
+        store
+            .resume_version_by_id(&version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        Some(candidate.id)
+    );
 }
 
 #[test]
@@ -609,7 +794,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 4);
+        assert_eq!(reopened.schema_version().unwrap(), 5);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -761,6 +946,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
         let connection = open_raw_connection(&db_path);
         connection.execute("DROP TABLE import_task", []).unwrap();
         connection.execute("DROP TABLE entity_mention", []).unwrap();
+        connection.execute("DROP TABLE candidate", []).unwrap();
         connection
             .execute(
                 "DROP INDEX IF EXISTS ingest_job_ocr_document_unique_idx",
@@ -768,8 +954,11 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             )
             .unwrap();
         connection
+            .execute("DROP INDEX IF EXISTS resume_version_candidate_idx", [])
+            .unwrap();
+        connection
             .execute(
-                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4)",
+                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5)",
                 [],
             )
             .unwrap();
@@ -778,8 +967,8 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[2, 3, 4]);
-        assert_eq!(reopened.schema_version().unwrap(), 4);
+        assert_eq!(report.applied_versions(), &[2, 3, 4, 5]);
+        assert_eq!(reopened.schema_version().unwrap(), 5);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -811,7 +1000,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 4);
+        assert_eq!(reopened.schema_version().unwrap(), 5);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 
@@ -1168,6 +1357,11 @@ fn resume_version(label: &str, document_id: DocumentId) -> ResumeVersion {
         quality_score: Some(0.8),
         visibility: ResumeVisibility::Searchable,
     }
+}
+
+fn contact_hash(hex: char) -> ContactHash {
+    let digest = std::iter::repeat_n(hex, 64).collect::<String>();
+    ContactHash::from_keyed_digest(digest).unwrap()
 }
 
 fn entity_mention(

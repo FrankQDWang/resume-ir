@@ -5,9 +5,10 @@ use std::str::FromStr;
 use std::time::Duration;
 
 pub use core_domain::{
-    CandidateId, Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
-    FileExtension, ImportTaskId, IndexStateStatus, IngestJobId, IngestJobKind, IngestJobStatus,
-    ResumeVersion, ResumeVersionId, ResumeVisibility, SectionId, UnixTimestamp,
+    Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
+    EntityMentionId, EntityType, FileExtension, ImportTaskId, IndexStateStatus, IngestJobId,
+    IngestJobKind, IngestJobStatus, ResumeVersion, ResumeVersionId, ResumeVisibility, SectionId,
+    UnixTimestamp,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
@@ -15,7 +16,10 @@ const SCHEMA_VERSION_V1: u32 = 1;
 const SCHEMA_VERSION_V2: u32 = 2;
 const SCHEMA_VERSION_V3: u32 = 3;
 const SCHEMA_VERSION_V4: u32 = 4;
+const SCHEMA_VERSION_V5: u32 = 5;
 const INDEX_STATE_KEY: &str = "default";
+const CANDIDATE_COLUMNS: &str = "\
+    id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
 const DOCUMENT_COLUMNS: &str = "\
     id, source_uri, normalized_path, file_name, extension, byte_size, mtime_seconds, \
     content_hash, text_hash, is_deleted, created_at_seconds, updated_at_seconds, status";
@@ -90,6 +94,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V2, SCHEMA_V2),
             (SCHEMA_VERSION_V3, SCHEMA_V3),
             (SCHEMA_VERSION_V4, SCHEMA_V4),
+            (SCHEMA_VERSION_V5, SCHEMA_V5),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -302,6 +307,106 @@ impl MetaStore {
         document.status = DocumentStatus::Deleted;
         document.updated_at = updated_at;
         Ok(Some(document))
+    }
+
+    pub fn upsert_candidate(&self, candidate: &Candidate) -> Result<()> {
+        validate_candidate(candidate)?;
+        let connection = self.connection.borrow();
+        upsert_candidate_in_connection(&connection, candidate)
+    }
+
+    pub fn candidate_by_id(&self, id: &CandidateId) -> Result<Option<Candidate>> {
+        let connection = self.connection.borrow();
+        candidate_by_id_from_connection(&connection, id)
+    }
+
+    pub fn candidate_by_contact_hash(
+        &self,
+        contact_hash: &ContactHash,
+    ) -> Result<Option<Candidate>> {
+        let connection = self.connection.borrow();
+        candidate_by_contact_hash_from_connection(&connection, contact_hash)
+    }
+
+    pub fn assign_candidate_to_version(
+        &self,
+        version_id: &ResumeVersionId,
+        candidate_id: &CandidateId,
+    ) -> Result<Option<Candidate>> {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let Some(candidate) = candidate_by_id_from_connection(&transaction, candidate_id)? else {
+            return Err(MetaStoreError::invalid_value("resume_version.candidate_id"));
+        };
+        let updated = transaction
+            .execute(
+                "UPDATE resume_version SET candidate_id = ?1 WHERE id = ?2",
+                params![candidate.id.as_str(), version_id.as_str()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        if updated == 0 {
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(None);
+        }
+
+        refresh_candidate_version_count_in_connection(&transaction, &candidate.id)?;
+        let assigned = candidate_by_id_from_connection(&transaction, &candidate.id)?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(assigned)
+    }
+
+    pub fn assign_candidate_from_hashed_contacts(
+        &self,
+        version_id: &ResumeVersionId,
+        email_hash: Option<&ContactHash>,
+        phone_hash: Option<&ContactHash>,
+    ) -> Result<Option<Candidate>> {
+        if email_hash.is_none() && phone_hash.is_none() {
+            return Ok(None);
+        }
+
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let Some(_version) = resume_version_by_id_from_connection(&transaction, version_id)? else {
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(None);
+        };
+
+        let candidate = match candidate_by_contact_hashes_from_connection(
+            &transaction,
+            email_hash,
+            phone_hash,
+        )? {
+            Some(candidate) => candidate,
+            None => {
+                let candidate = Candidate {
+                    id: CandidateId::from_non_secret_parts(&[
+                        "candidate-assignment-v1",
+                        version_id.as_str(),
+                    ]),
+                    primary_name: None,
+                    phone_hash: phone_hash.cloned(),
+                    email_hash: email_hash.cloned(),
+                    dedupe_key: None,
+                    merge_confidence: Some(1.0),
+                    version_count: 0,
+                };
+                upsert_candidate_in_connection(&transaction, &candidate)?;
+                candidate
+            }
+        };
+
+        transaction
+            .execute(
+                "UPDATE resume_version SET candidate_id = ?1 WHERE id = ?2",
+                params![candidate.id.as_str(), version_id.as_str()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        refresh_candidate_version_count_in_connection(&transaction, &candidate.id)?;
+        let assigned = candidate_by_id_from_connection(&transaction, &candidate.id)?;
+
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(assigned)
     }
 
     pub fn upsert_resume_version(&self, version: &ResumeVersion) -> Result<()> {
@@ -1635,6 +1740,28 @@ CREATE INDEX entity_mention_type_value_idx
     ON entity_mention(entity_type, normalized_value, confidence);
 "#;
 
+const SCHEMA_V5: &str = r#"
+CREATE TABLE candidate (
+    id TEXT PRIMARY KEY,
+    primary_name TEXT,
+    phone_hash TEXT CHECK (phone_hash IS NULL OR length(phone_hash) = 64),
+    email_hash TEXT CHECK (email_hash IS NULL OR length(email_hash) = 64),
+    dedupe_key TEXT,
+    merge_confidence REAL CHECK (merge_confidence IS NULL OR merge_confidence BETWEEN 0 AND 1),
+    version_count INTEGER NOT NULL DEFAULT 0 CHECK (version_count >= 0)
+);
+
+CREATE UNIQUE INDEX candidate_phone_hash_unique_idx
+    ON candidate(phone_hash)
+    WHERE phone_hash IS NOT NULL;
+CREATE UNIQUE INDEX candidate_email_hash_unique_idx
+    ON candidate(email_hash)
+    WHERE email_hash IS NOT NULL;
+CREATE INDEX resume_version_candidate_idx
+    ON resume_version(candidate_id)
+    WHERE candidate_id IS NOT NULL;
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -1759,6 +1886,168 @@ fn read_import_task(row: &Row<'_>) -> Result<ImportTask> {
         finished_at: read_optional_timestamp(row, 5)?,
         updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 6)?),
     })
+}
+
+fn upsert_candidate_in_connection(connection: &Connection, candidate: &Candidate) -> Result<()> {
+    validate_candidate(candidate)?;
+    connection
+        .execute(
+            "\
+            INSERT INTO candidate (
+                id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence,
+                version_count
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(id) DO UPDATE SET
+                primary_name = excluded.primary_name,
+                phone_hash = excluded.phone_hash,
+                email_hash = excluded.email_hash,
+                dedupe_key = excluded.dedupe_key,
+                merge_confidence = excluded.merge_confidence,
+                version_count = excluded.version_count",
+            params![
+                candidate.id.as_str(),
+                candidate.primary_name.as_deref(),
+                candidate.phone_hash.as_ref().map(ContactHash::as_str),
+                candidate.email_hash.as_ref().map(ContactHash::as_str),
+                candidate.dedupe_key.as_deref(),
+                candidate.merge_confidence.map(f64::from),
+                u32_to_i64(candidate.version_count),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+
+    Ok(())
+}
+
+fn candidate_by_id_from_connection(
+    connection: &Connection,
+    id: &CandidateId,
+) -> Result<Option<Candidate>> {
+    let sql = format!("SELECT {CANDIDATE_COLUMNS} FROM candidate WHERE id = ?1");
+    let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+    let mut rows = statement
+        .query(params![id.as_str()])
+        .map_err(MetaStoreError::storage)?;
+
+    match rows.next().map_err(MetaStoreError::storage)? {
+        Some(row) => Ok(Some(read_candidate(row)?)),
+        None => Ok(None),
+    }
+}
+
+fn candidate_by_contact_hash_from_connection(
+    connection: &Connection,
+    contact_hash: &ContactHash,
+) -> Result<Option<Candidate>> {
+    let sql = format!(
+        "\
+        SELECT {CANDIDATE_COLUMNS}
+        FROM candidate
+        WHERE email_hash = ?1 OR phone_hash = ?1
+        ORDER BY id
+        LIMIT 2"
+    );
+    let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+    let mut rows = statement
+        .query(params![contact_hash.as_str()])
+        .map_err(MetaStoreError::storage)?;
+    let mut candidates = Vec::new();
+
+    while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+        candidates.push(read_candidate(row)?);
+    }
+
+    match candidates.len() {
+        0 => Ok(None),
+        1 => Ok(candidates.pop()),
+        _ => Err(MetaStoreError::invalid_value("candidate.contact_hash")),
+    }
+}
+
+fn candidate_by_contact_hashes_from_connection(
+    connection: &Connection,
+    email_hash: Option<&ContactHash>,
+    phone_hash: Option<&ContactHash>,
+) -> Result<Option<Candidate>> {
+    let mut candidate: Option<Candidate> = None;
+
+    for contact_hash in [email_hash, phone_hash].into_iter().flatten() {
+        let Some(next) = candidate_by_contact_hash_from_connection(connection, contact_hash)?
+        else {
+            continue;
+        };
+        if let Some(current) = &candidate {
+            if current.id != next.id {
+                return Err(MetaStoreError::invalid_value("candidate.contact_hash"));
+            }
+        } else {
+            candidate = Some(next);
+        }
+    }
+
+    Ok(candidate)
+}
+
+fn resume_version_by_id_from_connection(
+    connection: &Connection,
+    id: &ResumeVersionId,
+) -> Result<Option<ResumeVersion>> {
+    let sql = format!("SELECT {RESUME_VERSION_COLUMNS} FROM resume_version WHERE id = ?1");
+    let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+    let mut rows = statement
+        .query(params![id.as_str()])
+        .map_err(MetaStoreError::storage)?;
+
+    match rows.next().map_err(MetaStoreError::storage)? {
+        Some(row) => Ok(Some(read_resume_version(row)?)),
+        None => Ok(None),
+    }
+}
+
+fn refresh_candidate_version_count_in_connection(
+    connection: &Connection,
+    candidate_id: &CandidateId,
+) -> Result<()> {
+    connection
+        .execute(
+            "\
+            UPDATE candidate
+            SET version_count = (
+                SELECT COUNT(*)
+                FROM resume_version
+                WHERE candidate_id = ?1
+            )
+            WHERE id = ?1",
+            params![candidate_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(())
+}
+
+fn read_candidate(row: &Row<'_>) -> Result<Candidate> {
+    let merge_confidence = read_optional_f64(row, 5)?.map(|value| value as f32);
+    let version_count = i64_to_u32(read_i64(row, 6)?, "candidate.version_count")?;
+
+    Ok(Candidate {
+        id: read_id::<CandidateId>(row, 0, "candidate.id")?,
+        primary_name: read_optional_string(row, 1)?,
+        phone_hash: read_optional_id::<ContactHash>(row, 2, "candidate.phone_hash")?,
+        email_hash: read_optional_id::<ContactHash>(row, 3, "candidate.email_hash")?,
+        dedupe_key: read_optional_string(row, 4)?,
+        merge_confidence,
+        version_count,
+    })
+}
+
+fn validate_candidate(candidate: &Candidate) -> Result<()> {
+    if let Some(merge_confidence) = candidate.merge_confidence {
+        if !merge_confidence.is_finite() || !(0.0..=1.0).contains(&merge_confidence) {
+            return Err(MetaStoreError::invalid_value("candidate.merge_confidence"));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_import_task(task: &ImportTask) -> Result<()> {
