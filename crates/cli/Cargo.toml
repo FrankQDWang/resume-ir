@@ -10,6 +10,7 @@ name = "resume-cli"
 path = "src/main.rs"
 
 [dependencies]
+embedder = { path = "../embedder" }
 import-pipeline = { path = "../import-pipeline" }
 index-fulltext = { path = "../index-fulltext" }
 index-vector = { path = "../index-vector" }

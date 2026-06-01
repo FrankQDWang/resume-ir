@@ -6,7 +6,7 @@ This file tracks long-running Goal execution against
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S38 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S39 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -53,6 +53,7 @@ This file tracks long-running Goal execution against
 | S36 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p fs-crawler`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p fs-crawler -p meta-store -p import-pipeline -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this scan file-budget enforcement slice; live progress streaming, user-triggered import cancellation, time/byte/CPU budgets, persisted per-file errors, real whole-machine witness runs, encrypted path metadata, and Windows/macOS full-disk validation remain not complete. |
 | S37 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p import-pipeline -p resume-cli -p resume-daemon --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this redacted persisted scan-error slice; live progress streaming, user-triggered import cancellation, time/byte/CPU budgets, file-level UI/UX, real whole-machine witness runs, encrypted path metadata, keyed path-error correlation, and Windows/macOS full-disk validation remain not complete. |
 | S38 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p index-vector -p resume-cli --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this persisted vector snapshot slice; real licensed embedding model selection/distribution, import-time embedding queue integration, CLI semantic/hybrid query execution, vector snapshot GC/repair, quality benchmarks, real data validation, and cross-platform validation remain not complete or BLOCKED. |
+| S39 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli embed_worker_debug_output_redacts_candidate_text_and_command_path`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p embedder`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p embedder -p index-vector --all-targets -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `/Users/frankqdwang/.cargo/bin/cargo test --workspace` passed. | None for this CLI local embedding worker slice; real licensed embedding model selection/distribution, OS-enforced no-network sandboxing for user-provided commands, daemon-loop embedding execution, import-time embedding job state, CLI semantic/hybrid query execution, vector snapshot GC/repair, quality benchmarks, real data validation, and cross-platform command validation remain not complete or BLOCKED. |
 
 ## Command Log
 
@@ -1754,6 +1755,60 @@ Output summary:
 Scope note:
 
 - S36 adds `ScanOptions::max_files`, `resume-cli import --max-files <count>`, scan budget reporting, SQLite schema V10 scan-budget columns on `import_scan_scope`, and disables missing-file deletion propagation when a scan is budget-exhausted. It does not implement live progress streaming, user-triggered cancellation, time/byte/CPU budgets, persisted per-file scan errors, real whole-machine witness scans, encrypted path metadata, or cross-platform full-disk validation.
+
+### S39
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker
+```
+
+Output summary:
+
+- Before implementation, the new CLI tests failed because `resume-cli` did not recognize `embed-worker`; the expected blocked/no-command behavior and local vector snapshot persistence were absent.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli embed_worker_debug_output_redacts_candidate_text_and_command_path
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo test -p embedder
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p embedder -p index-vector --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `cargo test -p resume-cli embed_worker_debug_output_redacts_candidate_text_and_command_path`: exit 0; the new CLI unit test passed and confirms `EmbedWorkerCandidate` redacts resume text and `EmbedWorkerArgs` redacts the configured command path from Debug output.
+- `cargo test -p resume-cli --test s39_embedding_worker`: exit 0; 2 tests passed, covering blocked operation without a local embedding command and local command execution that writes 2 synthetic searchable resume vectors to the persistent vector snapshot without leaking paths or hiding full-text search results.
+- `cargo clippy -p resume-cli --all-targets -- -D warnings`: exit 0.
+- `cargo test -p resume-cli`: exit 0; all CLI integration tests passed.
+- `cargo test -p embedder`: exit 0; 5 embedder tests passed.
+- `cargo test -p index-vector`: exit 0; 4 vector-index tests passed.
+- `cargo clippy -p resume-cli -p embedder -p index-vector --all-targets -- -D warnings`: exit 0.
+
+Workspace acceptance:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+```
+
+Output summary:
+
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0; all workspace tests passed.
+
+Scope note:
+
+- S39 adds `resume-cli embed-worker --once`, an explicit local embedding command requirement, model/dimension/budget/timeout parsing, visible searchable resume-version candidate selection, local command execution through the S34 embedder protocol, persistent local vector snapshot writes, and redacted Debug output for embedding worker candidates/args. It does not choose, bundle, license, download, or install a concrete embedding model; the configured command is trusted to be local/offline and OS-enforced no-network sandboxing is not yet implemented. It does not add daemon-loop embedding, semantic/hybrid query execution, vector snapshot GC/repair, real-data validation, or cross-platform command validation.
 
 ### S9
 

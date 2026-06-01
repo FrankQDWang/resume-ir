@@ -7,6 +7,10 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use embedder::{
+    Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
+    LocalEmbeddingCommandSpec,
+};
 use import_pipeline::{
     import_root_with_options, rebuild_full_text_index, ImportOptions,
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
@@ -16,8 +20,8 @@ use index_fulltext::{
     SnapshotRootState,
 };
 use index_vector::{
-    inspect_persistent_vector_snapshot, PersistentVectorSnapshotInspection,
-    PersistentVectorSnapshotState,
+    inspect_persistent_vector_snapshot, PersistentVectorIndex, PersistentVectorSnapshotInspection,
+    PersistentVectorSnapshotState, VectorDocument, VectorIndex,
 };
 use meta_store::{
     DocumentId, DocumentStatus, EntityType, ImportRootKind as StoreImportRootKind,
@@ -55,7 +59,7 @@ fn run() -> Result<()> {
     let data_dir = take_data_dir(&mut args)?;
     let Some(command) = args.first().map(String::as_str) else {
         return Err(CliError::usage(
-            "expected command: status, import, search, delete, pause, resume, ocr-worker, doctor, or export-diagnostics",
+            "expected command: status, import, search, delete, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
         ));
     };
 
@@ -67,6 +71,7 @@ fn run() -> Result<()> {
         "pause" => task_control_command(&data_dir, &args[1..], true),
         "resume" => task_control_command(&data_dir, &args[1..], false),
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
+        "embed-worker" => embed_worker_command(&data_dir, &args[1..]),
         "doctor" => {
             if args.len() != 1 {
                 return Err(CliError::usage("usage: resume-cli doctor"));
@@ -75,7 +80,7 @@ fn run() -> Result<()> {
         }
         "export-diagnostics" => export_diagnostics_command(&data_dir, &args[1..]),
         _ => Err(CliError::usage(
-            "expected command: status, import, search, delete, pause, resume, ocr-worker, doctor, or export-diagnostics",
+            "expected command: status, import, search, delete, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
         )),
     }
 }
@@ -1117,6 +1122,290 @@ fn ocr_worker_usage() -> CliError {
     )
 }
 
+fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let worker_args = parse_embed_worker_args(args)?;
+    let Some(command) = worker_args.command.clone() else {
+        return Err(CliError::user(
+            "embedding worker blocked: local embedding command not configured",
+        ));
+    };
+    let model_id = worker_args
+        .model_id
+        .as_deref()
+        .ok_or_else(embed_worker_usage)?;
+    let dimension = worker_args.dimension.ok_or_else(embed_worker_usage)?;
+    let store = open_store(data_dir)?;
+    let candidates = embedding_candidates(&store, worker_args.max_docs)?;
+    let documents_considered = candidates.len();
+
+    if candidates.is_empty() {
+        let vector_diagnostic = inspect_vector_index(data_dir);
+        println!("embedding worker: completed");
+        println!("model id: {model_id}");
+        println!("dimension: {dimension}");
+        println!("documents considered: 0");
+        println!("documents embedded: 0");
+        println!("vector index: {}", vector_diagnostic.index_label());
+        return Ok(());
+    }
+
+    let embedder = LocalEmbeddingCommandEmbedder::new(
+        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
+            .map_err(CliError::embedding)?
+            .with_timeout_ms(worker_args.timeout_ms)
+            .map_err(CliError::embedding)?,
+    );
+    let inputs = candidates
+        .iter()
+        .map(|candidate| {
+            EmbeddingInput::new(candidate.version_id.as_str(), candidate.text.as_str())
+        })
+        .collect::<Vec<_>>();
+    let vectors = embedder
+        .embed_batch(
+            &inputs,
+            EmbeddingBudget::new(worker_args.max_docs, worker_args.max_text_bytes),
+        )
+        .map_err(CliError::embedding)?;
+    let vector_documents = vectors
+        .into_iter()
+        .zip(candidates.iter())
+        .map(|(vector, candidate)| {
+            VectorDocument::new(
+                format!("{}:{}", vector.model_id(), vector.id()),
+                candidate.document_id.as_str(),
+                vector.values().to_vec(),
+            )
+            .map_err(CliError::vector)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
+        .map_err(CliError::vector)?;
+    index.upsert(vector_documents).map_err(CliError::vector)?;
+
+    let vector_diagnostic = inspect_vector_index(data_dir);
+    println!("embedding worker: completed");
+    println!("model id: {model_id}");
+    println!("dimension: {dimension}");
+    println!("documents considered: {documents_considered}");
+    println!("documents embedded: {}", inputs.len());
+    println!("vector index: {}", vector_diagnostic.index_label());
+
+    Ok(())
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct EmbedWorkerCandidate {
+    document_id: DocumentId,
+    version_id: ResumeVersionId,
+    text: String,
+}
+
+impl fmt::Debug for EmbedWorkerCandidate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmbedWorkerCandidate")
+            .field("document_id", &self.document_id)
+            .field("version_id", &self.version_id)
+            .field("text", &"<redacted>")
+            .field("text_bytes", &self.text.len())
+            .finish()
+    }
+}
+
+fn embedding_candidates(store: &MetaStore, max_docs: usize) -> Result<Vec<EmbedWorkerCandidate>> {
+    let mut candidates = Vec::new();
+    for document in store.visible_documents().map_err(CliError::store)? {
+        if !matches!(
+            document.status,
+            DocumentStatus::FieldsExtracted
+                | DocumentStatus::EmbeddingDone
+                | DocumentStatus::IndexedPartial
+                | DocumentStatus::Searchable
+        ) {
+            continue;
+        }
+
+        for version in store
+            .resume_versions_for_document(&document.id)
+            .map_err(CliError::store)?
+        {
+            if version.visibility != ResumeVisibility::Searchable {
+                continue;
+            }
+            let Some(text) = version
+                .clean_text
+                .as_deref()
+                .or(version.raw_text.as_deref())
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+            else {
+                continue;
+            };
+            candidates.push(EmbedWorkerCandidate {
+                document_id: document.id.clone(),
+                version_id: version.id,
+                text: text.to_string(),
+            });
+            if candidates.len() == max_docs {
+                return Ok(candidates);
+            }
+        }
+    }
+
+    Ok(candidates)
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct EmbedWorkerArgs {
+    command: Option<PathBuf>,
+    model_id: Option<String>,
+    dimension: Option<usize>,
+    max_docs: usize,
+    max_text_bytes: usize,
+    timeout_ms: u64,
+}
+
+impl fmt::Debug for EmbedWorkerArgs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmbedWorkerArgs")
+            .field("command_configured", &self.command.is_some())
+            .field("command", &self.command.as_ref().map(|_| "<redacted>"))
+            .field("model_id", &self.model_id)
+            .field("dimension", &self.dimension)
+            .field("max_docs", &self.max_docs)
+            .field("max_text_bytes", &self.max_text_bytes)
+            .field("timeout_ms", &self.timeout_ms)
+            .finish()
+    }
+}
+
+fn parse_embed_worker_args(args: &[String]) -> Result<EmbedWorkerArgs> {
+    let mut seen_once = false;
+    let mut command = None;
+    let mut model_id = None;
+    let mut dimension = None;
+    let mut max_docs = 64_usize;
+    let mut max_text_bytes = 1_000_000_usize;
+    let mut timeout_ms = 30_000_u64;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--once" => {
+                if seen_once {
+                    return Err(embed_worker_usage());
+                }
+                seen_once = true;
+                index += 1;
+            }
+            "--command" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(embed_worker_usage());
+                };
+                if command.is_some() {
+                    return Err(embed_worker_usage());
+                }
+                command = Some(PathBuf::from(value));
+                index += 1;
+            }
+            "--model-id" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(embed_worker_usage());
+                };
+                if model_id.is_some() || !valid_cli_identifier(value) {
+                    return Err(embed_worker_usage());
+                }
+                model_id = Some(value.clone());
+                index += 1;
+            }
+            "--dimension" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(embed_worker_usage());
+                };
+                if dimension.is_some() {
+                    return Err(embed_worker_usage());
+                }
+                dimension = Some(
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .ok_or_else(embed_worker_usage)?,
+                );
+                index += 1;
+            }
+            "--max-docs" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(embed_worker_usage());
+                };
+                max_docs = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(embed_worker_usage)?;
+                index += 1;
+            }
+            "--max-text-bytes" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(embed_worker_usage());
+                };
+                max_text_bytes = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(embed_worker_usage)?;
+                index += 1;
+            }
+            "--timeout-ms" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(embed_worker_usage());
+                };
+                timeout_ms = value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(embed_worker_usage)?;
+                index += 1;
+            }
+            _ => return Err(embed_worker_usage()),
+        }
+    }
+
+    if !seen_once {
+        return Err(embed_worker_usage());
+    }
+
+    Ok(EmbedWorkerArgs {
+        command,
+        model_id,
+        dimension,
+        max_docs,
+        max_text_bytes,
+        timeout_ms,
+    })
+}
+
+fn valid_cli_identifier(value: &str) -> bool {
+    !value.trim().is_empty()
+        && !value.contains('\n')
+        && !value.contains('\r')
+        && !value.contains('\t')
+}
+
+fn embed_worker_usage() -> CliError {
+    CliError::usage(
+        "usage: resume-cli embed-worker --once [--command <path>] [--model-id <id>] [--dimension <n>] [--max-docs <n>] [--max-text-bytes <bytes>] [--timeout-ms <ms>]",
+    )
+}
+
 fn doctor_command(data_dir: &Path) -> Result<()> {
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
@@ -1769,6 +2058,13 @@ impl CliError {
         }
     }
 
+    fn vector(error: index_vector::VectorIndexError) -> Self {
+        Self {
+            message: error.to_string(),
+            exit_code: 1,
+        }
+    }
+
     fn import(error: import_pipeline::ImportPipelineError) -> Self {
         Self {
             message: error.to_string(),
@@ -1790,6 +2086,13 @@ impl CliError {
         }
     }
 
+    fn embedding(error: embedder::EmbeddingError) -> Self {
+        Self {
+            message: error.to_string(),
+            exit_code: 1,
+        }
+    }
+
     fn exit_code(&self) -> i32 {
         self.exit_code
     }
@@ -1798,5 +2101,35 @@ impl CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embed_worker_debug_output_redacts_candidate_text_and_command_path() {
+        let candidate = EmbedWorkerCandidate {
+            document_id: DocumentId::from_non_secret_parts(&["debug-doc"]),
+            version_id: ResumeVersionId::from_non_secret_parts(&["debug-version"]),
+            text: "PRIVATE resume text".to_string(),
+        };
+        let candidate_debug = format!("{candidate:?}");
+        assert!(!candidate_debug.contains("PRIVATE"));
+        assert!(candidate_debug.contains("text_bytes"));
+
+        let args = EmbedWorkerArgs {
+            command: Some(PathBuf::from("/private/local/embed-command")),
+            model_id: Some("local-model".to_string()),
+            dimension: Some(4),
+            max_docs: 8,
+            max_text_bytes: 1000,
+            timeout_ms: 5000,
+        };
+        let args_debug = format!("{args:?}");
+        assert!(!args_debug.contains("/private/local/embed-command"));
+        assert!(args_debug.contains("command_configured"));
+        assert!(args_debug.contains("<redacted>"));
     }
 }
