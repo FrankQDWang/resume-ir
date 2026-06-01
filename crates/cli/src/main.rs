@@ -8,7 +8,10 @@ use std::str::FromStr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use import_pipeline::{import_root, rebuild_full_text_index};
-use index_fulltext::{FullTextIndex, SearchHit, SearchQuery};
+use index_fulltext::{
+    inspect_snapshot_root, FullTextIndex, SearchHit, SearchQuery, SnapshotReadTarget,
+    SnapshotRootState,
+};
 use meta_store::{
     DocumentId, DocumentStatus, EntityType, ImportTask, ImportTaskId, ImportTaskStatus,
     IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
@@ -80,6 +83,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
+    let index_diagnostic = inspect_search_index(data_dir);
 
     println!("resume-ir status");
     println!("indexed documents: {}", summary.indexed_documents);
@@ -103,11 +107,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "last snapshot: {}",
         summary.last_snapshot_id.as_deref().unwrap_or("none")
     );
-    if data_dir.join("search-index").join("meta.json").exists() {
-        println!("search index: available (full-text)");
-    } else {
-        println!("search index: unavailable (no full-text index snapshot)");
-    }
+    println!("search index: {}", index_diagnostic.index_label());
 
     Ok(())
 }
@@ -322,12 +322,13 @@ fn pending_import_task(
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let search_args = parse_search_args(args)?;
 
-    let index_dir = data_dir.join("search-index");
-    if !index_dir.join("meta.json").exists() {
+    let Some(index) =
+        FullTextIndex::open_active(&data_dir.join("search-index")).map_err(CliError::fulltext)?
+    else {
         println!("search index not available yet");
         println!("results: 0");
         return Ok(());
-    }
+    };
 
     let candidate_limit = search_args
         .top_k
@@ -335,7 +336,6 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .clamp(search_args.top_k, 100);
     let plan = plan_search(&search_args.query, candidate_limit)
         .map_err(|_| CliError::user("search query is empty"))?;
-    let index = FullTextIndex::open(&index_dir).map_err(CliError::fulltext)?;
     let hits = index
         .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
         .map_err(CliError::fulltext)?;
@@ -400,8 +400,22 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("entity mentions: {}", summary.entity_mentions);
     println!("recovery queue: {}", summary.recovery_queue_depth);
+    println!("index health: {}", index_health_label(summary.index_health));
+    println!(
+        "last snapshot: {}",
+        if summary.last_snapshot_id.is_some() {
+            "present"
+        } else {
+            "none"
+        }
+    );
     println!("search index: {}", index_diagnostic.index_label());
+    println!(
+        "search index read target: {}",
+        index_diagnostic.read_target_label()
+    );
     println!("query smoke: {}", index_diagnostic.query_smoke_label());
+    println!("staging orphans: {}", index_diagnostic.staging_orphans());
     println!("contact hash key: {}", contact_key.state().label());
     println!("fault simulations: available");
     println!("fault simulation hooks: daemon_restart,index_snapshot_corrupt,disk_space_low");
@@ -445,6 +459,26 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!(
         "  \"search_index_state\": \"{}\",",
         index_diagnostic.state_label()
+    );
+    println!(
+        "  \"search_index_read_target\": \"{}\",",
+        index_diagnostic.read_target_label()
+    );
+    println!(
+        "  \"index_health\": \"{}\",",
+        index_health_label(summary.index_health)
+    );
+    println!(
+        "  \"last_snapshot\": \"{}\",",
+        if summary.last_snapshot_id.is_some() {
+            "present"
+        } else {
+            "none"
+        }
+    );
+    println!(
+        "  \"staging_orphans\": {},",
+        index_diagnostic.staging_orphans()
     );
     println!(
         "  \"query_smoke\": \"{}\",",
@@ -681,13 +715,37 @@ struct SearchArgs {
 }
 
 fn inspect_search_index(data_dir: &Path) -> SearchIndexDiagnostic {
-    let index_dir = data_dir.join("search-index");
-    if !index_dir.join("meta.json").exists() {
-        return SearchIndexDiagnostic::Unavailable;
+    let index_root = data_dir.join("search-index");
+    let inspection = match inspect_snapshot_root(&index_root) {
+        Ok(inspection) => inspection,
+        Err(_) => {
+            return SearchIndexDiagnostic::Corrupt {
+                read_target: None,
+                staging_orphans: 0,
+            };
+        }
+    };
+
+    match inspection.state() {
+        SnapshotRootState::Missing => {
+            return SearchIndexDiagnostic::Unavailable {
+                staging_orphans: inspection.staging_orphans(),
+            };
+        }
+        SnapshotRootState::Corrupt | SnapshotRootState::ActiveMissing => {
+            return SearchIndexDiagnostic::Corrupt {
+                read_target: inspection.read_target(),
+                staging_orphans: inspection.staging_orphans(),
+            };
+        }
+        SnapshotRootState::Ready => {}
     }
 
-    let Ok(index) = FullTextIndex::open(&index_dir) else {
-        return SearchIndexDiagnostic::Corrupt;
+    let Ok(Some(index)) = FullTextIndex::open_active(&index_root) else {
+        return SearchIndexDiagnostic::Corrupt {
+            read_target: inspection.read_target(),
+            staging_orphans: inspection.staging_orphans(),
+        };
     };
 
     let started_at = Instant::now();
@@ -695,42 +753,83 @@ fn inspect_search_index(data_dir: &Path) -> SearchIndexDiagnostic {
         Ok(hits) => SearchIndexDiagnostic::Available {
             elapsed_ms: started_at.elapsed().as_millis(),
             results: hits.len(),
+            read_target: inspection.read_target(),
+            staging_orphans: inspection.staging_orphans(),
         },
-        Err(_) => SearchIndexDiagnostic::Corrupt,
+        Err(_) => SearchIndexDiagnostic::Corrupt {
+            read_target: inspection.read_target(),
+            staging_orphans: inspection.staging_orphans(),
+        },
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SearchIndexDiagnostic {
-    Unavailable,
-    Corrupt,
-    Available { elapsed_ms: u128, results: usize },
+    Unavailable {
+        staging_orphans: usize,
+    },
+    Corrupt {
+        read_target: Option<SnapshotReadTarget>,
+        staging_orphans: usize,
+    },
+    Available {
+        elapsed_ms: u128,
+        results: usize,
+        read_target: Option<SnapshotReadTarget>,
+        staging_orphans: usize,
+    },
 }
 
 impl SearchIndexDiagnostic {
     fn index_label(self) -> String {
         match self {
-            Self::Unavailable => "unavailable".to_string(),
-            Self::Corrupt => "corrupt".to_string(),
+            Self::Unavailable { .. } => "unavailable".to_string(),
+            Self::Corrupt { .. } => "corrupt".to_string(),
+            Self::Available {
+                read_target: Some(SnapshotReadTarget::PublishedSnapshot),
+                ..
+            } => "available (full-text snapshot)".to_string(),
             Self::Available { .. } => "available (full-text)".to_string(),
         }
     }
 
     fn state_label(self) -> &'static str {
         match self {
-            Self::Unavailable => "unavailable",
-            Self::Corrupt => "corrupt",
+            Self::Unavailable { .. } => "unavailable",
+            Self::Corrupt { .. } => "corrupt",
             Self::Available { .. } => "available",
+        }
+    }
+
+    fn read_target_label(self) -> &'static str {
+        match self {
+            Self::Unavailable { .. } => "none",
+            Self::Corrupt { read_target, .. } | Self::Available { read_target, .. } => {
+                read_target.map(SnapshotReadTarget::label).unwrap_or("none")
+            }
+        }
+    }
+
+    fn staging_orphans(self) -> usize {
+        match self {
+            Self::Unavailable { staging_orphans }
+            | Self::Corrupt {
+                staging_orphans, ..
+            }
+            | Self::Available {
+                staging_orphans, ..
+            } => staging_orphans,
         }
     }
 
     fn query_smoke_label(self) -> String {
         match self {
-            Self::Unavailable => "skipped (no full-text index)".to_string(),
-            Self::Corrupt => "skipped (index unavailable)".to_string(),
+            Self::Unavailable { .. } => "skipped (no full-text index)".to_string(),
+            Self::Corrupt { .. } => "skipped (index unavailable)".to_string(),
             Self::Available {
                 elapsed_ms,
                 results,
+                ..
             } => {
                 format!("ok (elapsed_ms={elapsed_ms}, results={results})")
             }
@@ -739,8 +838,8 @@ impl SearchIndexDiagnostic {
 
     fn query_smoke_json_label(self) -> &'static str {
         match self {
-            Self::Unavailable => "skipped_no_fulltext_index",
-            Self::Corrupt => "skipped_index_unavailable",
+            Self::Unavailable { .. } => "skipped_no_fulltext_index",
+            Self::Corrupt { .. } => "skipped_index_unavailable",
             Self::Available { .. } => "ok",
         }
     }

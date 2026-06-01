@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
+use meta_store::{IndexState, IndexStateStatus, MetaStore, UnixTimestamp};
+
 #[test]
 fn doctor_reports_no_index_without_path_or_fake_benchmark() {
     let data_dir = temp_path("doctor-private-data");
@@ -163,6 +166,74 @@ fn doctor_reports_unreadable_contact_hash_key_without_leaks() {
     assert!(!stdout.contains(path_str(&data_dir)));
 
     fs::set_permissions(&secrets_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn doctor_and_diagnostics_report_metadata_index_health_with_active_snapshot() {
+    let data_dir = temp_dir("diagnostics-index-health");
+    publish_snapshot(
+        &data_dir.join("search-index"),
+        "fulltext-1800002000-1-0-0",
+        [IndexDocument {
+            doc_id: "doc_diagnostic".to_string(),
+            version_id: "ver_diagnostic".to_string(),
+            file_name: "synthetic-diagnostic.pdf".to_string(),
+            clean_text: "diagnostic Java search text".to_string(),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: "diagnostic Java".to_string(),
+            }],
+            is_deleted: false,
+        }],
+    )
+    .unwrap();
+    fs::create_dir_all(data_dir.join("search-index").join("staging").join("orphan")).unwrap();
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .upsert_index_state(&IndexState {
+            manifest_version: "fulltext-s25-test".to_string(),
+            snapshot_token: Some("fulltext-1800002000-1-0-0".to_string()),
+            status: IndexStateStatus::Stale,
+            updated_at: UnixTimestamp::from_unix_seconds(1_800_002_000),
+        })
+        .unwrap();
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with active snapshot");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("search index: available (full-text snapshot)"));
+    assert!(stdout.contains("index health: stale"));
+    assert!(stdout.contains("last snapshot: present"));
+    assert!(stdout.contains("staging orphans: 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with active snapshot");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"search_index_state\": \"available\""));
+    assert!(stdout.contains("\"search_index_read_target\": \"published_snapshot\""));
+    assert!(stdout.contains("\"index_health\": \"stale\""));
+    assert!(stdout.contains("\"last_snapshot\": \"present\""));
+    assert!(stdout.contains("\"staging_orphans\": 1"));
+    assert!(!stdout.contains("fulltext-1800002000-1-0-0"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
     remove_dir(&data_dir);
 }
 

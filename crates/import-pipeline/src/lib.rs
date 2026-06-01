@@ -2,11 +2,12 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use core_domain::{EntityMentionId, SectionType};
 use extractor_rules::{extract_strong_fields, FieldType, RuleMatch};
 use fs_crawler::{crawl_directory, DiscoveredFile};
-use index_fulltext::{FullTextIndex, IndexDocument, IndexSection};
+use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use meta_store::{
     Document, DocumentStatus, EntityMention, EntityType, FileExtension, ImportTask,
     ImportTaskStatus, IndexState, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId,
@@ -124,7 +125,13 @@ fn run_import(
             .map(|(_, index_document)| index_document.clone()),
     );
     let indexed_document_count = index_documents.len();
-    write_full_text_index(data_dir, index_documents)?;
+    let snapshot_token = index_snapshot_token(
+        now,
+        indexed_document_count,
+        summary.ocr_required_documents,
+        summary.deleted_documents,
+    );
+    write_full_text_index(data_dir, &snapshot_token, index_documents)?;
 
     for (mut document, _) in pending_index_documents {
         document.status = DocumentStatus::Searchable;
@@ -135,13 +142,7 @@ fn run_import(
         summary.searchable_documents += 1;
     }
 
-    update_index_state(
-        store,
-        now,
-        indexed_document_count,
-        summary.ocr_required_documents,
-        summary.deleted_documents,
-    )?;
+    update_index_state(store, now, snapshot_token)?;
 
     Ok(summary)
 }
@@ -154,45 +155,55 @@ pub fn rebuild_full_text_index(
     let sectionizer = Sectionizer::default();
     let index_documents = persisted_index_documents(store, &sectionizer, &BTreeSet::new())?;
     let indexed_documents = index_documents.len();
-    write_full_text_index(data_dir, index_documents)?;
-    update_index_state(store, now, indexed_documents, 0, 0)?;
+    let snapshot_token = index_snapshot_token(now, indexed_documents, 0, 0);
+    write_full_text_index(data_dir, &snapshot_token, index_documents)?;
+    update_index_state(store, now, snapshot_token)?;
 
     Ok(IndexRebuildSummary { indexed_documents })
 }
 
-fn write_full_text_index(data_dir: &Path, index_documents: Vec<IndexDocument>) -> Result<()> {
-    let index = FullTextIndex::open_or_create(&data_dir.join("search-index"))
-        .map_err(ImportPipelineError::index)?;
-    index
-        .replace_documents(index_documents)
-        .map_err(ImportPipelineError::index)?;
-    index.commit().map_err(ImportPipelineError::index)?;
-    drop(index);
-
-    Ok(())
+fn write_full_text_index(
+    data_dir: &Path,
+    snapshot_token: &str,
+    index_documents: Vec<IndexDocument>,
+) -> Result<()> {
+    publish_snapshot(
+        &data_dir.join("search-index"),
+        snapshot_token,
+        index_documents,
+    )
+    .map_err(ImportPipelineError::index)
 }
 
-fn update_index_state(
-    store: &MetaStore,
-    now: UnixTimestamp,
-    indexed_documents: usize,
-    ocr_required_documents: usize,
-    deleted_documents: usize,
-) -> Result<()> {
+fn update_index_state(store: &MetaStore, now: UnixTimestamp, snapshot_token: String) -> Result<()> {
     store
         .upsert_index_state(&IndexState {
             manifest_version: INDEX_MANIFEST_VERSION.to_string(),
-            snapshot_token: Some(format!(
-                "snapshot:{}:{}:{}:{}",
-                now.as_unix_seconds(),
-                indexed_documents,
-                ocr_required_documents,
-                deleted_documents
-            )),
+            snapshot_token: Some(snapshot_token),
             status: IndexStateStatus::Ready,
             updated_at: now,
         })
         .map_err(ImportPipelineError::store)
+}
+
+fn index_snapshot_token(
+    now: UnixTimestamp,
+    indexed_documents: usize,
+    ocr_required_documents: usize,
+    deleted_documents: usize,
+) -> String {
+    format!(
+        "fulltext-{}-{}-{indexed_documents}-{ocr_required_documents}-{deleted_documents}",
+        now.as_unix_seconds(),
+        snapshot_unique_suffix(now)
+    )
+}
+
+fn snapshot_unique_suffix(now: UnixTimestamp) -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_else(|_| now.as_unix_seconds() as u128)
 }
 
 fn mark_missing_documents_deleted(

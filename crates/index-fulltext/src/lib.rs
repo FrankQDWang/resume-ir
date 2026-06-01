@@ -4,7 +4,9 @@ pub fn crate_name() -> &'static str {
 
 use std::fmt;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 use regex::Regex;
@@ -16,6 +18,9 @@ use tantivy::{Index, IndexReader, IndexWriter};
 const WRITER_HEAP_BYTES: usize = 50_000_000;
 const DEFAULT_LIMIT: usize = 10;
 const MAX_LIMIT: usize = 100;
+const ACTIVE_SNAPSHOT_FILE: &str = "active-snapshot";
+const SNAPSHOTS_DIR: &str = "snapshots";
+const STAGING_DIR: &str = "staging";
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct IndexDocument {
@@ -165,6 +170,14 @@ impl FullTextIndex {
         })
     }
 
+    pub fn open_active(index_root: &Path) -> Result<Option<Self>> {
+        let Some(target_dir) = active_index_dir(index_root)? else {
+            return Ok(None);
+        };
+
+        Self::open(&target_dir).map(Some)
+    }
+
     pub fn replace_documents<I>(&self, documents: I) -> Result<()>
     where
         I: IntoIterator<Item = IndexDocument>,
@@ -297,6 +310,220 @@ impl FullTextIndex {
 
         Ok(hits)
     }
+}
+
+pub fn publish_snapshot<I>(index_root: &Path, snapshot_name: &str, documents: I) -> Result<()>
+where
+    I: IntoIterator<Item = IndexDocument>,
+{
+    validate_snapshot_name(snapshot_name)?;
+
+    let staging_root = index_root.join(STAGING_DIR);
+    let snapshots_root = index_root.join(SNAPSHOTS_DIR);
+    fs::create_dir_all(&staging_root).map_err(FullTextError::io)?;
+    fs::create_dir_all(&snapshots_root).map_err(FullTextError::io)?;
+
+    let staging_dir = staging_root.join(format!("{snapshot_name}.tmp"));
+    if staging_dir.exists() {
+        fs::remove_dir_all(&staging_dir).map_err(FullTextError::io)?;
+    }
+    let published_dir = snapshots_root.join(snapshot_name);
+    if published_dir.exists() {
+        return Err(FullTextError::internal("full-text snapshot already exists"));
+    }
+
+    let index = FullTextIndex::open_or_create(&staging_dir)?;
+    index.replace_documents(documents)?;
+    index.commit()?;
+    drop(index);
+
+    let validation = FullTextIndex::open(&staging_dir)?;
+    validation.search(SearchQuery::new("diagnostic").with_limit(1))?;
+    drop(validation);
+
+    fs::rename(&staging_dir, &published_dir).map_err(FullTextError::io)?;
+    write_active_snapshot(index_root, snapshot_name)?;
+
+    Ok(())
+}
+
+pub fn inspect_snapshot_root(index_root: &Path) -> Result<SnapshotRootInspection> {
+    let staging_orphans = staging_orphan_count(index_root)?;
+    let active_snapshot = read_active_snapshot(index_root)?;
+
+    if let Some(snapshot_name) = active_snapshot {
+        let snapshot_dir = index_root.join(SNAPSHOTS_DIR).join(&snapshot_name);
+        if !snapshot_dir.join("meta.json").exists() {
+            return Ok(SnapshotRootInspection {
+                state: SnapshotRootState::ActiveMissing,
+                read_target: None,
+                active_snapshot: Some(snapshot_name),
+                staging_orphans,
+            });
+        }
+
+        let state = if FullTextIndex::open(&snapshot_dir).is_ok() {
+            SnapshotRootState::Ready
+        } else {
+            SnapshotRootState::Corrupt
+        };
+        return Ok(SnapshotRootInspection {
+            state,
+            read_target: Some(SnapshotReadTarget::PublishedSnapshot),
+            active_snapshot: Some(snapshot_name),
+            staging_orphans,
+        });
+    }
+
+    if index_root.join("meta.json").exists() {
+        let state = if FullTextIndex::open(index_root).is_ok() {
+            SnapshotRootState::Ready
+        } else {
+            SnapshotRootState::Corrupt
+        };
+        return Ok(SnapshotRootInspection {
+            state,
+            read_target: Some(SnapshotReadTarget::LegacyRoot),
+            active_snapshot: None,
+            staging_orphans,
+        });
+    }
+
+    Ok(SnapshotRootInspection {
+        state: SnapshotRootState::Missing,
+        read_target: None,
+        active_snapshot: None,
+        staging_orphans,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotRootInspection {
+    state: SnapshotRootState,
+    read_target: Option<SnapshotReadTarget>,
+    active_snapshot: Option<String>,
+    staging_orphans: usize,
+}
+
+impl SnapshotRootInspection {
+    pub fn state(&self) -> SnapshotRootState {
+        self.state
+    }
+
+    pub fn read_target(&self) -> Option<SnapshotReadTarget> {
+        self.read_target
+    }
+
+    pub fn active_snapshot(&self) -> Option<&str> {
+        self.active_snapshot.as_deref()
+    }
+
+    pub fn staging_orphans(&self) -> usize {
+        self.staging_orphans
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapshotRootState {
+    Missing,
+    Ready,
+    Corrupt,
+    ActiveMissing,
+}
+
+impl SnapshotRootState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Ready => "ready",
+            Self::Corrupt => "corrupt",
+            Self::ActiveMissing => "active_missing",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapshotReadTarget {
+    PublishedSnapshot,
+    LegacyRoot,
+}
+
+impl SnapshotReadTarget {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::PublishedSnapshot => "published_snapshot",
+            Self::LegacyRoot => "legacy_root",
+        }
+    }
+}
+
+fn active_index_dir(index_root: &Path) -> Result<Option<PathBuf>> {
+    let Some(snapshot_name) = read_active_snapshot(index_root)? else {
+        if index_root.join("meta.json").exists() {
+            return Ok(Some(index_root.to_path_buf()));
+        }
+        return Ok(None);
+    };
+
+    Ok(Some(index_root.join(SNAPSHOTS_DIR).join(snapshot_name)))
+}
+
+fn read_active_snapshot(index_root: &Path) -> Result<Option<String>> {
+    let path = index_root.join(ACTIVE_SNAPSHOT_FILE);
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(FullTextError::io(error)),
+    };
+    let snapshot_name = content.trim();
+    validate_snapshot_name(snapshot_name)?;
+    Ok(Some(snapshot_name.to_string()))
+}
+
+fn write_active_snapshot(index_root: &Path, snapshot_name: &str) -> Result<()> {
+    validate_snapshot_name(snapshot_name)?;
+    let active_path = index_root.join(ACTIVE_SNAPSHOT_FILE);
+    let temp_path = index_root.join(format!(".{ACTIVE_SNAPSHOT_FILE}.tmp"));
+    fs::write(&temp_path, format!("{snapshot_name}\n")).map_err(FullTextError::io)?;
+    match fs::rename(&temp_path, &active_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            fs::remove_file(&active_path).map_err(FullTextError::io)?;
+            fs::rename(&temp_path, &active_path).map_err(FullTextError::io)
+        }
+        Err(error) => Err(FullTextError::io(error)),
+    }
+}
+
+fn staging_orphan_count(index_root: &Path) -> Result<usize> {
+    let staging_root = index_root.join(STAGING_DIR);
+    let entries = match fs::read_dir(staging_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(FullTextError::io(error)),
+    };
+
+    let mut count = 0_usize;
+    for entry in entries {
+        let entry = entry.map_err(FullTextError::io)?;
+        if entry.file_type().map_err(FullTextError::io)?.is_dir() {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn validate_snapshot_name(snapshot_name: &str) -> Result<()> {
+    if snapshot_name.is_empty()
+        || !snapshot_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(FullTextError::internal(
+            "full-text snapshot name is invalid",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]

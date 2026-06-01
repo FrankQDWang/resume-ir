@@ -2,7 +2,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use index_fulltext::{FullTextIndex, IndexDocument, IndexSection, SearchQuery};
+use index_fulltext::{
+    inspect_snapshot_root, publish_snapshot, FullTextIndex, IndexDocument, IndexSection,
+    SearchQuery, SnapshotReadTarget, SnapshotRootState,
+};
 use tantivy::collector::TopDocs;
 use tantivy::query::AllQuery;
 use tantivy::schema::{TantivyDocument, Value};
@@ -292,6 +295,48 @@ fn stored_index_fields_redact_contact_values_before_commit() {
         );
     }
     remove_dir(&index_dir);
+}
+
+#[test]
+fn published_snapshot_becomes_active_without_reading_staging_orphans() {
+    let index_root = temp_dir("published-snapshot");
+
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800001000-1-0-0",
+        [java_payment_document(false)],
+    )
+    .unwrap();
+    fs::create_dir_all(index_root.join("staging").join("orphan-bad")).unwrap();
+    fs::write(
+        index_root
+            .join("staging")
+            .join("orphan-bad")
+            .join("meta.json"),
+        b"not a valid tantivy index",
+    )
+    .unwrap();
+
+    let inspection = inspect_snapshot_root(&index_root).unwrap();
+    assert_eq!(inspection.state(), SnapshotRootState::Ready);
+    assert_eq!(
+        inspection.read_target(),
+        Some(SnapshotReadTarget::PublishedSnapshot)
+    );
+    assert_eq!(
+        inspection.active_snapshot(),
+        Some("fulltext-1800001000-1-0-0")
+    );
+    assert_eq!(inspection.staging_orphans(), 1);
+
+    let index = FullTextIndex::open_active(&index_root).unwrap().unwrap();
+    let hits = index
+        .search(SearchQuery::new("Java payment").with_limit(5))
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].doc_id, "doc_java_payment");
+
+    remove_dir(&index_root);
 }
 
 fn java_payment_document(is_deleted: bool) -> IndexDocument {

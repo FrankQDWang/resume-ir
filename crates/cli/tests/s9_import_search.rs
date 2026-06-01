@@ -50,7 +50,7 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
     assert!(status_stdout.contains("ocr queue: 1"));
     assert!(status_stdout.contains("import tasks queued: 0"));
     assert!(status_stdout.contains("index health: ready"));
-    assert!(status_stdout.contains("search index: available (full-text)"));
+    assert!(status_stdout.contains("search index: available (full-text snapshot)"));
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "search", "Java"])
