@@ -195,6 +195,42 @@ fn mixed_chinese_english_query_matches_clean_text() {
     remove_dir(&index_dir);
 }
 
+#[test]
+fn snippets_redact_contact_values_near_query_matches() {
+    let index_dir = temp_dir("snippet-redaction");
+    let index = FullTextIndex::open_or_create(&index_dir).unwrap();
+
+    index
+        .replace_documents([IndexDocument {
+            doc_id: "doc_contact".to_string(),
+            version_id: "ver_contact".to_string(),
+            file_name: "synthetic-contact.pdf".to_string(),
+            clean_text:
+                "Built Java. Phone: +14155550132 Alt: 4155550132 Email: Shared.Candidate@Example.Test"
+                    .to_string(),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: "Built Java ranking services".to_string(),
+            }],
+            is_deleted: false,
+        }])
+        .unwrap();
+    index.commit().unwrap();
+    index.reload().unwrap();
+
+    let hits = index
+        .search(SearchQuery::new("Java").with_limit(5))
+        .unwrap();
+
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].snippet.contains("Java"));
+    assert!(hits[0].snippet.contains("<redacted-email>"));
+    assert!(hits[0].snippet.contains("<redacted-phone>"));
+    assert!(!hits[0].snippet.contains("Shared.Candidate"));
+    assert!(!hits[0].snippet.contains("415"));
+    remove_dir(&index_dir);
+}
+
 fn java_payment_document(is_deleted: bool) -> IndexDocument {
     IndexDocument {
         doc_id: "doc_java_payment".to_string(),

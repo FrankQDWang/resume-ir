@@ -15,6 +15,7 @@ use meta_store::{
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_docx::DocxParser;
 use parser_pdf::PdfParser;
+use privacy::{ContactHasher, ContactKind};
 use sectionizer::{SectionChunk, Sectionizer};
 use text_normalizer::TextNormalizer;
 
@@ -89,7 +90,7 @@ fn run_import(
         .collect::<BTreeSet<_>>();
 
     for file in report.files {
-        match process_file(store, &file, &sectionizer, now)? {
+        match process_file(data_dir, store, &file, &sectionizer, now)? {
             ProcessedFile::Searchable {
                 document,
                 index_document,
@@ -287,6 +288,7 @@ fn index_document_from_resume_version(
 }
 
 fn process_file(
+    data_dir: &Path,
     store: &MetaStore,
     file: &DiscoveredFile,
     sectionizer: &Sectionizer,
@@ -380,11 +382,15 @@ fn process_file(
     store
         .upsert_document(&document)
         .map_err(ImportPipelineError::store)?;
+    let existing_candidate_id = store
+        .resume_version_by_id(&version_id)
+        .map_err(ImportPipelineError::store)?
+        .and_then(|version| version.candidate_id);
     store
         .upsert_resume_version(&ResumeVersion {
             id: version_id.clone(),
             document_id: document.id.clone(),
-            candidate_id: None,
+            candidate_id: existing_candidate_id,
             parse_version: PARSE_VERSION.to_string(),
             schema_version: SCHEMA_VERSION.to_string(),
             language_set: language_set(&clean_text),
@@ -401,6 +407,7 @@ fn process_file(
     store
         .replace_entity_mentions(&version_id, &mentions)
         .map_err(ImportPipelineError::store)?;
+    assign_candidate_from_contact_mentions(data_dir, store, &version_id, &mentions)?;
 
     let sections = sectionizer.sectionize(&clean_text);
     Ok(ProcessedFile::Searchable {
@@ -414,6 +421,58 @@ fn process_file(
             is_deleted: false,
         }),
     })
+}
+
+fn assign_candidate_from_contact_mentions(
+    data_dir: &Path,
+    store: &MetaStore,
+    version_id: &ResumeVersionId,
+    mentions: &[EntityMention],
+) -> Result<()> {
+    let email = best_normalized_contact(mentions, EntityType::Email);
+    let phone = best_normalized_contact(mentions, EntityType::Phone);
+    if email.is_none() && phone.is_none() {
+        return Ok(());
+    }
+
+    let hasher = ContactHasher::load_or_create(data_dir).map_err(ImportPipelineError::privacy)?;
+    let email_hash = email
+        .map(|value| hasher.hash_contact(ContactKind::Email, value))
+        .transpose()
+        .map_err(ImportPipelineError::privacy)?;
+    let phone_hash = phone
+        .map(|value| hasher.hash_contact(ContactKind::Phone, value))
+        .transpose()
+        .map_err(ImportPipelineError::privacy)?;
+    store
+        .assign_candidate_from_hashed_contacts(version_id, email_hash.as_ref(), phone_hash.as_ref())
+        .map_err(ImportPipelineError::store)?;
+
+    Ok(())
+}
+
+fn best_normalized_contact(mentions: &[EntityMention], entity_type: EntityType) -> Option<&str> {
+    let mut candidates = mentions
+        .iter()
+        .filter(|mention| mention.entity_type == entity_type)
+        .filter_map(|mention| {
+            let normalized = mention.normalized_value.as_deref()?;
+            Some((
+                normalized,
+                mention.confidence,
+                mention.span_start.unwrap_or(usize::MAX),
+            ))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.2.cmp(&right.2))
+            .then_with(|| left.0.cmp(right.0))
+    });
+    candidates.first().map(|candidate| candidate.0)
 }
 
 fn mark_ocr_required_and_enqueue(
@@ -614,6 +673,13 @@ impl ImportPipelineError {
             retryable: true,
         }
     }
+
+    fn privacy(_error: privacy::PrivacyError) -> Self {
+        Self {
+            kind: ImportPipelineErrorKind::Privacy,
+            retryable: false,
+        }
+    }
 }
 
 impl fmt::Debug for ImportPipelineError {
@@ -632,6 +698,9 @@ impl fmt::Display for ImportPipelineError {
             ImportPipelineErrorKind::Store => formatter.write_str("metadata update failed"),
             ImportPipelineErrorKind::Crawl => formatter.write_str("file scan failed"),
             ImportPipelineErrorKind::Index => formatter.write_str("search index update failed"),
+            ImportPipelineErrorKind::Privacy => {
+                formatter.write_str("contact privacy boundary failed")
+            }
         }
     }
 }
@@ -643,4 +712,5 @@ enum ImportPipelineErrorKind {
     Store,
     Crawl,
     Index,
+    Privacy,
 }

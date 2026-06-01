@@ -5,8 +5,9 @@ pub fn crate_name() -> &'static str {
 use std::fmt;
 use std::fs;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
+use regex::Regex;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::{Field, Schema, TantivyDocument, Value, FAST, STORED, STRING, TEXT};
@@ -363,7 +364,27 @@ fn build_snippet(text: &str, query: &str) -> String {
 
     let start = nearest_char_boundary_before(text, first_match.saturating_sub(40));
     let end = nearest_char_boundary_after(text, (first_match + 80).min(text.len()));
-    text[start..end].trim().to_string()
+    redact_contact_values(text[start..end].trim())
+}
+
+fn redact_contact_values(text: &str) -> String {
+    static EMAIL_REGEX: OnceLock<Regex> = OnceLock::new();
+    static PHONE_REGEX: OnceLock<Regex> = OnceLock::new();
+    static COMPACT_PHONE_REGEX: OnceLock<Regex> = OnceLock::new();
+
+    let email_redacted = EMAIL_REGEX
+        .get_or_init(|| Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap())
+        .replace_all(text, "<redacted-email>");
+    let phone_redacted = PHONE_REGEX
+        .get_or_init(|| {
+            Regex::new(r"(?x)(?:\+\d{1,3}[\s.-]*)?(?:\(\d{3}\)|\d{3,4})[\s.-]+\d{3,4}[\s.-]+\d{4}")
+                .unwrap()
+        })
+        .replace_all(&email_redacted, "<redacted-phone>");
+    COMPACT_PHONE_REGEX
+        .get_or_init(|| Regex::new(r"\+?(?:1)?\d{10}\b").unwrap())
+        .replace_all(&phone_redacted, "<redacted-phone>")
+        .into_owned()
 }
 
 fn nearest_char_boundary_before(text: &str, mut index: usize) -> usize {

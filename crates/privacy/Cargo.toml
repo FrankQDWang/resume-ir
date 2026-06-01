@@ -1,5 +1,5 @@
 [package]
-name = "index-fulltext"
+name = "privacy"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -9,8 +9,10 @@ publish.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-regex = "1.12"
-tantivy = "0.26.1"
+core-domain = { path = "../core-domain" }
+getrandom = "0.2"
+hmac = "0.12"
+sha2 = "0.10"
 
 [lints]
 workspace = true
