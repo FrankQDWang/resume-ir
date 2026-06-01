@@ -2,7 +2,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use privacy::{contact_hash_key_path, ContactHasher, ContactKind};
+use privacy::{
+    contact_hash_key_path, inspect_contact_hash_key, ContactHashKeyState, ContactHasher,
+    ContactKind,
+};
 
 #[test]
 fn contact_hasher_outputs_stable_lowercase_redacted_hashes() {
@@ -55,6 +58,75 @@ fn contact_hash_key_is_created_locally_without_contact_material() {
     remove_dir(&data_dir);
 }
 
+#[test]
+fn contact_hash_key_inspection_is_read_only_and_redacted() {
+    let data_dir = temp_dir("privacy-key-inspect");
+    let key_path = contact_hash_key_path(&data_dir);
+
+    let missing = inspect_contact_hash_key(&data_dir).unwrap();
+    assert_eq!(missing.state(), ContactHashKeyState::Missing);
+    assert!(!key_path.exists());
+    assert!(!format!("{missing:?}").contains(path_str(&data_dir)));
+
+    fs::create_dir_all(key_path.parent().unwrap()).unwrap();
+    fs::write(&key_path, "not-a-hex-key\n").unwrap();
+    let invalid = inspect_contact_hash_key(&data_dir).unwrap();
+    assert_eq!(invalid.state(), ContactHashKeyState::Invalid);
+    assert!(!format!("{invalid:?}").contains("not-a-hex-key"));
+    assert!(!format!("{invalid:?}").contains(path_str(&data_dir)));
+
+    fs::write(&key_path, format!("{}\n", "a".repeat(64))).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644)).unwrap();
+        let weak = inspect_contact_hash_key(&data_dir).unwrap();
+        assert_eq!(weak.state(), ContactHashKeyState::WeakPermissions);
+        assert_eq!(key_mode(&key_path) & 0o777, 0o644);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let ready = inspect_contact_hash_key(&data_dir).unwrap();
+    assert_eq!(ready.state(), ContactHashKeyState::Ready);
+    assert!(!format!("{ready:?}").contains("a".repeat(64).as_str()));
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn contact_hash_key_inspection_reports_unreadable_without_leaks() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let data_dir = temp_dir("privacy-key-unreadable");
+    let key_path = contact_hash_key_path(&data_dir);
+    fs::create_dir_all(key_path.parent().unwrap()).unwrap();
+    fs::write(&key_path, format!("{}\n", "b".repeat(64))).unwrap();
+    fs::set_permissions(
+        key_path.parent().unwrap(),
+        fs::Permissions::from_mode(0o000),
+    )
+    .unwrap();
+
+    let unreadable = inspect_contact_hash_key(&data_dir).unwrap();
+    assert_eq!(unreadable.state(), ContactHashKeyState::Unreadable);
+    assert!(!format!("{unreadable:?}").contains(path_str(&data_dir)));
+    assert!(!format!("{unreadable:?}").contains("b".repeat(64).as_str()));
+
+    fs::set_permissions(
+        key_path.parent().unwrap(),
+        fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    remove_dir(&data_dir);
+}
+
 fn temp_dir(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -63,6 +135,10 @@ fn temp_dir(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("resume-ir-s21-{label}-{unique}"));
     fs::create_dir_all(&path).unwrap();
     path
+}
+
+fn path_str(path: &Path) -> &str {
+    path.to_str().unwrap()
 }
 
 fn remove_dir(path: &PathBuf) {

@@ -13,6 +13,7 @@ use meta_store::{
     DocumentId, DocumentStatus, EntityType, ImportTask, ImportTaskId, ImportTaskStatus,
     IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
+use privacy::inspect_contact_hash_key;
 use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
 
@@ -389,6 +390,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
+    let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
 
     println!("resume-ir doctor");
     println!("metadata: ok");
@@ -400,6 +402,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("search index: {}", index_diagnostic.index_label());
     println!("query smoke: {}", index_diagnostic.query_smoke_label());
+    println!("contact hash key: {}", contact_key.state().label());
     println!("fault simulations: available");
     println!("fault simulation hooks: daemon_restart,index_snapshot_corrupt,disk_space_low");
     println!("diagnostics redaction: available");
@@ -417,6 +420,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
+    let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
 
     println!("{{");
     println!("  \"schema_version\": \"diagnostics.v1\",");
@@ -445,6 +449,10 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!(
         "  \"query_smoke\": \"{}\",",
         index_diagnostic.query_smoke_json_label()
+    );
+    println!(
+        "  \"contact_hash_key\": \"{}\",",
+        contact_key.state().label()
     );
     println!("  \"fault_simulations\": [");
     println!("    \"daemon_restart\",");
@@ -816,6 +824,13 @@ impl CliError {
     }
 
     fn import(error: import_pipeline::ImportPipelineError) -> Self {
+        Self {
+            message: error.to_string(),
+            exit_code: 1,
+        }
+    }
+
+    fn privacy(error: privacy::PrivacyError) -> Self {
         Self {
             message: error.to_string(),
             exit_code: 1,

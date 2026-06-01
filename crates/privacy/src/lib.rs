@@ -94,6 +94,88 @@ pub fn contact_hash_key_path(data_dir: &Path) -> PathBuf {
         })
 }
 
+pub fn inspect_contact_hash_key(data_dir: &Path) -> Result<ContactHashKeyInspection> {
+    let key_path = contact_hash_key_path(data_dir);
+    match key_path.try_exists() {
+        Ok(true) => {}
+        Ok(false) => {
+            return Ok(ContactHashKeyInspection {
+                state: ContactHashKeyState::Missing,
+            });
+        }
+        Err(_) => {
+            return Ok(ContactHashKeyInspection {
+                state: ContactHashKeyState::Unreadable,
+            });
+        }
+    }
+
+    let key_hex = match fs::read_to_string(&key_path) {
+        Ok(key_hex) => key_hex,
+        Err(_) => {
+            return Ok(ContactHashKeyInspection {
+                state: ContactHashKeyState::Unreadable,
+            });
+        }
+    };
+    if decode_key_hex(key_hex.trim()).is_err() {
+        return Ok(ContactHashKeyInspection {
+            state: ContactHashKeyState::Invalid,
+        });
+    }
+
+    if key_permissions_are_weak(&key_path)? {
+        return Ok(ContactHashKeyInspection {
+            state: ContactHashKeyState::WeakPermissions,
+        });
+    }
+
+    Ok(ContactHashKeyInspection {
+        state: ContactHashKeyState::Ready,
+    })
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContactHashKeyInspection {
+    state: ContactHashKeyState,
+}
+
+impl ContactHashKeyInspection {
+    pub fn state(&self) -> ContactHashKeyState {
+        self.state
+    }
+}
+
+impl fmt::Debug for ContactHashKeyInspection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ContactHashKeyInspection")
+            .field("state", &self.state)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContactHashKeyState {
+    Missing,
+    Ready,
+    Invalid,
+    WeakPermissions,
+    Unreadable,
+}
+
+impl ContactHashKeyState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Ready => "ready",
+            Self::Invalid => "invalid",
+            Self::WeakPermissions => "weak_permissions",
+            Self::Unreadable => "unreadable",
+        }
+    }
+}
+
 fn write_new_key_file(path: &Path, bytes: &[u8]) -> Result<()> {
     #[cfg(unix)]
     {
@@ -121,6 +203,25 @@ fn write_new_key_file(path: &Path, bytes: &[u8]) -> Result<()> {
         file.write_all(b"\n").map_err(PrivacyError::storage)?;
         file.sync_all().map_err(PrivacyError::storage)?;
         Ok(())
+    }
+}
+
+fn key_permissions_are_weak(path: &Path) -> Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = fs::metadata(path)
+            .map_err(PrivacyError::storage)?
+            .permissions()
+            .mode()
+            & 0o777;
+        Ok(mode != 0o600)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(false)
     }
 }
 

@@ -1046,6 +1046,7 @@ dependencies = [
  "import-pipeline",
  "index-fulltext",
  "meta-store",
+ "privacy",
  "rank-fusion",
  "search-planner",
  "serde_json",
