@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S56 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S57 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -34,11 +34,12 @@ obsolete preliminary files and checklists are not product scope.
   streaming, cooperative cancellation of already-running import scans, daemon
   index-maintenance workers, service lifecycle, CI, CODEOWNERS, and
   macOS/Windows validation.
-- P1 import/search: directory scanning, DOCX/text-layer PDF parsing, cleaning,
-  sectioning, full-text snapshot publish/recover, delete rebuild, and redacted
-  snippets exist. Missing production work includes watcher/background
-  incremental import, stronger `.doc`/`.txt` support, production-grade PDF
-  coverage, large-corpus proof, and incremental index updates.
+- P1 import/search: directory scanning, DOCX/text-layer PDF/UTF-8 and
+  BOM-marked UTF-16 TXT parsing, cleaning, sectioning, full-text snapshot
+  publish/recover, delete rebuild, and redacted snippets exist. Missing
+  production work includes watcher/background incremental import, legacy `.doc`
+  support, production-grade PDF coverage, large-corpus proof, and incremental
+  index updates.
 - P2 fields/dedupe/privacy: rules for contacts/date/education/company/title/
   skills/certs/years, persisted entity mentions, contact HMAC assignment, and
   candidate folding exist. Missing production work includes name extraction,
@@ -135,8 +136,80 @@ obsolete preliminary files and checklists are not product scope.
 | S54 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this model-scoped vector query isolation slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, section vectors, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 | S55 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this section-level vector input slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 | S56 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this queued/retryable import cancellation slice; live progress streaming, cooperative cancellation of already-running import scans, daemon endpoint discovery UX, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, and Windows/macOS validation remain not complete. |
+| S57 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p parser-text`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this TXT parser/import/search slice; legacy `.doc`, broader TXT encoding heuristics beyond UTF-8/BOM-marked UTF-16, watcher/background incremental import, production-grade PDF coverage, large-corpus proof, and incremental index updates remain not complete. |
 
 ## Command Log
+
+### S57
+
+Design target:
+
+- S57 closes the P1 gap where `.txt` files were discovered by the crawler but
+  failed permanently in import because no text parser was connected.
+- Added a production `parser-text` crate for UTF-8, UTF-8 BOM, and BOM-marked
+  UTF-16 text with parser-level budget support. Parser debug/error formatting
+  does not expose raw text bytes.
+- Import now routes `FileExtension::Txt` through the parser, then uses the
+  existing normalizer, extractor, candidate assignment, and full-text snapshot
+  path. CLI import/search tests cover a synthetic TXT resume without leaking
+  temporary root paths or contact values in search output.
+- TXT import has a pre-read byte cap and treats blank text as a failed document
+  instead of enqueueing OCR, because OCR is not a valid recovery path for a
+  plaintext file.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search import_txt_resume_builds_searchable_index_without_path_leakage -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search import_blank_txt_resume_fails_without_queueing_ocr -- --exact
+```
+
+Output summary:
+
+- Before implementation, the focused CLI test failed because import stdout did
+  not contain `searchable documents: 1`; the file was discovered but not
+  parsed into a searchable document.
+- Before the blank-TXT fix, the focused CLI test failed because import stdout
+  did not contain `ocr required documents: 0`; blank TXT was incorrectly routed
+  to the OCR queue.
+- After implementation, the focused test proves a synthetic TXT resume imports
+  as searchable, search can find it, blank TXT does not enqueue OCR, and output
+  redacts the temp root and contact value.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-text
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `cargo test -p parser-text`: exit 0; 8 tests passed, covering UTF-8,
+  UTF-16LE/BE with BOM, unsupported-extension rejection, invalid UTF-8/UTF-16
+  redaction, and parser byte-budget enforcement.
+- `cargo test -p import-pipeline`: exit 0; 2 tests passed, preserving existing
+  discovery deletion behavior with the TXT parser dependency wired in.
+- `cargo test -p resume-cli --test s9_import_search`: exit 0; 17 tests passed.
+  Coverage includes the TXT import/search loop, blank TXT non-OCR behavior,
+  and existing import/search regressions.
+- `cargo test -p resume-cli`: exit 0.
+- `cargo clippy --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0.
+
+Scope note:
+
+- S57 does not implement legacy `.doc` parsing, broad non-BOM encoding
+  detection, file streaming beyond the current pre-read cap, watcher/background
+  incremental import, production-grade PDF coverage, large-corpus proof, or
+  incremental index updates. Those remain incomplete.
 
 ### S56
 

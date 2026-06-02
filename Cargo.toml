@@ -9,6 +9,7 @@ members = [
     "crates/parser-common",
     "crates/parser-docx",
     "crates/parser-pdf",
+    "crates/parser-text",
     "crates/privacy",
     "crates/text-normalizer",
     "crates/sectionizer",

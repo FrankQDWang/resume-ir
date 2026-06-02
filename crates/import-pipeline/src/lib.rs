@@ -21,6 +21,7 @@ use meta_store::{
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_docx::DocxParser;
 use parser_pdf::PdfParser;
+use parser_text::TxtParser;
 use privacy::{ContactHasher, ContactKind};
 use sectionizer::{SectionChunk, Sectionizer};
 use text_normalizer::TextNormalizer;
@@ -548,6 +549,17 @@ fn process_file(
         .upsert_document(&document)
         .map_err(ImportPipelineError::store)?;
 
+    if file.extension == FileExtension::Txt
+        && file.byte_size > parser_text::DEFAULT_MAX_BYTES as u64
+    {
+        document.status = DocumentStatus::FailedPermanent;
+        document.updated_at = now;
+        store
+            .upsert_document(&document)
+            .map_err(ImportPipelineError::store)?;
+        return Ok(ProcessedFile::Failed);
+    }
+
     let path = PathBuf::from(file.normalized_path.as_str());
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
@@ -572,6 +584,12 @@ fn process_file(
             .parse(
                 ParseInput::from_bytes(Some(extension), &bytes),
                 ResourceBudget::default(),
+            )
+            .map_err(|error| (error, document.clone())),
+        FileExtension::Txt => TxtParser
+            .parse(
+                ParseInput::from_bytes(Some(extension), &bytes),
+                ResourceBudget::default().with_max_bytes(parser_text::DEFAULT_MAX_BYTES),
             )
             .map_err(|error| (error, document.clone())),
         _ => {
@@ -616,6 +634,15 @@ fn process_file(
         .text()
         .to_string();
     if clean_text.trim().is_empty() {
+        if file.extension == FileExtension::Txt {
+            document.status = DocumentStatus::FailedPermanent;
+            document.updated_at = now;
+            store
+                .upsert_document(&document)
+                .map_err(ImportPipelineError::store)?;
+            return Ok(ProcessedFile::Failed);
+        }
+
         return Ok(ProcessedFile::OcrRequired {
             ocr_job_queued: mark_ocr_required_and_enqueue(store, &mut document, now)?,
         });

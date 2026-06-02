@@ -110,6 +110,108 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
 }
 
 #[test]
+fn import_txt_resume_builds_searchable_index_without_path_leakage() {
+    let data_dir = temp_dir("txt-import-data");
+    let private_root = temp_dir("txt-import-private-root");
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+    fs::write(
+        private_root.join("synthetic-rust-search.txt"),
+        "Synthetic Candidate\nRust search infrastructure\nemail: candidate@example.test\n",
+    )
+    .unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run resume-cli import for txt resume");
+
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    assert!(import_stdout.contains("files discovered: 1"));
+    assert!(import_stdout.contains("searchable documents: 1"));
+    assert!(import_stdout.contains("failed documents: 0"));
+    assert!(!import_stdout.contains(path_str(&private_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_private_root)));
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "search", "Rust search"])
+        .output()
+        .expect("run resume-cli search for txt resume");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(search_stdout.contains("results: 1"));
+    assert!(search_stdout.contains("synthetic-rust-search.txt"));
+    assert!(!search_stdout.contains("candidate@example.test"));
+    assert!(!search_stdout.contains(path_str(&private_root)));
+    assert!(!search_stdout.contains(path_str(&canonical_private_root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
+fn import_blank_txt_resume_fails_without_queueing_ocr() {
+    let data_dir = temp_dir("blank-txt-import-data");
+    let private_root = temp_dir("blank-txt-import-private-root");
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+    fs::write(private_root.join("synthetic-blank.txt"), " \n\t\r\n").unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run resume-cli import for blank txt resume");
+
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    assert!(import_stdout.contains("files discovered: 1"));
+    assert!(import_stdout.contains("searchable documents: 0"));
+    assert!(import_stdout.contains("ocr required documents: 0"));
+    assert!(import_stdout.contains("ocr jobs queued: 0"));
+    assert!(import_stdout.contains("failed documents: 1"));
+    assert!(!import_stdout.contains(path_str(&private_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_private_root)));
+
+    let status = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "status"])
+        .output()
+        .expect("run resume-cli status after blank txt import");
+    assert!(status.status.success());
+    assert!(status.stderr.is_empty());
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("ocr queue: 0"));
+    assert!(!status_stdout.contains(path_str(&private_root)));
+    assert!(!status_stdout.contains(path_str(&canonical_private_root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
 fn import_enqueue_persists_task_without_running_foreground_import() {
     let data_dir = temp_dir("enqueue-import-data");
     let fixture_root = fixture_root();

@@ -1,0 +1,12 @@
+[package]
+name = "parser-text"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+parser-common = { path = "../parser-common" }
+
+[lints]
+workspace = true

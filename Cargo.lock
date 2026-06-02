@@ -629,6 +629,7 @@ dependencies = [
  "parser-common",
  "parser-docx",
  "parser-pdf",
+ "parser-text",
  "privacy",
  "sectionizer",
  "text-normalizer",
@@ -906,6 +907,13 @@ name = "parser-pdf"
 version = "0.1.0"
 dependencies = [
  "core-domain",
+ "parser-common",
+]
+
+[[package]]
+name = "parser-text"
+version = "0.1.0"
+dependencies = [
  "parser-common",
 ]
 
