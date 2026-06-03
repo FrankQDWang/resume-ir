@@ -18,8 +18,8 @@ use import_pipeline::{
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{
-    inspect_snapshot_root, redact_contact_values, FullTextIndex, SearchHit, SearchQuery,
-    SnapshotReadTarget, SnapshotRootState,
+    inspect_snapshot_root, purge_obsolete_snapshots, redact_contact_values, FullTextIndex,
+    SearchHit, SearchQuery, SnapshotReadTarget, SnapshotRootState,
 };
 use index_vector::{
     inspect_persistent_vector_snapshot, PersistentVectorIndex, PersistentVectorSnapshotInspection,
@@ -59,7 +59,7 @@ const FAULT_PROBE_MAX_BYTES: u64 = 1024 * 1024;
 const OCR_CRASH_PROBE_BYTES: &[u8] = b"SYNTHETIC OCR CRASH PROBE BYTES";
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, doctor, or export-diagnostics";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, doctor, or export-diagnostics";
 
 fn main() {
     if let Err(error) = run() {
@@ -87,6 +87,7 @@ fn run() -> Result<()> {
         "search" => search_command(&data_dir, &args[1..]),
         "detail" => detail_command(&data_dir, &args[1..]),
         "delete" => delete_command(&data_dir, &args[1..]),
+        "purge" => purge_command(&data_dir, &args[1..]),
         "cancel" => cancel_command(&data_dir, &args[1..]),
         "pause" => task_control_command(&data_dir, &args[1..], true),
         "resume" => task_control_command(&data_dir, &args[1..], false),
@@ -3614,6 +3615,83 @@ fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("indexed documents: {}", rebuild.indexed_documents);
 
     Ok(())
+}
+
+fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    if args != ["--deleted"] {
+        return Err(CliError::usage(purge_usage()));
+    }
+
+    let store = open_store(data_dir)?;
+    let deleted_document_ids = store.deleted_document_ids().map_err(CliError::store)?;
+    let deleted_doc_id_set = deleted_document_ids
+        .iter()
+        .map(|document_id| document_id.to_string())
+        .collect::<BTreeSet<_>>();
+
+    let vector_documents_purged = purge_vector_documents(data_dir, &deleted_doc_id_set)?;
+    let now = current_timestamp()?;
+    let rebuild = if deleted_document_ids.is_empty() {
+        None
+    } else {
+        Some(rebuild_full_text_index(data_dir, &store, now).map_err(CliError::import)?)
+    };
+    let snapshot_purge =
+        purge_obsolete_snapshots(&data_dir.join("search-index")).map_err(CliError::fulltext)?;
+    let purged_documents = store.purge_deleted_documents().map_err(CliError::store)?;
+
+    println!("purge completed");
+    println!("scope: deleted");
+    println!("purged documents: {purged_documents}");
+    println!("index rebuilt: {}", rebuild.is_some());
+    println!(
+        "indexed documents: {}",
+        rebuild
+            .as_ref()
+            .map(|summary| summary.indexed_documents)
+            .unwrap_or(0)
+    );
+    println!(
+        "full-text snapshots purged: {}",
+        snapshot_purge.removed_snapshots()
+    );
+    println!(
+        "full-text staging purged: {}",
+        snapshot_purge.removed_staging()
+    );
+    println!("vector documents purged: {vector_documents_purged}");
+    println!("metadata vacuum: yes");
+    println!("physical purge scope: local best-effort, not forensic erase");
+
+    Ok(())
+}
+
+fn purge_vector_documents(data_dir: &Path, doc_ids: &BTreeSet<String>) -> Result<usize> {
+    if doc_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let vector_root = data_dir.join("vector-index");
+    let inspection = inspect_persistent_vector_snapshot(&vector_root);
+    match (inspection.state(), inspection.snapshot()) {
+        (PersistentVectorSnapshotState::Missing, _) => Ok(0),
+        (PersistentVectorSnapshotState::Ready, Some(snapshot)) => {
+            let index = PersistentVectorIndex::open(&vector_root, snapshot.dimension())
+                .map_err(CliError::vector)?;
+            index.purge_doc_ids(doc_ids).map_err(CliError::vector)
+        }
+        (PersistentVectorSnapshotState::Corrupt, _) => {
+            Err(CliError::user("purge blocked: vector index is corrupt"))
+        }
+        (PersistentVectorSnapshotState::Unreadable, _) => {
+            Err(CliError::user("purge blocked: vector index is unreadable"))
+        }
+        _ => Err(CliError::user("purge blocked: vector index is not ready")),
+    }
+}
+
+fn purge_usage() -> &'static str {
+    "usage: resume-cli purge --deleted"
 }
 
 fn task_control_command(data_dir: &Path, args: &[String], paused: bool) -> Result<()> {

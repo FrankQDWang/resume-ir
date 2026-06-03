@@ -4,6 +4,7 @@ use std::process::Command;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{DocumentId, MetaStore, UnixTimestamp};
 
 #[test]
@@ -284,6 +285,96 @@ fn default_search_hydrates_metadata_to_hide_deleted_stale_index_hits() {
     remove_dir(&data_dir);
 }
 
+#[test]
+fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak() {
+    let data_dir = temp_dir("purge-deleted-data");
+    let fixture_root = fixture_root();
+    import_fixtures(&data_dir, &fixture_root);
+
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 2"));
+    let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
+    let live_doc_id = doc_id_for_file(&before, "synthetic-java-platform.pdf");
+
+    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
+    vector_index
+        .upsert(vec![
+            VectorDocument::new_for_model(
+                "fixture-model",
+                "fixture-model:deleted-doc",
+                deleted_doc_id.clone(),
+                vec![1.0, 0.0, 0.0, 0.0],
+            )
+            .unwrap(),
+            VectorDocument::new_for_model(
+                "fixture-model",
+                "fixture-model:live-doc",
+                live_doc_id.clone(),
+                vec![0.0, 1.0, 0.0, 0.0],
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+    assert_eq!(vector_index.snapshot().unwrap().vector_count(), 2);
+
+    let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "delete",
+            "--doc-id",
+            &deleted_doc_id,
+        ])
+        .output()
+        .expect("run resume-cli delete before purge");
+    assert!(delete.status.success());
+    assert!(snapshot_dir_count(&data_dir) >= 2);
+
+    let purge = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "purge", "--deleted"])
+        .output()
+        .expect("run resume-cli purge");
+
+    assert!(
+        purge.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&purge.stdout),
+        String::from_utf8_lossy(&purge.stderr)
+    );
+    assert!(purge.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&purge.stdout);
+    assert!(stdout.contains("purge completed"));
+    assert!(stdout.contains("scope: deleted"));
+    assert!(stdout.contains("purged documents: 1"));
+    assert!(stdout.contains("index rebuilt: true"));
+    assert!(stdout.contains("vector documents purged: 1"));
+    assert!(stdout.contains("metadata vacuum: yes"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains("PRIVATE"));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    assert!(store
+        .document_by_id(&DocumentId::from_str(&deleted_doc_id).unwrap())
+        .unwrap()
+        .is_none());
+    assert!(store
+        .document_by_id(&DocumentId::from_str(&live_doc_id).unwrap())
+        .unwrap()
+        .is_some());
+    assert_eq!(snapshot_dir_count(&data_dir), 1);
+    let reopened_vector = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
+    assert_eq!(reopened_vector.snapshot().unwrap().vector_count(), 1);
+
+    let after = search(&data_dir, "Java");
+    assert!(after.contains("results: 1"));
+    assert!(!after.contains("synthetic-java-engineer.docx"));
+    assert!(after.contains("synthetic-java-platform.pdf"));
+
+    remove_dir(&data_dir);
+}
+
 fn import_fixtures(data_dir: &Path, fixture_root: &Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -371,6 +462,22 @@ fn fixture_root() -> PathBuf {
 
 fn fixture_file(name: &str) -> PathBuf {
     fixture_root().join(name)
+}
+
+fn snapshot_dir_count(data_dir: &Path) -> usize {
+    let snapshots = data_dir.join("search-index").join("snapshots");
+    match fs::read_dir(snapshots) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .map(|file_type| file_type.is_dir())
+                    .unwrap_or(false)
+            })
+            .count(),
+        Err(_) => 0,
+    }
 }
 
 fn temp_dir(label: &str) -> PathBuf {

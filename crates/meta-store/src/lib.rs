@@ -343,6 +343,55 @@ impl MetaStore {
         Ok(Some(document))
     }
 
+    pub fn deleted_document_ids(&self) -> Result<Vec<DocumentId>> {
+        let connection = self.connection.borrow();
+        deleted_document_ids_from_connection(&connection)
+    }
+
+    pub fn purge_deleted_documents(&self) -> Result<usize> {
+        let mut connection = self.connection.borrow_mut();
+        let document_ids = deleted_document_ids_from_connection(&connection)?;
+        if document_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let placeholders = (0..document_ids.len())
+            .map(|index| format!("?{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let delete_sql = format!("DELETE FROM document WHERE id IN ({placeholders})");
+        let delete_params = document_ids
+            .iter()
+            .map(|document_id| Value::Text(document_id.as_str().to_string()))
+            .collect::<Vec<_>>();
+
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let deleted = transaction
+            .execute(&delete_sql, params_from_iter(delete_params))
+            .map_err(MetaStoreError::storage)?;
+        transaction
+            .execute(
+                "\
+                UPDATE candidate
+                SET version_count = (
+                    SELECT COUNT(*)
+                    FROM resume_version
+                    WHERE resume_version.candidate_id = candidate.id
+                )",
+                [],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction
+            .execute("DELETE FROM candidate WHERE version_count = 0", [])
+            .map_err(MetaStoreError::storage)?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+
+        connection
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;")
+            .map_err(MetaStoreError::storage)?;
+        Ok(deleted)
+    }
+
     pub fn upsert_candidate(&self, candidate: &Candidate) -> Result<()> {
         validate_candidate(candidate)?;
         let connection = self.connection.borrow();
@@ -3778,6 +3827,26 @@ fn read_candidate(row: &Row<'_>) -> Result<Candidate> {
         merge_confidence,
         version_count,
     })
+}
+
+fn deleted_document_ids_from_connection(connection: &Connection) -> Result<Vec<DocumentId>> {
+    let mut statement = connection
+        .prepare(
+            "\
+            SELECT id
+            FROM document
+            WHERE is_deleted = 1 OR status = 'deleted'
+            ORDER BY id",
+        )
+        .map_err(MetaStoreError::storage)?;
+    let mut rows = statement.query([]).map_err(MetaStoreError::storage)?;
+    let mut document_ids = Vec::new();
+
+    while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+        document_ids.push(read_id::<DocumentId>(row, 0, "document.id")?);
+    }
+
+    Ok(document_ids)
 }
 
 fn validate_candidate(candidate: &Candidate) -> Result<()> {

@@ -81,6 +81,27 @@ impl PersistentVectorIndex {
         fs::rename(&self.temp_path, &self.snapshot_path).map_err(|_| VectorIndexError::Storage)?;
         Ok(())
     }
+
+    pub fn purge_doc_ids(&self, doc_ids: &BTreeSet<String>) -> Result<usize, VectorIndexError> {
+        if doc_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let mut state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
+        let vector_ids = state
+            .vectors
+            .values()
+            .filter(|vector| doc_ids.contains(vector.doc_id()))
+            .map(|vector| vector.vector_id().to_string())
+            .collect::<Vec<_>>();
+        let removed = vector_ids.len();
+        for vector_id in vector_ids {
+            state.vectors.remove(&vector_id);
+            state.deleted.remove(&vector_id);
+        }
+        self.persist_state(&state)?;
+        Ok(removed)
+    }
 }
 
 pub fn inspect_persistent_vector_snapshot(

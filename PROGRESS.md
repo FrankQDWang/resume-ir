@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S87 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
-- Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
+- Data policy: S0-S88 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
 ## Production Gap Audit
@@ -42,8 +42,7 @@ obsolete preliminary files and checklists are not product scope.
   MIT licensing, CODEOWNERS, contribution/security policy, PR templates,
   GitHub Actions workflow definitions, dependency update configuration, local
   license checks, and public push guardrails. Missing or BLOCKED production
-  control-plane work includes remote GitHub repository creation/push/branch
-  protection until `gh` is re-authenticated, service lifecycle, and macOS plus
+  control-plane work includes full service lifecycle proof and macOS plus
   Windows validation.
 - P1 import/search: directory scanning, DOCX/text-layer PDF/UTF-8 and
   BOM-marked UTF-16 TXT parsing, cleaning, sectioning, full-text snapshot
@@ -54,9 +53,12 @@ obsolete preliminary files and checklists are not product scope.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
   education/company/title/skills/certs/years, persisted entity mentions,
   metadata-indexed field prefiltering before the full-text TopDocs cutoff,
-  contact HMAC assignment, and candidate folding exist. Missing production work
-  includes broader dictionaries, stronger normalization, soft-dedupe scoring,
-  labeled F1 metrics, encrypted local storage, and physical purge.
+  contact HMAC assignment, candidate folding, and explicit best-effort local
+  purge of tombstoned documents across metadata, obsolete full-text snapshots,
+  full-text staging directories, and vector records exist. Missing production
+  work includes broader dictionaries, stronger normalization, soft-dedupe
+  scoring, labeled F1 metrics, encrypted local storage, complete PII surface
+  purge coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, linear KNN, RRF helpers, embedding worker, model/dimension-scoped
   durable per-version embedding jobs, model-scoped vector query isolation,
@@ -86,12 +88,14 @@ obsolete preliminary files and checklists are not product scope.
   or externally blocked by platform credentials/runners.
 - P6 performance/stability: synthetic benchmark runner, status/doctor/export
   diagnostics, redacted resource telemetry for the data-disk volume, current
-  process memory, and CPU cores, snapshot fallback, safe fault simulation for
-  disk-space budget, permission-denied probes, file-lock contention probes,
-  daemon-kill/restart probes against configured daemon binaries, OCR command
-  crash probes, model-checksum probes against controlled local model artifacts,
-  local model-pack manifest validation, targeted fault tests, local-only
-  production runbooks, and a runbook CI policy guard exist. The benchmark runner
+  process memory, and CPU cores, snapshot fallback, explicit obsolete
+  full-text snapshot and staging cleanup for deleted-document purge, safe fault
+  simulation for disk-space budget, permission-denied probes, file-lock
+  contention probes, daemon-kill/restart probes against configured daemon
+  binaries, OCR command crash probes, model-checksum probes against controlled
+  local model artifacts, local model-pack manifest validation, targeted fault
+  tests, local-only production runbooks, and a runbook CI policy guard exist.
+  The benchmark runner
   now has an explicit synthetic benchmark
   gate wired into PR and nightly smoke workflows; synthetic runs must opt in
   with `--allow-synthetic` and cannot prove 100k/1M production performance.
@@ -191,8 +195,82 @@ obsolete preliminary files and checklists are not product scope.
 | S85 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_model_checksum --locked` first failed because `model-checksum` was unsupported; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/check-runbooks.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this controlled local model artifact checksum probe slice; real licensed model selection/download/distribution, model package manifest governance, semantic/vector quality gates, battery mode, external-drive disconnect, destructive actual ENOSPC/service-manager drills, Windows/macOS validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S86 | Product model-governance slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker model_manifest_validate --locked` first failed because `model validate-manifest` was unsupported, then failed after schema tightening because the implementation only accepted a single-model manifest instead of `model_pack_id` plus `models[]`; `./scripts/ci/verify-local.sh` also exposed a daemon scheduler test race where a post-startup queued task could be claimed before its scan scope was written, fixed by using the existing atomic `insert_import_task_with_scan_scope` API in the test helper. After implementation and the stability fix, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/check-runbooks.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local model-pack manifest validation slice and daemon scheduler test stability repair; real licensed OCR/embedding model selection/download/distribution, model quality evaluation, ANN production indexing, semantic/vector quality gates, production model performance proof, and cross-platform release evidence remain not complete or BLOCKED. |
 | S87 | Product search slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_fields_before_fulltext_top_k_cutoff --locked -- --exact` first failed because field filters were applied only after the full-text TopDocs cutoff, causing a synthetic Rust candidate outside the top five unfiltered keyword hits to be missed with `--top-k 1`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p index-fulltext -p meta-store --all-targets --locked -- -D warnings`, `git diff --check`, `./scripts/ci/check-runbooks.sh`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this metadata-indexed field prefilter slice; broader dictionaries, stronger normalization, labeled field F1, ANN/vector quality gates, SQLCipher/encrypted metadata, physical purge, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
+| S88 | Product privacy/delete slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact` first failed because `resume-cli purge` was unsupported; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p index-fulltext -p index-vector -p meta-store --all-targets --locked -- -D warnings`, `git diff --check`, `./scripts/ci/check-runbooks.sh`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this explicit best-effort local deleted-document purge slice; SQLCipher/encrypted metadata, forensic erase, full OCR/cache/job-retention purge coverage, real-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S88
+
+Design target:
+
+- Add an explicit `resume-cli purge --deleted` command for local tombstoned
+  document cleanup.
+- Remove matching vectors from the persistent vector snapshot, rebuild the
+  active full-text snapshot from visible metadata, delete obsolete full-text
+  snapshots and staging directories, purge deleted rows from SQLite metadata,
+  refresh candidate counts, and run WAL checkpoint plus `VACUUM`.
+- Keep command output path-free and clear that the scope is local best-effort,
+  not forensic erase or encrypted-storage proof.
+- Use synthetic fixtures only.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- Exit 101 before implementation because `resume-cli purge` was not recognized
+  as a command.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p index-fulltext -p index-vector -p meta-store --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Target RED/GREEN test: exit 0 after implementation.
+- `cargo fmt --check`: exit 0.
+- `s14_delete_search`: exit 0; 7 tests passed, including explicit purge of
+  tombstoned metadata, old full-text snapshots, and vector records without data
+  directory or fixture path leakage.
+- `index-fulltext`: exit 0; 12 tests passed.
+- `index-vector`: exit 0; 6 tests passed.
+- `meta-store`: exit 0; 42 tests passed across unit/integration/doc-test
+  targets.
+- Focused clippy: exit 0.
+- `git diff --check`: exit 0.
+- `check-runbooks.sh`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S88 adds best-effort local purge for documents already tombstoned by the
+  product: vector records are physically removed from the vector snapshot, a
+  clean full-text snapshot is rebuilt from visible metadata, old full-text
+  snapshots/staging directories are removed, and deleted metadata rows are
+  purged with SQLite checkpoint/VACUUM.
+- It does not delete original user files, claim forensic erasure, encrypt local
+  storage, purge every possible future PII surface such as OCR cache or
+  queued-job retention, prove behavior on real resumes, or validate Windows/
+  macOS filesystem semantics.
+- Full product is still not complete.
 
 ### S87
 

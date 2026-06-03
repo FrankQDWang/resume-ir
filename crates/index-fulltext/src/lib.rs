@@ -501,6 +501,72 @@ pub fn inspect_snapshot_root(index_root: &Path) -> Result<SnapshotRootInspection
     })
 }
 
+pub fn purge_obsolete_snapshots(index_root: &Path) -> Result<SnapshotPurgeSummary> {
+    let active_snapshot = match read_active_snapshot_pointer(index_root)? {
+        ActiveSnapshotPointer::Valid(snapshot_name) => Some(snapshot_name),
+        ActiveSnapshotPointer::Missing | ActiveSnapshotPointer::Invalid => None,
+    };
+    let snapshots_root = index_root.join(SNAPSHOTS_DIR);
+    let mut removed_snapshots = 0_usize;
+    match fs::read_dir(&snapshots_root) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.map_err(FullTextError::io)?;
+                if !entry.file_type().map_err(FullTextError::io)?.is_dir() {
+                    continue;
+                }
+                let snapshot_name = entry.file_name();
+                let snapshot_name = snapshot_name.to_string_lossy();
+                if active_snapshot.as_deref() == Some(snapshot_name.as_ref()) {
+                    continue;
+                }
+                fs::remove_dir_all(entry.path()).map_err(FullTextError::io)?;
+                removed_snapshots += 1;
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(FullTextError::io(error)),
+    }
+
+    let staging_root = index_root.join(STAGING_DIR);
+    let mut removed_staging = 0_usize;
+    match fs::read_dir(&staging_root) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.map_err(FullTextError::io)?;
+                if !entry.file_type().map_err(FullTextError::io)?.is_dir() {
+                    continue;
+                }
+                fs::remove_dir_all(entry.path()).map_err(FullTextError::io)?;
+                removed_staging += 1;
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(FullTextError::io(error)),
+    }
+
+    Ok(SnapshotPurgeSummary {
+        removed_snapshots,
+        removed_staging,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapshotPurgeSummary {
+    removed_snapshots: usize,
+    removed_staging: usize,
+}
+
+impl SnapshotPurgeSummary {
+    pub fn removed_snapshots(self) -> usize {
+        self.removed_snapshots
+    }
+
+    pub fn removed_staging(self) -> usize {
+        self.removed_staging
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotRootInspection {
     state: SnapshotRootState,
