@@ -485,6 +485,7 @@ impl UnixSignal {
 fn signal_process_group(process_group_id: u32, signal: UnixSignal) {
     let _ = Command::new("/bin/kill")
         .arg(signal.as_kill_arg())
+        .arg("--")
         .arg(format!("-{process_group_id}"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())

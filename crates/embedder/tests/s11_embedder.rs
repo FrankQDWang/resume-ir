@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 #[cfg(unix)]
 use std::sync::{Arc, Barrier};
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use embedder::{
@@ -207,6 +209,41 @@ sleep 5
         .unwrap_err();
     assert_eq!(error, EmbeddingError::Timeout);
     assert_eq!(std::fs::read_to_string(permission_marker).unwrap(), "600");
+    assert!(!format!("{error:?}").contains("PRIVATE"));
+}
+
+#[cfg(unix)]
+#[test]
+fn local_command_embedder_terminates_descendants_that_keep_output_pipes_open() {
+    let command = write_fixture_executable(
+        "fixture-embedding-descendant",
+        r#"#!/bin/sh
+(trap "" HUP; sleep 2; printf 'resume-ir-embedding-v1\nmodel_id=fixture-model\ndimension=2\nvector=doc_private\t1,0\n') &
+sleep 2
+"#,
+    );
+    let embedder = LocalEmbeddingCommandEmbedder::new(
+        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), "fixture-model", 2)
+            .unwrap()
+            .with_timeout_ms(50)
+            .unwrap(),
+    );
+    let started_at = Instant::now();
+    let error = embedder
+        .embed_batch(
+            &[EmbeddingInput::new(
+                "doc_private",
+                "PRIVATE descendant text",
+            )],
+            EmbeddingBudget::new(1, 128),
+        )
+        .unwrap_err();
+
+    assert_eq!(error, EmbeddingError::Timeout);
+    assert!(
+        started_at.elapsed() < Duration::from_millis(750),
+        "timeout returned only after descendant closed inherited pipes"
+    );
     assert!(!format!("{error:?}").contains("PRIVATE"));
 }
 

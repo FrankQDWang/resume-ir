@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S77 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S78 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -168,9 +168,72 @@ obsolete preliminary files and checklists are not product scope.
 | S74 | CI fix attempt; superseded by S75 | GitHub Actions PR #9 `rust workspace` then failed in `ocr-client` because timeout cleanup could return after the direct child exited while descendants still held output pipes. The first local fix sent `KILL` to the process group even after the direct child exited, and `./scripts/ci/verify-local.sh` passed locally, but GitHub Actions still failed on the same descendant-pipe timing test. | S74 alone did not clear Linux CI; S75 follows with the actual timeout-path reader fix. |
 | S75 | CI fix attempt; superseded by S76 | GitHub Actions PR #9 `rust workspace` still failed in `local_command_worker_terminates_descendants_that_keep_output_pipes_open` after S74. The timeout/cancel/error path returned the terminal OCR error without joining stdout/stderr reader threads, preventing inherited pipes from delaying timeout return, and `./scripts/ci/verify-local.sh` passed locally. | GitHub Actions later failed with exit 143 while running `tests/s50_ocr_worker.rs`, so S75 was not sufficient; S76 follows with child-process cleanup plus output-reader joining. |
 | S76 | CI fix attempt; superseded by S77 | GitHub Actions PR #9 `rust workspace` failed after S75 with exit 143 while running daemon OCR worker tests. The S76 fix restored timeout/cancel error-path output-reader joining, while terminating direct child processes before the parent exited and then terminating the process group so inherited pipes would not hang cleanup. Focused local checks passed for `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked`; `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan also passed. | GitHub Actions later failed in the original inherited-pipe descendant timeout test, so S76 was not sufficient on Linux; S77 follows with portable process-group signal syntax. |
-| S77 | CI portability slice complete locally | GitHub Actions PR #9 `rust workspace` failed after S76 in `local_command_worker_terminates_descendants_that_keep_output_pipes_open`; the timeout returned only after the descendant closed inherited pipes. The S77 fix uses `/bin/kill <signal> -- -PGID` for Unix process-group signaling and removes the unreliable direct-child `pkill -P` helper. Focused local checks passed for `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked`; `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan also passed. | Push and hosted GitHub Actions verification are still pending for S77. Real OCR engine packaging, Linux/macOS/Windows service validation, signed installers, notarization, and full release evidence remain not complete or BLOCKED. |
+| S77 | CI fix attempt; superseded by S78 | GitHub Actions PR #9 `rust workspace` failed after S76 in `local_command_worker_terminates_descendants_that_keep_output_pipes_open`; the timeout returned only after the descendant closed inherited pipes. The S77 fix used `/bin/kill <signal> -- -PGID` for OCR Unix process-group signaling and removed the unreliable direct-child `pkill -P` helper. Focused local checks passed for `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked`; `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan also passed. | GitHub Actions later passed OCR but failed with exit 143 while running daemon embedding worker tests, exposing the same process-group signaling gap in the embedder; S78 follows. |
+| S78 | CI portability slice complete locally | GitHub Actions PR #9 `rust workspace` failed after S77 with exit 143 while running `tests/s51_embedding_worker.rs`, after OCR tests had passed. The S78 fix applies the same `/bin/kill <signal> -- -PGID` Unix process-group syntax to the local command embedder and adds an embedder inherited-pipe descendant timeout regression test. Focused local checks passed for `/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker --locked`, and `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked`; `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan also passed after formatting. | Push and hosted GitHub Actions verification are still pending for S78. Real embedding model packaging, ANN, Linux/macOS/Windows service validation, signed installers, notarization, and full release evidence remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S78
+
+Design target:
+
+- Apply the same portable Unix process-group signaling syntax to the local
+  command embedder that S77 applied to OCR.
+- Add an embedder regression test for descendant processes that keep stdout
+  pipes open after a timeout.
+
+Observed RED:
+
+```bash
+gh pr checks 9 --repo FrankQDWang/resume-ir --watch --interval 10
+gh run view 26864432512 --repo FrankQDWang/resume-ir --log-failed
+```
+
+Output summary:
+
+- `rust workspace` failed in GitHub Actions after 1m57s.
+- OCR tests passed in the hosted run, including
+  `local_command_worker_terminates_descendants_that_keep_output_pipes_open`.
+- The hosted run then failed with exit 143 while running
+  `tests/s51_embedding_worker.rs`.
+- The embedder had the same `/bin/kill <signal> -PGID` process-group signaling
+  form as the pre-S77 OCR client, so S78 updates it to
+  `/bin/kill <signal> -- -PGID`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked
+./scripts/ci/verify-local.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `embedder --test s11_embedder`: exit 0; 7 tests passed, including the new
+  inherited-pipe descendant timeout regression test.
+- `resume-daemon --test s51_embedding_worker`: exit 0; 2 tests passed.
+- `ocr-client --test s12_ocr_client`: exit 0; 14 tests passed.
+- First `verify-local.sh` attempt failed at `cargo fmt --check` after the new
+  test; `/Users/frankqdwang/.cargo/bin/cargo fmt --all` was run.
+- Second `verify-local.sh`: exit 0; metadata, fmt, clippy, workspace tests,
+  license check, and public repository guard passed.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0; public repo guard passed.
+- Obsolete-reference marker scan: exit 1 with no matches.
+
+Pending remote check:
+
+- PR #9 hosted GitHub Actions checks after push
+
+Scope note:
+
+- S78 fixes local embedding command process cleanup only. It does not package
+  or validate a real embedding model.
 
 ### S77
 
