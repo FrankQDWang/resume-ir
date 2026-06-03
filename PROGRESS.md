@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S57 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S58 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -40,11 +40,11 @@ obsolete preliminary files and checklists are not product scope.
   production work includes watcher/background incremental import, legacy `.doc`
   support, production-grade PDF coverage, large-corpus proof, and incremental
   index updates.
-- P2 fields/dedupe/privacy: rules for contacts/date/education/company/title/
-  skills/certs/years, persisted entity mentions, contact HMAC assignment, and
-  candidate folding exist. Missing production work includes name extraction,
-  dictionaries, normalization, soft-dedupe scoring, labeled F1 metrics,
-  encrypted local storage, and physical purge.
+- P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
+  education/company/title/skills/certs/years, persisted entity mentions,
+  contact HMAC assignment, and candidate folding exist. Missing production work
+  includes broader dictionaries, stronger normalization, soft-dedupe scoring,
+  labeled F1 metrics, encrypted local storage, and physical purge.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, linear KNN, RRF helpers, embedding worker, model/dimension-scoped
   durable per-version embedding jobs, model-scoped vector query isolation,
@@ -137,8 +137,73 @@ obsolete preliminary files and checklists are not product scope.
 | S55 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this section-level vector input slice; licensed model selection/distribution, ONNX/HNSW/FAISS or equivalent ANN, semantic quality metrics, real performance proof, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 | S56 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this queued/retryable import cancellation slice; live progress streaming, cooperative cancellation of already-running import scans, daemon endpoint discovery UX, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, and Windows/macOS validation remain not complete. |
 | S57 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p parser-text`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this TXT parser/import/search slice; legacy `.doc`, broader TXT encoding heuristics beyond UTF-8/BOM-marked UTF-16, watcher/background incremental import, production-grade PDF coverage, large-corpus proof, and incremental index updates remain not complete. |
+| S58 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this high-confidence name mention slice; broad name dictionaries, multilingual name normalization, name-based soft-dedupe scoring, labeled field F1 metrics, encrypted local storage, and physical purge remain not complete. |
 
 ## Command Log
+
+### S58
+
+Design target:
+
+- S58 closes the P2 gap where the domain and metadata model already supported
+  `EntityType::Name` but rules never produced a name mention.
+- Added high-confidence name extraction for explicit `Name:`/localized labels
+  and conservative resume-heading candidates. The rule rejects section headers,
+  contact lines, school/company lines, and known title lines to reduce false
+  positives.
+- Import now maps `FieldType::Name` to `EntityType::Name`, so extracted names
+  are persisted with evidence, confidence, and extractor metadata through the
+  existing entity mention path. The S57 synthetic TXT import test now asserts
+  the persisted name mention.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_candidate_name_from_labeled_line_and_heading_with_evidence -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search import_txt_resume_builds_searchable_index_without_path_leakage -- --exact
+```
+
+Output summary:
+
+- Before implementation, the focused extractor test failed to compile because
+  `FieldType::Name` did not exist.
+- Before implementation, the focused CLI import test failed because no
+  persisted `EntityType::Name` mention existed for the synthetic TXT resume.
+- After implementation, the focused tests prove labeled and heading name
+  extraction, debug redaction of name text, and import-time persistence of the
+  synthetic name mention.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `cargo test -p extractor-rules`: exit 0; 9 tests passed, covering name
+  extraction, false-positive avoidance, existing contact/date/education/company/
+  title/skill/certificate extraction, and debug redaction.
+- `cargo test -p import-pipeline`: exit 0; 2 tests passed.
+- `cargo test -p resume-cli --test s9_import_search`: exit 0; 17 tests passed,
+  including TXT import/search plus persisted name mention.
+- `cargo test -p resume-cli`: exit 0.
+- `cargo clippy --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0.
+
+Scope note:
+
+- S58 does not implement broad name dictionaries, multilingual name
+  normalization, name-based soft-dedupe scoring, labeled field F1 metrics,
+  encrypted local storage, or physical purge. Those remain incomplete.
 
 ### S57
 

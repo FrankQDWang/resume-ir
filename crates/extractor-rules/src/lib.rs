@@ -9,6 +9,7 @@ use regex::Regex;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FieldType {
+    Name,
     Email,
     Phone,
     DateRange,
@@ -50,6 +51,7 @@ impl fmt::Debug for RuleMatch {
 
 pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     let mut matches = Vec::new();
+    extract_names(text, &mut matches);
     extract_emails(text, &mut matches);
     extract_phones(text, &mut matches);
     extract_numeric_date_ranges(text, &mut matches);
@@ -63,6 +65,184 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     extract_certificates(text, &mut matches);
     matches.sort_by_key(|field| field.span_start);
     matches
+}
+
+fn extract_names(text: &str, matches: &mut Vec<RuleMatch>) {
+    if extract_labeled_name(text, matches) {
+        return;
+    }
+
+    extract_heading_name(text, matches);
+}
+
+fn extract_labeled_name(text: &str, matches: &mut Vec<RuleMatch>) -> bool {
+    let regex = Regex::new(r"(?i)^(?:name|candidate|姓名|候选人)\s*[:：]\s*(?P<name>.+)$").unwrap();
+    for (line_start, line) in indexed_lines(text).into_iter().take(12) {
+        let leading = line.len() - line.trim_start().len();
+        let trimmed_line = line.trim();
+        let Some(captures) = regex.captures(trimmed_line) else {
+            continue;
+        };
+        let Some(found) = captures.name("name") else {
+            continue;
+        };
+        if push_name_match(
+            matches,
+            found.as_str(),
+            line_start + leading + found.start(),
+            0.93,
+        ) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn extract_heading_name(text: &str, matches: &mut Vec<RuleMatch>) {
+    for (line_start, line) in indexed_lines(text).into_iter().take(5) {
+        let leading = line.len() - line.trim_start().len();
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if push_name_match(matches, trimmed, line_start + leading, 0.84) {
+            return;
+        }
+
+        if !looks_like_contact_line(trimmed) {
+            break;
+        }
+    }
+}
+
+fn push_name_match(
+    matches: &mut Vec<RuleMatch>,
+    raw: &str,
+    raw_span_start: usize,
+    confidence: f32,
+) -> bool {
+    let leading = raw.len() - raw.trim_start().len();
+    let trimmed = raw.trim();
+    let span_start = raw_span_start + leading;
+    let span_end = span_start + trimmed.len();
+    let Some(normalized) = normalize_candidate_name(trimmed) else {
+        return false;
+    };
+
+    matches.push(RuleMatch {
+        field_type: FieldType::Name,
+        raw_value: trimmed.to_string(),
+        normalized_value: Some(normalized),
+        span_start,
+        span_end,
+        confidence,
+    });
+    true
+}
+
+fn normalize_candidate_name(value: &str) -> Option<String> {
+    let value = value
+        .trim()
+        .trim_matches(|character: char| {
+            matches!(character, ',' | ';' | '|' | '/' | '\\' | '，' | '；')
+        })
+        .trim();
+    if value.is_empty() || value.len() > 80 {
+        return None;
+    }
+    if value.contains('@') || value.chars().any(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    if looks_like_section_header(value)
+        || looks_like_contact_line(value)
+        || looks_like_school(value)
+        || looks_like_company(value)
+        || normalize_title(value).is_some()
+    {
+        return None;
+    }
+
+    if is_likely_english_name(value) || is_likely_cjk_name(value) {
+        Some(
+            value
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase(),
+        )
+    } else {
+        None
+    }
+}
+
+fn is_likely_english_name(value: &str) -> bool {
+    let tokens = value.split_whitespace().collect::<Vec<_>>();
+    if !(2..=4).contains(&tokens.len()) {
+        return false;
+    }
+
+    tokens.iter().all(|token| {
+        let mut chars = token.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        first.is_ascii_uppercase()
+            && chars.all(|character| {
+                character.is_ascii_alphabetic()
+                    || character == '\''
+                    || character == '-'
+                    || character == '.'
+            })
+    })
+}
+
+fn is_likely_cjk_name(value: &str) -> bool {
+    let count = value.chars().count();
+    (2..=6).contains(&count)
+        && value
+            .chars()
+            .all(|character| ('\u{4e00}'..='\u{9fff}').contains(&character))
+}
+
+fn looks_like_section_header(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    matches!(
+        lower.as_str(),
+        "profile"
+            | "summary"
+            | "contact"
+            | "contacts"
+            | "education"
+            | "experience"
+            | "project"
+            | "projects"
+            | "skill"
+            | "skills"
+            | "certificate"
+            | "certificates"
+            | "certifications"
+            | "个人信息"
+            | "联系方式"
+            | "教育经历"
+            | "工作经历"
+            | "项目经历"
+            | "技能"
+            | "证书"
+    )
+}
+
+fn looks_like_contact_line(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    lower.contains('@')
+        || lower.starts_with("email")
+        || lower.starts_with("phone")
+        || lower.starts_with("mobile")
+        || lower.starts_with("tel")
+        || lower.starts_with("邮箱")
+        || lower.starts_with("电话")
+        || lower.starts_with("手机")
 }
 
 fn extract_emails(text: &str, matches: &mut Vec<RuleMatch>) {

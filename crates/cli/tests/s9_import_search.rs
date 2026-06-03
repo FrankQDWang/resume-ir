@@ -4,7 +4,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanErrorKind,
+    EntityType, ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanErrorKind,
     ImportScanErrorOperation, ImportScanProfile, ImportTask, ImportTaskId, ImportTaskStatus,
     MetaStore, UnixTimestamp,
 };
@@ -157,6 +157,29 @@ fn import_txt_resume_builds_searchable_index_without_path_leakage() {
     assert!(!search_stdout.contains("candidate@example.test"));
     assert!(!search_stdout.contains(path_str(&private_root)));
     assert!(!search_stdout.contains(path_str(&canonical_private_root)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-rust-search.txt")
+        .unwrap();
+    let version = store
+        .latest_visible_resume_version_for_document(&document.id)
+        .unwrap()
+        .unwrap();
+    let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+    let name = mentions
+        .iter()
+        .find(|mention| mention.entity_type == EntityType::Name)
+        .unwrap();
+    assert_eq!(
+        name.normalized_value.as_deref(),
+        Some("synthetic candidate")
+    );
+    assert_eq!(name.raw_value, "Synthetic Candidate");
 
     remove_dir(&data_dir);
     remove_dir(&private_root);

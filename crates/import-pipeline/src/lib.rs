@@ -804,6 +804,7 @@ fn entity_mention_from_rule(
 
 fn entity_type_from_field_type(field_type: &FieldType) -> EntityType {
     match field_type {
+        FieldType::Name => EntityType::Name,
         FieldType::Email => EntityType::Email,
         FieldType::Phone => EntityType::Phone,
         FieldType::DateRange => EntityType::DateRange,

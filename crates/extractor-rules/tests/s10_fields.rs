@@ -1,6 +1,63 @@
 use extractor_rules::{extract_strong_fields, FieldType};
 
 #[test]
+fn extracts_candidate_name_from_labeled_line_and_heading_with_evidence() {
+    let labeled_text = "\
+Name: Synthetic Candidate
+Email: candidate@example.test
+Experience
+Senior Backend Engineer";
+
+    let labeled_matches = extract_strong_fields(labeled_text);
+    let labeled_name = labeled_matches
+        .iter()
+        .find(|field| field.field_type == FieldType::Name)
+        .unwrap();
+    assert_eq!(labeled_name.raw_value, "Synthetic Candidate");
+    assert_eq!(
+        labeled_name.normalized_value.as_deref(),
+        Some("synthetic candidate")
+    );
+    assert_eq!(
+        &labeled_text[labeled_name.span_start..labeled_name.span_end],
+        labeled_name.raw_value
+    );
+    assert!(labeled_name.confidence >= 0.9);
+    assert!(!format!("{labeled_name:?}").contains("Synthetic Candidate"));
+
+    let heading_text = "\
+Synthetic Heading Candidate
+Senior Backend Engineer
+Skills: Rust, Java";
+    let heading_matches = extract_strong_fields(heading_text);
+    let heading_name = heading_matches
+        .iter()
+        .find(|field| field.field_type == FieldType::Name)
+        .unwrap();
+    assert_eq!(heading_name.raw_value, "Synthetic Heading Candidate");
+    assert_eq!(
+        heading_name.normalized_value.as_deref(),
+        Some("synthetic heading candidate")
+    );
+    assert!(heading_name.confidence >= 0.8);
+}
+
+#[test]
+fn avoids_section_headers_and_contact_lines_as_candidate_names() {
+    let text = "\
+Education
+Synthetic University
+Email: candidate@example.test
+Skills: Rust, Java";
+
+    let matches = extract_strong_fields(text);
+
+    assert!(!matches
+        .iter()
+        .any(|field| field.field_type == FieldType::Name));
+}
+
+#[test]
 fn extracts_degree_school_skills_and_experience_with_evidence() {
     let text = "\
 Education
