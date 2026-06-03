@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S75 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S76 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -166,9 +166,67 @@ obsolete preliminary files and checklists are not product scope.
 | S72 | Stability slice complete | `./scripts/ci/verify-local.sh` first exposed a concurrent local-command embedder temp-directory collision as `EngineFailed`; after the fix, `/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder --locked` passed with 6 tests and `./scripts/ci/verify-local.sh` passed end to end. | None for this CI stability slice; licensed model packaging, ANN, real semantic quality metrics, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 | S73 | CI portability slice complete | GitHub Actions PR #9 `rust workspace` failed on Linux because the embedder permission test used macOS `stat -f` before GNU `stat -c`; the fixture command now uses GNU `stat -c` first and falls back to macOS `stat -f`. | None for this Linux CI test portability slice; broader Linux package validation, Windows validation, signed installers, notarization, and full cross-platform release evidence remain not complete or BLOCKED. |
 | S74 | CI fix attempt; superseded by S75 | GitHub Actions PR #9 `rust workspace` then failed in `ocr-client` because timeout cleanup could return after the direct child exited while descendants still held output pipes. The first local fix sent `KILL` to the process group even after the direct child exited, and `./scripts/ci/verify-local.sh` passed locally, but GitHub Actions still failed on the same descendant-pipe timing test. | S74 alone did not clear Linux CI; S75 follows with the actual timeout-path reader fix. |
-| S75 | CI stability slice complete locally | GitHub Actions PR #9 `rust workspace` still failed in `local_command_worker_terminates_descendants_that_keep_output_pipes_open` after S74. The timeout/cancel/error path now returns the terminal OCR error without joining stdout/stderr reader threads, preventing inherited pipes from delaying timeout return. | GitHub Actions re-run still required after push; real OCR engine packaging, Linux/macOS/Windows service validation, signed installers, notarization, and full release evidence remain not complete or BLOCKED. |
+| S75 | CI fix attempt; superseded by S76 | GitHub Actions PR #9 `rust workspace` still failed in `local_command_worker_terminates_descendants_that_keep_output_pipes_open` after S74. The timeout/cancel/error path returned the terminal OCR error without joining stdout/stderr reader threads, preventing inherited pipes from delaying timeout return, and `./scripts/ci/verify-local.sh` passed locally. | GitHub Actions later failed with exit 143 while running `tests/s50_ocr_worker.rs`, so S75 was not sufficient; S76 follows with child-process cleanup plus output-reader joining. |
+| S76 | CI stability slice complete locally | GitHub Actions PR #9 `rust workspace` failed after S75 with exit 143 while running daemon OCR worker tests. The S76 fix restores timeout/cancel error-path output-reader joining, while terminating direct child processes before the parent exits and then terminating the process group so inherited pipes do not hang cleanup. Focused local checks passed for `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked`; `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan also passed. | Push and hosted GitHub Actions verification are still pending for S76. Real OCR engine packaging, Linux/macOS/Windows service validation, signed installers, notarization, and full release evidence remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S76
+
+Design target:
+
+- Restore OCR timeout/cancel error-path output-reader cleanup so the client
+  does not leave detached reader threads or background process side effects.
+- Before the OCR shell exits, terminate its direct child processes and then the
+  process group, so descendants that inherited stdout/stderr pipes do not hang
+  reader joins.
+
+Observed RED:
+
+```bash
+gh pr checks 9 --repo FrankQDWang/resume-ir --watch --interval 10
+gh run view 26863872803 --repo FrankQDWang/resume-ir --log-failed
+```
+
+Output summary:
+
+- `rust workspace` failed in GitHub Actions after the S75 push.
+- The failed run exited with code 143 while running
+  `tests/s50_ocr_worker.rs`, after
+  `daemon_ocr_worker_once_respects_pause_without_claiming_or_invoking_command`
+  had completed.
+- S75 passed local verification but was not stable enough for Linux hosted CI.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked
+./scripts/ci/verify-local.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `ocr-client --test s12_ocr_client`: exit 0; 14 tests passed, including the
+  inherited-pipe descendant timeout case.
+- `resume-daemon --test s50_ocr_worker`: exit 0; 3 tests passed.
+- `verify-local.sh`: exit 0; metadata, fmt, clippy, workspace tests, license
+  check, and public repository guard passed.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0; public repo guard passed.
+- Obsolete-reference marker scan: exit 1 with no matches.
+
+Pending remote check:
+
+- PR #9 hosted GitHub Actions checks after push
+
+Scope note:
+
+- S76 fixes local OCR command timeout cleanup stability only. It does not
+  package or validate a real OCR engine.
 
 ### S75
 
@@ -208,8 +266,8 @@ Output summary:
 
 Scope note:
 
-- S75 fixes OCR command timeout return behavior only. It does not package or
-  validate a real OCR engine.
+- S75 fixed OCR command timeout return behavior locally, but later hosted CI
+  failed with exit 143 while running daemon OCR worker tests. S76 supersedes it.
 
 ### S74
 

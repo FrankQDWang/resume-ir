@@ -134,7 +134,14 @@ impl OcrClient for LocalOcrCommandClient {
         let stdout_reader = spawn_output_reader(stdout, OCR_OUTPUT_MAX_BYTES);
         let stderr_reader = spawn_output_reader(stderr, OCR_OUTPUT_MAX_BYTES);
 
-        let status = wait_for_ocr_child(&mut child, budget, cancellation)?;
+        let status = match wait_for_ocr_child(&mut child, budget, cancellation) {
+            Ok(status) => status,
+            Err(error) => {
+                let _ = join_output_reader(stdout_reader);
+                let _ = join_output_reader(stderr_reader);
+                return Err(error);
+            }
+        };
         #[cfg(unix)]
         terminate_process_group(child.id());
         let stdout = join_output_reader(stdout_reader)?;
@@ -556,10 +563,13 @@ fn wait_for_ocr_child(
 fn terminate_child(child: &mut Child) {
     #[cfg(unix)]
     {
-        signal_process_group(child.id(), UnixSignal::Term);
-        let exited_after_term = wait_for_child_exit(child, Duration::from_millis(100));
-        signal_process_group(child.id(), UnixSignal::Kill);
-        if exited_after_term || wait_for_child_exit(child, Duration::from_millis(100)) {
+        let process_id = child.id();
+        signal_child_processes(process_id, UnixSignal::Term);
+        signal_process_group(process_id, UnixSignal::Term);
+        thread::sleep(Duration::from_millis(10));
+        signal_child_processes(process_id, UnixSignal::Kill);
+        signal_process_group(process_id, UnixSignal::Kill);
+        if wait_for_child_exit(child, Duration::from_millis(100)) {
             return;
         }
     }
@@ -597,6 +607,18 @@ fn signal_process_group(process_group_id: u32, signal: UnixSignal) {
     let _ = Command::new("/bin/kill")
         .arg(signal.as_kill_arg())
         .arg(format!("-{process_group_id}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(unix)]
+fn signal_child_processes(parent_process_id: u32, signal: UnixSignal) {
+    let _ = Command::new("/usr/bin/pkill")
+        .arg(signal.as_kill_arg())
+        .arg("-P")
+        .arg(parent_process_id.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
