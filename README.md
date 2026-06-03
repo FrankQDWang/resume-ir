@@ -16,8 +16,9 @@ The hot query path must stay read-only and avoid OCR, full parsing, model infere
 
 ## Current Stage
 
-The project is in long-running build execution. Work proceeds by the slices in
-`02_execution_plan_执行方案/10_长时间Goal执行清单.md`.
+The project is in production build execution. Work proceeds from `GOAL.md`, the
+system design documents, the execution-plan documents, and the current state in
+`PROGRESS.md`.
 
 Each completed slice must:
 

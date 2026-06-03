@@ -24,5 +24,4 @@
 - `02_execution_plan_执行方案/07_里程碑风险与取舍.md`
 - `02_execution_plan_执行方案/08_依赖许可与参考资料.md`
 - `02_execution_plan_执行方案/09_一页版执行清单.md`
-- `02_execution_plan_执行方案/10_长时间Goal执行清单.md`
 - `GOAL.md`
