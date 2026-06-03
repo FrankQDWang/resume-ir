@@ -134,14 +134,7 @@ impl OcrClient for LocalOcrCommandClient {
         let stdout_reader = spawn_output_reader(stdout, OCR_OUTPUT_MAX_BYTES);
         let stderr_reader = spawn_output_reader(stderr, OCR_OUTPUT_MAX_BYTES);
 
-        let status = match wait_for_ocr_child(&mut child, budget, cancellation) {
-            Ok(status) => status,
-            Err(error) => {
-                let _ = join_output_reader(stdout_reader);
-                let _ = join_output_reader(stderr_reader);
-                return Err(error);
-            }
-        };
+        let status = wait_for_ocr_child(&mut child, budget, cancellation)?;
         #[cfg(unix)]
         terminate_process_group(child.id());
         let stdout = join_output_reader(stdout_reader)?;
