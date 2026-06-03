@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S65 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
-- Remote side effects: no push, PR, release, upload, signing, or notarization. S65 prepared GitHub repository automation locally, but remote repository creation/push/branch protection was not executed because the local `gh` credential for `FrankQDWang` is invalid.
+- Data policy: S0-S66 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Remote side effects: no push, PR, release, upload, signing, or notarization. S65 prepared GitHub repository automation locally. During S66, sandboxed `gh auth status` still saw a stale invalid credential, but escalated `gh auth status` verified the `FrankQDWang` keyring credential with `repo` and `workflow` scopes. Remote repository creation/push/branch protection has not yet been executed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
 ## Production Gap Audit
@@ -76,10 +76,12 @@ obsolete preliminary files and checklists are not product scope.
   BLOCKED work includes real PDF page rendering, multi-page OCR, bbox
   persistence, concrete OCR engine install/license, backpressure, and real
   scanned-resume witness runs.
-- P5 packaging/platform: not production-ready. Installer, signing,
-  notarization, LaunchAgent/user-mode service, Windows service/MSI, upgrade/
-  uninstall, and release workflow remain absent or externally blocked by
-  platform credentials/runners.
+- P5 packaging/platform: not production-ready. A local CLI service lifecycle
+  now writes, reports, removes, and dry-run starts/stops a macOS user
+  LaunchAgent plist without CLI path disclosure. Installer packaging, signing,
+  notarization, Windows service/MSI, real upgrade/uninstall runs, hosted release
+  workflow execution, and cross-platform validation remain absent, not complete,
+  or externally blocked by platform credentials/runners.
 - P6 performance/stability: synthetic benchmark runner, status/doctor/export
   diagnostics, snapshot fallback, and targeted fault tests exist. Missing or
   BLOCKED work includes 100k/1M real-corpus benchmarks, nightly gates,
@@ -155,9 +157,82 @@ obsolete preliminary files and checklists are not product scope.
 | S62 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this authenticated import cancel-over-IPC slice; dedicated progress stream, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, Windows/macOS validation, and packaging/signing remain not complete or BLOCKED. |
 | S63 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this authenticated import progress stream slice; daemon index-maintenance workers, service lifecycle, CI, CODEOWNERS, real whole-machine witness runs, Windows/macOS validation, token rotation/revocation, and packaging/signing remain not complete or BLOCKED. |
 | S64 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this daemon full-text index maintenance worker slice; queued incremental index jobs, snapshot GC/retention, vector or ANN index maintenance, service lifecycle, CI, CODEOWNERS, real whole-machine witness runs, Windows/macOS validation, token rotation/revocation, and packaging/signing remain not complete or BLOCKED. |
-| S65 | Local slice complete; remote BLOCKED | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo metadata --no-deps --locked --format-version 1`, `/Users/frankqdwang/.cargo/bin/cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --documents 24 --queries 6 --top-k 5 --json`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace --locked`, `./scripts/ci/check-licenses.sh`, `./scripts/ci/guard-public-repo.sh`, `sh -n scripts/ci/guard-public-repo.sh scripts/ci/check-licenses.sh scripts/ci/verify-local.sh scripts/ci/configure-github-repo.sh`, and the obsolete-reference marker scan passed with no matches. | Remote GitHub repository creation, initial push, PR creation, and branch protection configuration are BLOCKED until the local `gh` credential for `FrankQDWang` is re-authenticated. Service lifecycle, real whole-machine witness runs, Windows/macOS validation, token rotation/revocation, and packaging/signing remain not complete or BLOCKED. |
+| S65 | Local slice complete; remote pending | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo metadata --no-deps --locked --format-version 1`, `/Users/frankqdwang/.cargo/bin/cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --documents 24 --queries 6 --top-k 5 --json`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace --locked`, `./scripts/ci/check-licenses.sh`, `./scripts/ci/guard-public-repo.sh`, `sh -n scripts/ci/guard-public-repo.sh scripts/ci/check-licenses.sh scripts/ci/verify-local.sh scripts/ci/configure-github-repo.sh`, and the obsolete-reference marker scan passed with no matches. | Remote GitHub repository creation, initial push, PR creation, and branch protection configuration are pending after S66 keyring re-auth verification. Real whole-machine witness runs, Windows/macOS validation, token rotation/revocation, and packaging/signing remain not complete or BLOCKED. |
+| S66 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s66_service_lifecycle --locked`, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace --locked`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed with no matches. | None for this macOS LaunchAgent CLI lifecycle slice; live `launchctl` start/stop was implemented but not exercised against the user's real login session, and Windows service/MSI, signed pkg/dmg, notarization, real upgrade/uninstall, hosted runner validation, and complete release packaging remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S66
+
+Design target:
+
+- S66 closes the local P5 gap where the daemon could run in foreground but the
+  CLI had no service lifecycle entrypoint.
+- The CLI now supports `resume-cli service install|uninstall|status|start|stop`.
+  Install writes a macOS user LaunchAgent plist with `ProgramArguments` for
+  `resume-daemon --data-dir <local> run --foreground --work-imports
+  --work-index --ipc-listen 127.0.0.1:0`, preserves user data on uninstall, and
+  keeps CLI stdout/stderr path-redacted.
+- Optional OCR and embedding worker command flags can be included in the
+  generated plist, but no concrete engine/model is bundled by this slice.
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s66_service_lifecycle --locked
+```
+
+Output summary:
+
+- Exit 101 before implementation; all four S66 tests failed because
+  `resume-cli service` did not exist.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s66_service_lifecycle --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace --locked
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+gh auth status
+```
+
+Output summary:
+
+- `resume-cli --test s66_service_lifecycle`: exit 0; 4 tests passed, covering
+  LaunchAgent plist install, XML escaping, redacted install/status/uninstall
+  output, user-data preservation, start/stop dry-run output, and invalid label
+  rejection without path leaks.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `resume-cli --test s4_cli`: exit 0; 6 tests passed.
+- `resume-cli --test s20_status_ipc`: exit 0; 6 tests passed.
+- `resume-daemon --test s4_daemon`: exit 0; 10 tests passed.
+- `resume-daemon --test s20_ipc`: exit 0; 18 tests passed.
+- `cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`: exit 0.
+- `cargo test --workspace --locked`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+- Sandboxed `gh auth status`: exit 1 with stale invalid credential. Escalated
+  `gh auth status`: exit 0; `FrankQDWang` is logged in from keyring with
+  `repo` and `workflow` scopes.
+
+Scope note:
+
+- S66 does not create a signed macOS pkg/dmg, does not notarize, does not build
+  Windows MSI/service registration, does not run real `launchctl` start/stop
+  against the user's login session, does not execute hosted GitHub Actions, and
+  does not prove cross-platform install/upgrade/uninstall.
+- Full product is still not complete.
 
 ### S65
 

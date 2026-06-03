@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::str::FromStr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -47,6 +48,9 @@ const LOCAL_DISCOVERY_DEFAULT_MAX_FILES: usize = 10_000;
 const IPC_ENDPOINT_FILE: &str = "ipc.endpoints.json";
 const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
 const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
+const DEFAULT_SERVICE_LABEL: &str = "com.resume-ir.daemon";
+const DEFAULT_SERVICE_IPC_LISTEN: &str = "127.0.0.1:0";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, service, doctor, or export-diagnostics";
 
 fn main() {
     if let Err(error) = run() {
@@ -65,9 +69,7 @@ fn run() -> Result<()> {
 
     let data_dir = take_data_dir(&mut args)?;
     let Some(command) = args.first().map(String::as_str) else {
-        return Err(CliError::usage(
-            "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
-        ));
+        return Err(CliError::usage(TOP_LEVEL_USAGE));
     };
 
     match command {
@@ -81,6 +83,7 @@ fn run() -> Result<()> {
         "resume" => task_control_command(&data_dir, &args[1..], false),
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
         "embed-worker" => embed_worker_command(&data_dir, &args[1..]),
+        "service" => service_command(&data_dir, &args[1..]),
         "doctor" => {
             if args.len() != 1 {
                 return Err(CliError::usage("usage: resume-cli doctor"));
@@ -88,9 +91,7 @@ fn run() -> Result<()> {
             doctor_command(&data_dir)
         }
         "export-diagnostics" => export_diagnostics_command(&data_dir, &args[1..]),
-        _ => Err(CliError::usage(
-            "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, doctor, or export-diagnostics",
-        )),
+        _ => Err(CliError::usage(TOP_LEVEL_USAGE)),
     }
 }
 
@@ -108,6 +109,668 @@ fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
     let path = PathBuf::from(args.remove(1));
     args.remove(0);
     Ok(path)
+}
+
+fn service_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(service_usage()));
+    };
+
+    match action {
+        "install" => service_install_command(data_dir, &args[1..]),
+        "uninstall" => service_uninstall_command(&args[1..]),
+        "status" => service_status_command(&args[1..]),
+        "start" => service_start_command(&args[1..]),
+        "stop" => service_stop_command(&args[1..]),
+        _ => Err(CliError::usage(service_usage())),
+    }
+}
+
+fn service_install_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let install_args = parse_service_install_args(args)?;
+    let plist_path = service_plist_path(&install_args.common);
+    let daemon_binary = install_args
+        .daemon_binary
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(default_daemon_binary_path);
+
+    if !daemon_binary.is_file() {
+        return Err(CliError::user(
+            "service install blocked: daemon binary is unavailable",
+        ));
+    }
+
+    let program_arguments = service_program_arguments(data_dir, &daemon_binary, &install_args)?;
+    let stdout_path = data_dir.join("logs").join("resume-daemon.stdout.log");
+    let stderr_path = data_dir.join("logs").join("resume-daemon.stderr.log");
+    let plist = render_launch_agent_plist(
+        &install_args.common.label,
+        &program_arguments,
+        &stdout_path,
+        &stderr_path,
+    )?;
+
+    if install_args.common.dry_run {
+        println!("service: install dry-run");
+        println!("label: {}", install_args.common.label);
+        println!("platform: macos-launch-agent");
+        println!("launch agent: would write");
+        println!("paths: <redacted>");
+        return Ok(());
+    }
+
+    fs::create_dir_all(data_dir)
+        .map_err(|_| CliError::user("unable to prepare service data directory"))?;
+    fs::create_dir_all(data_dir.join("logs"))
+        .map_err(|_| CliError::user("unable to prepare service log directory"))?;
+    fs::create_dir_all(&install_args.common.launch_agent_dir)
+        .map_err(|_| CliError::user("unable to prepare service launch agent directory"))?;
+    write_service_file_atomically(&plist_path, plist.as_bytes())?;
+
+    println!("service: installed");
+    println!("label: {}", install_args.common.label);
+    println!("platform: macos-launch-agent");
+    println!("launch agent: configured");
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn service_uninstall_command(args: &[String]) -> Result<()> {
+    let common = parse_service_common_args(args, false)?;
+    let plist_path = service_plist_path(&common);
+    match fs::remove_file(&plist_path) {
+        Ok(()) => {
+            println!("service: uninstalled");
+            println!("label: {}", common.label);
+            println!("user data: preserved");
+            println!("paths: <redacted>");
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            println!("service: not installed");
+            println!("label: {}", common.label);
+            println!("user data: preserved");
+            println!("paths: <redacted>");
+            Ok(())
+        }
+        Err(_) => Err(CliError::user("unable to remove service launch agent")),
+    }
+}
+
+fn service_status_command(args: &[String]) -> Result<()> {
+    let common = parse_service_common_args(args, false)?;
+    let plist_path = service_plist_path(&common);
+    if plist_path.exists() {
+        println!("service: installed");
+    } else {
+        println!("service: not installed");
+    }
+    println!("label: {}", common.label);
+    println!("platform: macos-launch-agent");
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn service_start_command(args: &[String]) -> Result<()> {
+    let common = parse_service_common_args(args, true)?;
+    let plist_path = service_plist_path(&common);
+    if !plist_path.exists() {
+        return Err(CliError::user(
+            "service start blocked: service is not installed",
+        ));
+    }
+
+    if common.dry_run {
+        println!("service: start dry-run");
+        println!("label: {}", common.label);
+        println!("launchctl bootstrap: <redacted>");
+        println!("launchctl kickstart: <redacted>");
+        return Ok(());
+    }
+
+    let domain = current_user_launchctl_domain()?;
+    run_launchctl(&["bootstrap", domain.as_str(), path_as_str(&plist_path)?])?;
+    let target = format!("{domain}/{}", common.label);
+    run_launchctl(&["kickstart", "-k", target.as_str()])?;
+
+    println!("service: started");
+    println!("label: {}", common.label);
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn service_stop_command(args: &[String]) -> Result<()> {
+    let common = parse_service_common_args(args, true)?;
+    let plist_path = service_plist_path(&common);
+    if !plist_path.exists() {
+        return Err(CliError::user(
+            "service stop blocked: service is not installed",
+        ));
+    }
+
+    if common.dry_run {
+        println!("service: stop dry-run");
+        println!("label: {}", common.label);
+        println!("launchctl bootout: <redacted>");
+        return Ok(());
+    }
+
+    let domain = current_user_launchctl_domain()?;
+    run_launchctl(&["bootout", domain.as_str(), path_as_str(&plist_path)?])?;
+
+    println!("service: stopped");
+    println!("label: {}", common.label);
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ServiceCommonArgs {
+    label: String,
+    launch_agent_dir: PathBuf,
+    dry_run: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ServiceInstallArgs {
+    common: ServiceCommonArgs,
+    daemon_binary: Option<PathBuf>,
+    ocr_command: Option<PathBuf>,
+    ocr_engine_profile: Option<String>,
+    ocr_lang: Option<String>,
+    ocr_profile: Option<String>,
+    ocr_render_dpi: Option<String>,
+    ocr_page_timeout_ms: Option<String>,
+    embedding_command: Option<PathBuf>,
+    embedding_model_id: Option<String>,
+    embedding_dimension: Option<String>,
+    embedding_max_docs: Option<String>,
+    embedding_max_text_bytes: Option<String>,
+    embedding_timeout_ms: Option<String>,
+}
+
+fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
+    let mut label = DEFAULT_SERVICE_LABEL.to_string();
+    let mut launch_agent_dir = None;
+    let mut dry_run = false;
+    let mut daemon_binary = None;
+    let mut ocr_command = None;
+    let mut ocr_engine_profile = None;
+    let mut ocr_lang = None;
+    let mut ocr_profile = None;
+    let mut ocr_render_dpi = None;
+    let mut ocr_page_timeout_ms = None;
+    let mut embedding_command = None;
+    let mut embedding_model_id = None;
+    let mut embedding_dimension = None;
+    let mut embedding_max_docs = None;
+    let mut embedding_max_text_bytes = None;
+    let mut embedding_timeout_ms = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--label" => {
+                label = parse_service_label(take_service_value(args, &mut index)?)?;
+            }
+            "--launch-agent-dir" => {
+                if launch_agent_dir.is_some() {
+                    return Err(CliError::usage(service_usage()));
+                }
+                launch_agent_dir = Some(PathBuf::from(take_service_value(args, &mut index)?));
+            }
+            "--daemon-binary" => {
+                set_once_path(
+                    &mut daemon_binary,
+                    PathBuf::from(take_service_value(args, &mut index)?),
+                )?;
+            }
+            "--ocr-command" => {
+                set_once_path(
+                    &mut ocr_command,
+                    PathBuf::from(take_service_value(args, &mut index)?),
+                )?;
+            }
+            "--ocr-engine-profile" => {
+                set_once_string(
+                    &mut ocr_engine_profile,
+                    take_service_identifier(args, &mut index)?,
+                )?;
+            }
+            "--ocr-lang" => {
+                set_once_string(&mut ocr_lang, take_service_identifier(args, &mut index)?)?;
+            }
+            "--ocr-profile" => {
+                set_once_string(&mut ocr_profile, take_service_identifier(args, &mut index)?)?;
+            }
+            "--ocr-render-dpi" => {
+                set_once_string(
+                    &mut ocr_render_dpi,
+                    take_service_positive_number(args, &mut index)?,
+                )?;
+            }
+            "--ocr-page-timeout-ms" => {
+                set_once_string(
+                    &mut ocr_page_timeout_ms,
+                    take_service_positive_number(args, &mut index)?,
+                )?;
+            }
+            "--embedding-command" => {
+                set_once_path(
+                    &mut embedding_command,
+                    PathBuf::from(take_service_value(args, &mut index)?),
+                )?;
+            }
+            "--embedding-model-id" => {
+                set_once_string(
+                    &mut embedding_model_id,
+                    take_service_identifier(args, &mut index)?,
+                )?;
+            }
+            "--embedding-dimension" => {
+                set_once_string(
+                    &mut embedding_dimension,
+                    take_service_positive_number(args, &mut index)?,
+                )?;
+            }
+            "--embedding-max-docs" => {
+                set_once_string(
+                    &mut embedding_max_docs,
+                    take_service_positive_number(args, &mut index)?,
+                )?;
+            }
+            "--embedding-max-text-bytes" => {
+                set_once_string(
+                    &mut embedding_max_text_bytes,
+                    take_service_positive_number(args, &mut index)?,
+                )?;
+            }
+            "--embedding-timeout-ms" => {
+                set_once_string(
+                    &mut embedding_timeout_ms,
+                    take_service_positive_number(args, &mut index)?,
+                )?;
+            }
+            "--dry-run" => {
+                if dry_run {
+                    return Err(CliError::usage(service_usage()));
+                }
+                dry_run = true;
+                index += 1;
+            }
+            _ => return Err(CliError::usage(service_usage())),
+        }
+    }
+
+    if embedding_command.is_some()
+        && (embedding_model_id.is_none() || embedding_dimension.is_none())
+    {
+        return Err(CliError::usage(service_usage()));
+    }
+    if embedding_command.is_none()
+        && (embedding_model_id.is_some()
+            || embedding_dimension.is_some()
+            || embedding_max_docs.is_some()
+            || embedding_max_text_bytes.is_some()
+            || embedding_timeout_ms.is_some())
+    {
+        return Err(CliError::usage(service_usage()));
+    }
+    if ocr_command.is_none()
+        && (ocr_engine_profile.is_some()
+            || ocr_lang.is_some()
+            || ocr_profile.is_some()
+            || ocr_render_dpi.is_some()
+            || ocr_page_timeout_ms.is_some())
+    {
+        return Err(CliError::usage(service_usage()));
+    }
+
+    Ok(ServiceInstallArgs {
+        common: ServiceCommonArgs {
+            label,
+            launch_agent_dir: launch_agent_dir
+                .map(Ok)
+                .unwrap_or_else(default_launch_agent_dir)?,
+            dry_run,
+        },
+        daemon_binary,
+        ocr_command,
+        ocr_engine_profile,
+        ocr_lang,
+        ocr_profile,
+        ocr_render_dpi,
+        ocr_page_timeout_ms,
+        embedding_command,
+        embedding_model_id,
+        embedding_dimension,
+        embedding_max_docs,
+        embedding_max_text_bytes,
+        embedding_timeout_ms,
+    })
+}
+
+fn parse_service_common_args(args: &[String], allow_dry_run: bool) -> Result<ServiceCommonArgs> {
+    let mut label = DEFAULT_SERVICE_LABEL.to_string();
+    let mut launch_agent_dir = None;
+    let mut dry_run = false;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--label" => {
+                label = parse_service_label(take_service_value(args, &mut index)?)?;
+            }
+            "--launch-agent-dir" => {
+                if launch_agent_dir.is_some() {
+                    return Err(CliError::usage(service_usage()));
+                }
+                launch_agent_dir = Some(PathBuf::from(take_service_value(args, &mut index)?));
+            }
+            "--dry-run" if allow_dry_run => {
+                if dry_run {
+                    return Err(CliError::usage(service_usage()));
+                }
+                dry_run = true;
+                index += 1;
+            }
+            _ => return Err(CliError::usage(service_usage())),
+        }
+    }
+
+    Ok(ServiceCommonArgs {
+        label,
+        launch_agent_dir: launch_agent_dir
+            .map(Ok)
+            .unwrap_or_else(default_launch_agent_dir)?,
+        dry_run,
+    })
+}
+
+fn service_program_arguments(
+    data_dir: &Path,
+    daemon_binary: &Path,
+    install_args: &ServiceInstallArgs,
+) -> Result<Vec<String>> {
+    let mut arguments = vec![
+        path_as_str(daemon_binary)?.to_string(),
+        "--data-dir".to_string(),
+        path_as_str(data_dir)?.to_string(),
+        "run".to_string(),
+        "--foreground".to_string(),
+        "--work-imports".to_string(),
+        "--work-index".to_string(),
+        "--ipc-listen".to_string(),
+        DEFAULT_SERVICE_IPC_LISTEN.to_string(),
+    ];
+
+    if let Some(command) = install_args.ocr_command.as_ref() {
+        arguments.push("--work-ocr".to_string());
+        arguments.push("--ocr-command".to_string());
+        arguments.push(path_as_str(command)?.to_string());
+        push_optional_pair(
+            &mut arguments,
+            "--ocr-engine-profile",
+            install_args.ocr_engine_profile.as_deref(),
+        );
+        push_optional_pair(
+            &mut arguments,
+            "--ocr-lang",
+            install_args.ocr_lang.as_deref(),
+        );
+        push_optional_pair(
+            &mut arguments,
+            "--ocr-profile",
+            install_args.ocr_profile.as_deref(),
+        );
+        push_optional_pair(
+            &mut arguments,
+            "--ocr-render-dpi",
+            install_args.ocr_render_dpi.as_deref(),
+        );
+        push_optional_pair(
+            &mut arguments,
+            "--ocr-page-timeout-ms",
+            install_args.ocr_page_timeout_ms.as_deref(),
+        );
+    }
+
+    if let Some(command) = install_args.embedding_command.as_ref() {
+        arguments.push("--work-embeddings".to_string());
+        arguments.push("--embedding-command".to_string());
+        arguments.push(path_as_str(command)?.to_string());
+        push_optional_pair(
+            &mut arguments,
+            "--embedding-model-id",
+            install_args.embedding_model_id.as_deref(),
+        );
+        push_optional_pair(
+            &mut arguments,
+            "--embedding-dimension",
+            install_args.embedding_dimension.as_deref(),
+        );
+        push_optional_pair(
+            &mut arguments,
+            "--embedding-max-docs",
+            install_args.embedding_max_docs.as_deref(),
+        );
+        push_optional_pair(
+            &mut arguments,
+            "--embedding-max-text-bytes",
+            install_args.embedding_max_text_bytes.as_deref(),
+        );
+        push_optional_pair(
+            &mut arguments,
+            "--embedding-timeout-ms",
+            install_args.embedding_timeout_ms.as_deref(),
+        );
+    }
+
+    Ok(arguments)
+}
+
+fn render_launch_agent_plist(
+    label: &str,
+    program_arguments: &[String],
+    stdout_path: &Path,
+    stderr_path: &Path,
+) -> Result<String> {
+    let mut plist = String::new();
+    plist.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    plist.push_str("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n");
+    plist.push_str("<plist version=\"1.0\">\n");
+    plist.push_str("<dict>\n");
+    plist.push_str("  <key>Label</key>\n");
+    plist.push_str("  <string>");
+    plist.push_str(&xml_escape(label));
+    plist.push_str("</string>\n");
+    plist.push_str("  <key>ProgramArguments</key>\n");
+    plist.push_str("  <array>\n");
+    for argument in program_arguments {
+        plist.push_str("    <string>");
+        plist.push_str(&xml_escape(argument));
+        plist.push_str("</string>\n");
+    }
+    plist.push_str("  </array>\n");
+    plist.push_str("  <key>RunAtLoad</key>\n");
+    plist.push_str("  <true/>\n");
+    plist.push_str("  <key>KeepAlive</key>\n");
+    plist.push_str("  <true/>\n");
+    plist.push_str("  <key>StandardOutPath</key>\n");
+    plist.push_str("  <string>");
+    plist.push_str(&xml_escape(path_as_str(stdout_path)?));
+    plist.push_str("</string>\n");
+    plist.push_str("  <key>StandardErrorPath</key>\n");
+    plist.push_str("  <string>");
+    plist.push_str(&xml_escape(path_as_str(stderr_path)?));
+    plist.push_str("</string>\n");
+    plist.push_str("</dict>\n");
+    plist.push_str("</plist>\n");
+    Ok(plist)
+}
+
+fn write_service_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    let Some(parent) = path.parent() else {
+        return Err(CliError::user("service launch agent path is invalid"));
+    };
+    let tmp_path = parent.join(format!(
+        ".{}.tmp-{}",
+        path.file_name()
+            .and_then(|file_name| file_name.to_str())
+            .unwrap_or("resume-ir-service"),
+        std::process::id()
+    ));
+    fs::write(&tmp_path, bytes)
+        .map_err(|_| CliError::user("unable to write service launch agent"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o644))
+            .map_err(|_| CliError::user("unable to secure service launch agent"))?;
+    }
+    fs::rename(&tmp_path, path)
+        .map_err(|_| CliError::user("unable to publish service launch agent"))?;
+    Ok(())
+}
+
+fn current_user_launchctl_domain() -> Result<String> {
+    let output = Command::new("/usr/bin/id")
+        .arg("-u")
+        .output()
+        .map_err(|_| CliError::user("unable to determine user launch domain"))?;
+    if !output.status.success() {
+        return Err(CliError::user("unable to determine user launch domain"));
+    }
+    let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if uid.is_empty() || !uid.chars().all(|character| character.is_ascii_digit()) {
+        return Err(CliError::user("unable to determine user launch domain"));
+    }
+    Ok(format!("gui/{uid}"))
+}
+
+fn run_launchctl(args: &[&str]) -> Result<()> {
+    let output = Command::new("/bin/launchctl")
+        .args(args)
+        .output()
+        .map_err(|_| CliError::user("unable to run launchctl"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(CliError::user("launchctl reported a service error"))
+    }
+}
+
+fn service_plist_path(common: &ServiceCommonArgs) -> PathBuf {
+    common
+        .launch_agent_dir
+        .join(format!("{}.plist", common.label))
+}
+
+fn default_daemon_binary_path() -> PathBuf {
+    let current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("resume-cli"));
+    let binary_name = if cfg!(windows) {
+        "resume-daemon.exe"
+    } else {
+        "resume-daemon"
+    };
+    current_exe
+        .parent()
+        .map(|parent| parent.join(binary_name))
+        .unwrap_or_else(|| PathBuf::from(binary_name))
+}
+
+fn default_launch_agent_dir() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| CliError::user("service launch agent directory is not configured"))?;
+    Ok(home.join("Library").join("LaunchAgents"))
+}
+
+fn parse_service_label(value: &str) -> Result<String> {
+    if value.is_empty()
+        || value.starts_with('.')
+        || value.ends_with('.')
+        || !value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '.' || character == '-'
+        })
+    {
+        return Err(CliError::usage(service_usage()));
+    }
+    Ok(value.to_string())
+}
+
+fn take_service_value<'a>(args: &'a [String], index: &mut usize) -> Result<&'a str> {
+    let Some(value) = args.get(*index + 1).map(String::as_str) else {
+        return Err(CliError::usage(service_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(service_usage()));
+    }
+    *index += 2;
+    Ok(value)
+}
+
+fn take_service_identifier(args: &[String], index: &mut usize) -> Result<String> {
+    let value = take_service_value(args, index)?;
+    if !valid_cli_identifier(value) {
+        return Err(CliError::usage(service_usage()));
+    }
+    Ok(value.to_string())
+}
+
+fn take_service_positive_number(args: &[String], index: &mut usize) -> Result<String> {
+    let value = take_service_value(args, index)?;
+    if value
+        .parse::<usize>()
+        .ok()
+        .filter(|parsed| *parsed > 0)
+        .is_none()
+    {
+        return Err(CliError::usage(service_usage()));
+    }
+    Ok(value.to_string())
+}
+
+fn set_once_path(slot: &mut Option<PathBuf>, value: PathBuf) -> Result<()> {
+    if slot.is_some() {
+        return Err(CliError::usage(service_usage()));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
+fn set_once_string(slot: &mut Option<String>, value: String) -> Result<()> {
+    if slot.is_some() {
+        return Err(CliError::usage(service_usage()));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
+fn push_optional_pair(arguments: &mut Vec<String>, flag: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        arguments.push(flag.to_string());
+        arguments.push(value.to_string());
+    }
+}
+
+fn path_as_str(path: &Path) -> Result<&str> {
+    path.to_str()
+        .ok_or_else(|| CliError::user("service path contains unsupported characters"))
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn service_usage() -> &'static str {
+    "usage: resume-cli service <install|uninstall|status|start|stop> [--launch-agent-dir <path>] [--label <id>] [--dry-run] [--daemon-binary <path>] [--ocr-command <path>] [--embedding-command <path> --embedding-model-id <id> --embedding-dimension <n>]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
