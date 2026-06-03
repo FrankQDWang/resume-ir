@@ -28,7 +28,6 @@ gh repo edit "$FULL_NAME" \
   --enable-projects=false \
   --enable-wiki=false \
   --default-branch main \
-  --allow-forking=true \
   --delete-branch-on-merge=true
 
 main_sha="$(git rev-parse main)"
