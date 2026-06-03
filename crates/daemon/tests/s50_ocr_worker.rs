@@ -201,6 +201,71 @@ esac
 
 #[cfg(unix)]
 #[test]
+fn daemon_ocr_worker_once_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr() {
+    let data_dir = temp_dir("ocr-worker-backpressure-data");
+    let private_document_path =
+        seed_scanned_document_with_bytes(&data_dir, two_page_scanned_pdf_bytes());
+    let command = write_fixture_executable(
+        "fixture-daemon-ocr-worker-backpressure",
+        r#"#!/bin/sh
+printf 'PRIVATE_DAEMON_OCR_BACKPRESSURE_INVOKED\n'
+exit 31
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--once",
+            "--work-ocr-once",
+            "--ocr-command",
+            path_str(&command),
+            "--ocr-max-pages-per-document",
+            "1",
+        ])
+        .output()
+        .expect("run daemon OCR worker once with page-count backpressure");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr worker processed: 0"));
+    assert!(stdout.contains("ocr worker cache writes: 0"));
+    assert!(stdout.contains("ocr worker cache hits: 0"));
+    assert!(stdout.contains("ocr worker failed: 1"));
+    assert!(!stdout.contains("PRIVATE_DAEMON_OCR_BACKPRESSURE_INVOKED"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_document_path)));
+    assert!(!stdout.contains(path_str(&command)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::OcrRequired);
+    let jobs = store.retryable_jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].status, IngestJobStatus::FailedRetryable);
+    assert_eq!(jobs[0].attempt_count, 1);
+    let content_hash = scanned.content_hash.expect("content hash");
+    for page_no in [1, 2] {
+        let cache_key =
+            OcrPageCacheKey::new(content_hash.clone(), page_no, 300, "eng", "balanced").unwrap();
+        assert!(store.ocr_page_cache_entry(&cache_key).unwrap().is_none());
+    }
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn daemon_ocr_worker_once_uses_pdftoppm_renderer_for_valid_pdf_before_ocr() {
     let Some(pdftoppm) = find_command("pdftoppm") else {
         eprintln!("skipping pdftoppm daemon worker witness because pdftoppm is not installed");

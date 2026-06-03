@@ -58,6 +58,7 @@ const DEFAULT_OCR_LANG: &str = "eng";
 const DEFAULT_OCR_PROFILE: &str = "balanced";
 const DEFAULT_OCR_RENDER_DPI: u32 = 300;
 const DEFAULT_OCR_PAGE_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
 const DEFAULT_EMBEDDING_MAX_DOCS: usize = 64;
 const DEFAULT_EMBEDDING_MAX_TEXT_BYTES: usize = 1_000_000;
 const DEFAULT_EMBEDDING_TIMEOUT_MS: u64 = 30_000;
@@ -403,6 +404,17 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                     .ok_or_else(|| DaemonError::usage(run_usage()))?;
                 index += 2;
             }
+            "--ocr-max-pages-per-document" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.ocr_max_pages_per_document = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| DaemonError::usage(run_usage()))?;
+                index += 2;
+            }
             "--embedding-command" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(DaemonError::usage(run_usage()));
@@ -499,7 +511,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -817,6 +829,13 @@ fn run_claimed_ocr_job(
             return Err(DaemonError::import(error));
         }
     };
+    if page_count > options.ocr_max_pages_per_document {
+        mark_ocr_job_failed_retryable(store, job, now)?;
+        return Ok(OcrWorkerSummary {
+            failed: 1,
+            ..OcrWorkerSummary::default()
+        });
+    }
     let budget = OcrWorkerBudget::new(options.ocr_page_timeout_ms).map_err(DaemonError::ocr)?;
     let cancellation = CancellationToken::new();
     let ocr_options = OcrOptions::new(options.ocr_lang.as_str(), options.ocr_profile.as_str())
@@ -3063,6 +3082,7 @@ struct RunOptions {
     ocr_profile: String,
     ocr_render_dpi: u32,
     ocr_page_timeout_ms: u64,
+    ocr_max_pages_per_document: u32,
     embedding_command: Option<PathBuf>,
     embedding_model_id: Option<String>,
     embedding_dimension: Option<usize>,
@@ -3097,6 +3117,7 @@ impl Default for RunOptions {
             ocr_profile: DEFAULT_OCR_PROFILE.to_string(),
             ocr_render_dpi: DEFAULT_OCR_RENDER_DPI,
             ocr_page_timeout_ms: DEFAULT_OCR_PAGE_TIMEOUT_MS,
+            ocr_max_pages_per_document: DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT,
             embedding_command: None,
             embedding_model_id: None,
             embedding_dimension: None,

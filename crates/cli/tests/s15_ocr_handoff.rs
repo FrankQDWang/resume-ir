@@ -459,6 +459,90 @@ esac
 
 #[cfg(unix)]
 #[test]
+fn ocr_worker_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr() {
+    let data_dir = temp_dir("ocr-worker-backpressure-data");
+    let fixture_root = temp_dir("ocr-worker-backpressure-fixtures");
+    std::fs::write(
+        fixture_root.join("synthetic-scanned-resume.pdf"),
+        two_page_scanned_pdf_bytes(),
+    )
+    .unwrap();
+    let command = write_fixture_executable(
+        "fixture-ocr-worker-backpressure",
+        r#"#!/bin/sh
+printf 'PRIVATE_OCR_BACKPRESSURE_INVOKED\n'
+exit 31
+"#,
+    );
+    import_fixtures(&data_dir, &fixture_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+            "--max-pages-per-document",
+            "1",
+        ])
+        .output()
+        .expect("run backpressured ocr worker");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ocr worker blocked: OCR page count exceeds configured limit"));
+    assert!(!stderr.contains("PRIVATE_OCR_BACKPRESSURE_INVOKED"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+    assert!(!stderr.contains(path_str(&command)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::OcrRequired);
+    let jobs = store.retryable_jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].status, IngestJobStatus::FailedRetryable);
+    assert_eq!(jobs[0].attempt_count, 1);
+
+    let content_hash = scanned.content_hash.expect("content hash");
+    for page_no in [1, 2] {
+        let cache_key =
+            OcrPageCacheKey::new(content_hash.clone(), page_no, 300, "eng", "balanced").unwrap();
+        assert!(store.ocr_page_cache_entry(&cache_key).unwrap().is_none());
+    }
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "PRIVATE_OCR_BACKPRESSURE_INVOKED",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run resume-cli search after OCR backpressure");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(
+        search_stdout.contains("results: 0"),
+        "stdout:\n{search_stdout}"
+    );
+    assert!(!search_stdout.contains("synthetic-scanned-resume.pdf"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&fixture_root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
+}
+
+#[cfg(unix)]
+#[test]
 fn ocr_worker_uses_pdftoppm_renderer_for_valid_pdf_before_ocr() {
     let Some(pdftoppm) = find_command("pdftoppm") else {
         eprintln!("skipping pdftoppm CLI worker witness because pdftoppm is not installed");

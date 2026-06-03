@@ -9,7 +9,9 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
     let launch_agent_dir = temp_path("service-private-launch-agents");
     let daemon_dir = temp_dir("daemon & private bin");
     let daemon_binary = daemon_dir.join("resume-daemon");
+    let ocr_command = daemon_dir.join("ocr-worker");
     fs::write(&daemon_binary, "#!/bin/sh\n").unwrap();
+    fs::write(&ocr_command, "#!/bin/sh\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -21,6 +23,10 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
             path_str(&launch_agent_dir),
             "--daemon-binary",
             path_str(&daemon_binary),
+            "--ocr-command",
+            path_str(&ocr_command),
+            "--ocr-max-pages-per-document",
+            "7",
         ])
         .output()
         .expect("run service install");
@@ -39,6 +45,7 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&launch_agent_dir)));
     assert!(!stdout.contains(path_str(&daemon_binary)));
+    assert!(!stdout.contains(path_str(&ocr_command)));
 
     let plist_path = launch_agent_dir.join("com.resume-ir.daemon.plist");
     let plist = fs::read_to_string(&plist_path).expect("read launch agent plist");
@@ -51,6 +58,11 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
     assert!(plist.contains("--work-index"));
     assert!(plist.contains("--ipc-listen"));
     assert!(plist.contains("127.0.0.1:0"));
+    assert!(plist.contains("--work-ocr"));
+    assert!(plist.contains("--ocr-command"));
+    assert!(plist.contains(&path_str(&ocr_command).replace('&', "&amp;")));
+    assert!(plist.contains("--ocr-max-pages-per-document"));
+    assert!(plist.contains("<string>7</string>"));
     assert!(plist.contains("<key>RunAtLoad</key>"));
     assert!(plist.contains("<key>KeepAlive</key>"));
     assert!(data_dir.join("logs").exists());

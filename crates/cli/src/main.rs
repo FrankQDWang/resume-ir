@@ -60,6 +60,7 @@ const DEFAULT_SERVICE_LABEL: &str = "com.resume-ir.daemon";
 const DEFAULT_SERVICE_IPC_LISTEN: &str = "127.0.0.1:0";
 const FAULT_PROBE_MAX_BYTES: u64 = 1024 * 1024;
 const OCR_CRASH_PROBE_BYTES: &[u8] = b"SYNTHETIC OCR CRASH PROBE BYTES";
+const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
 const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, doctor, or export-diagnostics";
@@ -543,6 +544,7 @@ struct ServiceInstallArgs {
     ocr_profile: Option<String>,
     ocr_render_dpi: Option<String>,
     ocr_page_timeout_ms: Option<String>,
+    ocr_max_pages_per_document: Option<String>,
     embedding_command: Option<PathBuf>,
     embedding_model_id: Option<String>,
     embedding_dimension: Option<String>,
@@ -562,6 +564,7 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
     let mut ocr_profile = None;
     let mut ocr_render_dpi = None;
     let mut ocr_page_timeout_ms = None;
+    let mut ocr_max_pages_per_document = None;
     let mut embedding_command = None;
     let mut embedding_model_id = None;
     let mut embedding_dimension = None;
@@ -614,6 +617,12 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
             "--ocr-page-timeout-ms" => {
                 set_once_string(
                     &mut ocr_page_timeout_ms,
+                    take_service_positive_number(args, &mut index)?,
+                )?;
+            }
+            "--ocr-max-pages-per-document" => {
+                set_once_string(
+                    &mut ocr_max_pages_per_document,
                     take_service_positive_number(args, &mut index)?,
                 )?;
             }
@@ -683,7 +692,8 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
             || ocr_lang.is_some()
             || ocr_profile.is_some()
             || ocr_render_dpi.is_some()
-            || ocr_page_timeout_ms.is_some())
+            || ocr_page_timeout_ms.is_some()
+            || ocr_max_pages_per_document.is_some())
     {
         return Err(CliError::usage(service_usage()));
     }
@@ -703,6 +713,7 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
         ocr_profile,
         ocr_render_dpi,
         ocr_page_timeout_ms,
+        ocr_max_pages_per_document,
         embedding_command,
         embedding_model_id,
         embedding_dimension,
@@ -794,6 +805,11 @@ fn service_program_arguments(
             &mut arguments,
             "--ocr-page-timeout-ms",
             install_args.ocr_page_timeout_ms.as_deref(),
+        );
+        push_optional_pair(
+            &mut arguments,
+            "--ocr-max-pages-per-document",
+            install_args.ocr_max_pages_per_document.as_deref(),
         );
     }
 
@@ -1031,7 +1047,7 @@ fn xml_escape(value: &str) -> String {
 }
 
 fn service_usage() -> &'static str {
-    "usage: resume-cli service <install|uninstall|status|start|stop> [--launch-agent-dir <path>] [--label <id>] [--dry-run] [--daemon-binary <path>] [--ocr-command <path>] [--embedding-command <path> --embedding-model-id <id> --embedding-dimension <n>]"
+    "usage: resume-cli service <install|uninstall|status|start|stop> [--launch-agent-dir <path>] [--label <id>] [--dry-run] [--daemon-binary <path>] [--ocr-command <path>] [--ocr-max-pages-per-document <n>] [--embedding-command <path> --embedding-model-id <id> --embedding-dimension <n>]"
 }
 
 fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -3957,6 +3973,11 @@ fn run_claimed_ocr_job(
         .map_err(|_| CliError::user("ocr worker could not read document bytes"))?;
     let page_count =
         detect_ocr_page_count(&document.extension, &bytes).map_err(CliError::import)?;
+    if page_count > worker_args.max_pages_per_document {
+        return Err(CliError::user(
+            "ocr worker blocked: OCR page count exceeds configured limit",
+        ));
+    }
     let budget = OcrWorkerBudget::new(worker_args.page_timeout_ms).map_err(CliError::ocr)?;
     let cancellation = CancellationToken::new();
     let options = OcrOptions::new(worker_args.lang.as_str(), worker_args.profile.as_str())
@@ -4198,6 +4219,7 @@ struct OcrWorkerArgs {
     profile: String,
     render_dpi: u32,
     page_timeout_ms: u64,
+    max_pages_per_document: u32,
 }
 
 fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
@@ -4211,6 +4233,7 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
     let mut profile = "balanced".to_string();
     let mut render_dpi = 300_u32;
     let mut page_timeout_ms = 30_000_u64;
+    let mut max_pages_per_document = DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT;
     let mut index = 0;
 
     while index < args.len() {
@@ -4323,6 +4346,18 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
                     .ok_or_else(ocr_worker_usage)?;
                 index += 1;
             }
+            "--max-pages-per-document" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(ocr_worker_usage());
+                };
+                max_pages_per_document = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(ocr_worker_usage)?;
+                index += 1;
+            }
             _ => return Err(ocr_worker_usage()),
         }
     }
@@ -4347,12 +4382,13 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
         profile,
         render_dpi,
         page_timeout_ms,
+        max_pages_per_document,
     })
 }
 
 fn ocr_worker_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli ocr-worker --once [--command <path>|--tesseract-command <path>] [--render-command <path>|--pdftoppm-command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>]",
+        "usage: resume-cli ocr-worker --once [--command <path>|--tesseract-command <path>] [--render-command <path>|--pdftoppm-command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>] [--max-pages-per-document <n>]",
     )
 }
 
