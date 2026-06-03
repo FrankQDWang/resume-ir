@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S83 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S84 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -88,8 +88,11 @@ obsolete preliminary files and checklists are not product scope.
   disk-space budget, permission-denied probes, file-lock contention probes,
   daemon-kill/restart probes against configured daemon binaries, OCR command
   crash probes, targeted fault tests, local-only production runbooks, and a
-  runbook CI policy guard exist. Missing or BLOCKED work includes 100k/1M
-  real-corpus benchmarks, nightly performance gates, destructive service-level
+  runbook CI policy guard exist. The benchmark runner now has an explicit
+  synthetic benchmark gate wired into PR and nightly smoke workflows; synthetic
+  runs must opt in with `--allow-synthetic` and cannot prove 100k/1M production
+  performance. Missing or BLOCKED work includes 100k/1M real-corpus benchmarks,
+  real-corpus nightly/release performance gates, destructive service-level
   kill/actual ENOSPC fault injection, and cross-platform performance evidence.
 
 ## Slice Status
@@ -178,8 +181,68 @@ obsolete preliminary files and checklists are not product scope.
 | S81 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_daemon_kill_restarts_configured_daemon_without_path_leak -- --exact` first failed because `daemon-kill` was not supported, and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths -- --exact` first failed because diagnostics did not advertise `daemon_kill`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s81_daemon_kill --locked`, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings`, `git diff --check`, and `./scripts/ci/verify-local.sh` passed. | None for this safe daemon-kill/restart probe slice; destructive service-manager kill, actual ENOSPC, OCR-crash fault injection, model checksum fault, battery mode, external-drive disconnect, runbooks, Windows/macOS service validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S82 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_ocr_crash_reproduces_engine_failure_without_payload_or_path_leak -- --exact` first failed because `ocr-crash` was not supported, and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths -- --exact` first failed because diagnostics did not advertise `ocr_crash`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked`, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings`, `git diff --check`, and `./scripts/ci/verify-local.sh` passed. | None for this safe OCR command-crash probe and retryable worker-failure slice; destructive service-manager kill, actual ENOSPC, model checksum fault, battery mode, external-drive disconnect, runbooks, Windows/macOS service validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S83 | Product runbook/CI guard slice complete | `sh scripts/ci/check-runbooks.sh` first failed with `missing required runbook: docs/runbooks/diagnostics-redaction.md`; after adding local-only runbooks and wiring the guard into local/hosted CI, `./scripts/ci/check-runbooks.sh`, `sh -n scripts/ci/check-runbooks.sh scripts/ci/verify-local.sh scripts/ci/guard-public-repo.sh scripts/ci/check-licenses.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and `./scripts/ci/verify-local.sh` passed. | None for this production runbook and policy-guard slice; 100k/1M real-corpus benchmarks, nightly performance gates, destructive service-level kill/actual ENOSPC fault injection, model checksum fault, battery mode, external-drive disconnect, Windows/macOS service validation, and cross-platform performance evidence remain not complete or BLOCKED. |
+| S84 | Product benchmark-gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked` first failed because `evaluate_benchmark_gate_json` and `BenchmarkGateConfig` did not exist; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings`, the `resume-benchmark synthetic-query` plus `resume-benchmark gate` smoke, `./scripts/ci/check-runbooks.sh`, `git diff --check`, and `./scripts/ci/verify-local.sh` passed. | None for this synthetic benchmark gate and workflow wiring slice; 100k/1M real-corpus benchmark datasets, real-corpus nightly/release performance gates, semantic/vector quality gates, OCR throughput gates, Windows/macOS benchmark runners, and cross-platform performance evidence remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S84
+
+Design target:
+
+- Add a real benchmark policy gate for existing benchmark JSON artifacts, so a
+  benchmark smoke can fail on insufficient sample size, P95 latency regression,
+  zero-result regressions, or unproven million-scale claims.
+- Wire the gate into PR benchmark smoke and nightly benchmark smoke workflows.
+- Keep synthetic smoke explicitly scoped: `--allow-synthetic` is required, and a
+  passing synthetic gate must not be treated as 100k/1M real-corpus evidence.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked
+```
+
+Output summary:
+
+- Exit 101 before implementation because the new RED tests imported missing
+  symbols `evaluate_benchmark_gate_json` and `BenchmarkGateConfig`.
+- The CLI RED tests also required `resume-benchmark gate --report <path>` to
+  exist and reject synthetic artifacts unless `--allow-synthetic` is supplied.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+tmpdir=$(mktemp -d); /Users/frankqdwang/.cargo/bin/cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --index-dir "$tmpdir/index" --documents 24 --queries 6 --top-k 5 --json > "$tmpdir/benchmark-smoke.json" && /Users/frankqdwang/.cargo/bin/cargo run -p benchmark-runner --bin resume-benchmark --locked -- gate --report "$tmpdir/benchmark-smoke.json" --allow-synthetic --min-documents 24 --min-queries 6 --max-p95-ms 1000 --max-zero-result-queries 0; rc=$?; rm -rf "$tmpdir"; exit $rc
+./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `benchmark-runner` tests: exit 0; 9 integration tests passed, including gate
+  rejection for synthetic-without-allowance, latency regression, and unproven
+  million-scale claims.
+- `benchmark-runner` clippy: exit 0.
+- CLI smoke: exit 0; `resume-benchmark gate` printed `benchmark gate passed`
+  against a generated redacted synthetic report.
+- `check-runbooks.sh`: exit 0; the release blocker runbook now documents
+  `resume-benchmark gate`.
+- `git diff --check`: exit 0.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S84 adds synthetic benchmark policy gates and workflow wiring. It does not run
+  or claim 100k/1M real-corpus benchmarks, semantic/vector recall gates, OCR
+  throughput gates, representative hardware runs, Windows/macOS benchmark
+  evidence, or production P95 target compliance.
+- Full product is still not complete.
 
 ### S83
 

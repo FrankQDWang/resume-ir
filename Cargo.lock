@@ -87,6 +87,7 @@ name = "benchmark-runner"
 version = "0.1.0"
 dependencies = [
  "index-fulltext",
+ "serde_json",
 ]
 
 [[package]]

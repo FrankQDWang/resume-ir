@@ -51,7 +51,9 @@ jobs:
         run: ./scripts/ci/check-runbooks.sh
 
       - name: Benchmark smoke
-        run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --documents 24 --queries 6 --top-k 5 --json
+        run: |
+          cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --documents 24 --queries 6 --top-k 5 --json > benchmark-smoke.json
+          cargo run -p benchmark-runner --bin resume-benchmark --locked -- gate --report benchmark-smoke.json --allow-synthetic --min-documents 24 --min-queries 6 --max-p95-ms 1000 --max-zero-result-queries 0
 
       - name: Public repository guard
         run: ./scripts/ci/guard-public-repo.sh

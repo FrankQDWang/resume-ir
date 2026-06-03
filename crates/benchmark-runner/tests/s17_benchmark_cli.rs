@@ -50,6 +50,109 @@ fn resume_benchmark_outputs_redacted_synthetic_json() {
     remove_dir(&index_dir);
 }
 
+#[test]
+fn resume_benchmark_gate_accepts_explicit_synthetic_smoke_report() {
+    let index_dir = temp_dir("synthetic-query-cli-gate-index");
+    let report_path = temp_dir("synthetic-query-cli-gate-report").join("report.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "synthetic-query",
+            "--index-dir",
+            path_str(&index_dir),
+            "--documents",
+            "24",
+            "--queries",
+            "100",
+            "--top-k",
+            "5",
+            "--json",
+        ])
+        .output()
+        .expect("run resume-benchmark");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::write(&report_path, &output.stdout).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "gate",
+            "--report",
+            path_str(&report_path),
+            "--allow-synthetic",
+            "--min-documents",
+            "24",
+            "--min-queries",
+            "100",
+            "--max-p95-ms",
+            "1000",
+            "--max-zero-result-queries",
+            "0",
+        ])
+        .output()
+        .expect("run resume-benchmark gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "benchmark gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(&index_dir);
+    remove_dir(report_path.parent().unwrap());
+}
+
+#[test]
+fn resume_benchmark_gate_rejects_synthetic_without_explicit_allowance() {
+    let report_dir = temp_dir("synthetic-query-cli-gate-reject");
+    let report_path = report_dir.join("report.json");
+    fs::write(
+        &report_path,
+        concat!(
+            "{\"schema_version\":\"benchmark.v1\",",
+            "\"dataset_kind\":\"synthetic\",",
+            "\"document_count\":1000,",
+            "\"query_count\":100,",
+            "\"query_latency_ms\":{\"samples\":100,\"p95\":10},",
+            "\"zero_result_queries\":0,",
+            "\"million_scale_verified\":false,",
+            "\"target_claim\":\"not_evaluated\"}"
+        ),
+    )
+    .unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "gate",
+            "--report",
+            path_str(&report_path),
+            "--min-documents",
+            "1000",
+            "--min-queries",
+            "100",
+            "--max-p95-ms",
+            "50",
+        ])
+        .output()
+        .expect("run resume-benchmark gate");
+
+    assert!(!gate.status.success());
+    assert!(String::from_utf8_lossy(&gate.stderr)
+        .contains("synthetic benchmark requires explicit allowance"));
+
+    remove_dir(&report_dir);
+}
+
 fn temp_dir(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -299,6 +299,168 @@ pub fn run_synthetic_query_benchmark(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BenchmarkGateConfig {
+    min_documents: usize,
+    min_queries: usize,
+    max_p95_ms: f64,
+    max_zero_result_queries: usize,
+    allow_synthetic: bool,
+}
+
+impl BenchmarkGateConfig {
+    pub fn new(min_documents: usize, min_queries: usize, max_p95_ms: f64) -> Self {
+        Self {
+            min_documents,
+            min_queries,
+            max_p95_ms,
+            max_zero_result_queries: 0,
+            allow_synthetic: false,
+        }
+    }
+
+    pub fn allow_synthetic(mut self) -> Self {
+        self.allow_synthetic = true;
+        self
+    }
+
+    pub fn with_max_zero_result_queries(mut self, max_zero_result_queries: usize) -> Self {
+        self.max_zero_result_queries = max_zero_result_queries;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BenchmarkGateEvaluation {
+    dataset_kind: String,
+    document_count: usize,
+    query_count: usize,
+    p95_ms: f64,
+}
+
+impl BenchmarkGateEvaluation {
+    pub fn dataset_kind(&self) -> &str {
+        &self.dataset_kind
+    }
+
+    pub fn document_count(&self) -> usize {
+        self.document_count
+    }
+
+    pub fn query_count(&self) -> usize {
+        self.query_count
+    }
+
+    pub fn p95_ms(&self) -> f64 {
+        self.p95_ms
+    }
+}
+
+pub fn evaluate_benchmark_gate_json(
+    report_json: &str,
+    config: BenchmarkGateConfig,
+) -> std::result::Result<BenchmarkGateEvaluation, BenchmarkGateError> {
+    let report: serde_json::Value =
+        serde_json::from_str(report_json).map_err(|_| BenchmarkGateError::invalid_json())?;
+
+    let schema_version = required_str(&report, "schema_version")?;
+    if schema_version != "benchmark.v1" {
+        return Err(BenchmarkGateError::failed("unsupported benchmark schema"));
+    }
+
+    let dataset_kind = required_str(&report, "dataset_kind")?;
+    let document_count = required_usize(&report, "document_count")?;
+    let query_count = required_usize(&report, "query_count")?;
+    let latency = report
+        .get("query_latency_ms")
+        .ok_or_else(|| BenchmarkGateError::missing_field("query_latency_ms"))?;
+    let samples = required_usize(latency, "samples")?;
+    let p95_ms = required_f64(latency, "p95")?;
+    let zero_result_queries = required_usize(&report, "zero_result_queries")?;
+    let million_scale_verified = required_bool(&report, "million_scale_verified")?;
+    let target_claim = required_str(&report, "target_claim")?;
+
+    if dataset_kind == "synthetic" && !config.allow_synthetic {
+        return Err(BenchmarkGateError::failed(
+            "synthetic benchmark requires explicit allowance",
+        ));
+    }
+    if document_count < config.min_documents {
+        return Err(BenchmarkGateError::failed(
+            "document count below gate minimum",
+        ));
+    }
+    if query_count < config.min_queries || samples < config.min_queries {
+        return Err(BenchmarkGateError::failed(
+            "query sample count below gate minimum",
+        ));
+    }
+    if p95_ms > config.max_p95_ms {
+        return Err(BenchmarkGateError::failed("query p95 exceeded threshold"));
+    }
+    if zero_result_queries > config.max_zero_result_queries {
+        return Err(BenchmarkGateError::failed(
+            "zero-result query count exceeded threshold",
+        ));
+    }
+    if million_scale_verified && (dataset_kind == "synthetic" || document_count < 1_000_000) {
+        return Err(BenchmarkGateError::failed(
+            "million-scale claim is not proven",
+        ));
+    }
+    if target_claim != "not_evaluated" && (dataset_kind == "synthetic" || !million_scale_verified) {
+        return Err(BenchmarkGateError::failed("target claim is not proven"));
+    }
+
+    Ok(BenchmarkGateEvaluation {
+        dataset_kind: dataset_kind.to_string(),
+        document_count,
+        query_count,
+        p95_ms,
+    })
+}
+
+fn required_str<'a>(
+    value: &'a serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<&'a str, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| BenchmarkGateError::missing_field(field))
+}
+
+fn required_usize(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<usize, BenchmarkGateError> {
+    let number = value
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| BenchmarkGateError::missing_field(field))?;
+    usize::try_from(number).map_err(|_| BenchmarkGateError::failed("numeric field is too large"))
+}
+
+fn required_f64(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<f64, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .ok_or_else(|| BenchmarkGateError::missing_field(field))
+}
+
+fn required_bool(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<bool, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| BenchmarkGateError::missing_field(field))
+}
+
 impl LatencySummary {
     fn from_samples(mut samples: Vec<f64>) -> Result<Self> {
         if samples.is_empty() {
@@ -461,3 +623,50 @@ enum BenchmarkErrorKind {
     FullText,
     Io,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BenchmarkGateError {
+    message: &'static str,
+}
+
+impl BenchmarkGateError {
+    fn invalid_json() -> Self {
+        Self {
+            message: "benchmark report is not valid JSON",
+        }
+    }
+
+    fn missing_field(field: &'static str) -> Self {
+        Self { message: field }
+    }
+
+    fn failed(message: &'static str) -> Self {
+        Self { message }
+    }
+}
+
+impl fmt::Display for BenchmarkGateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.message {
+            "schema_version"
+            | "dataset_kind"
+            | "document_count"
+            | "query_count"
+            | "query_latency_ms"
+            | "samples"
+            | "p95"
+            | "zero_result_queries"
+            | "million_scale_verified"
+            | "target_claim" => {
+                write!(
+                    formatter,
+                    "benchmark report missing required field: {}",
+                    self.message
+                )
+            }
+            message => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for BenchmarkGateError {}

@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::PathBuf;
 
-use benchmark_runner::{run_synthetic_query_benchmark, BenchmarkError, SyntheticBenchmarkConfig};
+use benchmark_runner::{
+    evaluate_benchmark_gate_json, run_synthetic_query_benchmark, BenchmarkError,
+    BenchmarkGateConfig, BenchmarkGateError, SyntheticBenchmarkConfig,
+};
 
 fn main() {
     if let Err(error) = run() {
@@ -11,7 +14,13 @@ fn main() {
 }
 
 fn run() -> Result<(), CliError> {
-    let args = parse_args(std::env::args().skip(1))?;
+    match parse_command(std::env::args().skip(1))? {
+        CliCommand::SyntheticQuery(args) => run_synthetic_query(args),
+        CliCommand::Gate(args) => run_gate(args),
+    }
+}
+
+fn run_synthetic_query(args: SyntheticQueryArgs) -> Result<(), CliError> {
     let index_dir = args.index_dir.unwrap_or_else(|| {
         args.data_dir
             .join("benchmark-scratch")
@@ -36,21 +45,38 @@ fn run() -> Result<(), CliError> {
     Ok(())
 }
 
-fn parse_args<I>(args: I) -> Result<CliArgs, CliError>
+fn run_gate(args: GateArgs) -> Result<(), CliError> {
+    let report_json = fs::read_to_string(&args.report)
+        .map_err(|_| CliError::user("unable to read benchmark report"))?;
+    let mut config =
+        BenchmarkGateConfig::new(args.min_documents, args.min_queries, args.max_p95_ms)
+            .with_max_zero_result_queries(args.max_zero_result_queries);
+    if args.allow_synthetic {
+        config = config.allow_synthetic();
+    }
+    evaluate_benchmark_gate_json(&report_json, config).map_err(CliError::gate)?;
+    println!("benchmark gate passed");
+    Ok(())
+}
+
+fn parse_command<I>(args: I) -> Result<CliCommand, CliError>
 where
     I: IntoIterator<Item = String>,
 {
+    let args = args.into_iter().collect::<Vec<_>>();
+    match args.first().map(String::as_str) {
+        Some("gate") => parse_gate_args(&args[1..]).map(CliCommand::Gate),
+        _ => parse_synthetic_query_args(&args).map(CliCommand::SyntheticQuery),
+    }
+}
+
+fn parse_synthetic_query_args(args: &[String]) -> Result<SyntheticQueryArgs, CliError> {
     let mut data_dir = PathBuf::from("local-data");
     let mut index_dir = None;
     let mut documents = 1_000_usize;
     let mut queries = 100_usize;
     let mut top_k = 10_usize;
-    let args = args.into_iter().collect::<Vec<_>>();
-    let mut index = 0_usize;
-
-    if args.first().map(String::as_str) == Some("synthetic-query") {
-        index = 1;
-    }
+    let mut index = usize::from(args.first().map(String::as_str) == Some("synthetic-query"));
 
     while index < args.len() {
         match args[index].as_str() {
@@ -90,13 +116,68 @@ where
         }
     }
 
-    Ok(CliArgs {
+    Ok(SyntheticQueryArgs {
         data_dir,
         cleanup_after_run: index_dir.is_none(),
         index_dir,
         documents,
         queries,
         top_k,
+    })
+}
+
+fn parse_gate_args(args: &[String]) -> Result<GateArgs, CliError> {
+    let mut report = None;
+    let mut allow_synthetic = false;
+    let mut min_documents = 100_000_usize;
+    let mut min_queries = 100_usize;
+    let mut max_p95_ms = 200.0_f64;
+    let mut max_zero_result_queries = 0_usize;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--report" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                report = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--allow-synthetic" => {
+                allow_synthetic = true;
+                index += 1;
+            }
+            "--min-documents" => {
+                min_documents = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-queries" => {
+                min_queries = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--max-p95-ms" => {
+                max_p95_ms = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--max-zero-result-queries" => {
+                max_zero_result_queries = parse_nonnegative_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    Ok(GateArgs {
+        report: report.ok_or_else(CliError::usage)?,
+        allow_synthetic,
+        min_documents,
+        min_queries,
+        max_p95_ms,
+        max_zero_result_queries,
     })
 }
 
@@ -107,18 +188,47 @@ fn parse_positive_usize(value: Option<&String>) -> Result<usize, CliError> {
         .ok_or_else(CliError::usage)
 }
 
+fn parse_nonnegative_usize(value: Option<&String>) -> Result<usize, CliError> {
+    value
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or_else(CliError::usage)
+}
+
+fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
+    value
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| *value > 0.0)
+        .ok_or_else(CliError::usage)
+}
+
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
-struct CliArgs {
+enum CliCommand {
+    SyntheticQuery(SyntheticQueryArgs),
+    Gate(GateArgs),
+}
+
+#[derive(Clone, Debug)]
+struct SyntheticQueryArgs {
     data_dir: PathBuf,
     index_dir: Option<PathBuf>,
     cleanup_after_run: bool,
     documents: usize,
     queries: usize,
     top_k: usize,
+}
+
+#[derive(Clone, Debug)]
+struct GateArgs {
+    report: PathBuf,
+    allow_synthetic: bool,
+    min_documents: usize,
+    min_queries: usize,
+    max_p95_ms: f64,
+    max_zero_result_queries: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +248,12 @@ impl CliError {
     }
 
     fn benchmark(error: BenchmarkError) -> Self {
+        Self {
+            message: error.to_string(),
+        }
+    }
+
+    fn gate(error: BenchmarkGateError) -> Self {
         Self {
             message: error.to_string(),
         }

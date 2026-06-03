@@ -37,6 +37,21 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   synthetic-query --documents 24 --queries 6 --top-k 5 --json
 ```
 
+Run the synthetic benchmark gate against a local or nightly benchmark artifact:
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  gate --report benchmark-smoke.json --allow-synthetic \
+  --min-documents 1000 --min-queries 100 \
+  --max-p95-ms 500 --max-zero-result-queries 0
+```
+
+The installed binary form is `resume-benchmark gate --report
+benchmark-smoke.json`.
+
+The explicit `--allow-synthetic` flag is required for synthetic smoke artifacts.
+Do not treat a passing synthetic gate as 100k or 1M real-corpus proof.
+
 ## Stable Release Exit Criteria
 
 Stable release requires current evidence for:
