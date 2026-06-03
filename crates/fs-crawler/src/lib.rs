@@ -45,6 +45,15 @@ pub fn crawl_directory_with_options(
     crawl_with_fs_options(&fs, root.as_ref(), options)
 }
 
+pub fn crawl_directory_with_options_and_control(
+    root: impl AsRef<Path>,
+    options: ScanOptions,
+    control: ScanControl<'_>,
+) -> Result<ScanReport> {
+    let fs = StdFileSystem;
+    crawl_with_fs_options_and_control(&fs, root.as_ref(), options, control)
+}
+
 pub fn crawl_with_fs(file_system: &impl FileSystem, root: &Path) -> Result<ScanReport> {
     crawl_with_fs_profile(file_system, root, ScanProfile::Explicit)
 }
@@ -69,6 +78,16 @@ pub fn crawl_with_fs_options(
     root: &Path,
     options: ScanOptions,
 ) -> Result<ScanReport> {
+    crawl_with_fs_options_and_control(file_system, root, options, ScanControl::none())
+}
+
+pub fn crawl_with_fs_options_and_control(
+    file_system: &impl FileSystem,
+    root: &Path,
+    options: ScanOptions,
+    control: ScanControl<'_>,
+) -> Result<ScanReport> {
+    ensure_scan_not_cancelled(control)?;
     let root_metadata = file_system
         .metadata(root)
         .map_err(|error| CrawlError::from_io(root, FsOperation::ReadMetadata, error))?;
@@ -85,6 +104,7 @@ pub fn crawl_with_fs_options(
     let mut directories = vec![root.to_path_buf()];
 
     while let Some(directory) = directories.pop() {
+        ensure_scan_not_cancelled(control)?;
         if scan_file_budget_reached(&mut report, options.max_files) {
             break;
         }
@@ -106,6 +126,7 @@ pub fn crawl_with_fs_options(
         entries.sort_by_key(|entry| path_sort_key(&entry.path));
 
         for entry in entries {
+            ensure_scan_not_cancelled(control)?;
             if scan_file_budget_reached(&mut report, options.max_files) {
                 directories.clear();
                 break;
@@ -118,7 +139,7 @@ pub fn crawl_with_fs_options(
                         directories.push(entry.path);
                     }
                 }
-                FsEntryKind::File => process_file(file_system, &entry.path, &mut report),
+                FsEntryKind::File => process_file(file_system, &entry.path, &mut report, control)?,
                 FsEntryKind::Other => report.ignored_count += 1,
             }
         }
@@ -134,6 +155,14 @@ pub fn crawl_with_fs_options(
     report.errors.sort_by_key(|error| error.sort_key());
 
     Ok(report)
+}
+
+fn ensure_scan_not_cancelled(control: ScanControl<'_>) -> Result<()> {
+    if control.is_cancelled() {
+        Err(CrawlError::cancelled())
+    } else {
+        Ok(())
+    }
 }
 
 fn scan_file_budget_reached(report: &mut ScanReport, max_files: Option<usize>) -> bool {
@@ -159,7 +188,13 @@ pub fn normalize_path(
     Ok(NormalizedPath::new(normalize_path_string(raw)))
 }
 
-fn process_file(file_system: &impl FileSystem, path: &Path, report: &mut ScanReport) {
+fn process_file(
+    file_system: &impl FileSystem,
+    path: &Path,
+    report: &mut ScanReport,
+    control: ScanControl<'_>,
+) -> Result<()> {
+    ensure_scan_not_cancelled(control)?;
     let normalized_path = match normalize_path(path) {
         Ok(normalized_path) => normalized_path,
         Err(error) => {
@@ -168,18 +203,18 @@ fn process_file(file_system: &impl FileSystem, path: &Path, report: &mut ScanRep
                 FsOperation::NormalizePath,
                 error,
             ));
-            return;
+            return Ok(());
         }
     };
 
     if ignored_path_name(&normalized_path) {
         report.ignored_count += 1;
-        return;
+        return Ok(());
     }
 
     let Some(extension) = supported_extension(&normalized_path) else {
         report.ignored_count += 1;
-        return;
+        return Ok(());
     };
 
     let metadata = match file_system.metadata(path) {
@@ -188,22 +223,24 @@ fn process_file(file_system: &impl FileSystem, path: &Path, report: &mut ScanRep
             report
                 .errors
                 .push(CrawlError::from_io(path, FsOperation::ReadMetadata, error));
-            return;
+            return Ok(());
         }
     };
 
     if metadata.kind != FsEntryKind::File {
         report.ignored_count += 1;
-        return;
+        return Ok(());
     }
 
-    let fingerprint = match quick_fingerprint(file_system, path, &normalized_path, &metadata) {
-        Ok(fingerprint) => fingerprint,
-        Err(error) => {
-            report.errors.push(error);
-            return;
-        }
-    };
+    let fingerprint =
+        match quick_fingerprint(file_system, path, &normalized_path, &metadata, control) {
+            Ok(fingerprint) => fingerprint,
+            Err(error) if error.kind == CrawlErrorKind::Cancelled => return Err(error),
+            Err(error) => {
+                report.errors.push(error);
+                return Ok(());
+            }
+        };
 
     let mtime = unix_timestamp(metadata.modified);
     let byte_size = metadata.len;
@@ -225,6 +262,8 @@ fn process_file(file_system: &impl FileSystem, path: &Path, report: &mut ScanRep
         },
         fingerprint,
     });
+
+    Ok(())
 }
 
 fn quick_fingerprint(
@@ -232,7 +271,9 @@ fn quick_fingerprint(
     path: &Path,
     normalized_path: &NormalizedPath,
     metadata: &FsMetadata,
+    control: ScanControl<'_>,
 ) -> Result<QuickFingerprint> {
+    ensure_scan_not_cancelled(control)?;
     let mut hash = StableHash::new();
     hash.update_str("fs-crawler-v1");
     hash.update_str(normalized_path.as_str());
@@ -253,6 +294,7 @@ fn quick_fingerprint(
             .map_err(|error| CrawlError::from_io(path, FsOperation::Fingerprint, error))?;
         let sample = read_up_to(&mut *reader, metadata.len as usize)
             .map_err(|error| CrawlError::from_io(path, FsOperation::Fingerprint, error))?;
+        ensure_scan_not_cancelled(control)?;
         sampled_bytes += sample.len() as u64;
         hash.update_str("all");
         hash.update_bytes(&sample);
@@ -262,6 +304,7 @@ fn quick_fingerprint(
             .map_err(|error| CrawlError::from_io(path, FsOperation::Fingerprint, error))?;
         let head = read_up_to(&mut *reader, SAMPLE_BYTES_PER_EDGE as usize)
             .map_err(|error| CrawlError::from_io(path, FsOperation::Fingerprint, error))?;
+        ensure_scan_not_cancelled(control)?;
         sampled_bytes += head.len() as u64;
         hash.update_str("head");
         hash.update_bytes(&head);
@@ -271,6 +314,7 @@ fn quick_fingerprint(
             .map_err(|error| CrawlError::from_io(path, FsOperation::Fingerprint, error))?;
         let tail = read_up_to(&mut *reader, SAMPLE_BYTES_PER_EDGE as usize)
             .map_err(|error| CrawlError::from_io(path, FsOperation::Fingerprint, error))?;
+        ensure_scan_not_cancelled(control)?;
         sampled_bytes += tail.len() as u64;
         hash.update_str("tail");
         hash.update_bytes(&tail);
@@ -547,6 +591,29 @@ pub struct ScanOptions {
     pub max_files: Option<usize>,
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct ScanControl<'a> {
+    cancel_check: Option<&'a dyn Fn() -> bool>,
+}
+
+impl<'a> ScanControl<'a> {
+    pub fn none() -> Self {
+        Self { cancel_check: None }
+    }
+
+    pub fn from_cancel_check(cancel_check: &'a dyn Fn() -> bool) -> Self {
+        Self {
+            cancel_check: Some(cancel_check),
+        }
+    }
+
+    fn is_cancelled(self) -> bool {
+        self.cancel_check
+            .map(|cancel_check| cancel_check())
+            .unwrap_or(false)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScanBudgetExhausted {
     pub kind: ScanBudgetKind,
@@ -688,6 +755,7 @@ pub type Result<T> = std::result::Result<T, CrawlError>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CrawlErrorKind {
+    Cancelled,
     PermissionDenied,
     SourceUnavailable,
     LockedOrUnreadable,
@@ -696,6 +764,7 @@ pub enum CrawlErrorKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FsOperation {
+    CheckCancellation,
     NormalizePath,
     ReadDirectory,
     ReadMetadata,
@@ -710,6 +779,14 @@ pub struct CrawlError {
 }
 
 impl CrawlError {
+    fn cancelled() -> Self {
+        Self {
+            kind: CrawlErrorKind::Cancelled,
+            operation: FsOperation::CheckCancellation,
+            path: None,
+        }
+    }
+
     fn new(kind: CrawlErrorKind, operation: FsOperation, path: &Path) -> Self {
         Self {
             kind,

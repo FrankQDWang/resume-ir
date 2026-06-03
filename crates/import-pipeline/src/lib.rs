@@ -8,8 +8,8 @@ use core_domain::{EntityMentionId, SectionType};
 use extractor_rules::{extract_strong_fields, FieldType, RuleMatch};
 pub use fs_crawler::ScanProfile;
 use fs_crawler::{
-    crawl_directory_with_options, CrawlError, CrawlErrorKind, DiscoveredFile, FsOperation,
-    NormalizedPath, ScanBudgetKind, ScanOptions,
+    crawl_directory_with_options_and_control, CrawlError, CrawlErrorKind, DiscoveredFile,
+    FsOperation, NormalizedPath, ScanBudgetKind, ScanControl, ScanOptions,
 };
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use meta_store::{
@@ -93,14 +93,19 @@ fn run_import(
     now: UnixTimestamp,
     options: ImportOptions,
 ) -> Result<ImportSummary> {
-    let report = crawl_directory_with_options(
+    ensure_import_not_cancelled(store, &task.id)?;
+    let cancel_check = || store.is_import_task_cancelled(&task.id).unwrap_or(true);
+    let ensure_not_cancelled = || ensure_import_not_cancelled(store, &task.id);
+    let report = crawl_directory_with_options_and_control(
         root,
         ScanOptions {
             profile: options.scan_profile,
             max_files: options.max_files,
         },
+        ScanControl::from_cancel_check(&cancel_check),
     )
     .map_err(ImportPipelineError::crawl)?;
+    ensure_import_not_cancelled(store, &task.id)?;
     let scanned_directories = report.scanned_directories.clone();
     let skipped_directories = report.skipped_directories.clone();
     let scan_errors = import_scan_errors_from_crawl(&task.id, &report.errors, now);
@@ -125,6 +130,7 @@ fn run_import(
     store
         .replace_import_scan_errors(&task.id, &scan_errors)
         .map_err(ImportPipelineError::store)?;
+    ensure_import_not_cancelled(store, &task.id)?;
     let mut pending_index_documents = Vec::new();
     let sectionizer = Sectionizer::default();
     let can_propagate_deletions = report.errors.is_empty() && scan_budget_exhausted.is_none();
@@ -135,7 +141,15 @@ fn run_import(
         .collect::<BTreeSet<_>>();
 
     for file in report.files {
-        match process_file(data_dir, store, &file, &sectionizer, now)? {
+        ensure_not_cancelled()?;
+        match process_file(
+            data_dir,
+            store,
+            &file,
+            &sectionizer,
+            now,
+            &ensure_not_cancelled,
+        )? {
             ProcessedFile::Searchable {
                 document,
                 index_document,
@@ -155,6 +169,7 @@ fn run_import(
     }
 
     if can_propagate_deletions {
+        ensure_import_not_cancelled(store, &task.id)?;
         summary.deleted_documents = mark_missing_documents_deleted(
             store,
             root,
@@ -170,6 +185,7 @@ fn run_import(
         .iter()
         .map(|(document, _)| document.id.as_str().to_string())
         .collect::<BTreeSet<_>>();
+    ensure_import_not_cancelled(store, &task.id)?;
     let mut index_documents = persisted_index_documents(store, &sectionizer, &pending_doc_ids)?;
     index_documents.extend(
         pending_index_documents
@@ -183,9 +199,11 @@ fn run_import(
         summary.ocr_required_documents,
         summary.deleted_documents,
     );
+    ensure_import_not_cancelled(store, &task.id)?;
     write_full_text_index(data_dir, &snapshot_token, index_documents)?;
 
     for (mut document, _) in pending_index_documents {
+        ensure_import_not_cancelled(store, &task.id)?;
         document.status = DocumentStatus::Searchable;
         document.updated_at = now;
         store
@@ -194,9 +212,21 @@ fn run_import(
         summary.searchable_documents += 1;
     }
 
+    ensure_import_not_cancelled(store, &task.id)?;
     update_index_state(store, now, snapshot_token)?;
 
     Ok(summary)
+}
+
+fn ensure_import_not_cancelled(store: &MetaStore, task_id: &ImportTaskId) -> Result<()> {
+    if store
+        .is_import_task_cancelled(task_id)
+        .map_err(ImportPipelineError::store)?
+    {
+        Err(ImportPipelineError::cancelled())
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -380,12 +410,20 @@ fn snapshot_unique_suffix(now: UnixTimestamp) -> u128 {
 }
 
 fn current_timestamp_or(default: UnixTimestamp) -> UnixTimestamp {
-    SystemTime::now()
+    let Some(current) = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
         .and_then(|duration| i64::try_from(duration.as_secs()).ok())
         .map(UnixTimestamp::from_unix_seconds)
-        .unwrap_or(default)
+    else {
+        return default;
+    };
+
+    if current.as_unix_seconds() >= default.as_unix_seconds() {
+        current
+    } else {
+        default
+    }
 }
 
 fn mark_missing_documents_deleted(
@@ -543,11 +581,14 @@ fn process_file(
     file: &DiscoveredFile,
     sectionizer: &Sectionizer,
     now: UnixTimestamp,
+    ensure_not_cancelled: &dyn Fn() -> Result<()>,
 ) -> Result<ProcessedFile> {
+    ensure_not_cancelled()?;
     let mut document = document_from_discovered_file(file, now, DocumentStatus::Discovered);
     store
         .upsert_document(&document)
         .map_err(ImportPipelineError::store)?;
+    ensure_not_cancelled()?;
 
     if file.extension == FileExtension::Txt
         && file.byte_size > parser_text::DEFAULT_MAX_BYTES as u64
@@ -561,6 +602,7 @@ fn process_file(
     }
 
     let path = PathBuf::from(file.normalized_path.as_str());
+    ensure_not_cancelled()?;
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
         Err(_) => {
@@ -571,8 +613,10 @@ fn process_file(
             return Ok(ProcessedFile::Failed);
         }
     };
+    ensure_not_cancelled()?;
 
     let extension = file_extension_label(&file.extension);
+    ensure_not_cancelled()?;
     let parse_output = match file.extension {
         FileExtension::Docx => DocxParser
             .parse(
@@ -600,6 +644,7 @@ fn process_file(
             return Ok(ProcessedFile::Failed);
         }
     };
+    ensure_not_cancelled()?;
 
     let parse_output = match parse_output {
         Ok(parse_output) => parse_output,
@@ -625,11 +670,13 @@ fn process_file(
     };
 
     if parse_output.status() == ParseStatus::OcrRequired {
+        ensure_not_cancelled()?;
         return Ok(ProcessedFile::OcrRequired {
             ocr_job_queued: mark_ocr_required_and_enqueue(store, &mut document, now)?,
         });
     }
 
+    ensure_not_cancelled()?;
     let clean_text = TextNormalizer::normalize(parse_output.text())
         .text()
         .to_string();
@@ -643,11 +690,13 @@ fn process_file(
             return Ok(ProcessedFile::Failed);
         }
 
+        ensure_not_cancelled()?;
         return Ok(ProcessedFile::OcrRequired {
             ocr_job_queued: mark_ocr_required_and_enqueue(store, &mut document, now)?,
         });
     }
 
+    ensure_not_cancelled()?;
     document.status = DocumentStatus::TextCleaned;
     let version_id = ResumeVersionId::from_non_secret_parts(&[
         "s9",
@@ -680,11 +729,14 @@ fn process_file(
         })
         .map_err(ImportPipelineError::store)?;
     let mentions = entity_mentions_from_rules(&version_id, &clean_text);
+    ensure_not_cancelled()?;
     store
         .replace_entity_mentions(&version_id, &mentions)
         .map_err(ImportPipelineError::store)?;
+    ensure_not_cancelled()?;
     assign_candidate_from_contact_mentions(data_dir, store, &version_id, &mentions)?;
 
+    ensure_not_cancelled()?;
     let sections = sectionizer.sectionize(&clean_text);
     Ok(ProcessedFile::Searchable {
         document: Box::new(document.clone()),
@@ -966,6 +1018,7 @@ fn import_scan_errors_from_crawl(
 
 fn import_scan_error_kind(kind: CrawlErrorKind) -> ImportScanErrorKind {
     match kind {
+        CrawlErrorKind::Cancelled => ImportScanErrorKind::Io,
         CrawlErrorKind::PermissionDenied => ImportScanErrorKind::PermissionDenied,
         CrawlErrorKind::SourceUnavailable => ImportScanErrorKind::SourceUnavailable,
         CrawlErrorKind::LockedOrUnreadable => ImportScanErrorKind::LockedOrUnreadable,
@@ -975,6 +1028,7 @@ fn import_scan_error_kind(kind: CrawlErrorKind) -> ImportScanErrorKind {
 
 fn import_scan_error_operation(operation: FsOperation) -> ImportScanErrorOperation {
     match operation {
+        FsOperation::CheckCancellation => ImportScanErrorOperation::ReadDirectory,
         FsOperation::NormalizePath => ImportScanErrorOperation::NormalizePath,
         FsOperation::ReadDirectory => ImportScanErrorOperation::ReadDirectory,
         FsOperation::ReadMetadata => ImportScanErrorOperation::ReadMetadata,
@@ -1001,9 +1055,20 @@ impl ImportPipelineError {
         }
     }
 
-    fn crawl(_error: fs_crawler::CrawlError) -> Self {
+    fn crawl(error: fs_crawler::CrawlError) -> Self {
+        if error.kind == CrawlErrorKind::Cancelled {
+            return Self::cancelled();
+        }
+
         Self {
             kind: ImportPipelineErrorKind::Crawl,
+            retryable: true,
+        }
+    }
+
+    fn cancelled() -> Self {
+        Self {
+            kind: ImportPipelineErrorKind::Cancelled,
             retryable: true,
         }
     }
@@ -1036,6 +1101,7 @@ impl fmt::Debug for ImportPipelineError {
 impl fmt::Display for ImportPipelineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
+            ImportPipelineErrorKind::Cancelled => formatter.write_str("import task was cancelled"),
             ImportPipelineErrorKind::Store => formatter.write_str("metadata update failed"),
             ImportPipelineErrorKind::Crawl => formatter.write_str("file scan failed"),
             ImportPipelineErrorKind::Index => formatter.write_str("search index update failed"),
@@ -1050,6 +1116,7 @@ impl std::error::Error for ImportPipelineError {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImportPipelineErrorKind {
+    Cancelled,
     Store,
     Crawl,
     Index,
@@ -1058,11 +1125,17 @@ enum ImportPipelineErrorKind {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use fs_crawler::{normalize_path, NormalizedPath, ScanProfile};
+    use meta_store::{ImportTask, ImportTaskStatus, MetaStore, UnixTimestamp};
 
-    use super::document_path_is_deletion_candidate;
+    use super::{
+        current_timestamp_or, document_path_is_deletion_candidate, import_root_with_options,
+        ImportOptions, ImportPipelineErrorKind,
+    };
 
     #[test]
     fn discovery_deletion_requires_direct_parent_directory_to_be_scanned() {
@@ -1110,7 +1183,95 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn current_timestamp_or_never_returns_before_default_timestamp() {
+        let future_default = UnixTimestamp::from_unix_seconds(4_000_000_000);
+
+        assert_eq!(current_timestamp_or(future_default), future_default);
+    }
+
     fn normalized_path(path: &str) -> NormalizedPath {
         normalize_path(path).unwrap()
+    }
+
+    #[test]
+    fn import_root_stops_running_task_when_cancellation_marker_exists() {
+        let temp = TestDir::new("import-pipeline-cancel-running");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("synthetic-resume.txt"),
+            b"Synthetic Candidate\nEmail: synthetic@example.test\nSkills: Rust",
+        )
+        .unwrap();
+
+        let store = MetaStore::open_in_memory().unwrap();
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_000);
+        let cancel_at = UnixTimestamp::from_unix_seconds(1_700_000_010);
+        let task = import_task("running-cancelled-import", root.to_str().unwrap(), now);
+        store.insert_import_task(&task).unwrap();
+        store.cancel_import_task(&task.id, cancel_at).unwrap();
+
+        let error = import_root_with_options(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions::default(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind, ImportPipelineErrorKind::Cancelled);
+        let stored_task = store.import_task_by_id(&task.id).unwrap().unwrap();
+        assert_eq!(stored_task.status, ImportTaskStatus::FailedRetryable);
+        assert_eq!(store.status_summary().unwrap().searchable_documents, 0);
+        assert!(!data_dir.join("search-index").join("active").exists());
+    }
+
+    fn import_task(label: &str, root_path: &str, now: UnixTimestamp) -> ImportTask {
+        ImportTask {
+            id: meta_store::ImportTaskId::from_non_secret_parts(&[label]),
+            root_path: root_path.to_string(),
+            status: ImportTaskStatus::Running,
+            queued_at: now,
+            started_at: Some(now),
+            finished_at: None,
+            updated_at: now,
+        }
+    }
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let unique = format!(
+                "{}-{}-{}",
+                label,
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            let path = std::env::temp_dir().join(unique);
+            fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }

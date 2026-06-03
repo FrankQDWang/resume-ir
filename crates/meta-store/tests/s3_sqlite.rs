@@ -1742,6 +1742,35 @@ fn cancelled_import_tasks_are_not_claimed_or_reported_as_queued() {
 }
 
 #[test]
+fn running_import_task_cancellation_is_recorded_and_removed_from_recovery() {
+    let store = migrated_store();
+    let started_at = UnixTimestamp::from_unix_seconds(1_800_000_010);
+    let cancel_at = UnixTimestamp::from_unix_seconds(1_800_000_020);
+    let mut running = import_task(
+        "cancelled-running-import",
+        "/private/cancelled/running",
+        ImportTaskStatus::Running,
+    );
+    running.started_at = Some(started_at);
+    running.updated_at = started_at;
+
+    store.insert_import_task(&running).unwrap();
+
+    assert!(store.cancel_import_task(&running.id, cancel_at).unwrap());
+    assert!(store.is_import_task_cancelled(&running.id).unwrap());
+    assert_eq!(
+        store
+            .pending_import_task_by_root(&running.root_path)
+            .unwrap(),
+        None
+    );
+    let summary = store.status_summary().unwrap();
+    assert_eq!(summary.import_tasks_queued, 0);
+    assert_eq!(summary.import_tasks_recoverable, 0);
+    assert_eq!(summary.import_tasks_cancelled, 1);
+}
+
+#[test]
 fn import_worker_claim_atomically_marks_next_task_running_and_skips_attempted_tasks() {
     let store = migrated_store();
     let timestamp = UnixTimestamp::from_unix_seconds(1_800_000_000);

@@ -613,7 +613,14 @@ fn run_import_worker_once_with_retry_due(
         let import_summary = match import_result {
             Ok(import_summary) => import_summary,
             Err(_) => {
-                worker_summary.failed += 1;
+                if store
+                    .is_import_task_cancelled(&task.id)
+                    .map_err(DaemonError::store)?
+                {
+                    worker_summary.cancelled += 1;
+                } else {
+                    worker_summary.failed += 1;
+                }
                 continue;
             }
         };
@@ -2686,6 +2693,7 @@ impl Default for RunOptions {
 struct ImportWorkerSummary {
     stale_recovered: usize,
     processed: usize,
+    cancelled: usize,
     failed: usize,
     searchable_documents: usize,
     ocr_jobs_queued: usize,
@@ -2695,6 +2703,7 @@ impl ImportWorkerSummary {
     fn has_activity(&self) -> bool {
         self.stale_recovered > 0
             || self.processed > 0
+            || self.cancelled > 0
             || self.failed > 0
             || self.searchable_documents > 0
             || self.ocr_jobs_queued > 0
@@ -2703,6 +2712,7 @@ impl ImportWorkerSummary {
     fn extend(&mut self, other: Self) {
         self.stale_recovered += other.stale_recovered;
         self.processed += other.processed;
+        self.cancelled += other.cancelled;
         self.failed += other.failed;
         self.searchable_documents += other.searchable_documents;
         self.ocr_jobs_queued += other.ocr_jobs_queued;
@@ -2715,6 +2725,7 @@ fn print_import_worker_summary(import_summary: &ImportWorkerSummary) -> Result<(
         import_summary.stale_recovered
     );
     println!("import worker processed: {}", import_summary.processed);
+    println!("import worker cancelled: {}", import_summary.cancelled);
     println!("import worker failed: {}", import_summary.failed);
     println!(
         "import worker searchable documents: {}",

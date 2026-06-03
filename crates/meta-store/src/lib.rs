@@ -1567,7 +1567,9 @@ impl MetaStore {
 
         if !matches!(
             current_task.status,
-            ImportTaskStatus::Queued | ImportTaskStatus::FailedRetryable
+            ImportTaskStatus::Queued
+                | ImportTaskStatus::Running
+                | ImportTaskStatus::FailedRetryable
         ) {
             return Err(MetaStoreError::invalid_transition());
         }

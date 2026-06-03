@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Cursor};
@@ -7,8 +8,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use core_domain::FileExtension;
 use fs_crawler::{
     crawl_directory, crawl_with_fs, crawl_with_fs_profile, normalize_path, CrawlErrorKind,
-    FileSystem, FsEntry, FsEntryKind, FsMetadata, ScanBudgetKind, ScanOptions, ScanProfile,
-    MAX_TOTAL_SAMPLE_BYTES,
+    FileSystem, FsEntry, FsEntryKind, FsMetadata, FsOperation, ScanBudgetKind, ScanControl,
+    ScanOptions, ScanProfile, MAX_TOTAL_SAMPLE_BYTES,
 };
 
 #[test]
@@ -206,6 +207,67 @@ fn scan_options_stop_after_file_budget_without_path_leakage() {
     assert_eq!(budget.limit, 2);
     assert_eq!(budget.observed, 2);
     assert!(!format!("{budget:?}").contains("/fixture"));
+}
+
+#[test]
+fn scan_control_cancels_directory_walk_without_path_leakage() {
+    let fs = FakeFileSystem::new()
+        .dir("/fixture")
+        .dir("/fixture/a")
+        .file("/fixture/a/resume-a.pdf", b"%PDF synthetic a")
+        .dir("/fixture/b")
+        .file("/fixture/b/resume-b.pdf", b"%PDF synthetic b");
+    let checks = Cell::new(0);
+    let should_cancel = || {
+        let previous = checks.get();
+        checks.set(previous + 1);
+        previous >= 2
+    };
+
+    let error = fs_crawler::crawl_with_fs_options_and_control(
+        &fs,
+        Path::new("/fixture"),
+        ScanOptions {
+            profile: ScanProfile::Explicit,
+            max_files: None,
+        },
+        ScanControl::from_cancel_check(&should_cancel),
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind, CrawlErrorKind::Cancelled);
+    assert_eq!(error.operation, FsOperation::CheckCancellation);
+    assert!(error.normalized_path().is_none());
+    assert!(!format!("{error:?}").contains("/fixture"));
+}
+
+#[test]
+fn scan_control_cancels_during_fingerprint_without_path_leakage() {
+    let fs = FakeFileSystem::new()
+        .dir("/fixture")
+        .file("/fixture/resume.pdf", b"%PDF synthetic resume");
+    let checks = Cell::new(0);
+    let should_cancel = || {
+        let previous = checks.get();
+        checks.set(previous + 1);
+        previous >= 5
+    };
+
+    let error = fs_crawler::crawl_with_fs_options_and_control(
+        &fs,
+        Path::new("/fixture"),
+        ScanOptions {
+            profile: ScanProfile::Explicit,
+            max_files: None,
+        },
+        ScanControl::from_cancel_check(&should_cancel),
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind, CrawlErrorKind::Cancelled);
+    assert_eq!(error.operation, FsOperation::CheckCancellation);
+    assert!(error.normalized_path().is_none());
+    assert!(!format!("{error:?}").contains("resume.pdf"));
 }
 
 #[test]
