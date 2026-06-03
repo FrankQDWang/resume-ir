@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S69 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
-- Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, updated to `135f927` after S67, and updated to `d0798fa` after S68. During S69, repository settings and main branch protection were configured successfully. No release, upload of runtime data, signing, or notarization has been performed.
+- Data policy: S0-S70 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, updated to `135f927` after S67, and updated to `d0798fa` after S68. During S69, repository settings and main branch protection were configured successfully. During S70, draft PR #8 was opened for the post-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
 ## Production Gap Audit
@@ -162,8 +162,45 @@ obsolete preliminary files and checklists are not product scope.
 | S67 | Product governance slice complete | `gh repo view FrankQDWang/resume-ir` showed the repository was initially absent, `gh repo create FrankQDWang/resume-ir --public --source=. --remote=origin --description "Local-first resume search engine" --disable-wiki` created it, `git remote -v` showed HTTPS origin, `./scripts/ci/guard-public-repo.sh` passed, `git push -u origin main` pushed `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, and `sh -n scripts/ci/configure-github-repo.sh` plus `git diff --check` passed after the HTTPS fallback script fix. | Branch protection is intentionally deferred until this S67 progress/script-fix commit is pushed. PR creation, hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
 | S68 | Product governance slice complete | `./scripts/ci/configure-github-repo.sh FrankQDWang resume-ir` failed at `gh repo edit` with `HTTP 422` because `--allow-forking` is only applicable to org-owned private repositories, `sh -n scripts/ci/configure-github-repo.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed after removing that invalid option. | Branch protection still has to be rerun after S68 is pushed. Hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
 | S69 | Product governance slice complete on branch | `./scripts/ci/configure-github-repo.sh FrankQDWang resume-ir` reran successfully after S68 was pushed, and `gh api /repos/FrankQDWang/resume-ir/branches/main/protection --jq ...` verified strict checks for `rust workspace`, `public repository guard`, `license policy`, and `dependency tree`, admin enforcement, CODEOWNER review, linear history, and force-push/deletion denial. This S69 progress record is on branch `codex/record-github-protection` because main is now protected. | This branch still needs to be pushed and opened as a PR. Hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
+| S70 | Product governance slice complete on branch | `gh auth status`, `git status --short`, `git branch -vv`, `gh pr list --repo FrankQDWang/resume-ir --head codex/record-github-protection --state all`, and `gh pr create --repo FrankQDWang/resume-ir --base main --head codex/record-github-protection --title "docs: record github branch protection" --draft` succeeded; draft PR #8 exists at `https://github.com/FrankQDWang/resume-ir/pull/8`. | The PR is draft and must pass hosted checks plus CODEOWNER review before merge. Releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S70
+
+Design target:
+
+- S70 opens the protected-main PR for the S69 branch protection progress record.
+- This keeps main protected and moves subsequent repository changes through the
+  required PR/check/review path.
+
+Checks and remote operations:
+
+```bash
+gh auth status
+git status --short
+git branch -vv
+gh pr list --repo FrankQDWang/resume-ir --head codex/record-github-protection --state all
+gh pr create --repo FrankQDWang/resume-ir --base main --head codex/record-github-protection --title "docs: record github branch protection" --draft
+```
+
+Output summary:
+
+- `gh auth status`: exit 0; `FrankQDWang` is logged in via keyring with `repo`
+  and `workflow` scopes.
+- `git status --short`: exit 0 with no output before PR creation.
+- `git branch -vv`: current branch
+  `codex/record-github-protection` tracked
+  `origin/codex/record-github-protection` at `9352f92`.
+- `gh pr list ...`: exit 0 with no existing PR for the branch.
+- `gh pr create ... --draft`: exit 0 and returned
+  `https://github.com/FrankQDWang/resume-ir/pull/8`.
+
+Scope note:
+
+- The PR is intentionally draft until hosted checks are inspected and any
+  required follow-up is handled.
+- Full product is still not complete.
 
 ### S69
 
