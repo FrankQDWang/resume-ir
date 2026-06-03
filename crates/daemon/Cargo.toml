@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 embedder = { path = "../embedder" }
-getrandom = "0.2"
+getrandom = "0.4"
 index-fulltext = { path = "../index-fulltext" }
 index-vector = { path = "../index-vector" }
 import-pipeline = { path = "../import-pipeline" }
