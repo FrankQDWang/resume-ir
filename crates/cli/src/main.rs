@@ -449,6 +449,10 @@ struct IpcImportEndpoint {
     addr: SocketAddr,
 }
 
+struct IpcImportCancelEndpoint {
+    addr: SocketAddr,
+}
+
 #[derive(Clone)]
 struct IpcSearchEndpoint {
     addr: SocketAddr,
@@ -469,6 +473,10 @@ fn discover_status_ipc_endpoint(data_dir: &Path) -> Result<IpcStatusEndpoint> {
 
 fn discover_import_ipc_endpoint(data_dir: &Path) -> Result<IpcImportEndpoint> {
     parse_import_ipc_endpoint(&discover_ipc_url(data_dir, "imports")?)
+}
+
+fn discover_import_cancel_ipc_endpoint(data_dir: &Path) -> Result<IpcImportCancelEndpoint> {
+    parse_import_cancel_ipc_endpoint(&discover_ipc_url(data_dir, "import_cancel")?)
 }
 
 fn discover_search_ipc_endpoint(data_dir: &Path) -> Result<IpcSearchEndpoint> {
@@ -752,6 +760,65 @@ fn render_import_ipc_result(body: &serde_json::Value) {
     );
     println!("roots queued: {roots_queued}");
     println!("scan file limit: {scan_file_limit}");
+}
+
+fn cancel_import_ipc_command_with_token_file(
+    endpoint: &IpcImportCancelEndpoint,
+    token_file: &Path,
+    task_id: &ImportTaskId,
+) -> Result<()> {
+    let token = fs::read_to_string(token_file)
+        .map_err(|_| CliError::user("unable to read daemon import cancel ipc token"))?;
+    let token = validate_daemon_ipc_token(&token, "daemon import cancel ipc token is invalid")?;
+    let body = serde_json::json!({
+        "task_id": task_id.to_string(),
+    })
+    .to_string();
+
+    let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
+        .map_err(|_| CliError::user("unable to connect to daemon import cancel ipc"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon import cancel ipc"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon import cancel ipc"))?;
+    let request = format!(
+        "POST /imports/cancel HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        endpoint.addr,
+        token,
+        body.len(),
+        body
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|_| CliError::user("unable to request daemon import cancel ipc"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|_| CliError::user("unable to read daemon import cancel ipc"))?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| CliError::user("daemon import cancel ipc response is invalid"))?;
+    let status_line = headers.lines().next().unwrap_or_default();
+    if !status_line.starts_with("HTTP/1.1 202 ") && !status_line.starts_with("HTTP/1.0 202 ") {
+        return Err(CliError::user("daemon import cancel ipc returned an error"));
+    }
+
+    let body: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| CliError::user("daemon import cancel ipc returned invalid json"))?;
+    render_import_cancel_ipc_result(&body);
+    Ok(())
+}
+
+fn render_import_cancel_ipc_result(body: &serde_json::Value) {
+    println!("import task cancelled");
+    println!(
+        "task id: {}",
+        json_str(body, "task_id").unwrap_or("unknown")
+    );
+    println!("status: cancelled");
 }
 
 fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
@@ -1045,6 +1112,23 @@ fn parse_import_ipc_endpoint(value: &str) -> Result<IpcImportEndpoint> {
     }
 
     Ok(IpcImportEndpoint { addr })
+}
+
+fn parse_import_cancel_ipc_endpoint(value: &str) -> Result<IpcImportCancelEndpoint> {
+    let rest = value.strip_prefix("http://").ok_or_else(cancel_usage)?;
+    let (authority, path) = rest.split_once('/').ok_or_else(cancel_usage)?;
+    if path != "imports/cancel" && path != "status" {
+        return Err(cancel_usage());
+    }
+
+    let addr = SocketAddr::from_str(authority).map_err(|_| cancel_usage())?;
+    if !addr.ip().is_loopback() {
+        return Err(CliError::usage(
+            "import cancel ipc endpoint must be loopback",
+        ));
+    }
+
+    Ok(IpcImportCancelEndpoint { addr })
 }
 
 fn parse_root_preset(value: &str) -> Result<RootPreset> {
@@ -1751,33 +1835,120 @@ fn task_control_command(data_dir: &Path, args: &[String], paused: bool) -> Resul
 }
 
 fn cancel_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    let task_id = parse_cancel_import_args(args)?;
+    let cancel_args = parse_cancel_import_args(args)?;
+    if cancel_args.ipc_auto {
+        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
+        let endpoint = discover_import_cancel_ipc_endpoint(data_dir)?;
+        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
+        verify_auto_ipc_status(&status_endpoint)?;
+        let token_file = auto_ipc_token_file(data_dir);
+        return cancel_import_ipc_command_with_token_file(
+            &endpoint,
+            &token_file,
+            &cancel_args.task_id,
+        );
+    }
+    if let Some(endpoint) = &cancel_args.ipc_endpoint {
+        let token_file = cancel_args
+            .ipc_token_file
+            .as_ref()
+            .ok_or_else(cancel_usage)?;
+        return cancel_import_ipc_command_with_token_file(
+            endpoint,
+            token_file,
+            &cancel_args.task_id,
+        );
+    }
+
     let store = open_store(data_dir)?;
     let now = current_timestamp()?;
     store
-        .cancel_import_task(&task_id, now)
+        .cancel_import_task(&cancel_args.task_id, now)
         .map_err(CliError::store)?;
 
     println!("import task cancelled");
-    println!("task id: {task_id}");
+    println!("task id: {}", cancel_args.task_id);
     println!("status: cancelled");
 
     Ok(())
 }
 
-fn parse_cancel_import_args(args: &[String]) -> Result<ImportTaskId> {
-    if args.len() != 3
-        || args.first().map(String::as_str) != Some("import")
-        || args.get(1).map(String::as_str) != Some("--task-id")
-    {
+struct CancelImportArgs {
+    task_id: ImportTaskId,
+    ipc_auto: bool,
+    ipc_endpoint: Option<IpcImportCancelEndpoint>,
+    ipc_token_file: Option<PathBuf>,
+}
+
+fn parse_cancel_import_args(args: &[String]) -> Result<CancelImportArgs> {
+    if args.first().map(String::as_str) != Some("import") {
         return Err(cancel_usage());
     }
 
-    ImportTaskId::from_str(&args[2]).map_err(|_| cancel_usage())
+    let mut task_id = None;
+    let mut ipc_auto = false;
+    let mut ipc_endpoint = None;
+    let mut ipc_token_file = None;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--task-id" => {
+                if task_id.is_some() {
+                    return Err(cancel_usage());
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(cancel_usage());
+                };
+                task_id = Some(ImportTaskId::from_str(value).map_err(|_| cancel_usage())?);
+            }
+            "--ipc" => {
+                if ipc_auto || ipc_endpoint.is_some() {
+                    return Err(cancel_usage());
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(cancel_usage());
+                };
+                if value == "auto" {
+                    ipc_auto = true;
+                } else {
+                    ipc_endpoint = Some(parse_import_cancel_ipc_endpoint(value)?);
+                }
+            }
+            "--ipc-token-file" => {
+                if ipc_token_file.is_some() {
+                    return Err(cancel_usage());
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(cancel_usage());
+                };
+                ipc_token_file = Some(PathBuf::from(value));
+            }
+            _ => return Err(cancel_usage()),
+        }
+        index += 1;
+    }
+    if ipc_auto && ipc_token_file.is_some() {
+        return Err(cancel_usage());
+    }
+    if !ipc_auto && ipc_endpoint.is_some() != ipc_token_file.is_some() {
+        return Err(cancel_usage());
+    }
+
+    Ok(CancelImportArgs {
+        task_id: task_id.ok_or_else(cancel_usage)?,
+        ipc_auto,
+        ipc_endpoint,
+        ipc_token_file,
+    })
 }
 
 fn cancel_usage() -> CliError {
-    CliError::usage("usage: resume-cli cancel import --task-id <id>")
+    CliError::usage(
+        "usage: resume-cli cancel import [--ipc auto|<http://127.0.0.1:port/imports/cancel|/status> --ipc-token-file <path>] --task-id <id>",
+    )
 }
 
 fn parse_worker_task_control_args(args: &[String]) -> Result<WorkerTaskKind> {

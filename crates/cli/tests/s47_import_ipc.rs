@@ -6,6 +6,8 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use meta_store::ImportTaskId;
+
 #[test]
 fn import_ipc_submits_authenticated_request_without_touching_local_store() {
     let data_dir = temp_path("import-ipc-data");
@@ -173,6 +175,151 @@ fn import_ipc_auto_discovers_endpoint_and_token_file() {
 
     remove_path(&data_dir);
     remove_path(&root_dir);
+}
+
+#[test]
+fn cancel_import_ipc_submits_authenticated_request_without_touching_local_store() {
+    let data_dir = temp_path("cancel-import-ipc-data");
+    let token_file = temp_file("cancel-import-ipc-token");
+    fs::write(
+        &token_file,
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n",
+    )
+    .unwrap();
+    let task_id = ImportTaskId::from_non_secret_parts(&["s62", "cancel-import-ipc"]);
+    let task_id_string = task_id.to_string();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
+    let addr = listener.local_addr().unwrap();
+    let expected_task_id = task_id_string.clone();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = accept_with_timeout(&listener);
+        let request = read_http_request(&mut stream);
+        assert!(request.starts_with("POST /imports/cancel HTTP/1.1"));
+        assert!(request.contains(
+            "Authorization: Bearer dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ));
+        assert!(request.contains("Content-Type: application/json"));
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+        let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(payload["task_id"], expected_task_id);
+
+        let response = format!(
+            "{{\"schema_version\":\"daemon.import_cancel.v1\",\"status\":\"cancel_requested\",\"task_id\":\"{expected_task_id}\",\"already_cancelled\":false}}"
+        );
+        write!(
+            stream,
+            "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.len(),
+            response
+        )
+        .expect("write fake import cancel response");
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "cancel",
+            "import",
+            "--ipc",
+            &format!("http://{addr}/status"),
+            "--ipc-token-file",
+            path_str(&token_file),
+            "--task-id",
+            &task_id_string,
+        ])
+        .output()
+        .expect("run resume-cli cancel import --ipc");
+
+    server.join().expect("fake daemon joined");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("import task cancelled"));
+    assert!(stdout.contains(&format!("task id: {task_id_string}")));
+    assert!(stdout.contains("status: cancelled"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&token_file)));
+    assert!(!stdout.contains("dddddddd"));
+    assert!(!data_dir.exists());
+
+    remove_path(&data_dir);
+    remove_path(&token_file);
+}
+
+#[test]
+fn cancel_import_ipc_auto_discovers_endpoint_and_token_file() {
+    let data_dir = temp_dir("cancel-import-ipc-auto-data");
+    let token = "abababababababababababababababababababababababababababababababab";
+    let task_id = ImportTaskId::from_non_secret_parts(&["s62", "cancel-import-ipc-auto"]);
+    let task_id_string = task_id.to_string();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
+    let addr = listener.local_addr().unwrap();
+    write_auto_ipc_files(&data_dir, addr, token);
+    let expected_task_id = task_id_string.clone();
+    let server = thread::spawn(move || {
+        let (mut status_stream, _) = accept_with_timeout(&listener);
+        let status_request = read_http_request(&mut status_stream);
+        assert!(status_request.starts_with("GET /status HTTP/1.1"));
+        assert!(!status_request.contains("Authorization:"));
+        write_auto_status_response(&mut status_stream);
+        drop(status_stream);
+
+        let (mut stream, _) = accept_with_timeout(&listener);
+        let request = read_http_request(&mut stream);
+        assert!(request.starts_with("POST /imports/cancel HTTP/1.1"));
+        assert!(request.contains(&format!("Authorization: Bearer {token}")));
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+        let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(payload["task_id"], expected_task_id);
+
+        let response = format!(
+            "{{\"schema_version\":\"daemon.import_cancel.v1\",\"status\":\"cancel_requested\",\"task_id\":\"{expected_task_id}\",\"already_cancelled\":false}}"
+        );
+        write!(
+            stream,
+            "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.len(),
+            response
+        )
+        .expect("write fake import cancel response");
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "cancel",
+            "import",
+            "--ipc",
+            "auto",
+            "--task-id",
+            &task_id_string,
+        ])
+        .output()
+        .expect("run resume-cli cancel import --ipc auto");
+
+    server.join().expect("fake daemon joined");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("import task cancelled"));
+    assert!(stdout.contains(&format!("task id: {task_id_string}")));
+    assert!(stdout.contains("status: cancelled"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(token));
+
+    remove_path(&data_dir);
 }
 
 #[test]
@@ -575,7 +722,7 @@ fn write_auto_ipc_files(data_dir: &Path, addr: SocketAddr, token: &str) {
     fs::write(
         data_dir.join("ipc.endpoints.json"),
         format!(
-            "{{\"schema_version\":\"resume-ir.daemon-ipc.v1\",\"status\":\"http://{addr}/status\",\"imports\":\"http://{addr}/imports\",\"search\":\"http://{addr}/search\",\"details\":\"http://{addr}/details\"}}"
+            "{{\"schema_version\":\"resume-ir.daemon-ipc.v1\",\"status\":\"http://{addr}/status\",\"imports\":\"http://{addr}/imports\",\"import_cancel\":\"http://{addr}/imports/cancel\",\"search\":\"http://{addr}/search\",\"details\":\"http://{addr}/details\"}}"
         ),
     )
     .unwrap();

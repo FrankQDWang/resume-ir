@@ -1284,6 +1284,7 @@ fn write_ipc_endpoint_manifest(data_dir: &Path, addr: SocketAddr) -> Result<()> 
         "schema_version": IPC_ENDPOINT_SCHEMA_VERSION,
         "status": format!("http://{addr}/status"),
         "imports": format!("http://{addr}/imports"),
+        "import_cancel": format!("http://{addr}/imports/cancel"),
         "search": format!("http://{addr}/search"),
         "details": format!("http://{addr}/details"),
     })
@@ -1441,6 +1442,13 @@ fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
     }
 
     if request.method == "POST"
+        && request.path == "/imports/cancel"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_import_cancel_command_ipc(data_dir, &request, &mut stream);
+    }
+
+    if request.method == "POST"
         && request.path == "/search"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
@@ -1566,6 +1574,53 @@ fn handle_import_command_ipc(
     }
 
     match enqueue_import_command(data_dir, &request.body) {
+        Ok(body) => write_http_response(stream, 202, "application/json", &body),
+        Err(IpcCommandError::BadRequest(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "bad_request",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 400, "application/json", &body)
+        }
+        Err(IpcCommandError::Conflict(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "conflict",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 409, "application/json", &body)
+        }
+        Err(IpcCommandError::NotFound(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "not_found",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 404, "application/json", &body)
+        }
+        Err(IpcCommandError::Internal(error)) => Err(error),
+    }
+}
+
+fn handle_import_cancel_command_ipc(
+    data_dir: &Path,
+    request: &IpcRequest,
+    stream: &mut TcpStream,
+) -> Result<()> {
+    if !ipc_command_authorized(data_dir, &request.headers)? {
+        let body = serde_json::json!({
+            "schema_version": "daemon.error.v1",
+            "status": "unauthorized",
+        })
+        .to_string();
+        return write_http_response(stream, 401, "application/json", &body);
+    }
+
+    match cancel_import_command(data_dir, &request.body) {
         Ok(body) => write_http_response(stream, 202, "application/json", &body),
         Err(IpcCommandError::BadRequest(message)) => {
             let body = serde_json::json!({
@@ -2018,6 +2073,51 @@ fn execute_detail_command(
         }
     });
     Ok(body.to_string())
+}
+
+fn cancel_import_command(
+    data_dir: &Path,
+    body: &[u8],
+) -> std::result::Result<String, IpcCommandError> {
+    let payload = serde_json::from_slice::<serde_json::Value>(body)
+        .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
+    let task_id = parse_import_cancel_task_id(&payload)?;
+    let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
+    let Some(task) = store
+        .import_task_by_id(&task_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Err(IpcCommandError::NotFound("import task was not found"));
+    };
+    if !matches!(
+        task.status,
+        ImportTaskStatus::Queued | ImportTaskStatus::Running | ImportTaskStatus::FailedRetryable
+    ) {
+        return Err(IpcCommandError::Conflict("import task cannot be cancelled"));
+    }
+    let now = current_timestamp().map_err(IpcCommandError::Internal)?;
+    let inserted = store
+        .cancel_import_task(&task_id, now)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?;
+    let body = serde_json::json!({
+        "schema_version": "daemon.import_cancel.v1",
+        "status": "cancel_requested",
+        "task_id": task_id.to_string(),
+        "already_cancelled": !inserted,
+    });
+    Ok(body.to_string())
+}
+
+fn parse_import_cancel_task_id(
+    payload: &serde_json::Value,
+) -> std::result::Result<ImportTaskId, IpcCommandError> {
+    let value = payload
+        .get("task_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(IpcCommandError::BadRequest("task_id is required"))?;
+    ImportTaskId::from_str(value).map_err(|_| IpcCommandError::BadRequest("task_id is invalid"))
 }
 
 fn parse_detail_command(

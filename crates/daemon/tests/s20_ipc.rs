@@ -53,6 +53,10 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
         format!("{base_endpoint}/imports")
     );
     assert_eq!(
+        endpoint_manifest_json["import_cancel"],
+        format!("{base_endpoint}/imports/cancel")
+    );
+    assert_eq!(
         endpoint_manifest_json["search"],
         format!("{base_endpoint}/search")
     );
@@ -424,6 +428,72 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
     assert_eq!(scope.scan_profile, ImportScanProfile::Explicit);
     assert_eq!(scope.requested_root_path, path_str(&fixture_root));
     assert_eq!(scope.canonical_root_path, path_str(&canonical_fixture_root));
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
+    let data_dir = temp_dir("ipc-import-cancel-command-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let started_at_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_sub(60) as i64;
+    let task_id = seed_running_import_task(
+        &data_dir,
+        "cancel-running-over-ipc",
+        &canonical_fixture_root,
+        started_at_seconds,
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "2",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_import_cancel_command(&endpoint, Some(&token), &task_id);
+    assert!(response.contains("HTTP/1.1 202 Accepted"));
+    assert!(response.contains("\"schema_version\":\"daemon.import_cancel.v1\""));
+    assert!(response.contains("\"status\":\"cancel_requested\""));
+    assert!(response.contains(&format!("\"task_id\":\"{task_id}\"")));
+    assert!(!response.contains(path_str(&data_dir)));
+    assert!(!response.contains(path_str(&fixture_root)));
+    assert!(!response.contains(path_str(&canonical_fixture_root)));
+    assert!(!response.contains(&token));
+
+    let status_response = http_get(&endpoint);
+    assert!(status_response.contains("HTTP/1.1 200 OK"));
+    assert!(status_response.contains("\"import_tasks_cancelled\":1"));
+    assert!(!status_response.contains(path_str(&data_dir)));
+    assert!(!status_response.contains(path_str(&fixture_root)));
+    assert!(!status_response.contains(path_str(&canonical_fixture_root)));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    assert!(store.is_import_task_cancelled(&task_id).unwrap());
+    let summary = store.status_summary().unwrap();
+    assert_eq!(summary.import_tasks_cancelled, 1);
 
     remove_dir(&data_dir);
 }
@@ -931,6 +1001,34 @@ fn http_post_import_command_value(
     write!(
         stream,
         "POST /imports HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("write request");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+    response
+}
+
+fn http_post_import_cancel_command(
+    endpoint: &str,
+    token: Option<&str>,
+    task_id: &ImportTaskId,
+) -> String {
+    let rest = endpoint
+        .strip_prefix("http://")
+        .expect("endpoint has http scheme");
+    let (addr, _path) = rest.split_once('/').expect("endpoint has path");
+    let body = serde_json::json!({
+        "task_id": task_id.to_string(),
+    })
+    .to_string();
+    let authorization = token
+        .map(|token| format!("Authorization: Bearer {token}\r\n"))
+        .unwrap_or_default();
+    let mut stream = TcpStream::connect(addr).expect("connect daemon ipc");
+    write!(
+        stream,
+        "POST /imports/cancel HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )
     .expect("write request");
