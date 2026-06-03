@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: release dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate version input
+        run: |
+          case "${{ inputs.version }}" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "version must look like vX.Y.Z" >&2; exit 1 ;;
+          esac
+
+      - name: Verify workspace
+        run: ./scripts/ci/verify-local.sh
+
+      - name: Build release binaries
+        run: cargo build --workspace --release --locked
+
+      - name: Check public artifact boundary
+        run: |
+          test ! -d local-data
+          test ! -d diagnostics
+          test ! -d model-cache
+
+      - name: Release gate
+        run: |
+          echo "Packaging, signing, notarization, SBOM, and GitHub Release upload are gated until explicit release approval."

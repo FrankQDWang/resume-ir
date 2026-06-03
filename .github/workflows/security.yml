@@ -1,0 +1,55 @@
+name: Security
+
+on:
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "43 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-guard:
+    name: public repository guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard tracked files
+        run: ./scripts/ci/guard-public-repo.sh
+
+  licenses:
+    name: license policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check licenses
+        run: ./scripts/ci/check-licenses.sh
+
+  dependency-tree:
+    name: dependency tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check locked dependency graph
+        run: cargo tree --workspace --locked

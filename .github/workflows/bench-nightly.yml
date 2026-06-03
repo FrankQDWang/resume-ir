@@ -1,0 +1,34 @@
+name: Nightly Benchmark Smoke
+
+on:
+  schedule:
+    - cron: "29 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-query-smoke:
+    name: synthetic query benchmark smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run synthetic benchmark
+        run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --documents 1000 --queries 100 --top-k 10 --json > benchmark-smoke.json
+
+      - name: Upload benchmark smoke artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-smoke
+          path: benchmark-smoke.json
+          if-no-files-found: error

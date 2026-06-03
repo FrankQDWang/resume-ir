@@ -1,0 +1,26 @@
+name: Model Evaluation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manifest-only:
+    name: model manifest gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reject tracked model weights
+        run: |
+          if git ls-files | grep -E '(^|/)models/.+\.(bin|onnx|safetensors|pt|gguf)$'; then
+            echo "Model weights are not allowed in the public repository without a reviewed manifest." >&2
+            exit 1
+          fi
+
+      - name: Guard public data boundary
+        run: ./scripts/ci/guard-public-repo.sh

@@ -1,0 +1,43 @@
+# Default owner for the public repository.
+* @FrankQDWang
+
+# Core Rust workspace
+/Cargo.toml @FrankQDWang
+/Cargo.lock @FrankQDWang
+/crates/core-domain/ @FrankQDWang
+/crates/config/ @FrankQDWang
+
+# Ingest, parsing, OCR, and local workers
+/crates/fs-crawler/ @FrankQDWang
+/crates/ingest-scheduler/ @FrankQDWang
+/crates/parser-common/ @FrankQDWang
+/crates/parser-docx/ @FrankQDWang
+/crates/parser-pdf/ @FrankQDWang
+/crates/parser-text/ @FrankQDWang
+/crates/ocr-client/ @FrankQDWang
+
+# Search, indexing, ranking, and privacy
+/crates/import-pipeline/ @FrankQDWang
+/crates/index-fulltext/ @FrankQDWang
+/crates/index-vector/ @FrankQDWang
+/crates/search-planner/ @FrankQDWang
+/crates/rank-fusion/ @FrankQDWang
+/crates/privacy/ @FrankQDWang
+/crates/embedder/ @FrankQDWang
+/crates/meta-store/ @FrankQDWang
+
+# User-facing processes
+/crates/daemon/ @FrankQDWang
+/crates/cli/ @FrankQDWang
+
+# CI, policy, and public repository controls
+/.github/ @FrankQDWang
+/scripts/ci/ @FrankQDWang
+/CODEOWNERS @FrankQDWang
+/SECURITY.md @FrankQDWang
+/CONTRIBUTING.md @FrankQDWang
+
+# Product docs and synthetic fixtures
+/01_system_design_*/ @FrankQDWang
+/02_execution_plan_*/ @FrankQDWang
+/tests/fixtures/ @FrankQDWang

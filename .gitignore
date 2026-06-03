@@ -30,9 +30,24 @@ diagnostics*.tar.gz
 # Local runtime data
 /data/
 /local-data/
+/resume-data/
+/resumes/
+/corpus/
+/corpora/
 /indexes/
 /logs/
 /diagnostics/
+/bench-results/
+
+# Local model/cache artifacts. Keep manifests and docs trackable, not weights.
+/model-cache/
+/models/cache/
+/models/**/*.bin
+/models/**/*.onnx
+/models/**/*.safetensors
+/models/**/*.pt
+/models/**/*.gguf
+/.cache/
 
 # Test and benchmark outputs
 /tmp/

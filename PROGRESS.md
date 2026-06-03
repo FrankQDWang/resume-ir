@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S64 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
-- Remote side effects: no push, PR, release, upload, signing, or notarization.
+- Data policy: S0-S65 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Remote side effects: no push, PR, release, upload, signing, or notarization. S65 prepared GitHub repository automation locally, but remote repository creation/push/branch protection was not executed because the local `gh` credential for `FrankQDWang` is invalid.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
 ## Production Gap Audit
@@ -38,9 +38,13 @@ obsolete preliminary files and checklists are not product scope.
   manifest, and the CLI can use `--ipc auto` for status, import progress,
   import, cancel-import, search, and detail commands. A daemon full-text index
   maintenance worker can now force a local snapshot rebuild or run in a loop to
-  repair non-ready snapshot roots. Missing production control-plane work
-  includes service lifecycle, CI, CODEOWNERS, and macOS plus Windows
-  validation.
+  repair non-ready snapshot roots. Public-repository governance now includes
+  MIT licensing, CODEOWNERS, contribution/security policy, PR templates,
+  GitHub Actions workflow definitions, dependency update configuration, local
+  license checks, and public push guardrails. Missing or BLOCKED production
+  control-plane work includes remote GitHub repository creation/push/branch
+  protection until `gh` is re-authenticated, service lifecycle, and macOS plus
+  Windows validation.
 - P1 import/search: directory scanning, DOCX/text-layer PDF/UTF-8 and
   BOM-marked UTF-16 TXT parsing, cleaning, sectioning, full-text snapshot
   publish/recover, delete rebuild, and redacted snippets exist. Missing
@@ -151,8 +155,67 @@ obsolete preliminary files and checklists are not product scope.
 | S62 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this authenticated import cancel-over-IPC slice; dedicated progress stream, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, Windows/macOS validation, and packaging/signing remain not complete or BLOCKED. |
 | S63 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this authenticated import progress stream slice; daemon index-maintenance workers, service lifecycle, CI, CODEOWNERS, real whole-machine witness runs, Windows/macOS validation, token rotation/revocation, and packaging/signing remain not complete or BLOCKED. |
 | S64 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this daemon full-text index maintenance worker slice; queued incremental index jobs, snapshot GC/retention, vector or ANN index maintenance, service lifecycle, CI, CODEOWNERS, real whole-machine witness runs, Windows/macOS validation, token rotation/revocation, and packaging/signing remain not complete or BLOCKED. |
+| S65 | Local slice complete; remote BLOCKED | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo metadata --no-deps --locked --format-version 1`, `/Users/frankqdwang/.cargo/bin/cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --documents 24 --queries 6 --top-k 5 --json`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace --locked`, `./scripts/ci/check-licenses.sh`, `./scripts/ci/guard-public-repo.sh`, `sh -n scripts/ci/guard-public-repo.sh scripts/ci/check-licenses.sh scripts/ci/verify-local.sh scripts/ci/configure-github-repo.sh`, and the obsolete-reference marker scan passed with no matches. | Remote GitHub repository creation, initial push, PR creation, and branch protection configuration are BLOCKED until the local `gh` credential for `FrankQDWang` is re-authenticated. Service lifecycle, real whole-machine witness runs, Windows/macOS validation, token rotation/revocation, and packaging/signing remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S65
+
+Design target:
+
+- S65 prepares the repository for public GitHub hosting without uploading real
+  resumes, local data directories, daemon tokens, diagnostic bundles, logs,
+  indexes, or model caches.
+- The repository now has MIT licensing, CODEOWNERS, contribution and security
+  policies, PR and issue templates, GitHub Actions workflow definitions,
+  Dependabot configuration, AI coding harness instructions, local license
+  checking, local public-repository guardrails, and a GitHub configuration
+  script for repo creation, first push, and branch protection.
+- Workspace crate metadata now uses `MIT` while keeping `publish = false`.
+
+Implementation checks:
+
+```bash
+sh -n scripts/ci/guard-public-repo.sh scripts/ci/check-licenses.sh scripts/ci/verify-local.sh scripts/ci/configure-github-repo.sh
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo metadata --no-deps --locked --format-version 1
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --documents 24 --queries 6 --top-k 5 --json
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace --locked
+./scripts/ci/check-licenses.sh
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+gh auth status
+```
+
+Output summary:
+
+- Script syntax check: exit 0.
+- `git diff --check`: exit 0.
+- `cargo metadata --no-deps --locked --format-version 1`: exit 0 and shows
+  workspace crates licensed as MIT.
+- `cargo fmt --check`: exit 0.
+- Synthetic benchmark smoke: exit 0 and emitted redacted synthetic JSON with
+  no paths or raw resume text.
+- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`:
+  exit 0.
+- `cargo test --workspace --locked`: exit 0.
+- `./scripts/ci/check-licenses.sh`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+- `gh auth status`: exit 1; the active `FrankQDWang` token is invalid. Remote
+  GitHub repository creation, initial push, PR creation, and branch protection
+  configuration are therefore BLOCKED until re-authentication.
+
+Scope note:
+
+- S65 does not prove GitHub Actions execution on hosted runners, does not create
+  the public remote repository, does not push a branch, and does not configure
+  branch protection because the local GitHub CLI credential is invalid. It also
+  does not implement service lifecycle, release packaging, signing,
+  notarization, token rotation/revocation, real whole-machine witness runs, or
+  Windows/macOS validation.
 
 ### S64
 

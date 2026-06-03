@@ -38,9 +38,22 @@ git log --oneline -3
 After Rust workspace creation:
 
 ```bash
-cargo metadata --no-deps
+./scripts/ci/verify-local.sh
+```
+
+Equivalent core checks:
+
+```bash
+cargo metadata --no-deps --locked
 cargo fmt --check
-cargo test --workspace
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --locked
+./scripts/ci/check-licenses.sh
+./scripts/ci/guard-public-repo.sh
 ```
 
 Do not import real resumes, upload data, push, release, sign binaries, or run heavy OCR/model workflows without explicit human confirmation.
+
+## License
+
+This repository is licensed under the MIT License. See `LICENSE`.
