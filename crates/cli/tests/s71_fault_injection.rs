@@ -217,6 +217,54 @@ fn fault_simulate_daemon_kill_restarts_configured_daemon_without_path_leak() {
     let _ = fs::remove_file(&daemon_binary);
 }
 
+#[cfg(unix)]
+#[test]
+fn fault_simulate_ocr_crash_reproduces_engine_failure_without_payload_or_path_leak() {
+    let data_dir = temp_path("fault-ocr-crash-private-data");
+    let scratch_dir = temp_path("fault-ocr-crash-private-scratch");
+    let ocr_command = ocr_crash_fixture_script("fault-ocr-crash-private-helper");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--case",
+            "ocr-crash",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+            "--ocr-command",
+            path_str(&ocr_command),
+        ])
+        .output()
+        .expect("run ocr-crash fault simulation");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("fault: ocr_crash"));
+    assert!(stdout.contains("status: reproduced"));
+    assert!(stdout.contains("ocr command: failed"));
+    assert!(stdout.contains("probe bytes: 31"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains("PRIVATE_OCR_CRASH_STDOUT"));
+    assert!(!stdout.contains("PRIVATE_OCR_CRASH_STDERR"));
+    assert!(!stdout.contains("SYNTHETIC OCR CRASH PROBE BYTES"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(!stdout.contains(path_str(&ocr_command)));
+    assert!(scratch_dir.exists());
+    assert!(fs::read_dir(&scratch_dir).unwrap().next().is_none());
+
+    remove_dir(&scratch_dir);
+    let _ = fs::remove_file(&ocr_command);
+}
+
 #[test]
 fn fault_simulate_usage_errors_do_not_leak_private_paths() {
     let data_dir = temp_path("fault-usage-private-data");
@@ -284,6 +332,22 @@ fi
 while :; do
   sleep 1
 done
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    path
+}
+
+#[cfg(unix)]
+fn ocr_crash_fixture_script(label: &str) -> PathBuf {
+    let path = temp_path(label);
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+printf 'PRIVATE_OCR_CRASH_STDOUT\n'
+printf 'PRIVATE_OCR_CRASH_STDERR\n' >&2
+exit 17
 "#,
     )
     .unwrap();

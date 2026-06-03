@@ -34,8 +34,8 @@ use meta_store::{
     ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
-    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
-    OcrPageRequest, OcrWorkerBudget, RenderedPage,
+    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrErrorKind,
+    OcrOptions, OcrPageRequest, OcrWorkerBudget, RenderedPage,
 };
 use privacy::inspect_contact_hash_key;
 use rank_fusion::{
@@ -55,6 +55,7 @@ const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
 const DEFAULT_SERVICE_LABEL: &str = "com.resume-ir.daemon";
 const DEFAULT_SERVICE_IPC_LISTEN: &str = "127.0.0.1:0";
 const FAULT_PROBE_MAX_BYTES: u64 = 1024 * 1024;
+const OCR_CRASH_PROBE_BYTES: &[u8] = b"SYNTHETIC OCR CRASH PROBE BYTES";
 const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, service, fault-simulate, doctor, or export-diagnostics";
 
 fn main() {
@@ -877,6 +878,25 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
             println!("paths: <redacted>");
             Ok(())
         }
+        FaultSimulationCase::OcrCrash => {
+            let ocr_command = fault_args
+                .ocr_command
+                .as_deref()
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            println!("fault: ocr_crash");
+            let result = simulate_ocr_crash_probe(&scratch_dir, ocr_command)?;
+            if result.reproduced {
+                println!("status: reproduced");
+                println!("ocr command: failed");
+            } else {
+                println!("status: not reproduced");
+                println!("ocr command: completed");
+            }
+            println!("probe bytes: {}", result.probe_bytes);
+            println!("paths: <redacted>");
+            Ok(())
+        }
     }
 }
 
@@ -886,6 +906,7 @@ enum FaultSimulationCase {
     PermissionDenied,
     FileLock,
     DaemonKill,
+    OcrCrash,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -895,6 +916,7 @@ struct FaultSimulationArgs {
     required_bytes: Option<u64>,
     available_bytes: Option<u64>,
     daemon_binary: Option<PathBuf>,
+    ocr_command: Option<PathBuf>,
 }
 
 fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
@@ -903,6 +925,7 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
     let mut required_bytes = None;
     let mut available_bytes = None;
     let mut daemon_binary = None;
+    let mut ocr_command = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -938,6 +961,12 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 }
                 daemon_binary = Some(PathBuf::from(take_fault_value(args, &mut index)?));
             }
+            "--ocr-command" => {
+                if ocr_command.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                ocr_command = Some(PathBuf::from(take_fault_value(args, &mut index)?));
+            }
             _ => return Err(CliError::usage(fault_simulate_usage())),
         }
     }
@@ -948,17 +977,34 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
             if required_bytes.is_none() || available_bytes.is_none() {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
-            if daemon_binary.is_some() {
+            if daemon_binary.is_some() || ocr_command.is_some() {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
         }
         FaultSimulationCase::PermissionDenied | FaultSimulationCase::FileLock => {
-            if required_bytes.is_some() || available_bytes.is_some() || daemon_binary.is_some() {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_some()
+                || ocr_command.is_some()
+            {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
         }
         FaultSimulationCase::DaemonKill => {
-            if required_bytes.is_some() || available_bytes.is_some() || daemon_binary.is_none() {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_none()
+                || ocr_command.is_some()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::OcrCrash => {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_some()
+                || ocr_command.is_none()
+            {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
         }
@@ -970,6 +1016,7 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
         required_bytes,
         available_bytes,
         daemon_binary,
+        ocr_command,
     })
 }
 
@@ -979,6 +1026,7 @@ fn parse_fault_case(value: &str) -> Result<FaultSimulationCase> {
         "permission-denied" => Ok(FaultSimulationCase::PermissionDenied),
         "file-lock" => Ok(FaultSimulationCase::FileLock),
         "daemon-kill" => Ok(FaultSimulationCase::DaemonKill),
+        "ocr-crash" => Ok(FaultSimulationCase::OcrCrash),
         _ => Err(CliError::usage(fault_simulate_usage())),
     }
 }
@@ -1201,8 +1249,41 @@ fn daemon_restart_once_succeeds(daemon_binary: &Path, data_dir: &Path) -> std::i
         && String::from_utf8_lossy(&output.stdout).contains("resume-daemon foreground ready"))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OcrCrashProbeResult {
+    reproduced: bool,
+    probe_bytes: usize,
+}
+
+fn simulate_ocr_crash_probe(scratch_dir: &Path, ocr_command: &Path) -> Result<OcrCrashProbeResult> {
+    fs::create_dir_all(scratch_dir).map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let client = LocalOcrCommandClient::new(
+        LocalOcrCommandSpec::new(ocr_command, Vec::<String>::new(), "fault-simulate")
+            .map_err(CliError::ocr)?,
+    );
+    let request = OcrPageRequest::new(
+        RenderedPage::new(1, 300, OCR_CRASH_PROBE_BYTES.to_vec()).map_err(CliError::ocr)?,
+        OcrOptions::new("eng", "balanced").map_err(CliError::ocr)?,
+    )
+    .map_err(CliError::ocr)?;
+    let reproduced = match client.recognize_page(
+        request,
+        OcrWorkerBudget::new(1_000).map_err(CliError::ocr)?,
+        &CancellationToken::new(),
+    ) {
+        Ok(_) => false,
+        Err(error) if error.kind() == OcrErrorKind::EngineFailed => true,
+        Err(_) => return Err(CliError::user("fault simulation probe failed")),
+    };
+
+    Ok(OcrCrashProbeResult {
+        reproduced,
+        probe_bytes: OCR_CRASH_PROBE_BYTES.len(),
+    })
+}
+
 fn fault_simulate_usage() -> &'static str {
-    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>]"
+    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -3971,7 +4052,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("cpu cores: {}", resource_telemetry.cpu_cores);
     println!("fault simulations: available");
     println!(
-        "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock"
+        "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock,ocr_crash"
     );
     println!("diagnostics redaction: available");
 
@@ -4091,7 +4172,8 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("    \"index_snapshot_corrupt\",");
     println!("    \"disk_space_low\",");
     println!("    \"permission_denied\",");
-    println!("    \"file_lock\"");
+    println!("    \"file_lock\",");
+    println!("    \"ocr_crash\"");
     println!("  ],");
     println!("  \"scope\": \"redacted skeleton; no raw resume text, paths, or queries included\"");
     println!("}}");

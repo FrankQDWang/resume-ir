@@ -328,6 +328,92 @@ printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME
 
 #[cfg(unix)]
 #[test]
+fn ocr_worker_command_crash_records_retryable_failure_without_leaking_outputs() {
+    let data_dir = temp_dir("ocr-worker-crash-data");
+    let fixture_root = fixture_root();
+    let command = write_fixture_executable(
+        "fixture-ocr-worker-crash",
+        r#"#!/bin/sh
+printf 'PRIVATE_OCR_WORKER_CRASH_STDOUT\n'
+printf 'PRIVATE_OCR_WORKER_CRASH_STDERR\n' >&2
+exit 17
+"#,
+    );
+    import_fixtures(&data_dir, &fixture_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+        ])
+        .output()
+        .expect("run crashed ocr worker command");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ocr worker blocked: local OCR command failed or unavailable"));
+    assert!(!stderr.contains("PRIVATE_OCR_WORKER_CRASH_STDOUT"));
+    assert!(!stderr.contains("PRIVATE_OCR_WORKER_CRASH_STDERR"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+    assert!(!stderr.contains(path_str(&command)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::OcrRequired);
+    let jobs = store.retryable_jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].status, IngestJobStatus::FailedRetryable);
+    assert_eq!(jobs[0].attempt_count, 1);
+    let cache_key = OcrPageCacheKey::new(
+        scanned.content_hash.expect("content hash"),
+        1,
+        300,
+        "eng",
+        "balanced",
+    )
+    .unwrap();
+    let cache_entry = store
+        .ocr_page_cache_entry(&cache_key)
+        .unwrap()
+        .expect("OCR retryable failure cache entry");
+    assert_eq!(cache_entry.status(), OcrPageCacheStatus::FailedRetryable);
+    assert_eq!(cache_entry.text(), None);
+    assert_eq!(cache_entry.error_kind(), Some("EngineFailed"));
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "PRIVATE_OCR_WORKER_CRASH_STDOUT",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run resume-cli search after OCR crash");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(
+        search_stdout.contains("results: 0"),
+        "stdout:\n{search_stdout}"
+    );
+    assert!(!search_stdout.contains("synthetic-scanned-resume.pdf"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&fixture_root)));
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn ocr_worker_indexes_succeeded_cache_hit_without_invoking_command() {
     let data_dir = temp_dir("ocr-worker-cache-hit-data");
     let fixture_root = fixture_root();
