@@ -669,6 +669,14 @@ fn ocr_worker_uses_tesseract_for_rendered_image_before_indexing() {
     assert!(text.contains("S92"), "OCR text: {text:?}");
     assert!(text.contains("OCR"), "OCR text: {text:?}");
     assert!(text.contains("TEST"), "OCR text: {text:?}");
+    assert!(
+        cache_entry
+            .word_boxes()
+            .iter()
+            .any(|word_box| word_box.text() == "S92" && word_box.width() > 0),
+        "OCR word boxes: {:?}",
+        cache_entry.word_boxes()
+    );
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([

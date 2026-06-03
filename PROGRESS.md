@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S92 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S93 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -76,18 +76,18 @@ obsolete preliminary files and checklists are not product scope.
 - P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
   cache schema, local OCR command client, local PDF page-render command
   protocol, local Poppler `pdftoppm` PDF renderer adapter, local Tesseract OCR
-  adapter with TSV confidence parsing, timeout/cancel/temp cleanup, page-count
-  detection for scanned PDFs, multi-page OCR fan-out, per-page cache entries,
-  and aggregate OCR text indexing exist. The CLI and daemon can now claim
-  queued OCR jobs, render valid PDF pages through local `pdftoppm` or a
-  configured renderer, execute local OCR commands or local Tesseract on the
-  rendered image, persist cache entries for each page, index combined OCR text
-  with page count, honor persistent pause state, and keep serving status IPC
-  while OCR runs. Deleted-document purge now removes current OCR jobs and
-  current OCR page-cache entries that are no longer shared by visible
-  documents. Missing or BLOCKED work includes final OCR/renderer distribution
-  policy, non-English language pack policy, bbox persistence, backpressure,
-  real scanned-resume witness runs, large-corpus OCR throughput proof, and
+  adapter with TSV confidence and word-box parsing, timeout/cancel/temp cleanup,
+  page-count detection for scanned PDFs, multi-page OCR fan-out, per-page cache
+  entries with persisted OCR word boxes, and aggregate OCR text indexing exist.
+  The CLI and daemon can now claim queued OCR jobs, render valid PDF pages
+  through local `pdftoppm` or a configured renderer, execute local OCR commands
+  or local Tesseract on the rendered image, persist cache entries for each page,
+  index combined OCR text with page count, honor persistent pause state, and keep
+  serving status IPC while OCR runs. Deleted-document purge now removes current
+  OCR jobs and current OCR page-cache entries that are no longer shared by
+  visible documents. Missing or BLOCKED work includes final OCR/renderer
+  distribution policy, non-English language pack policy, backpressure, real
+  scanned-resume witness runs, large-corpus OCR throughput proof, and
   Windows/macOS validation.
 - P5 packaging/platform: not production-ready. A local CLI service lifecycle
   now writes, reports, removes, and dry-run starts/stops a macOS user
@@ -209,8 +209,82 @@ obsolete preliminary files and checklists are not product scope.
 | S90 | Product privacy/delete slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact` first failed after the test was tightened because `purge --deleted` did not report or remove OCR cache/job retention surfaces; after implementation, the focused RED/GREEN test, full `s14_delete_search`, `meta-store`, focused clippy, fmt, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this current OCR cache/job purge slice; SQLCipher/encrypted metadata, forensic erase, future OCR bbox purge surfaces, real-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S91 | Product OCR slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client pdftoppm_renderer_renders_valid_pdf_page_to_ppm_without_payload_debug_leaks --locked -- --exact` first failed because `PdftoppmPdfRenderer` and `PdftoppmRenderSpec` did not exist; after implementation, OCR client, CLI handoff, daemon worker, fmt, focused clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local Poppler `pdftoppm` renderer adapter and CLI/daemon worker wiring slice; Tesseract or equivalent real OCR recognition engine, renderer/OCR distribution policy, bbox persistence, backpressure, real scanned-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S92 | Product OCR slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client tesseract_worker_recognizes_synthetic_image_without_payload_debug_leaks -- --exact` first failed because `TesseractOcrClient` and `TesseractOcrSpec` did not exist; after implementation, local Tesseract 5.5.2 was installed, the focused Tesseract OCR client, CLI worker, daemon worker, fmt, focused clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local Tesseract adapter and CLI/daemon wiring slice; final OCR/renderer distribution policy, non-English language packs, OCR bbox persistence, backpressure, real scanned-resume witness runs, large-corpus OCR throughput proof, and Windows/macOS validation remain not complete or BLOCKED. |
+| S93 | Product OCR slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client tesseract_worker_recognizes_synthetic_image_without_payload_debug_leaks --locked -- --exact` and `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite ocr_page_cache_persists_word_boxes_without_debug_payload_leak --locked -- --exact` first failed because OCR word-box APIs and cache persistence did not exist; after implementation, OCR client, meta-store, CLI handoff, daemon worker, fmt, focused clippy, `git diff --check`, schema expectation guard, and `./scripts/ci/verify-local.sh` passed. | None for this OCR word-box persistence slice; final OCR/renderer distribution policy, non-English language packs, backpressure, real scanned-resume witness runs, large-corpus OCR throughput proof, Windows/macOS validation, and future OCR bbox purge surface audits remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S93
+
+Design target:
+
+- Persist OCR word bounding boxes from local Tesseract TSV output into the local
+  OCR page cache without putting OCR payloads or file paths into debug/user
+  output.
+- Keep the existing custom OCR command protocol compatible with empty word boxes;
+  only concrete OCR engines that return boxes populate the metadata.
+- Prove the path with synthetic fixtures only: OCR client parses word boxes,
+  meta-store round-trips redacted word-box cache metadata, and CLI/daemon
+  Tesseract worker paths write boxes into cache before search indexing.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client tesseract_worker_recognizes_synthetic_image_without_payload_debug_leaks --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite ocr_page_cache_persists_word_boxes_without_debug_payload_leak --locked -- --exact
+```
+
+Output summary:
+
+- `ocr-client` failed with exit 101 because `OcrPage::word_boxes()` did not
+  exist.
+- `meta-store` failed with exit 101 because `OcrWordBox`,
+  `OcrPageCacheEntry::succeeded_with_word_boxes`, and
+  `OcrPageCacheEntry::word_boxes()` did not exist.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p ocr-client -p meta-store -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+git diff --check
+if rg -n "schema_version\\(\\)\\.unwrap\\(\\), 14|\\[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14\\]" crates/meta-store/tests/s3_sqlite.rs; then exit 1; else echo "no stale schema version expectations"; fi
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `ocr-client` test suite: exit 0; 17 tests passed, including real Tesseract
+  recognition of a synthetic image and word-box parsing for the `S92` token.
+- `meta-store` SQLite suite: exit 0; 42 tests passed, including schema V15 and
+  OCR word-box cache round-trip with redacted Debug output.
+- `s15_ocr_handoff`: exit 0; 11 tests passed, including CLI Tesseract worker
+  cache word-box persistence and search indexing.
+- `s50_ocr_worker`: exit 0; 7 tests passed, including daemon Tesseract worker
+  cache word-box persistence and search indexing.
+- `cargo fmt --check`: exit 0 after formatting.
+- Focused clippy: exit 0.
+- `git diff --check`: exit 0.
+- Schema expectation guard: exit 0 with no stale schema-version expectations.
+- `check-runbooks.sh`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker guard: exit 0 with no matches.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S93 stores OCR word boxes locally in OCR cache rows and keeps them out of
+  Debug. It does not add bbox-aware retrieval/ranking UI, final OCR distribution,
+  non-English language-pack policy, real scanned-resume witness proof,
+  large-corpus OCR throughput, or Windows/macOS validation.
+- Full product is still not complete.
 
 ### S92
 

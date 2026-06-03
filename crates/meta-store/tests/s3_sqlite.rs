@@ -9,8 +9,8 @@ use meta_store::{
     ImportScanBudgetKind, ImportScanError, ImportScanErrorKind, ImportScanErrorOperation,
     ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
     IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus, MetaStore,
-    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
+    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ResumeVersion,
+    ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
 };
 use rusqlite::{params, Connection};
 
@@ -23,9 +23,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     );
-    assert_eq!(store.schema_version().unwrap(), 14);
+    assert_eq!(store.schema_version().unwrap(), 15);
 
     for table_name in [
         "candidate",
@@ -47,7 +47,7 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 14);
+    assert_eq!(store.schema_version().unwrap(), 15);
 }
 
 #[test]
@@ -1041,6 +1041,45 @@ fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
 }
 
 #[test]
+fn ocr_page_cache_persists_word_boxes_without_debug_payload_leak() {
+    let store = migrated_store();
+    let key =
+        OcrPageCacheKey::new("synthetic-bbox-content-hash", 1, 300, "eng", "balanced").unwrap();
+    let word_boxes = vec![
+        OcrWordBox::new("SecretName", 12, 34, 56, 18, 0.92).unwrap(),
+        OcrWordBox::new("Rust", 72, 34, 40, 18, 0.88).unwrap(),
+    ];
+    let success = OcrPageCacheEntry::succeeded_with_word_boxes(
+        key.clone(),
+        "SecretName Rust",
+        0.90,
+        "fixture-tesseract",
+        33,
+        word_boxes.clone(),
+        UnixTimestamp::from_unix_seconds(1_800_000_810),
+    )
+    .unwrap();
+
+    store.upsert_ocr_page_cache_entry(&success).unwrap();
+
+    let loaded = store
+        .ocr_page_cache_entry(&key)
+        .unwrap()
+        .expect("ocr cache entry");
+    assert_eq!(loaded.word_boxes(), word_boxes.as_slice());
+    assert_eq!(loaded.word_boxes()[0].text(), "SecretName");
+    assert_eq!(loaded.word_boxes()[0].left(), 12);
+    assert_eq!(loaded.word_boxes()[0].top(), 34);
+    assert_eq!(loaded.word_boxes()[0].width(), 56);
+    assert_eq!(loaded.word_boxes()[0].height(), 18);
+    assert_eq!(loaded.word_boxes()[0].confidence(), 0.92);
+
+    let debug = format!("{loaded:?} {:?}", loaded.word_boxes());
+    assert!(!debug.contains("SecretName"));
+    assert!(!debug.contains("synthetic-bbox-content-hash"));
+}
+
+#[test]
 fn ocr_page_cache_rejects_invalid_keys_and_confidence() {
     assert!(OcrPageCacheKey::new("", 1, 300, "eng", "balanced").is_err());
     assert!(OcrPageCacheKey::new("hash", 0, 300, "eng", "balanced").is_err());
@@ -1054,6 +1093,9 @@ fn ocr_page_cache_rejects_invalid_keys_and_confidence() {
         UnixTimestamp::from_unix_seconds(1_800_000_802),
     )
     .is_err());
+    assert!(OcrWordBox::new("", 1, 1, 1, 1, 0.5).is_err());
+    assert!(OcrWordBox::new("word", 1, 1, 0, 1, 0.5).is_err());
+    assert!(OcrWordBox::new("word", 1, 1, 1, 1, 1.5).is_err());
 }
 
 #[test]
@@ -1253,7 +1295,10 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
     {
         let connection = open_raw_connection(&db_path);
         connection
-            .execute("DELETE FROM schema_migrations WHERE version IN (6, 7)", [])
+            .execute(
+                "DELETE FROM schema_migrations WHERE version IN (6, 7, 15)",
+                [],
+            )
             .unwrap();
         connection
             .execute("DROP TABLE IF EXISTS ocr_page_cache", [])
@@ -1297,8 +1342,8 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[6, 7]);
-        assert_eq!(reopened.schema_version().unwrap(), 14);
+        assert_eq!(report.applied_versions(), &[6, 7, 15]);
+        assert_eq!(reopened.schema_version().unwrap(), 15);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1603,7 +1648,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 14);
+        assert_eq!(reopened.schema_version().unwrap(), 15);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -2038,7 +2083,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             .unwrap();
         connection
             .execute(
-                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)",
+                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15)",
                 [],
             )
             .unwrap();
@@ -2049,9 +2094,9 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
         let report = reopened.run_migrations().unwrap();
         assert_eq!(
             report.applied_versions(),
-            &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+            &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 14);
+        assert_eq!(reopened.schema_version().unwrap(), 15);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -2083,7 +2128,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 14);
+        assert_eq!(reopened.schema_version().unwrap(), 15);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

@@ -220,7 +220,15 @@ fn tesseract_worker_recognizes_synthetic_image_without_payload_debug_leaks() {
         "recognized text: {:?}",
         page.text()
     );
+    let boxes = page.word_boxes();
+    assert!(
+        boxes.iter().any(|word_box| word_box.text() == "S92"
+            && word_box.width() > 0
+            && word_box.height() > 0),
+        "recognized boxes: {boxes:?}"
+    );
     assert!(!format!("{page:?}").contains("S92 OCR TEST"));
+    assert!(!format!("{boxes:?}").contains("S92 OCR TEST"));
 }
 
 #[test]

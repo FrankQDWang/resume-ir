@@ -511,12 +511,92 @@ impl fmt::Debug for OcrCacheKey {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct OcrWordBox {
+    text: String,
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
+    confidence: f32,
+}
+
+impl OcrWordBox {
+    pub fn new(
+        text: impl Into<String>,
+        left: u32,
+        top: u32,
+        width: u32,
+        height: u32,
+        confidence: f32,
+    ) -> Result<Self, OcrError> {
+        let text = text.into();
+        if text.trim().is_empty()
+            || width == 0
+            || height == 0
+            || !confidence.is_finite()
+            || !(0.0..=1.0).contains(&confidence)
+        {
+            return Err(OcrError::new(OcrErrorKind::InvalidRequest));
+        }
+
+        Ok(Self {
+            text,
+            left,
+            top,
+            width,
+            height,
+            confidence,
+        })
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn left(&self) -> u32 {
+        self.left
+    }
+
+    pub fn top(&self) -> u32 {
+        self.top
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn confidence(&self) -> f32 {
+        self.confidence
+    }
+}
+
+impl fmt::Debug for OcrWordBox {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OcrWordBox")
+            .field("text", &"<redacted>")
+            .field("text_bytes", &self.text.len())
+            .field("left", &self.left)
+            .field("top", &self.top)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("confidence", &self.confidence)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub struct OcrPage {
     page_no: u32,
     text: String,
     confidence: f32,
     engine_profile: String,
     duration_ms: u64,
+    word_boxes: Vec<OcrWordBox>,
 }
 
 impl OcrPage {
@@ -526,6 +606,24 @@ impl OcrPage {
         confidence: f32,
         engine_profile: impl Into<String>,
         duration_ms: u64,
+    ) -> Result<Self, OcrError> {
+        Self::new_with_word_boxes(
+            page_no,
+            text,
+            confidence,
+            engine_profile,
+            duration_ms,
+            Vec::new(),
+        )
+    }
+
+    pub fn new_with_word_boxes(
+        page_no: u32,
+        text: impl Into<String>,
+        confidence: f32,
+        engine_profile: impl Into<String>,
+        duration_ms: u64,
+        word_boxes: Vec<OcrWordBox>,
     ) -> Result<Self, OcrError> {
         if page_no == 0 || !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
             return Err(OcrError::new(OcrErrorKind::InvalidRequest));
@@ -537,6 +635,7 @@ impl OcrPage {
             confidence: confidence.clamp(0.0, 1.0),
             engine_profile: engine_profile.into(),
             duration_ms,
+            word_boxes,
         })
     }
 
@@ -559,6 +658,10 @@ impl OcrPage {
     pub fn engine_profile(&self) -> &str {
         &self.engine_profile
     }
+
+    pub fn word_boxes(&self) -> &[OcrWordBox] {
+        &self.word_boxes
+    }
 }
 
 impl fmt::Debug for OcrPage {
@@ -571,6 +674,7 @@ impl fmt::Debug for OcrPage {
             .field("confidence", &self.confidence)
             .field("engine_profile", &self.engine_profile)
             .field("duration_ms", &self.duration_ms)
+            .field("word_box_count", &self.word_boxes.len())
             .finish()
     }
 }
@@ -1092,6 +1196,7 @@ fn parse_tesseract_tsv(
         .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?
         .replace("\r\n", "\n");
     let mut words = Vec::new();
+    let mut word_boxes = Vec::new();
     let mut confidence_sum = 0.0_f32;
     let mut confidence_count = 0_usize;
 
@@ -1108,10 +1213,23 @@ fn parse_tesseract_tsv(
         let confidence = columns[10]
             .parse::<f32>()
             .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?;
+        let normalized_confidence = if confidence >= 0.0 {
+            (confidence / 100.0).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         if confidence >= 0.0 {
-            confidence_sum += (confidence / 100.0).clamp(0.0, 1.0);
+            confidence_sum += normalized_confidence;
             confidence_count += 1;
         }
+        let left = parse_tsv_u32(columns[6], "tesseract.left")?;
+        let top = parse_tsv_u32(columns[7], "tesseract.top")?;
+        let width = parse_tsv_u32(columns[8], "tesseract.width")?;
+        let height = parse_tsv_u32(columns[9], "tesseract.height")?;
+        word_boxes.push(
+            OcrWordBox::new(word, left, top, width, height, normalized_confidence)
+                .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?,
+        );
         words.push(word.to_string());
     }
 
@@ -1125,7 +1243,21 @@ fn parse_tesseract_tsv(
     } else {
         confidence_sum / confidence_count as f32
     };
-    OcrPage::new(page_no, text, confidence, engine_profile, duration_ms)
+    OcrPage::new_with_word_boxes(
+        page_no,
+        text,
+        confidence,
+        engine_profile,
+        duration_ms,
+        word_boxes,
+    )
+}
+
+fn parse_tsv_u32(value: &str, _field: &'static str) -> Result<u32, OcrError> {
+    let parsed = value
+        .parse::<u32>()
+        .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?;
+    Ok(parsed)
 }
 
 fn parse_confidence(metadata: &str) -> Result<f32, OcrError> {

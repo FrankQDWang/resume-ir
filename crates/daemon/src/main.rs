@@ -979,12 +979,14 @@ fn run_claimed_ocr_job(
                 });
             }
         };
-        let entry = OcrPageCacheEntry::succeeded(
+        let word_boxes = ocr_word_boxes_for_cache(&page)?;
+        let entry = OcrPageCacheEntry::succeeded_with_word_boxes(
             cache_key,
             page.text(),
             page.confidence(),
             page.engine_profile(),
             page.duration_ms(),
+            word_boxes,
             now,
         )
         .map_err(DaemonError::store)?;
@@ -1020,6 +1022,23 @@ fn run_claimed_ocr_job(
         cache_hits,
         ..OcrWorkerSummary::default()
     })
+}
+
+fn ocr_word_boxes_for_cache(page: &ocr_client::OcrPage) -> Result<Vec<meta_store::OcrWordBox>> {
+    page.word_boxes()
+        .iter()
+        .map(|word_box| {
+            meta_store::OcrWordBox::new(
+                word_box.text(),
+                word_box.left(),
+                word_box.top(),
+                word_box.width(),
+                word_box.height(),
+                word_box.confidence(),
+            )
+            .map_err(DaemonError::store)
+        })
+        .collect()
 }
 
 fn mark_ocr_job_failed_retryable(

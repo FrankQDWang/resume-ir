@@ -26,6 +26,7 @@ const SCHEMA_VERSION_V11: u32 = 11;
 const SCHEMA_VERSION_V12: u32 = 12;
 const SCHEMA_VERSION_V13: u32 = 13;
 const SCHEMA_VERSION_V14: u32 = 14;
+const SCHEMA_VERSION_V15: u32 = 15;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -50,7 +51,7 @@ const ENTITY_MENTION_COLUMNS: &str = "\
     span_start, span_end, confidence, extractor";
 const OCR_PAGE_CACHE_COLUMNS: &str = "\
     file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile, text, confidence, \
-    engine_profile, duration_ms, status, error_kind, updated_at_seconds";
+    engine_profile, duration_ms, status, error_kind, updated_at_seconds, word_boxes_json";
 const WORKER_TASK_CONTROL_COLUMNS: &str = "task_kind, paused, updated_at_seconds";
 const IMPORT_SCAN_SCOPE_COLUMNS: &str = "\
     import_task_id, root_kind, root_preset, scan_profile, requested_root_path, \
@@ -129,6 +130,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V12, SCHEMA_V12),
             (SCHEMA_VERSION_V13, SCHEMA_V13),
             (SCHEMA_VERSION_V14, SCHEMA_V14),
+            (SCHEMA_VERSION_V15, SCHEMA_V15),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -836,9 +838,10 @@ impl MetaStore {
                 "\
                 INSERT INTO ocr_page_cache (
                     file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile, text,
-                    confidence, engine_profile, duration_ms, status, error_kind, updated_at_seconds
+                    confidence, engine_profile, duration_ms, status, error_kind, updated_at_seconds,
+                    word_boxes_json
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                 ON CONFLICT(file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile)
                 DO UPDATE SET
                     text = excluded.text,
@@ -847,7 +850,8 @@ impl MetaStore {
                     duration_ms = excluded.duration_ms,
                     status = excluded.status,
                     error_kind = excluded.error_kind,
-                    updated_at_seconds = excluded.updated_at_seconds",
+                    updated_at_seconds = excluded.updated_at_seconds,
+                    word_boxes_json = excluded.word_boxes_json",
                 params![
                     entry.key.file_content_hash.as_str(),
                     u32_to_i64(entry.key.page_no),
@@ -864,6 +868,7 @@ impl MetaStore {
                     ocr_page_cache_status_to_storage(entry.status),
                     entry.error_kind.as_deref(),
                     entry.updated_at.as_unix_seconds(),
+                    ocr_word_boxes_json_for_storage(entry)?,
                 ],
             )
             .map_err(MetaStoreError::storage)?;
@@ -2587,9 +2592,89 @@ pub enum OcrPageCacheStatus {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct OcrWordBox {
+    text: String,
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
+    confidence: f32,
+}
+
+impl OcrWordBox {
+    pub fn new(
+        text: impl Into<String>,
+        left: u32,
+        top: u32,
+        width: u32,
+        height: u32,
+        confidence: f32,
+    ) -> Result<Self> {
+        let text = text.into();
+        if text.trim().is_empty()
+            || width == 0
+            || height == 0
+            || !confidence.is_finite()
+            || !(0.0..=1.0).contains(&confidence)
+        {
+            return Err(MetaStoreError::invalid_value("ocr_page_cache.word_box"));
+        }
+
+        Ok(Self {
+            text,
+            left,
+            top,
+            width,
+            height,
+            confidence,
+        })
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn left(&self) -> u32 {
+        self.left
+    }
+
+    pub fn top(&self) -> u32 {
+        self.top
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub fn confidence(&self) -> f32 {
+        self.confidence
+    }
+}
+
+impl fmt::Debug for OcrWordBox {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OcrWordBox")
+            .field("text", &"<redacted>")
+            .field("text_bytes", &self.text.len())
+            .field("left", &self.left)
+            .field("top", &self.top)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("confidence", &self.confidence)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub struct OcrPageCacheEntry {
     key: OcrPageCacheKey,
     text: Option<String>,
+    word_boxes: Vec<OcrWordBox>,
     confidence: Option<f32>,
     engine_profile: Option<String>,
     duration_ms: Option<u64>,
@@ -2607,6 +2692,26 @@ impl OcrPageCacheEntry {
         duration_ms: u64,
         updated_at: UnixTimestamp,
     ) -> Result<Self> {
+        Self::succeeded_with_word_boxes(
+            key,
+            text,
+            confidence,
+            engine_profile,
+            duration_ms,
+            Vec::new(),
+            updated_at,
+        )
+    }
+
+    pub fn succeeded_with_word_boxes(
+        key: OcrPageCacheKey,
+        text: impl Into<String>,
+        confidence: f32,
+        engine_profile: impl Into<String>,
+        duration_ms: u64,
+        word_boxes: Vec<OcrWordBox>,
+        updated_at: UnixTimestamp,
+    ) -> Result<Self> {
         let engine_profile = engine_profile.into();
         if !confidence.is_finite()
             || !(0.0..=1.0).contains(&confidence)
@@ -2618,6 +2723,7 @@ impl OcrPageCacheEntry {
         Ok(Self {
             key,
             text: Some(text.into()),
+            word_boxes,
             confidence: Some(confidence),
             engine_profile: Some(engine_profile),
             duration_ms: Some(duration_ms),
@@ -2667,6 +2773,7 @@ impl OcrPageCacheEntry {
         Ok(Self {
             key,
             text: None,
+            word_boxes: Vec::new(),
             confidence: None,
             engine_profile: None,
             duration_ms: None,
@@ -2682,6 +2789,10 @@ impl OcrPageCacheEntry {
 
     pub fn text(&self) -> Option<&str> {
         self.text.as_deref()
+    }
+
+    pub fn word_boxes(&self) -> &[OcrWordBox] {
+        &self.word_boxes
     }
 
     pub fn confidence(&self) -> Option<f32> {
@@ -2712,6 +2823,7 @@ impl fmt::Debug for OcrPageCacheEntry {
             .field("key", &self.key)
             .field("text", &"<redacted>")
             .field("text_bytes", &self.text.as_ref().map(String::len))
+            .field("word_box_count", &self.word_boxes.len())
             .field("confidence", &self.confidence)
             .field("engine_profile", &self.engine_profile)
             .field("duration_ms", &self.duration_ms)
@@ -3504,6 +3616,10 @@ CREATE INDEX import_task_cancellation_requested_idx
     ON import_task_cancellation(requested_at_seconds);
 "#;
 
+const SCHEMA_V15: &str = r#"
+ALTER TABLE ocr_page_cache ADD COLUMN word_boxes_json TEXT;
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -3634,6 +3750,7 @@ fn read_ocr_page_cache_entry(row: &Row<'_>) -> Result<OcrPageCacheEntry> {
     let entry = OcrPageCacheEntry {
         key,
         text: read_optional_string(row, 5)?,
+        word_boxes: read_ocr_word_boxes_json(read_optional_string(row, 12)?.as_deref())?,
         confidence: read_optional_f64(row, 6)?.map(|value| value as f32),
         engine_profile: read_optional_string(row, 7)?,
         duration_ms,
@@ -4057,6 +4174,7 @@ fn validate_ocr_page_cache_entry(entry: &OcrPageCacheEntry) -> Result<()> {
         }
         OcrPageCacheStatus::FailedRetryable | OcrPageCacheStatus::FailedPermanent => {
             if entry.text.is_some()
+                || !entry.word_boxes.is_empty()
                 || entry.confidence.is_some()
                 || entry.engine_profile.is_some()
                 || entry.duration_ms.is_some()
@@ -4068,6 +4186,70 @@ fn validate_ocr_page_cache_entry(entry: &OcrPageCacheEntry) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn ocr_word_boxes_json_for_storage(entry: &OcrPageCacheEntry) -> Result<Option<String>> {
+    if entry.status != OcrPageCacheStatus::Succeeded {
+        return Ok(None);
+    }
+
+    let values = entry
+        .word_boxes
+        .iter()
+        .map(|word_box| {
+            serde_json::json!({
+                "text": word_box.text,
+                "left": word_box.left,
+                "top": word_box.top,
+                "width": word_box.width,
+                "height": word_box.height,
+                "confidence": word_box.confidence,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string(&values)
+        .map(Some)
+        .map_err(|_| MetaStoreError::invalid_value("ocr_page_cache.word_boxes_json"))
+}
+
+fn read_ocr_word_boxes_json(json: Option<&str>) -> Result<Vec<OcrWordBox>> {
+    let Some(json) = json else {
+        return Ok(Vec::new());
+    };
+    let value = serde_json::from_str::<serde_json::Value>(json)
+        .map_err(|_| MetaStoreError::invalid_value("ocr_page_cache.word_boxes_json"))?;
+    let array = value
+        .as_array()
+        .ok_or_else(|| MetaStoreError::invalid_value("ocr_page_cache.word_boxes_json"))?;
+
+    array.iter().map(read_ocr_word_box_json).collect()
+}
+
+fn read_ocr_word_box_json(value: &serde_json::Value) -> Result<OcrWordBox> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| MetaStoreError::invalid_value("ocr_page_cache.word_box"))?;
+    let text = object
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| MetaStoreError::invalid_value("ocr_page_cache.word_box.text"))?;
+    let left = read_json_u32(object.get("left"), "ocr_page_cache.word_box.left")?;
+    let top = read_json_u32(object.get("top"), "ocr_page_cache.word_box.top")?;
+    let width = read_json_u32(object.get("width"), "ocr_page_cache.word_box.width")?;
+    let height = read_json_u32(object.get("height"), "ocr_page_cache.word_box.height")?;
+    let confidence = object
+        .get("confidence")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or_else(|| MetaStoreError::invalid_value("ocr_page_cache.word_box.confidence"))?
+        as f32;
+    OcrWordBox::new(text, left, top, width, height, confidence)
+}
+
+fn read_json_u32(value: Option<&serde_json::Value>, field: &'static str) -> Result<u32> {
+    let value = value
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| MetaStoreError::invalid_value(field))?;
+    u32::try_from(value).map_err(|_| MetaStoreError::invalid_value(field))
 }
 
 fn entity_mention_raw_value_for_storage(mention: &EntityMention) -> &str {
