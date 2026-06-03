@@ -4776,6 +4776,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
     let resource_telemetry = collect_resource_telemetry(data_dir);
+    let ocr_runtime = inspect_ocr_runtime();
 
     println!("resume-ir doctor");
     println!("metadata: ok");
@@ -4835,6 +4836,9 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
         resource_telemetry.format_process_memory()
     );
     println!("cpu cores: {}", resource_telemetry.cpu_cores);
+    println!("ocr renderer pdftoppm: {}", ocr_runtime.pdftoppm.label());
+    println!("ocr engine tesseract: {}", ocr_runtime.tesseract.label());
+    println!("ocr language eng: {}", ocr_runtime.tesseract_eng.label());
     println!("fault simulations: available");
     println!(
         "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock,model_checksum,ocr_crash"
@@ -4857,6 +4861,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
     let resource_telemetry = collect_resource_telemetry(data_dir);
+    let ocr_runtime = inspect_ocr_runtime();
 
     println!("{{");
     println!("  \"schema_version\": \"diagnostics.v1\",");
@@ -4963,6 +4968,15 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
     println!("    \"cpu_cores\": {}", resource_telemetry.cpu_cores);
     println!("  }},");
+    println!("  \"ocr_runtime\": {{");
+    println!("    \"paths\": \"<redacted>\",");
+    println!("    \"pdftoppm\": \"{}\",", ocr_runtime.pdftoppm.label());
+    println!("    \"tesseract\": \"{}\",", ocr_runtime.tesseract.label());
+    println!(
+        "    \"tesseract_eng\": \"{}\"",
+        ocr_runtime.tesseract_eng.label()
+    );
+    println!("  }},");
     println!("  \"fault_simulations\": [");
     println!("    \"daemon_restart\",");
     println!("    \"daemon_kill\",");
@@ -5039,6 +5053,103 @@ fn collect_resource_telemetry(data_dir: &Path) -> ResourceTelemetry {
         data_disk_available_bytes,
         process_memory_bytes,
         cpu_cores,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OcrRuntimeDiagnostic {
+    pdftoppm: OcrRuntimeState,
+    tesseract: OcrRuntimeState,
+    tesseract_eng: OcrRuntimeState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OcrRuntimeState {
+    Available,
+    Missing,
+    Unknown,
+}
+
+impl OcrRuntimeState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Missing => "missing",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+fn inspect_ocr_runtime() -> OcrRuntimeDiagnostic {
+    let pdftoppm = find_command_in_path("pdftoppm");
+    let tesseract = find_command_in_path("tesseract");
+    let tesseract_eng = tesseract
+        .as_ref()
+        .map(|path| inspect_tesseract_language(path, "eng"))
+        .unwrap_or(OcrRuntimeState::Missing);
+
+    OcrRuntimeDiagnostic {
+        pdftoppm: tool_state(pdftoppm.as_ref()),
+        tesseract: tool_state(tesseract.as_ref()),
+        tesseract_eng,
+    }
+}
+
+fn tool_state(path: Option<&PathBuf>) -> OcrRuntimeState {
+    if path.is_some_and(|path| is_executable_file(path)) {
+        OcrRuntimeState::Available
+    } else {
+        OcrRuntimeState::Missing
+    }
+}
+
+fn inspect_tesseract_language(command_path: &Path, language: &str) -> OcrRuntimeState {
+    let Ok(output) = Command::new(command_path).arg("--list-langs").output() else {
+        return OcrRuntimeState::Unknown;
+    };
+    if !output.status.success() {
+        return OcrRuntimeState::Unknown;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stdout
+        .lines()
+        .chain(stderr.lines())
+        .any(|line| line.trim() == language)
+    {
+        OcrRuntimeState::Available
+    } else {
+        OcrRuntimeState::Missing
+    }
+}
+
+fn find_command_in_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|path| path.join(name))
+            .find(|path| is_executable_file(path))
+    })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        metadata.permissions().mode() & 0o111 != 0
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
     }
 }
 

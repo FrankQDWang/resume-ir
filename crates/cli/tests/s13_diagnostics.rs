@@ -146,6 +146,92 @@ fn doctor_and_diagnostics_report_redacted_resource_telemetry() {
     remove_dir(&data_dir);
 }
 
+#[cfg(unix)]
+#[test]
+fn doctor_and_diagnostics_report_ocr_runtime_without_paths_or_language_dump() {
+    let data_dir = temp_dir("diagnostics-ocr-runtime-private-data");
+    let bin_dir = temp_dir("diagnostics-ocr-runtime-private-bin");
+    write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
+    write_executable(
+        &bin_dir,
+        "tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--list-langs" ]; then
+  printf 'List of available languages (2):\n'
+  printf 'eng\n'
+  printf 'chi_sim\n'
+  exit 0
+fi
+exit 9
+"#,
+    );
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with OCR runtime diagnostics");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("ocr renderer pdftoppm: available"));
+    assert!(stdout.contains("ocr engine tesseract: available"));
+    assert!(stdout.contains("ocr language eng: available"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stdout.contains("chi_sim"));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with OCR runtime diagnostics");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"ocr_runtime\": {"));
+    assert!(stdout.contains("\"pdftoppm\": \"available\""));
+    assert!(stdout.contains("\"tesseract\": \"available\""));
+    assert!(stdout.contains("\"tesseract_eng\": \"available\""));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stdout.contains("chi_sim"));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_reports_non_executable_ocr_tools_as_missing_without_paths() {
+    let data_dir = temp_dir("diagnostics-ocr-runtime-nonexec-data");
+    let bin_dir = temp_dir("diagnostics-ocr-runtime-nonexec-bin");
+    write_private_file(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with non-executable OCR runtime");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("ocr renderer pdftoppm: missing"));
+    assert!(stdout.contains("ocr engine tesseract: missing"));
+    assert!(stdout.contains("ocr language eng: missing"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+}
+
 #[test]
 fn doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_values() {
     let data_dir = temp_dir("diagnostics-vector-private-data");
@@ -501,4 +587,28 @@ fn path_str(path: &Path) -> &str {
 
 fn remove_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
+}
+
+#[cfg(unix)]
+fn write_executable(directory: &Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = directory.join(name);
+    fs::write(&path, body).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
+}
+
+#[cfg(unix)]
+fn write_private_file(directory: &Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = directory.join(name);
+    fs::write(&path, body).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o600);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
 }
