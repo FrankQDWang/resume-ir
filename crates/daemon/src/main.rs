@@ -18,8 +18,9 @@ use embedder::{
     LocalEmbeddingCommandSpec,
 };
 use import_pipeline::{
-    import_root_with_options, index_ocr_text, rebuild_full_text_index, ImportOptions,
-    ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
+    detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
+    ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary,
+    ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, redact_contact_values, FullTextIndex, SearchHit, SearchQuery,
@@ -34,8 +35,9 @@ use meta_store::{
     ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
-    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
-    OcrPageRequest, OcrWorkerBudget, RenderedPage,
+    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
+    LocalPdfRenderCommandSpec, OcrClient, OcrOptions, OcrPageRequest, OcrWorkerBudget,
+    RenderedPage,
 };
 use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
@@ -334,6 +336,16 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 options.ocr_command = Some(PathBuf::from(value));
                 index += 2;
             }
+            "--ocr-render-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                if options.ocr_render_command.is_some() {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.ocr_render_command = Some(PathBuf::from(value));
+                index += 2;
+            }
             "--ocr-engine-profile" => {
                 options.ocr_engine_profile = parse_non_empty_run_value(args.get(index + 1))?;
                 index += 2;
@@ -458,7 +470,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>] [--ocr-render-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -742,7 +754,7 @@ fn run_claimed_ocr_job(
     command: PathBuf,
     now: UnixTimestamp,
 ) -> Result<OcrWorkerSummary> {
-    let Some(mut document) = store
+    let Some(document) = store
         .document_by_id(&job.document_id)
         .map_err(DaemonError::store)?
     else {
@@ -759,43 +771,6 @@ fn run_claimed_ocr_job(
             ..OcrWorkerSummary::default()
         });
     };
-    let cache_key = OcrPageCacheKey::new(
-        content_hash,
-        1,
-        options.ocr_render_dpi,
-        options.ocr_lang.as_str(),
-        options.ocr_profile.as_str(),
-    )
-    .map_err(DaemonError::store)?;
-
-    if let Some(entry) = store
-        .ocr_page_cache_entry(&cache_key)
-        .map_err(DaemonError::store)?
-        .filter(|entry| entry.status() == OcrPageCacheStatus::Succeeded)
-    {
-        if let Some(text) = entry.text() {
-            if let Err(error) =
-                index_ocr_text(data_dir, store, &document.id, text, entry.confidence(), now)
-            {
-                let _ = mark_ocr_job_failed_retryable(store, job, now);
-                return Err(DaemonError::import(error));
-            }
-        } else {
-            document.status = DocumentStatus::OcrDone;
-            document.updated_at = now;
-            store
-                .upsert_document(&document)
-                .map_err(DaemonError::store)?;
-        }
-        store
-            .update_job_status(&job.id, IngestJobStatus::Completed, now)
-            .map_err(DaemonError::store)?;
-        return Ok(OcrWorkerSummary {
-            processed: 1,
-            cache_hits: 1,
-            ..OcrWorkerSummary::default()
-        });
-    }
 
     let bytes = match fs::read(&document.normalized_path) {
         Ok(bytes) => bytes,
@@ -807,6 +782,17 @@ fn run_claimed_ocr_job(
             });
         }
     };
+    let page_count = match detect_ocr_page_count(&document.extension, &bytes) {
+        Ok(page_count) => page_count,
+        Err(error) => {
+            mark_ocr_job_failed_retryable(store, job, now)?;
+            return Err(DaemonError::import(error));
+        }
+    };
+    let budget = OcrWorkerBudget::new(options.ocr_page_timeout_ms).map_err(DaemonError::ocr)?;
+    let cancellation = CancellationToken::new();
+    let ocr_options = OcrOptions::new(options.ocr_lang.as_str(), options.ocr_profile.as_str())
+        .map_err(DaemonError::ocr)?;
     let client = LocalOcrCommandClient::new(
         LocalOcrCommandSpec::new(
             command,
@@ -815,65 +801,139 @@ fn run_claimed_ocr_job(
         )
         .map_err(DaemonError::ocr)?,
     );
-    let request = OcrPageRequest::new(
-        RenderedPage::new(1, options.ocr_render_dpi, bytes).map_err(DaemonError::ocr)?,
-        OcrOptions::new(options.ocr_lang.as_str(), options.ocr_profile.as_str())
-            .map_err(DaemonError::ocr)?,
-    )
-    .map_err(DaemonError::ocr)?;
+    let renderer = options
+        .ocr_render_command
+        .clone()
+        .map(|render_command| {
+            LocalPdfRenderCommandSpec::new(render_command, Vec::<String>::new())
+                .map(LocalPdfRenderCommandClient::new)
+                .map_err(DaemonError::ocr)
+        })
+        .transpose()?;
 
-    match client.recognize_page(
-        request,
-        OcrWorkerBudget::new(options.ocr_page_timeout_ms).map_err(DaemonError::ocr)?,
-        &CancellationToken::new(),
-    ) {
-        Ok(page) => {
-            let entry = OcrPageCacheEntry::succeeded(
-                cache_key,
-                page.text(),
-                page.confidence(),
-                page.engine_profile(),
-                page.duration_ms(),
-                now,
-            )
-            .map_err(DaemonError::store)?;
-            store
-                .upsert_ocr_page_cache_entry(&entry)
-                .map_err(DaemonError::store)?;
-            if let Err(error) = index_ocr_text(
-                data_dir,
-                store,
-                &document.id,
-                page.text(),
-                Some(page.confidence()),
-                now,
-            ) {
-                let _ = mark_ocr_job_failed_retryable(store, job, now);
-                return Err(DaemonError::import(error));
+    let mut page_texts = Vec::new();
+    let mut confidence_sum = 0.0_f32;
+    let mut confidence_count = 0_usize;
+    let mut cache_writes = 0_usize;
+    let mut cache_hits = 0_usize;
+
+    for page_no in 1..=page_count {
+        let cache_key = OcrPageCacheKey::new(
+            content_hash.clone(),
+            page_no,
+            options.ocr_render_dpi,
+            options.ocr_lang.as_str(),
+            options.ocr_profile.as_str(),
+        )
+        .map_err(DaemonError::store)?;
+
+        if let Some(entry) = store
+            .ocr_page_cache_entry(&cache_key)
+            .map_err(DaemonError::store)?
+            .filter(|entry| entry.status() == OcrPageCacheStatus::Succeeded)
+        {
+            page_texts.push(entry.text().unwrap_or("").to_string());
+            if let Some(confidence) = entry.confidence() {
+                confidence_sum += confidence;
+                confidence_count += 1;
             }
-            store
-                .update_job_status(&job.id, IngestJobStatus::Completed, now)
-                .map_err(DaemonError::store)?;
-            Ok(OcrWorkerSummary {
-                processed: 1,
-                cache_writes: 1,
-                ..OcrWorkerSummary::default()
-            })
+            cache_hits += 1;
+            continue;
         }
-        Err(error) => {
-            let entry =
-                OcrPageCacheEntry::failed_retryable(cache_key, format!("{:?}", error.kind()), now)
+
+        let rendered_page = if let Some(renderer) = &renderer {
+            match renderer.render_page(
+                &bytes,
+                page_no,
+                options.ocr_render_dpi,
+                budget,
+                &cancellation,
+            ) {
+                Ok(rendered_page) => rendered_page,
+                Err(error) => {
+                    let entry = OcrPageCacheEntry::failed_retryable(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
                     .map_err(DaemonError::store)?;
-            store
-                .upsert_ocr_page_cache_entry(&entry)
+                    store
+                        .upsert_ocr_page_cache_entry(&entry)
+                        .map_err(DaemonError::store)?;
+                    mark_ocr_job_failed_retryable(store, job, now)?;
+                    return Ok(OcrWorkerSummary {
+                        failed: 1,
+                        ..OcrWorkerSummary::default()
+                    });
+                }
+            }
+        } else {
+            RenderedPage::new(page_no, options.ocr_render_dpi, bytes.clone())
+                .map_err(DaemonError::ocr)?
+        };
+        let request =
+            OcrPageRequest::new(rendered_page, ocr_options.clone()).map_err(DaemonError::ocr)?;
+
+        let page = match client.recognize_page(request, budget, &cancellation) {
+            Ok(page) => page,
+            Err(error) => {
+                let entry = OcrPageCacheEntry::failed_retryable(
+                    cache_key,
+                    format!("{:?}", error.kind()),
+                    now,
+                )
                 .map_err(DaemonError::store)?;
-            mark_ocr_job_failed_retryable(store, job, now)?;
-            Ok(OcrWorkerSummary {
-                failed: 1,
-                ..OcrWorkerSummary::default()
-            })
-        }
+                store
+                    .upsert_ocr_page_cache_entry(&entry)
+                    .map_err(DaemonError::store)?;
+                mark_ocr_job_failed_retryable(store, job, now)?;
+                return Ok(OcrWorkerSummary {
+                    failed: 1,
+                    ..OcrWorkerSummary::default()
+                });
+            }
+        };
+        let entry = OcrPageCacheEntry::succeeded(
+            cache_key,
+            page.text(),
+            page.confidence(),
+            page.engine_profile(),
+            page.duration_ms(),
+            now,
+        )
+        .map_err(DaemonError::store)?;
+        store
+            .upsert_ocr_page_cache_entry(&entry)
+            .map_err(DaemonError::store)?;
+        page_texts.push(page.text().to_string());
+        confidence_sum += page.confidence();
+        confidence_count += 1;
+        cache_writes += 1;
     }
+
+    let combined_text = page_texts.join("\n");
+    let confidence = (confidence_count > 0).then_some(confidence_sum / confidence_count as f32);
+    if let Err(error) = index_ocr_text(
+        data_dir,
+        store,
+        &document.id,
+        &combined_text,
+        confidence,
+        Some(page_count),
+        now,
+    ) {
+        let _ = mark_ocr_job_failed_retryable(store, job, now);
+        return Err(DaemonError::import(error));
+    }
+    store
+        .update_job_status(&job.id, IngestJobStatus::Completed, now)
+        .map_err(DaemonError::store)?;
+    Ok(OcrWorkerSummary {
+        processed: 1,
+        cache_writes,
+        cache_hits,
+        ..OcrWorkerSummary::default()
+    })
 }
 
 fn mark_ocr_job_failed_retryable(
@@ -2890,6 +2950,7 @@ struct RunOptions {
     work_index_once: bool,
     work_index: bool,
     ocr_command: Option<PathBuf>,
+    ocr_render_command: Option<PathBuf>,
     ocr_engine_profile: String,
     ocr_lang: String,
     ocr_profile: String,
@@ -2921,6 +2982,7 @@ impl Default for RunOptions {
             work_index_once: false,
             work_index: false,
             ocr_command: None,
+            ocr_render_command: None,
             ocr_engine_profile: DEFAULT_OCR_ENGINE_PROFILE.to_string(),
             ocr_lang: DEFAULT_OCR_LANG.to_string(),
             ocr_profile: DEFAULT_OCR_PROFILE.to_string(),

@@ -1,7 +1,7 @@
 use ocr_client::{
     CancellationToken, DisabledOcrWorkerClient, LocalOcrCommandClient, LocalOcrCommandSpec,
-    OcrCacheKey, OcrClient, OcrErrorKind, OcrOptions, OcrPage, OcrPageRequest, OcrWorkerBudget,
-    RenderedPage,
+    LocalPdfRenderCommandClient, LocalPdfRenderCommandSpec, OcrCacheKey, OcrClient, OcrErrorKind,
+    OcrOptions, OcrPage, OcrPageRequest, OcrWorkerBudget, RenderedPage,
 };
 
 #[cfg(unix)]
@@ -110,6 +110,40 @@ printf 'page=%s dpi=%s lang=%s profile=%s bytes=%s\n' \
     assert_eq!(page.confidence(), 0.82);
     assert_eq!(page.engine_profile(), "fixture-engine");
     assert!(!format!("{page:?}").contains("SYNTHETIC IMAGE BYTES"));
+}
+
+#[cfg(unix)]
+#[test]
+fn local_pdf_render_command_returns_page_bytes_without_payload_debug_leaks() {
+    let command = write_fixture_executable(
+        "fixture-pdf-render",
+        r#"#!/bin/sh
+input_size="$(wc -c < "$RESUME_IR_PDF_RENDER_INPUT_PATH" | tr -d ' ')"
+printf 'rendered-page=%s dpi=%s pdf-bytes=%s' \
+  "$RESUME_IR_PDF_RENDER_PAGE_NO" \
+  "$RESUME_IR_PDF_RENDER_DPI" \
+  "$input_size"
+"#,
+    );
+    let client = LocalPdfRenderCommandClient::new(
+        LocalPdfRenderCommandSpec::new(command, Vec::<String>::new()).unwrap(),
+    );
+
+    let rendered = client
+        .render_page(
+            b"SYNTHETIC PDF BYTES",
+            2,
+            300,
+            OcrWorkerBudget::new(5_000).unwrap(),
+            &CancellationToken::new(),
+        )
+        .unwrap();
+
+    assert_eq!(rendered.page_no(), 2);
+    assert_eq!(rendered.render_dpi(), 300);
+    assert_eq!(rendered.bytes(), b"rendered-page=2 dpi=300 pdf-bytes=19");
+    assert!(!format!("{rendered:?}").contains("SYNTHETIC PDF BYTES"));
+    assert!(!format!("{rendered:?}").contains("rendered-page=2"));
 }
 
 #[test]

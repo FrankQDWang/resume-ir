@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S88 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S89 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -73,13 +73,16 @@ obsolete preliminary files and checklists are not product scope.
   distribution, ONNX/HNSW/FAISS or equivalent ANN, semantic quality metrics,
   and real performance proof.
 - P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
-  cache schema, local OCR command client, timeout/cancel/temp cleanup, and OCR
-  text indexing exist. The daemon can now claim queued OCR jobs, execute a
-  configured local OCR command, persist cache entries, index OCR text, honor
-  persistent pause state, and keep serving status IPC while OCR runs. Missing or
-  BLOCKED work includes real PDF page rendering, multi-page OCR, bbox
-  persistence, concrete OCR engine install/license, backpressure, and real
-  scanned-resume witness runs.
+  cache schema, local OCR command client, local PDF page-render command
+  protocol, timeout/cancel/temp cleanup, page-count detection for scanned PDFs,
+  multi-page OCR fan-out, per-page cache entries, and aggregate OCR text
+  indexing exist. The daemon can now claim queued OCR jobs, execute configured
+  local PDF render and OCR commands, persist cache entries for each page, index
+  combined OCR text with page count, honor persistent pause state, and keep
+  serving status IPC while OCR runs. Missing or BLOCKED work includes selecting
+  and installing a concrete PDF renderer/OCR engine with license evidence,
+  real Poppler/PDFium/Tesseract witness runs, bbox persistence, backpressure,
+  full OCR cache/job purge coverage, and real scanned-resume witness runs.
 - P5 packaging/platform: not production-ready. A local CLI service lifecycle
   now writes, reports, removes, and dry-run starts/stops a macOS user
   LaunchAgent plist without CLI path disclosure. Installer packaging, signing,
@@ -196,8 +199,82 @@ obsolete preliminary files and checklists are not product scope.
 | S86 | Product model-governance slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker model_manifest_validate --locked` first failed because `model validate-manifest` was unsupported, then failed after schema tightening because the implementation only accepted a single-model manifest instead of `model_pack_id` plus `models[]`; `./scripts/ci/verify-local.sh` also exposed a daemon scheduler test race where a post-startup queued task could be claimed before its scan scope was written, fixed by using the existing atomic `insert_import_task_with_scan_scope` API in the test helper. After implementation and the stability fix, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/check-runbooks.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local model-pack manifest validation slice and daemon scheduler test stability repair; real licensed OCR/embedding model selection/download/distribution, model quality evaluation, ANN production indexing, semantic/vector quality gates, production model performance proof, and cross-platform release evidence remain not complete or BLOCKED. |
 | S87 | Product search slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_fields_before_fulltext_top_k_cutoff --locked -- --exact` first failed because field filters were applied only after the full-text TopDocs cutoff, causing a synthetic Rust candidate outside the top five unfiltered keyword hits to be missed with `--top-k 1`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p index-fulltext -p meta-store --all-targets --locked -- -D warnings`, `git diff --check`, `./scripts/ci/check-runbooks.sh`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this metadata-indexed field prefilter slice; broader dictionaries, stronger normalization, labeled field F1, ANN/vector quality gates, SQLCipher/encrypted metadata, physical purge, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S88 | Product privacy/delete slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact` first failed because `resume-cli purge` was unsupported; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p index-fulltext -p index-vector -p meta-store --all-targets --locked -- -D warnings`, `git diff --check`, `./scripts/ci/check-runbooks.sh`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this explicit best-effort local deleted-document purge slice; SQLCipher/encrypted metadata, forensic erase, full OCR/cache/job-retention purge coverage, real-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
+| S89 | Product OCR slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_processes_all_scanned_pdf_pages_before_indexing --locked -- --exact` first failed because OCR worker behavior was single-page/cache-write `1`; after implementation, focused CLI, daemon, OCR client, import-pipeline, parser-pdf, fmt, clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local PDF render command protocol and multi-page OCR fan-out slice; concrete PDF renderer/OCR engine install and license evidence, real Poppler/PDFium/Tesseract witness runs, bbox persistence, backpressure, full OCR cache/job purge coverage, real scanned-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S89
+
+Design target:
+
+- Add a local PDF page-render command protocol for scanned PDFs while keeping
+  command paths, input paths, and OCR payloads out of user-visible output.
+- Detect scanned PDF page count, render and OCR each page, persist per-page OCR
+  cache entries, aggregate page text in order, and index one searchable OCR
+  version with the correct page count.
+- Wire the path through both `resume-cli ocr-worker --render-command` and
+  `resume-daemon run --ocr-render-command`.
+- Use synthetic PDF fixtures only; do not claim a concrete Poppler/PDFium/
+  Tesseract integration or real resume witness from this slice.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_processes_all_scanned_pdf_pages_before_indexing --locked -- --exact
+```
+
+Output summary:
+
+- Exit 101 before implementation because the OCR worker processed the scanned
+  PDF as a single page, so the test did not observe two per-page OCR cache
+  writes or two rendered page handoffs before indexing.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_processes_all_scanned_pdf_pages_before_indexing --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-pdf --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p ocr-client -p import-pipeline -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Target RED/GREEN test: exit 0 after implementation.
+- `ocr-client` test suite: exit 0; 15 tests passed, including render command
+  page-byte handoff without debug payload leakage.
+- `s15_ocr_handoff`: exit 0; 9 tests passed, including CLI multi-page OCR
+  fan-out, per-page cache writes, page-count persistence, and searchability.
+- `s50_ocr_worker`: exit 0; 5 tests passed, including daemon multi-page render
+  and OCR fan-out.
+- `cargo fmt --check`: exit 0.
+- `import-pipeline`: exit 0; 5 tests passed plus doc-tests.
+- `parser-pdf`: exit 0; 7 tests passed plus doc-tests.
+- Focused clippy: exit 0.
+- `git diff --check`: exit 0.
+- `check-runbooks.sh`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S89 adds a local command protocol and tested multi-page fan-out path. It does
+  not install or license-review a concrete renderer/OCR engine, persist OCR
+  bounding boxes, prove behavior on real resumes, prove large-corpus OCR
+  throughput, complete OCR cache/job retention purge, or validate Windows/
+  macOS behavior.
+- Full product is still not complete.
 
 ### S88
 

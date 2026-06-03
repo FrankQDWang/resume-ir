@@ -14,8 +14,9 @@ use embedder::{
 };
 use fs4::fs_std::FileExt;
 use import_pipeline::{
-    import_root_with_options, index_ocr_text, rebuild_full_text_index, ImportOptions,
-    ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
+    detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
+    ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary,
+    ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, purge_obsolete_snapshots, redact_contact_values, FullTextIndex,
@@ -34,8 +35,9 @@ use meta_store::{
     ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
-    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrErrorKind,
-    OcrOptions, OcrPageRequest, OcrWorkerBudget, RenderedPage,
+    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
+    LocalPdfRenderCommandSpec, OcrClient, OcrErrorKind, OcrOptions, OcrPageRequest,
+    OcrWorkerBudget, RenderedPage,
 };
 use privacy::inspect_contact_hash_key;
 use rank_fusion::{
@@ -3914,7 +3916,7 @@ fn run_claimed_ocr_job(
     command: PathBuf,
     now: UnixTimestamp,
 ) -> Result<OcrWorkerSummary> {
-    let Some(mut document) = store
+    let Some(document) = store
         .document_by_id(&job.document_id)
         .map_err(CliError::store)?
     else {
@@ -3927,40 +3929,14 @@ fn run_claimed_ocr_job(
         .content_hash
         .clone()
         .ok_or_else(|| CliError::user("ocr worker document is missing content hash"))?;
-    let cache_key = OcrPageCacheKey::new(
-        content_hash,
-        1,
-        worker_args.render_dpi,
-        worker_args.lang.as_str(),
-        worker_args.profile.as_str(),
-    )
-    .map_err(CliError::store)?;
-
-    if let Some(entry) = store
-        .ocr_page_cache_entry(&cache_key)
-        .map_err(CliError::store)?
-        .filter(|entry| entry.status() == meta_store::OcrPageCacheStatus::Succeeded)
-    {
-        if let Some(text) = entry.text() {
-            let _ = index_ocr_text(data_dir, store, &document.id, text, entry.confidence(), now)
-                .map_err(CliError::import)?;
-        } else {
-            document.status = DocumentStatus::OcrDone;
-            document.updated_at = now;
-            store.upsert_document(&document).map_err(CliError::store)?;
-        }
-        store
-            .update_job_status(&job.id, IngestJobStatus::Completed, now)
-            .map_err(CliError::store)?;
-        return Ok(OcrWorkerSummary {
-            documents_processed: 1,
-            cache_writes: 0,
-            cache_hits: 1,
-        });
-    }
-
     let bytes = fs::read(&document.normalized_path)
         .map_err(|_| CliError::user("ocr worker could not read document bytes"))?;
+    let page_count =
+        detect_ocr_page_count(&document.extension, &bytes).map_err(CliError::import)?;
+    let budget = OcrWorkerBudget::new(worker_args.page_timeout_ms).map_err(CliError::ocr)?;
+    let cancellation = CancellationToken::new();
+    let options = OcrOptions::new(worker_args.lang.as_str(), worker_args.profile.as_str())
+        .map_err(CliError::ocr)?;
     let client = LocalOcrCommandClient::new(
         LocalOcrCommandSpec::new(
             command,
@@ -3969,64 +3945,137 @@ fn run_claimed_ocr_job(
         )
         .map_err(CliError::ocr)?,
     );
-    let request = OcrPageRequest::new(
-        RenderedPage::new(1, worker_args.render_dpi, bytes).map_err(CliError::ocr)?,
-        OcrOptions::new(worker_args.lang.as_str(), worker_args.profile.as_str())
-            .map_err(CliError::ocr)?,
-    )
-    .map_err(CliError::ocr)?;
+    let renderer = worker_args
+        .render_command
+        .clone()
+        .map(|render_command| {
+            LocalPdfRenderCommandSpec::new(render_command, Vec::<String>::new())
+                .map(LocalPdfRenderCommandClient::new)
+                .map_err(CliError::ocr)
+        })
+        .transpose()?;
 
-    match client.recognize_page(
-        request,
-        OcrWorkerBudget::new(worker_args.page_timeout_ms).map_err(CliError::ocr)?,
-        &CancellationToken::new(),
-    ) {
-        Ok(page) => {
-            let entry = OcrPageCacheEntry::succeeded(
-                cache_key,
-                page.text(),
-                page.confidence(),
-                page.engine_profile(),
-                page.duration_ms(),
-                now,
-            )
-            .map_err(CliError::store)?;
-            store
-                .upsert_ocr_page_cache_entry(&entry)
-                .map_err(CliError::store)?;
-            let _ = index_ocr_text(
-                data_dir,
-                store,
-                &document.id,
-                page.text(),
-                Some(page.confidence()),
-                now,
-            )
-            .map_err(CliError::import)?;
-            store
-                .update_job_status(&job.id, IngestJobStatus::Completed, now)
-                .map_err(CliError::store)?;
-            Ok(OcrWorkerSummary {
-                documents_processed: 1,
-                cache_writes: 1,
-                cache_hits: 0,
-            })
+    let mut page_texts = Vec::new();
+    let mut confidence_sum = 0.0_f32;
+    let mut confidence_count = 0_usize;
+    let mut cache_writes = 0_usize;
+    let mut cache_hits = 0_usize;
+
+    for page_no in 1..=page_count {
+        let cache_key = OcrPageCacheKey::new(
+            content_hash.clone(),
+            page_no,
+            worker_args.render_dpi,
+            worker_args.lang.as_str(),
+            worker_args.profile.as_str(),
+        )
+        .map_err(CliError::store)?;
+
+        if let Some(entry) = store
+            .ocr_page_cache_entry(&cache_key)
+            .map_err(CliError::store)?
+            .filter(|entry| entry.status() == meta_store::OcrPageCacheStatus::Succeeded)
+        {
+            page_texts.push(entry.text().unwrap_or("").to_string());
+            if let Some(confidence) = entry.confidence() {
+                confidence_sum += confidence;
+                confidence_count += 1;
+            }
+            cache_hits += 1;
+            continue;
         }
-        Err(error) => {
-            let entry =
-                OcrPageCacheEntry::failed_retryable(cache_key, format!("{:?}", error.kind()), now)
+
+        let rendered_page = if let Some(renderer) = &renderer {
+            match renderer.render_page(
+                &bytes,
+                page_no,
+                worker_args.render_dpi,
+                budget,
+                &cancellation,
+            ) {
+                Ok(rendered_page) => rendered_page,
+                Err(error) => {
+                    let entry = OcrPageCacheEntry::failed_retryable(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
                     .map_err(CliError::store)?;
-            store
-                .upsert_ocr_page_cache_entry(&entry)
+                    store
+                        .upsert_ocr_page_cache_entry(&entry)
+                        .map_err(CliError::store)?;
+                    store
+                        .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+                        .map_err(CliError::store)?;
+                    return Err(CliError::user(
+                        "ocr worker blocked: local OCR command failed or unavailable",
+                    ));
+                }
+            }
+        } else {
+            RenderedPage::new(page_no, worker_args.render_dpi, bytes.clone())
+                .map_err(CliError::ocr)?
+        };
+        let request = OcrPageRequest::new(rendered_page, options.clone()).map_err(CliError::ocr)?;
+
+        let page = match client.recognize_page(request, budget, &cancellation) {
+            Ok(page) => page,
+            Err(error) => {
+                let entry = OcrPageCacheEntry::failed_retryable(
+                    cache_key,
+                    format!("{:?}", error.kind()),
+                    now,
+                )
                 .map_err(CliError::store)?;
-            store
-                .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
-                .map_err(CliError::store)?;
-            Err(CliError::user(
-                "ocr worker blocked: local OCR command failed or unavailable",
-            ))
-        }
+                store
+                    .upsert_ocr_page_cache_entry(&entry)
+                    .map_err(CliError::store)?;
+                store
+                    .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+                    .map_err(CliError::store)?;
+                return Err(CliError::user(
+                    "ocr worker blocked: local OCR command failed or unavailable",
+                ));
+            }
+        };
+        let entry = OcrPageCacheEntry::succeeded(
+            cache_key,
+            page.text(),
+            page.confidence(),
+            page.engine_profile(),
+            page.duration_ms(),
+            now,
+        )
+        .map_err(CliError::store)?;
+        store
+            .upsert_ocr_page_cache_entry(&entry)
+            .map_err(CliError::store)?;
+        page_texts.push(page.text().to_string());
+        confidence_sum += page.confidence();
+        confidence_count += 1;
+        cache_writes += 1;
     }
+
+    let combined_text = page_texts.join("\n");
+    let confidence = (confidence_count > 0).then_some(confidence_sum / confidence_count as f32);
+    let _ = index_ocr_text(
+        data_dir,
+        store,
+        &document.id,
+        &combined_text,
+        confidence,
+        Some(page_count),
+        now,
+    )
+    .map_err(CliError::import)?;
+    store
+        .update_job_status(&job.id, IngestJobStatus::Completed, now)
+        .map_err(CliError::store)?;
+    Ok(OcrWorkerSummary {
+        documents_processed: 1,
+        cache_writes,
+        cache_hits,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4039,6 +4088,7 @@ struct OcrWorkerSummary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OcrWorkerArgs {
     command: Option<PathBuf>,
+    render_command: Option<PathBuf>,
     engine_profile: String,
     lang: String,
     profile: String,
@@ -4049,6 +4099,7 @@ struct OcrWorkerArgs {
 fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
     let mut seen_once = false;
     let mut command = None;
+    let mut render_command = None;
     let mut engine_profile = "local-command".to_string();
     let mut lang = "eng".to_string();
     let mut profile = "balanced".to_string();
@@ -4074,6 +4125,17 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
                     return Err(ocr_worker_usage());
                 }
                 command = Some(PathBuf::from(value));
+                index += 1;
+            }
+            "--render-command" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(ocr_worker_usage());
+                };
+                if render_command.is_some() {
+                    return Err(ocr_worker_usage());
+                }
+                render_command = Some(PathBuf::from(value));
                 index += 1;
             }
             "--engine-profile" => {
@@ -4143,6 +4205,7 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
 
     Ok(OcrWorkerArgs {
         command,
+        render_command,
         engine_profile,
         lang,
         profile,
@@ -4153,7 +4216,7 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
 
 fn ocr_worker_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli ocr-worker --once [--command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>]",
+        "usage: resume-cli ocr-worker --once [--command <path>] [--render-command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>]",
     )
 }
 

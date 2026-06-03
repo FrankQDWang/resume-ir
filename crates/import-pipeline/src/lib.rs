@@ -304,6 +304,7 @@ pub fn index_ocr_text(
     document_id: &DocumentId,
     ocr_text: &str,
     confidence: Option<f32>,
+    page_count: Option<u32>,
     now: UnixTimestamp,
 ) -> Result<OcrTextIndexSummary> {
     let Some(mut document) = store
@@ -351,7 +352,7 @@ pub fn index_ocr_text(
             parse_version: OCR_PARSE_VERSION.to_string(),
             schema_version: SCHEMA_VERSION.to_string(),
             language_set: language_set(&clean_text),
-            page_count: Some(1),
+            page_count,
             raw_text: Some(ocr_text.to_string()),
             clean_text: Some(clean_text.clone()),
             quality_score: Some(confidence.unwrap_or(0.5)),
@@ -391,6 +392,24 @@ pub fn index_ocr_text(
         searchable: true,
         indexed_documents,
     })
+}
+
+pub fn detect_ocr_page_count(extension: &FileExtension, bytes: &[u8]) -> Result<u32> {
+    if !matches!(extension, FileExtension::Pdf) {
+        return Ok(1);
+    }
+
+    let output = PdfParser
+        .parse(
+            ParseInput::from_bytes(Some("pdf"), bytes),
+            ResourceBudget::default(),
+        )
+        .map_err(ImportPipelineError::parser)?;
+    Ok(output
+        .page_count()
+        .and_then(|page_count| u32::try_from(page_count).ok())
+        .filter(|page_count| *page_count > 0)
+        .unwrap_or(1))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1137,6 +1156,13 @@ impl ImportPipelineError {
             retryable: false,
         }
     }
+
+    fn parser(_error: parser_common::ParserError) -> Self {
+        Self {
+            kind: ImportPipelineErrorKind::Parser,
+            retryable: true,
+        }
+    }
 }
 
 impl fmt::Debug for ImportPipelineError {
@@ -1159,6 +1185,7 @@ impl fmt::Display for ImportPipelineError {
             ImportPipelineErrorKind::Privacy => {
                 formatter.write_str("contact privacy boundary failed")
             }
+            ImportPipelineErrorKind::Parser => formatter.write_str("document parser failed"),
         }
     }
 }
@@ -1172,6 +1199,7 @@ enum ImportPipelineErrorKind {
     Crawl,
     Index,
     Privacy,
+    Parser,
 }
 
 #[cfg(test)]
