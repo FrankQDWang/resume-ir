@@ -37,7 +37,7 @@ use meta_store::{
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
     LocalPdfRenderCommandSpec, OcrClient, OcrErrorKind, OcrOptions, OcrPageRequest,
-    OcrWorkerBudget, RenderedPage,
+    OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage,
 };
 use privacy::inspect_contact_hash_key;
 use rank_fusion::{
@@ -3978,6 +3978,15 @@ fn run_claimed_ocr_job(
                 .map_err(CliError::ocr)
         })
         .transpose()?;
+    let pdftoppm_renderer = worker_args
+        .pdftoppm_command
+        .clone()
+        .map(|pdftoppm_command| {
+            PdftoppmRenderSpec::new(pdftoppm_command)
+                .map(PdftoppmPdfRenderer::new)
+                .map_err(CliError::ocr)
+        })
+        .transpose()?;
 
     let mut page_texts = Vec::new();
     let mut confidence_sum = 0.0_f32;
@@ -4010,6 +4019,33 @@ fn run_claimed_ocr_job(
         }
 
         let rendered_page = if let Some(renderer) = &renderer {
+            match renderer.render_page(
+                &bytes,
+                page_no,
+                worker_args.render_dpi,
+                budget,
+                &cancellation,
+            ) {
+                Ok(rendered_page) => rendered_page,
+                Err(error) => {
+                    let entry = OcrPageCacheEntry::failed_retryable(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
+                    .map_err(CliError::store)?;
+                    store
+                        .upsert_ocr_page_cache_entry(&entry)
+                        .map_err(CliError::store)?;
+                    store
+                        .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+                        .map_err(CliError::store)?;
+                    return Err(CliError::user(
+                        "ocr worker blocked: local OCR command failed or unavailable",
+                    ));
+                }
+            }
+        } else if let Some(renderer) = &pdftoppm_renderer {
             match renderer.render_page(
                 &bytes,
                 page_no,
@@ -4113,6 +4149,7 @@ struct OcrWorkerSummary {
 struct OcrWorkerArgs {
     command: Option<PathBuf>,
     render_command: Option<PathBuf>,
+    pdftoppm_command: Option<PathBuf>,
     engine_profile: String,
     lang: String,
     profile: String,
@@ -4124,6 +4161,7 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
     let mut seen_once = false;
     let mut command = None;
     let mut render_command = None;
+    let mut pdftoppm_command = None;
     let mut engine_profile = "local-command".to_string();
     let mut lang = "eng".to_string();
     let mut profile = "balanced".to_string();
@@ -4160,6 +4198,17 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
                     return Err(ocr_worker_usage());
                 }
                 render_command = Some(PathBuf::from(value));
+                index += 1;
+            }
+            "--pdftoppm-command" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(ocr_worker_usage());
+                };
+                if pdftoppm_command.is_some() {
+                    return Err(ocr_worker_usage());
+                }
+                pdftoppm_command = Some(PathBuf::from(value));
                 index += 1;
             }
             "--engine-profile" => {
@@ -4226,10 +4275,14 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
     if !seen_once {
         return Err(ocr_worker_usage());
     }
+    if render_command.is_some() && pdftoppm_command.is_some() {
+        return Err(ocr_worker_usage());
+    }
 
     Ok(OcrWorkerArgs {
         command,
         render_command,
+        pdftoppm_command,
         engine_profile,
         lang,
         profile,
@@ -4240,7 +4293,7 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
 
 fn ocr_worker_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli ocr-worker --once [--command <path>] [--render-command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>]",
+        "usage: resume-cli ocr-worker --once [--command <path>] [--render-command <path>|--pdftoppm-command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>]",
     )
 }
 

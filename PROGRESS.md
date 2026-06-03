@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S90 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S91 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -75,17 +75,19 @@ obsolete preliminary files and checklists are not product scope.
   and real performance proof.
 - P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
   cache schema, local OCR command client, local PDF page-render command
-  protocol, timeout/cancel/temp cleanup, page-count detection for scanned PDFs,
-  multi-page OCR fan-out, per-page cache entries, and aggregate OCR text
-  indexing exist. The daemon can now claim queued OCR jobs, execute configured
-  local PDF render and OCR commands, persist cache entries for each page, index
-  combined OCR text with page count, honor persistent pause state, and keep
-  serving status IPC while OCR runs. Deleted-document purge now removes current
-  OCR jobs and current OCR page-cache entries that are no longer shared by
-  visible documents. Missing or BLOCKED work includes selecting and installing
-  a concrete PDF renderer/OCR engine with license evidence, real Poppler/
-  PDFium/Tesseract witness runs, bbox persistence, backpressure, and real
-  scanned-resume witness runs.
+  protocol, local Poppler `pdftoppm` PDF renderer adapter, timeout/cancel/temp
+  cleanup, page-count detection for scanned PDFs, multi-page OCR fan-out,
+  per-page cache entries, and aggregate OCR text indexing exist. The CLI and
+  daemon can now claim queued OCR jobs, render valid PDF pages through local
+  `pdftoppm` when configured, execute local OCR commands on the rendered PPM,
+  persist cache entries for each page, index combined OCR text with page count,
+  honor persistent pause state, and keep serving status IPC while OCR runs.
+  Deleted-document purge now removes current OCR jobs and current OCR
+  page-cache entries that are no longer shared by visible documents. Missing
+  or BLOCKED work includes selecting and installing a concrete OCR recognition
+  engine with license evidence, Tesseract or equivalent real-recognition
+  witness runs, OCR/renderer distribution policy, bbox persistence,
+  backpressure, and real scanned-resume witness runs.
 - P5 packaging/platform: not production-ready. A local CLI service lifecycle
   now writes, reports, removes, and dry-run starts/stops a macOS user
   LaunchAgent plist without CLI path disclosure. Installer packaging, signing,
@@ -204,8 +206,95 @@ obsolete preliminary files and checklists are not product scope.
 | S88 | Product privacy/delete slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact` first failed because `resume-cli purge` was unsupported; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p index-fulltext -p index-vector -p meta-store --all-targets --locked -- -D warnings`, `git diff --check`, `./scripts/ci/check-runbooks.sh`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this explicit best-effort local deleted-document purge slice; SQLCipher/encrypted metadata, forensic erase, full OCR/cache/job-retention purge coverage, real-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S89 | Product OCR slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_processes_all_scanned_pdf_pages_before_indexing --locked -- --exact` first failed because OCR worker behavior was single-page/cache-write `1`; after implementation, focused CLI, daemon, OCR client, import-pipeline, parser-pdf, fmt, clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local PDF render command protocol and multi-page OCR fan-out slice; concrete PDF renderer/OCR engine install and license evidence, real Poppler/PDFium/Tesseract witness runs, bbox persistence, backpressure, full OCR cache/job purge coverage, real scanned-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S90 | Product privacy/delete slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact` first failed after the test was tightened because `purge --deleted` did not report or remove OCR cache/job retention surfaces; after implementation, the focused RED/GREEN test, full `s14_delete_search`, `meta-store`, focused clippy, fmt, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this current OCR cache/job purge slice; SQLCipher/encrypted metadata, forensic erase, future OCR bbox purge surfaces, real-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
+| S91 | Product OCR slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client pdftoppm_renderer_renders_valid_pdf_page_to_ppm_without_payload_debug_leaks --locked -- --exact` first failed because `PdftoppmPdfRenderer` and `PdftoppmRenderSpec` did not exist; after implementation, OCR client, CLI handoff, daemon worker, fmt, focused clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local Poppler `pdftoppm` renderer adapter and CLI/daemon worker wiring slice; Tesseract or equivalent real OCR recognition engine, renderer/OCR distribution policy, bbox persistence, backpressure, real scanned-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S91
+
+Design target:
+
+- Add a concrete local Poppler `pdftoppm` PDF page renderer adapter that writes
+  private temp PDF input and private temp PPM output, bounds captured output,
+  observes timeout/cancellation, and keeps payloads/paths out of debug and
+  user-visible output.
+- Wire the renderer through `resume-cli ocr-worker --pdftoppm-command` and
+  `resume-daemon run --ocr-pdftoppm-command`, with mutual exclusion against the
+  existing generic render-command path.
+- Prove the path with valid synthetic PDF bytes rendered to PPM before the OCR
+  command receives the page input. Install `poppler-utils` in PR CI so hosted
+  tests exercise the real renderer instead of skipping for a missing binary.
+- Use synthetic fixtures only; do not claim Tesseract or real OCR recognition
+  engine completion from this slice.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client pdftoppm_renderer_renders_valid_pdf_page_to_ppm_without_payload_debug_leaks --locked -- --exact
+```
+
+Output summary:
+
+- Exit 101 before implementation because `PdftoppmPdfRenderer` and
+  `PdftoppmRenderSpec` were unresolved imports.
+
+Additional wiring RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker daemon_ocr_worker_once_uses_pdftoppm_renderer_for_valid_pdf_before_ocr --locked -- --exact
+```
+
+Output summary:
+
+- Exit 101 after adding the daemon integration test because `RunOptions` did
+  not yet have `ocr_pdftoppm_command`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p ocr-client -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `ocr-client` test suite: exit 0; 16 tests passed, including the Poppler
+  `pdftoppm` renderer witness that produced a `P6` PPM page from a valid
+  synthetic PDF.
+- `s15_ocr_handoff`: exit 0; 10 tests passed, including CLI worker handoff
+  from `pdftoppm` PPM bytes to OCR command/cache/search without token/path
+  leakage.
+- `s50_ocr_worker`: exit 0; 6 tests passed, including daemon one-shot worker
+  handoff from `pdftoppm` PPM bytes to OCR command/cache/search without
+  token/path leakage.
+- `cargo fmt --check`: exit 0 after formatting.
+- Focused clippy: exit 0.
+- `git diff --check`: exit 0.
+- `check-runbooks.sh`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S91 proves the local Poppler renderer adapter and CLI/daemon worker wiring
+  on valid synthetic PDFs when `pdftoppm` is installed. It does not install,
+  select, or license-review a real OCR recognition engine; local OCR text
+  recognition remains through the existing command protocol and synthetic test
+  commands.
+- It does not persist OCR bounding boxes, prove behavior on real resumes, prove
+  large-corpus OCR throughput, define final renderer/OCR distribution policy,
+  or validate Windows/macOS behavior.
+- Full product is still not complete.
 
 ### S90
 

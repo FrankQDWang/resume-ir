@@ -32,6 +32,11 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
+      - name: Install OCR renderer dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+
       - name: Metadata
         run: cargo metadata --no-deps --locked
 

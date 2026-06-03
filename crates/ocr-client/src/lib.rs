@@ -250,6 +250,97 @@ impl LocalPdfRenderCommandClient {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+pub struct PdftoppmRenderSpec {
+    program: PathBuf,
+}
+
+impl PdftoppmRenderSpec {
+    pub fn new(program: impl Into<PathBuf>) -> Result<Self, OcrError> {
+        let program = program.into();
+        if program.as_os_str().is_empty() {
+            return Err(OcrError::new(OcrErrorKind::InvalidRequest));
+        }
+
+        Ok(Self { program })
+    }
+}
+
+impl fmt::Debug for PdftoppmRenderSpec {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PdftoppmRenderSpec")
+            .field("program", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PdftoppmPdfRenderer {
+    spec: PdftoppmRenderSpec,
+}
+
+impl PdftoppmPdfRenderer {
+    pub fn new(spec: PdftoppmRenderSpec) -> Self {
+        Self { spec }
+    }
+
+    pub fn render_page(
+        &self,
+        document_bytes: &[u8],
+        page_no: u32,
+        render_dpi: u32,
+        budget: OcrWorkerBudget,
+        cancellation: &CancellationToken,
+    ) -> Result<RenderedPage, OcrError> {
+        if page_no == 0 || render_dpi == 0 {
+            return Err(OcrError::new(OcrErrorKind::InvalidRequest));
+        }
+        if cancellation.is_cancelled() {
+            return Err(OcrError::new(OcrErrorKind::Cancelled));
+        }
+
+        let input = OcrTempInput::write(document_bytes)?;
+        let output = OcrTempOutputPrefix::new()?;
+        let mut child = spawn_pdftoppm_command(
+            &self.spec,
+            page_no,
+            render_dpi,
+            input.path(),
+            output.prefix(),
+        )?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
+        let stdout_reader = spawn_output_reader(stdout, OCR_OUTPUT_MAX_BYTES);
+        let stderr_reader = spawn_output_reader(stderr, OCR_OUTPUT_MAX_BYTES);
+
+        let status = match wait_for_ocr_child(&mut child, budget, cancellation) {
+            Ok(status) => status,
+            Err(error) => {
+                let _ = join_output_reader(stdout_reader);
+                let _ = join_output_reader(stderr_reader);
+                return Err(error);
+            }
+        };
+        #[cfg(unix)]
+        terminate_process_group(child.id());
+        let _stdout = join_output_reader(stdout_reader)?;
+        let _stderr = join_output_reader(stderr_reader)?;
+        if !status.success() {
+            return Err(OcrError::new(OcrErrorKind::EngineFailed));
+        }
+
+        let page_bytes = read_rendered_ppm(&output.ppm_path())?;
+        RenderedPage::new(page_no, render_dpi, page_bytes)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct OcrCacheKey {
     file_content_hash: String,
     page_no: u32,
@@ -638,6 +729,38 @@ fn spawn_pdf_render_command(
     })
 }
 
+fn spawn_pdftoppm_command(
+    spec: &PdftoppmRenderSpec,
+    page_no: u32,
+    render_dpi: u32,
+    input_path: &Path,
+    output_prefix: &Path,
+) -> Result<Child, OcrError> {
+    let mut command = Command::new(&spec.program);
+    command
+        .arg("-q")
+        .arg("-f")
+        .arg(page_no.to_string())
+        .arg("-l")
+        .arg(page_no.to_string())
+        .arg("-r")
+        .arg(render_dpi.to_string())
+        .arg("-singlefile")
+        .arg(input_path.as_os_str())
+        .arg(output_prefix.as_os_str())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_process_isolation(&mut command);
+
+    command.spawn().map_err(|error| match error.kind() {
+        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {
+            OcrError::new(OcrErrorKind::WorkerUnavailable)
+        }
+        _ => OcrError::new(OcrErrorKind::EngineFailed),
+    })
+}
+
 #[cfg(unix)]
 fn configure_process_isolation(command: &mut Command) {
     command.process_group(0);
@@ -794,6 +917,17 @@ fn join_output_reader(handle: JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8>
         .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))
 }
 
+fn read_rendered_ppm(path: &Path) -> Result<Vec<u8>, OcrError> {
+    let file = fs::File::open(path).map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?;
+    let bytes = read_all_limited(file, OCR_RENDER_OUTPUT_MAX_BYTES)
+        .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?;
+    if bytes.is_empty() {
+        Err(OcrError::new(OcrErrorKind::EngineFailed))
+    } else {
+        Ok(bytes)
+    }
+}
+
 fn parse_ocr_output(
     page_no: u32,
     stdout: &[u8],
@@ -885,6 +1019,47 @@ impl Drop for OcrTempInput {
         if let Some(directory) = self.path.parent() {
             let _ = fs::remove_dir(directory);
         }
+    }
+}
+
+struct OcrTempOutputPrefix {
+    directory: PathBuf,
+    prefix: PathBuf,
+}
+
+impl OcrTempOutputPrefix {
+    fn new() -> Result<Self, OcrError> {
+        for attempt in 0..32 {
+            let directory = std::env::temp_dir().join(format!(
+                "resume-ir-pdf-render-output-{}-{}-{attempt}",
+                std::process::id(),
+                unique_nanos()
+            ));
+            match create_private_temp_dir(&directory) {
+                Ok(()) => {
+                    let prefix = directory.join("page");
+                    return Ok(Self { directory, prefix });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(_) => return Err(OcrError::new(OcrErrorKind::WorkerUnavailable)),
+            }
+        }
+
+        Err(OcrError::new(OcrErrorKind::WorkerUnavailable))
+    }
+
+    fn prefix(&self) -> &Path {
+        &self.prefix
+    }
+
+    fn ppm_path(&self) -> PathBuf {
+        self.directory.join("page.ppm")
+    }
+}
+
+impl Drop for OcrTempOutputPrefix {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.directory);
     }
 }
 

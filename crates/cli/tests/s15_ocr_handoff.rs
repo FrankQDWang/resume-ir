@@ -459,6 +459,131 @@ esac
 
 #[cfg(unix)]
 #[test]
+fn ocr_worker_uses_pdftoppm_renderer_for_valid_pdf_before_ocr() {
+    let Some(pdftoppm) = find_command("pdftoppm") else {
+        eprintln!("skipping pdftoppm CLI worker witness because pdftoppm is not installed");
+        return;
+    };
+    let data_dir = temp_dir("ocr-worker-pdftoppm-data");
+    let fixture_root = temp_dir("ocr-worker-pdftoppm-fixtures");
+    std::fs::write(
+        fixture_root.join("synthetic-scanned-resume.pdf"),
+        valid_blank_pdf_bytes(),
+    )
+    .unwrap();
+    let command = write_fixture_executable(
+        "fixture-ocr-worker-pdftoppm",
+        r#"#!/bin/sh
+header="$(head -c 2 "$RESUME_IR_OCR_INPUT_PATH")"
+if [ "$header" != "P6" ]; then
+  printf 'PRIVATE_UNEXPECTED_PDFFTOPPM_OCR_INPUT_%s\n' "$header"
+  exit 19
+fi
+if [ "$RESUME_IR_OCR_PAGE_NO" != "1" ]; then
+  printf 'PRIVATE_UNEXPECTED_PDFFTOPPM_OCR_PAGE_%s\n' "$RESUME_IR_OCR_PAGE_NO"
+  exit 20
+fi
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.87\n'
+printf 'text:\n'
+printf 'S91PdftoppmRenderedToken rendered page text\n'
+"#,
+    );
+    import_fixtures(&data_dir, &fixture_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+            "--pdftoppm-command",
+            path_str(&pdftoppm),
+            "--engine-profile",
+            "fixture-pdftoppm-engine",
+            "--render-dpi",
+            "72",
+        ])
+        .output()
+        .expect("run ocr worker with pdftoppm renderer");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr worker: completed"));
+    assert!(stdout.contains("documents processed: 1"));
+    assert!(stdout.contains("cache writes: 1"));
+    assert!(stdout.contains("cache hits: 0"));
+    assert!(!stdout.contains("S91PdftoppmRenderedToken"));
+    assert!(!stdout.contains("PRIVATE_UNEXPECTED_PDFFTOPPM"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains(path_str(&pdftoppm)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::Searchable);
+    assert!(store.retryable_jobs().unwrap().is_empty());
+    let cache_key = OcrPageCacheKey::new(
+        scanned.content_hash.expect("content hash"),
+        1,
+        72,
+        "eng",
+        "balanced",
+    )
+    .unwrap();
+    let cache_entry = store
+        .ocr_page_cache_entry(&cache_key)
+        .unwrap()
+        .expect("OCR cache entry");
+    assert_eq!(cache_entry.status(), OcrPageCacheStatus::Succeeded);
+    assert_eq!(cache_entry.confidence(), Some(0.87));
+    assert_eq!(
+        cache_entry.engine_profile(),
+        Some("fixture-pdftoppm-engine")
+    );
+    assert!(cache_entry
+        .text()
+        .unwrap()
+        .contains("S91PdftoppmRenderedToken"));
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "S91PdftoppmRenderedToken",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run resume-cli search for pdftoppm OCR text");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(
+        search_stdout.contains("results: 1"),
+        "stdout:\n{search_stdout}"
+    );
+    assert!(search_stdout.contains("synthetic-scanned-resume.pdf"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&fixture_root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
+}
+
+#[cfg(unix)]
+#[test]
 fn ocr_worker_command_crash_records_retryable_failure_without_leaking_outputs() {
     let data_dir = temp_dir("ocr-worker-crash-data");
     let fixture_root = fixture_root();
@@ -771,6 +896,39 @@ endstream endobj
 q 10 0 0 10 0 0 cm /Im2 Do Q
 endstream endobj
 %%EOF"
+}
+
+#[cfg(unix)]
+fn find_command(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|path| path.join(name))
+            .find(|path| path.exists())
+    })
+}
+
+#[cfg(unix)]
+fn valid_blank_pdf_bytes() -> Vec<u8> {
+    let mut output = Vec::new();
+    output.extend_from_slice(b"%PDF-1.4\n");
+    let object_1 = output.len();
+    output.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    let object_2 = output.len();
+    output.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+    let object_3 = output.len();
+    output.extend_from_slice(
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources << >> >>\nendobj\n",
+    );
+    let xref = output.len();
+    output.extend_from_slice(b"xref\n0 4\n");
+    output.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in [object_1, object_2, object_3] {
+        output.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    output.extend_from_slice(
+        format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    output
 }
 
 fn temp_dir(label: &str) -> PathBuf {

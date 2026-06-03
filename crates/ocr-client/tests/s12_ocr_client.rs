@@ -1,7 +1,8 @@
 use ocr_client::{
     CancellationToken, DisabledOcrWorkerClient, LocalOcrCommandClient, LocalOcrCommandSpec,
     LocalPdfRenderCommandClient, LocalPdfRenderCommandSpec, OcrCacheKey, OcrClient, OcrErrorKind,
-    OcrOptions, OcrPage, OcrPageRequest, OcrWorkerBudget, RenderedPage,
+    OcrOptions, OcrPage, OcrPageRequest, OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec,
+    RenderedPage,
 };
 
 #[cfg(unix)]
@@ -144,6 +145,38 @@ printf 'rendered-page=%s dpi=%s pdf-bytes=%s' \
     assert_eq!(rendered.bytes(), b"rendered-page=2 dpi=300 pdf-bytes=19");
     assert!(!format!("{rendered:?}").contains("SYNTHETIC PDF BYTES"));
     assert!(!format!("{rendered:?}").contains("rendered-page=2"));
+}
+
+#[cfg(unix)]
+#[test]
+fn pdftoppm_renderer_renders_valid_pdf_page_to_ppm_without_payload_debug_leaks() {
+    let Some(pdftoppm) = find_command("pdftoppm") else {
+        eprintln!("skipping pdftoppm renderer witness because pdftoppm is not installed");
+        return;
+    };
+    let renderer =
+        PdftoppmPdfRenderer::new(PdftoppmRenderSpec::new(pdftoppm).expect("pdftoppm spec"));
+    let pdf_bytes = valid_blank_pdf_bytes();
+
+    let rendered = renderer
+        .render_page(
+            &pdf_bytes,
+            1,
+            72,
+            OcrWorkerBudget::new(5_000).unwrap(),
+            &CancellationToken::new(),
+        )
+        .unwrap();
+
+    assert_eq!(rendered.page_no(), 1);
+    assert_eq!(rendered.render_dpi(), 72);
+    assert!(
+        rendered.bytes().starts_with(b"P6\n72 72\n255\n"),
+        "unexpected PPM header: {:?}",
+        &rendered.bytes()[..rendered.bytes().len().min(32)]
+    );
+    assert!(!format!("{rendered:?}").contains("%PDF"));
+    assert!(!format!("{rendered:?}").contains("P6\n72 72"));
 }
 
 #[test]
@@ -392,6 +425,39 @@ fn ocr_request(page_no: u32, bytes: Vec<u8>) -> OcrPageRequest {
         OcrOptions::new("eng", "balanced").unwrap(),
     )
     .unwrap()
+}
+
+#[cfg(unix)]
+fn find_command(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|path| path.join(name))
+            .find(|path| path.exists())
+    })
+}
+
+#[cfg(unix)]
+fn valid_blank_pdf_bytes() -> Vec<u8> {
+    let mut output = Vec::new();
+    output.extend_from_slice(b"%PDF-1.4\n");
+    let object_1 = output.len();
+    output.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    let object_2 = output.len();
+    output.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+    let object_3 = output.len();
+    output.extend_from_slice(
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources << >> >>\nendobj\n",
+    );
+    let xref = output.len();
+    output.extend_from_slice(b"xref\n0 4\n");
+    output.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in [object_1, object_2, object_3] {
+        output.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    output.extend_from_slice(
+        format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    output
 }
 
 #[cfg(unix)]

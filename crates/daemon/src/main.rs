@@ -37,7 +37,7 @@ use meta_store::{
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
     LocalPdfRenderCommandSpec, OcrClient, OcrOptions, OcrPageRequest, OcrWorkerBudget,
-    RenderedPage,
+    PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage,
 };
 use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
@@ -346,6 +346,16 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 options.ocr_render_command = Some(PathBuf::from(value));
                 index += 2;
             }
+            "--ocr-pdftoppm-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                if options.ocr_pdftoppm_command.is_some() {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.ocr_pdftoppm_command = Some(PathBuf::from(value));
+                index += 2;
+            }
             "--ocr-engine-profile" => {
                 options.ocr_engine_profile = parse_non_empty_run_value(args.get(index + 1))?;
                 index += 2;
@@ -465,12 +475,15 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
             "usage: --max-requests requires --ipc-listen",
         ));
     }
+    if options.ocr_render_command.is_some() && options.ocr_pdftoppm_command.is_some() {
+        return Err(DaemonError::usage(run_usage()));
+    }
 
     Ok(options)
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>] [--ocr-render-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -810,6 +823,15 @@ fn run_claimed_ocr_job(
                 .map_err(DaemonError::ocr)
         })
         .transpose()?;
+    let pdftoppm_renderer = options
+        .ocr_pdftoppm_command
+        .clone()
+        .map(|pdftoppm_command| {
+            PdftoppmRenderSpec::new(pdftoppm_command)
+                .map(PdftoppmPdfRenderer::new)
+                .map_err(DaemonError::ocr)
+        })
+        .transpose()?;
 
     let mut page_texts = Vec::new();
     let mut confidence_sum = 0.0_f32;
@@ -842,6 +864,32 @@ fn run_claimed_ocr_job(
         }
 
         let rendered_page = if let Some(renderer) = &renderer {
+            match renderer.render_page(
+                &bytes,
+                page_no,
+                options.ocr_render_dpi,
+                budget,
+                &cancellation,
+            ) {
+                Ok(rendered_page) => rendered_page,
+                Err(error) => {
+                    let entry = OcrPageCacheEntry::failed_retryable(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
+                    .map_err(DaemonError::store)?;
+                    store
+                        .upsert_ocr_page_cache_entry(&entry)
+                        .map_err(DaemonError::store)?;
+                    mark_ocr_job_failed_retryable(store, job, now)?;
+                    return Ok(OcrWorkerSummary {
+                        failed: 1,
+                        ..OcrWorkerSummary::default()
+                    });
+                }
+            }
+        } else if let Some(renderer) = &pdftoppm_renderer {
             match renderer.render_page(
                 &bytes,
                 page_no,
@@ -2951,6 +2999,7 @@ struct RunOptions {
     work_index: bool,
     ocr_command: Option<PathBuf>,
     ocr_render_command: Option<PathBuf>,
+    ocr_pdftoppm_command: Option<PathBuf>,
     ocr_engine_profile: String,
     ocr_lang: String,
     ocr_profile: String,
@@ -2983,6 +3032,7 @@ impl Default for RunOptions {
             work_index: false,
             ocr_command: None,
             ocr_render_command: None,
+            ocr_pdftoppm_command: None,
             ocr_engine_profile: DEFAULT_OCR_ENGINE_PROFILE.to_string(),
             ocr_lang: DEFAULT_OCR_LANG.to_string(),
             ocr_profile: DEFAULT_OCR_PROFILE.to_string(),
