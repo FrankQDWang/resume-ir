@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 parser-common = { path = "../parser-common" }
-quick-xml = "0.31"
+quick-xml = "0.40"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 
 [lints]
