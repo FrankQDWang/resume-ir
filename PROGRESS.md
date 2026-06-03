@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S80 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S81 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -85,11 +85,12 @@ obsolete preliminary files and checklists are not product scope.
 - P6 performance/stability: synthetic benchmark runner, status/doctor/export
   diagnostics, redacted resource telemetry for the data-disk volume, current
   process memory, and CPU cores, snapshot fallback, safe fault simulation for
-  disk-space budget, permission-denied probes, file-lock contention probes, and
-  targeted fault tests exist. Missing or BLOCKED work includes 100k/1M
-  real-corpus benchmarks, nightly gates, destructive kill/actual ENOSPC fault
-  injection, kill-daemon fault injection, runbooks, and cross-platform
-  performance evidence.
+  disk-space budget, permission-denied probes, file-lock contention probes,
+  daemon-kill/restart probes against configured daemon binaries, and targeted
+  fault tests exist. Missing or BLOCKED work includes 100k/1M real-corpus
+  benchmarks, nightly gates, destructive service-level kill/actual ENOSPC fault
+  injection, OCR-crash fault injection, runbooks, and cross-platform performance
+  evidence.
 
 ## Slice Status
 
@@ -174,8 +175,74 @@ obsolete preliminary files and checklists are not product scope.
 | S78 | CI portability slice complete | GitHub Actions PR #9 `rust workspace` failed after S77 with exit 143 while running `tests/s51_embedding_worker.rs`, after OCR tests had passed. The S78 fix applies the same `/bin/kill <signal> -- -PGID` Unix process-group syntax to the local command embedder and adds an embedder inherited-pipe descendant timeout regression test. Focused local checks passed for `/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker --locked`, and `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked`; `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and PR #9 hosted checks also passed after formatting. | None for this process-cleanup portability slice. Real embedding model packaging, ANN, Linux/macOS/Windows service validation, signed installers, notarization, and full release evidence remain not complete or BLOCKED. |
 | S79 | Product diagnostics slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_report_redacted_resource_telemetry --locked` first failed because doctor/export did not report resource telemetry; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and PR #9 hosted checks passed. | None for this redacted resource telemetry slice; 100k/1M real-corpus benchmarks, nightly gates, destructive kill/actual ENOSPC fault injection, file-lock semantics, runbooks, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S80 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_file_lock_reproduces_contention_without_path_leak --locked` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths --locked` first failed because `file-lock` was not supported and diagnostics did not advertise `file_lock`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed. | None for this safe file-lock contention slice; 100k/1M real-corpus benchmarks, nightly gates, destructive kill/actual ENOSPC fault injection, kill-daemon/OCR-crash fault injection, model checksum fault, battery mode, external-drive disconnect, runbooks, and cross-platform performance evidence remain not complete or BLOCKED. |
+| S81 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_daemon_kill_restarts_configured_daemon_without_path_leak -- --exact` first failed because `daemon-kill` was not supported, and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths -- --exact` first failed because diagnostics did not advertise `daemon_kill`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s81_daemon_kill --locked`, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings`, `git diff --check`, and `./scripts/ci/verify-local.sh` passed. | None for this safe daemon-kill/restart probe slice; destructive service-manager kill, actual ENOSPC, OCR-crash fault injection, model checksum fault, battery mode, external-drive disconnect, runbooks, Windows/macOS service validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S81
+
+Design target:
+
+- Add a local-only `resume-cli fault-simulate --case daemon-kill
+  --daemon-binary <path>` probe that starts a configured daemon binary against a
+  synthetic data directory, waits for readiness, terminates the controlled
+  process, runs a same-directory `--once` restart check, and redacts paths.
+- Add actual `resume-daemon` kill/restart integration evidence using the real
+  daemon binary and a synthetic data directory.
+- Expose `daemon_kill` in doctor/export diagnostics without weakening the
+  privacy boundary. Do not kill user services or read real resumes.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_daemon_kill_restarts_configured_daemon_without_path_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths -- --exact
+```
+
+Output summary:
+
+- `s71_fault_injection`: exit 101 before implementation because
+  `fault-simulate --case daemon-kill` returned the usage error.
+- `s13_diagnostics`: exit 101 before implementation because diagnostics did
+  not include `"daemon_kill"`.
+- The real daemon kill/restart integration test was added as production
+  evidence and passed against existing daemon behavior, so no daemon production
+  code change was required for restart health.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s81_daemon_kill --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `resume-cli --test s71_fault_injection`: exit 0; 6 tests passed, including
+  `fault_simulate_daemon_kill_restarts_configured_daemon_without_path_leak`.
+- `resume-cli --test s13_diagnostics`: exit 0; 9 tests passed.
+- `resume-daemon --test s81_daemon_kill`: exit 0; the real foreground daemon
+  was killed and restarted with the same synthetic data directory without path
+  leakage.
+- `cargo fmt --check`: exit 0.
+- `cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D
+  warnings`: exit 0.
+- `git diff --check`: exit 0.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, and public repository guard passed.
+
+Scope note:
+
+- S81 safely exercises process kill/restart for a controlled daemon binary and
+  synthetic data directory. It does not kill a user-installed service, simulate
+  actual disk exhaustion, crash OCR workers, validate service managers, or prove
+  Windows/macOS behavior.
+- Full product is still not complete.
 
 ### S80
 

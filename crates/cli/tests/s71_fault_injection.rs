@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 #[test]
 fn fault_simulate_disk_space_low_reproduces_without_writing_or_leaking_paths() {
     let data_dir = temp_path("fault-disk-private-data");
@@ -168,6 +171,52 @@ fn fault_simulate_file_lock_reproduces_contention_without_path_leak() {
     remove_dir(&scratch_dir);
 }
 
+#[cfg(unix)]
+#[test]
+fn fault_simulate_daemon_kill_restarts_configured_daemon_without_path_leak() {
+    let data_dir = temp_path("fault-daemon-private-data");
+    let scratch_dir = temp_path("fault-daemon-private-scratch");
+    let daemon_binary = daemon_fixture_script("fault-daemon-private-helper");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--case",
+            "daemon-kill",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+            "--daemon-binary",
+            path_str(&daemon_binary),
+        ])
+        .output()
+        .expect("run daemon-kill fault simulation");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("fault: daemon_kill"));
+    assert!(stdout.contains("status: reproduced"));
+    assert!(stdout.contains("daemon ready: yes"));
+    assert!(stdout.contains("terminated daemon: yes"));
+    assert!(stdout.contains("restart check: passed"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(!stdout.contains(path_str(&daemon_binary)));
+    assert!(scratch_dir.exists());
+    assert!(fs::read_dir(&scratch_dir).unwrap().next().is_none());
+
+    remove_dir(&scratch_dir);
+    let _ = fs::remove_file(&daemon_binary);
+}
+
 #[test]
 fn fault_simulate_usage_errors_do_not_leak_private_paths() {
     let data_dir = temp_path("fault-usage-private-data");
@@ -196,6 +245,50 @@ fn fault_simulate_usage_errors_do_not_leak_private_paths() {
     assert!(stderr.contains("resume-cli fault-simulate"));
     assert!(!stderr.contains(path_str(&data_dir)));
     assert!(!stderr.contains(path_str(&scratch_dir)));
+}
+
+#[cfg(unix)]
+fn daemon_fixture_script(label: &str) -> PathBuf {
+    let path = temp_path(label);
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+if [ "$1" != "--data-dir" ]; then
+  exit 64
+fi
+shift 2
+if [ "$1" != "run" ]; then
+  exit 64
+fi
+shift
+once=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --foreground)
+      shift
+      ;;
+    --once)
+      once=1
+      shift
+      ;;
+    *)
+      exit 64
+      ;;
+  esac
+done
+printf 'resume-daemon foreground ready\n'
+printf 'mode: foreground\n'
+if [ "$once" = 1 ]; then
+  exit 0
+fi
+while :; do
+  sleep 1
+done
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    path
 }
 
 fn temp_path(label: &str) -> PathBuf {

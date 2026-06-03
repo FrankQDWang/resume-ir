@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -847,6 +847,36 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
             println!("paths: <redacted>");
             Ok(())
         }
+        FaultSimulationCase::DaemonKill => {
+            let daemon_binary = fault_args
+                .daemon_binary
+                .as_deref()
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            println!("fault: daemon_kill");
+            let result = simulate_daemon_kill_probe(&scratch_dir, daemon_binary)
+                .map_err(|_| CliError::user("fault simulation probe failed"))?;
+            if result.terminated && result.restart_succeeded {
+                println!("status: reproduced");
+            } else {
+                println!("status: not reproduced");
+            }
+            println!("daemon ready: yes");
+            println!(
+                "terminated daemon: {}",
+                if result.terminated { "yes" } else { "no" }
+            );
+            println!(
+                "restart check: {}",
+                if result.restart_succeeded {
+                    "passed"
+                } else {
+                    "failed"
+                }
+            );
+            println!("paths: <redacted>");
+            Ok(())
+        }
     }
 }
 
@@ -855,6 +885,7 @@ enum FaultSimulationCase {
     DiskSpaceLow,
     PermissionDenied,
     FileLock,
+    DaemonKill,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -863,6 +894,7 @@ struct FaultSimulationArgs {
     scratch_dir: Option<PathBuf>,
     required_bytes: Option<u64>,
     available_bytes: Option<u64>,
+    daemon_binary: Option<PathBuf>,
 }
 
 fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
@@ -870,6 +902,7 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
     let mut scratch_dir = None;
     let mut required_bytes = None;
     let mut available_bytes = None;
+    let mut daemon_binary = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -899,6 +932,12 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 }
                 available_bytes = Some(take_fault_positive_u64(args, &mut index)?);
             }
+            "--daemon-binary" => {
+                if daemon_binary.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                daemon_binary = Some(PathBuf::from(take_fault_value(args, &mut index)?));
+            }
             _ => return Err(CliError::usage(fault_simulate_usage())),
         }
     }
@@ -909,9 +948,17 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
             if required_bytes.is_none() || available_bytes.is_none() {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
+            if daemon_binary.is_some() {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
         }
         FaultSimulationCase::PermissionDenied | FaultSimulationCase::FileLock => {
-            if required_bytes.is_some() || available_bytes.is_some() {
+            if required_bytes.is_some() || available_bytes.is_some() || daemon_binary.is_some() {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::DaemonKill => {
+            if required_bytes.is_some() || available_bytes.is_some() || daemon_binary.is_none() {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
         }
@@ -922,6 +969,7 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
         scratch_dir,
         required_bytes,
         available_bytes,
+        daemon_binary,
     })
 }
 
@@ -930,6 +978,7 @@ fn parse_fault_case(value: &str) -> Result<FaultSimulationCase> {
         "disk-space-low" => Ok(FaultSimulationCase::DiskSpaceLow),
         "permission-denied" => Ok(FaultSimulationCase::PermissionDenied),
         "file-lock" => Ok(FaultSimulationCase::FileLock),
+        "daemon-kill" => Ok(FaultSimulationCase::DaemonKill),
         _ => Err(CliError::usage(fault_simulate_usage())),
     }
 }
@@ -1025,8 +1074,135 @@ fn contend_file_lock_probe_file(path: &Path) -> std::io::Result<FileLockProbeRes
     result
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DaemonKillProbeResult {
+    terminated: bool,
+    restart_succeeded: bool,
+}
+
+fn simulate_daemon_kill_probe(
+    scratch_dir: &Path,
+    daemon_binary: &Path,
+) -> std::io::Result<DaemonKillProbeResult> {
+    fs::create_dir_all(scratch_dir)?;
+    let probe_data_dir = scratch_dir.join(format!(
+        ".resume-ir-daemon-kill-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&probe_data_dir)?;
+
+    let result = simulate_daemon_kill_probe_dir(daemon_binary, &probe_data_dir);
+    let _ = fs::remove_dir_all(&probe_data_dir);
+    result
+}
+
+fn simulate_daemon_kill_probe_dir(
+    daemon_binary: &Path,
+    data_dir: &Path,
+) -> std::io::Result<DaemonKillProbeResult> {
+    let mut child = Command::new(daemon_binary)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .arg("run")
+        .arg("--foreground")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "daemon stdout was not captured",
+        )
+    })?;
+
+    if !wait_for_daemon_ready(&mut child, stdout, Duration::from_secs(5))? {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "daemon did not report ready",
+        ));
+    }
+
+    child.kill()?;
+    let status = child.wait()?;
+    let restart_succeeded = daemon_restart_once_succeeds(daemon_binary, data_dir)?;
+
+    Ok(DaemonKillProbeResult {
+        terminated: !status.success(),
+        restart_succeeded,
+    })
+}
+
+fn wait_for_daemon_ready<R: Read + Send + 'static>(
+    child: &mut Child,
+    stdout: R,
+    timeout: Duration,
+) -> std::io::Result<bool> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    let _ = sender.send(false);
+                    return;
+                }
+                Ok(_) => {
+                    if line.contains("resume-daemon foreground ready") {
+                        let _ = sender.send(true);
+                        return;
+                    }
+                }
+                Err(_) => {
+                    let _ = sender.send(false);
+                    return;
+                }
+            }
+        }
+    });
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match receiver.try_recv() {
+            Ok(ready) => return Ok(ready),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(false),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+        if child.try_wait()?.is_some() {
+            return Ok(false);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(false);
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn daemon_restart_once_succeeds(daemon_binary: &Path, data_dir: &Path) -> std::io::Result<bool> {
+    let output = Command::new(daemon_binary)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .arg("run")
+        .arg("--foreground")
+        .arg("--once")
+        .output()?;
+
+    Ok(output.status.success()
+        && output.stderr.is_empty()
+        && String::from_utf8_lossy(&output.stdout).contains("resume-daemon foreground ready"))
+}
+
 fn fault_simulate_usage() -> &'static str {
-    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>]"
+    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -3795,7 +3971,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("cpu cores: {}", resource_telemetry.cpu_cores);
     println!("fault simulations: available");
     println!(
-        "fault simulation hooks: daemon_restart,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock"
+        "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock"
     );
     println!("diagnostics redaction: available");
 
@@ -3911,6 +4087,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("  }},");
     println!("  \"fault_simulations\": [");
     println!("    \"daemon_restart\",");
+    println!("    \"daemon_kill\",");
     println!("    \"index_snapshot_corrupt\",");
     println!("    \"disk_space_low\",");
     println!("    \"permission_denied\",");

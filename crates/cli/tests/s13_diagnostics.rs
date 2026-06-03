@@ -82,6 +82,7 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
     assert!(stdout.contains("\"vector_index_state\": \"unavailable\""));
     assert!(stdout.contains("\"contact_hash_key\": \"missing\""));
     assert!(stdout.contains("\"daemon_restart\""));
+    assert!(stdout.contains("\"daemon_kill\""));
     assert!(stdout.contains("\"disk_space_low\""));
     assert!(stdout.contains("\"file_lock\""));
     assert!(!stdout.contains(path_str(&data_dir)));
