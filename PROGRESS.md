@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S84 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S85 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -87,13 +87,16 @@ obsolete preliminary files and checklists are not product scope.
   process memory, and CPU cores, snapshot fallback, safe fault simulation for
   disk-space budget, permission-denied probes, file-lock contention probes,
   daemon-kill/restart probes against configured daemon binaries, OCR command
-  crash probes, targeted fault tests, local-only production runbooks, and a
-  runbook CI policy guard exist. The benchmark runner now has an explicit
-  synthetic benchmark gate wired into PR and nightly smoke workflows; synthetic
-  runs must opt in with `--allow-synthetic` and cannot prove 100k/1M production
-  performance. Missing or BLOCKED work includes 100k/1M real-corpus benchmarks,
-  real-corpus nightly/release performance gates, destructive service-level
-  kill/actual ENOSPC fault injection, and cross-platform performance evidence.
+  crash probes, model-checksum probes against controlled local model artifacts,
+  targeted fault tests, local-only production runbooks, and a runbook CI policy
+  guard exist. The benchmark runner now has an explicit synthetic benchmark
+  gate wired into PR and nightly smoke workflows; synthetic runs must opt in
+  with `--allow-synthetic` and cannot prove 100k/1M production performance.
+  Missing or BLOCKED work includes 100k/1M real-corpus benchmarks,
+  real-corpus nightly/release performance gates, licensed model selection/
+  distribution, semantic/vector quality gates, destructive service-level kill/
+  actual ENOSPC fault injection, battery/external-drive fault drills, Windows/
+  macOS validation, and cross-platform performance evidence.
 
 ## Slice Status
 
@@ -182,8 +185,73 @@ obsolete preliminary files and checklists are not product scope.
 | S82 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_ocr_crash_reproduces_engine_failure_without_payload_or_path_leak -- --exact` first failed because `ocr-crash` was not supported, and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths -- --exact` first failed because diagnostics did not advertise `ocr_crash`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked`, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings`, `git diff --check`, and `./scripts/ci/verify-local.sh` passed. | None for this safe OCR command-crash probe and retryable worker-failure slice; destructive service-manager kill, actual ENOSPC, model checksum fault, battery mode, external-drive disconnect, runbooks, Windows/macOS service validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S83 | Product runbook/CI guard slice complete | `sh scripts/ci/check-runbooks.sh` first failed with `missing required runbook: docs/runbooks/diagnostics-redaction.md`; after adding local-only runbooks and wiring the guard into local/hosted CI, `./scripts/ci/check-runbooks.sh`, `sh -n scripts/ci/check-runbooks.sh scripts/ci/verify-local.sh scripts/ci/guard-public-repo.sh scripts/ci/check-licenses.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and `./scripts/ci/verify-local.sh` passed. | None for this production runbook and policy-guard slice; 100k/1M real-corpus benchmarks, nightly performance gates, destructive service-level kill/actual ENOSPC fault injection, model checksum fault, battery mode, external-drive disconnect, Windows/macOS service validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S84 | Product benchmark-gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked` first failed because `evaluate_benchmark_gate_json` and `BenchmarkGateConfig` did not exist; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings`, the `resume-benchmark synthetic-query` plus `resume-benchmark gate` smoke, `./scripts/ci/check-runbooks.sh`, `git diff --check`, and `./scripts/ci/verify-local.sh` passed. | None for this synthetic benchmark gate and workflow wiring slice; 100k/1M real-corpus benchmark datasets, real-corpus nightly/release performance gates, semantic/vector quality gates, OCR throughput gates, Windows/macOS benchmark runners, and cross-platform performance evidence remain not complete or BLOCKED. |
+| S85 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_model_checksum --locked` first failed because `model-checksum` was unsupported; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/check-runbooks.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this controlled local model artifact checksum probe slice; real licensed model selection/download/distribution, model package manifest governance, semantic/vector quality gates, battery mode, external-drive disconnect, destructive actual ENOSPC/service-manager drills, Windows/macOS validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S85
+
+Design target:
+
+- Add a local-only model checksum fault simulation for controlled model
+  artifacts:
+  `resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex>`.
+- Compute the actual SHA-256 locally, report match/mismatch as a safe
+  reproduced/not-reproduced probe, and expose the hook in doctor plus redacted
+  diagnostics.
+- Keep outputs redacted: no model path, model bytes, full digest, or local data
+  directory should be printed.
+- Do not select, license, download, package, distribute, or validate a real
+  production embedding/OCR model in this slice.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_model_checksum --locked
+```
+
+Output summary:
+
+- Exit 101 before implementation because `fault-simulate` usage did not include
+  `model-checksum`, and the CLI rejected the new checksum probe arguments.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `s71_fault_injection`: exit 0; 9 tests passed, including checksum mismatch
+  and checksum match probes against synthetic local bytes.
+- `s13_diagnostics`: exit 0; 9 tests passed, including redacted diagnostics
+  advertising `model_checksum`.
+- `resume-cli` clippy: exit 0.
+- `check-runbooks.sh`: exit 0; the fault-injection runbook documents
+  `resume-cli fault-simulate --case model-checksum`.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S85 adds a local checksum fault probe for a caller-supplied, controlled model
+  artifact. It does not select/license/download/distribute a real model, prove
+  semantic/vector quality, prove OCR/embedding model performance, or complete
+  model package governance.
+- Full product is still not complete.
 
 ### S84
 

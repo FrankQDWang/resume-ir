@@ -43,6 +43,7 @@ use rank_fusion::{
 };
 use search_planner::plan_search;
 use sectionizer::Sectionizer;
+use sha2::{Digest, Sha256};
 use sysinfo::{
     get_current_pid, DiskRefreshKind, Disks, ProcessRefreshKind, ProcessesToUpdate, System,
 };
@@ -848,6 +849,35 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
             println!("paths: <redacted>");
             Ok(())
         }
+        FaultSimulationCase::ModelChecksum => {
+            let model_file = fault_args
+                .model_file
+                .as_deref()
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+            let expected_sha256 = fault_args
+                .expected_sha256
+                .as_deref()
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            println!("fault: model_checksum");
+            let actual_sha256 = file_sha256_hex(model_file)
+                .map_err(|_| CliError::user("fault simulation probe failed"))?;
+            let reproduced = actual_sha256 != expected_sha256;
+            if reproduced {
+                println!("status: reproduced");
+                println!("checksum match: no");
+            } else {
+                println!("status: not reproduced");
+                println!("checksum match: yes");
+            }
+            println!(
+                "expected sha256 prefix: {}",
+                checksum_prefix(expected_sha256)
+            );
+            println!("actual sha256 prefix: {}", checksum_prefix(&actual_sha256));
+            println!("paths: <redacted>");
+            Ok(())
+        }
         FaultSimulationCase::DaemonKill => {
             let daemon_binary = fault_args
                 .daemon_binary
@@ -905,6 +935,7 @@ enum FaultSimulationCase {
     DiskSpaceLow,
     PermissionDenied,
     FileLock,
+    ModelChecksum,
     DaemonKill,
     OcrCrash,
 }
@@ -917,6 +948,8 @@ struct FaultSimulationArgs {
     available_bytes: Option<u64>,
     daemon_binary: Option<PathBuf>,
     ocr_command: Option<PathBuf>,
+    model_file: Option<PathBuf>,
+    expected_sha256: Option<String>,
 }
 
 fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
@@ -926,6 +959,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
     let mut available_bytes = None;
     let mut daemon_binary = None;
     let mut ocr_command = None;
+    let mut model_file = None;
+    let mut expected_sha256 = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -967,6 +1002,18 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 }
                 ocr_command = Some(PathBuf::from(take_fault_value(args, &mut index)?));
             }
+            "--model-file" => {
+                if model_file.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                model_file = Some(PathBuf::from(take_fault_value(args, &mut index)?));
+            }
+            "--expected-sha256" => {
+                if expected_sha256.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                expected_sha256 = Some(take_fault_sha256(args, &mut index)?);
+            }
             _ => return Err(CliError::usage(fault_simulate_usage())),
         }
     }
@@ -977,7 +1024,11 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
             if required_bytes.is_none() || available_bytes.is_none() {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
-            if daemon_binary.is_some() || ocr_command.is_some() {
+            if daemon_binary.is_some()
+                || ocr_command.is_some()
+                || model_file.is_some()
+                || expected_sha256.is_some()
+            {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
         }
@@ -986,6 +1037,19 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 || available_bytes.is_some()
                 || daemon_binary.is_some()
                 || ocr_command.is_some()
+                || model_file.is_some()
+                || expected_sha256.is_some()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::ModelChecksum => {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_some()
+                || ocr_command.is_some()
+                || model_file.is_none()
+                || expected_sha256.is_none()
             {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
@@ -995,6 +1059,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 || available_bytes.is_some()
                 || daemon_binary.is_none()
                 || ocr_command.is_some()
+                || model_file.is_some()
+                || expected_sha256.is_some()
             {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
@@ -1004,6 +1070,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 || available_bytes.is_some()
                 || daemon_binary.is_some()
                 || ocr_command.is_none()
+                || model_file.is_some()
+                || expected_sha256.is_some()
             {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
@@ -1017,6 +1085,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
         available_bytes,
         daemon_binary,
         ocr_command,
+        model_file,
+        expected_sha256,
     })
 }
 
@@ -1025,6 +1095,7 @@ fn parse_fault_case(value: &str) -> Result<FaultSimulationCase> {
         "disk-space-low" => Ok(FaultSimulationCase::DiskSpaceLow),
         "permission-denied" => Ok(FaultSimulationCase::PermissionDenied),
         "file-lock" => Ok(FaultSimulationCase::FileLock),
+        "model-checksum" => Ok(FaultSimulationCase::ModelChecksum),
         "daemon-kill" => Ok(FaultSimulationCase::DaemonKill),
         "ocr-crash" => Ok(FaultSimulationCase::OcrCrash),
         _ => Err(CliError::usage(fault_simulate_usage())),
@@ -1048,6 +1119,42 @@ fn take_fault_positive_u64(args: &[String], index: &mut usize) -> Result<u64> {
         .ok()
         .filter(|value| *value > 0)
         .ok_or_else(|| CliError::usage(fault_simulate_usage()))
+}
+
+fn take_fault_sha256(args: &[String], index: &mut usize) -> Result<String> {
+    let value = take_fault_value(args, index)?.to_ascii_lowercase();
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(CliError::usage(fault_simulate_usage()));
+    }
+    Ok(value)
+}
+
+fn file_sha256_hex(path: &Path) -> std::io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Ok(hex_encode_lower(&hasher.finalize()))
+}
+
+fn hex_encode_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn checksum_prefix(checksum: &str) -> &str {
+    checksum.get(..8).unwrap_or("<invalid>")
 }
 
 fn write_fault_probe(scratch_dir: &Path, bytes: u64) -> std::io::Result<()> {
@@ -1283,7 +1390,7 @@ fn simulate_ocr_crash_probe(scratch_dir: &Path, ocr_command: &Path) -> Result<Oc
 }
 
 fn fault_simulate_usage() -> &'static str {
-    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>]"
+    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -4052,7 +4159,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("cpu cores: {}", resource_telemetry.cpu_cores);
     println!("fault simulations: available");
     println!(
-        "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock,ocr_crash"
+        "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock,model_checksum,ocr_crash"
     );
     println!("diagnostics redaction: available");
 
@@ -4173,6 +4280,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("    \"disk_space_low\",");
     println!("    \"permission_denied\",");
     println!("    \"file_lock\",");
+    println!("    \"model_checksum\",");
     println!("    \"ocr_crash\"");
     println!("  ],");
     println!("  \"scope\": \"redacted skeleton; no raw resume text, paths, or queries included\"");

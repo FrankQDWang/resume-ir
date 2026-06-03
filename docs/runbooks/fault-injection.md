@@ -23,6 +23,7 @@ Canonical probe forms:
 - `resume-cli fault-simulate --case disk-space-low`
 - `resume-cli fault-simulate --case permission-denied`
 - `resume-cli fault-simulate --case file-lock`
+- `resume-cli fault-simulate --case model-checksum`
 - `resume-cli fault-simulate --case daemon-kill`
 - `resume-cli fault-simulate --case ocr-crash`
 
@@ -55,6 +56,17 @@ resume-cli --data-dir "$data_dir" fault-simulate \
   --scratch-dir "$scratch"
 ```
 
+Run model artifact checksum simulation against a controlled local model file:
+
+```bash
+printf 'SYNTHETIC MODEL CHECKSUM PROBE\n' > "$scratch/model.bin"
+resume-cli --data-dir "$data_dir" fault-simulate \
+  --case model-checksum \
+  --scratch-dir "$scratch" \
+  --model-file "$scratch/model.bin" \
+  --expected-sha256 0000000000000000000000000000000000000000000000000000000000000000
+```
+
 Run daemon kill/restart simulation against a controlled daemon binary:
 
 ```bash
@@ -74,7 +86,8 @@ resume-cli --data-dir "$data_dir" fault-simulate \
 ```
 
 Expected safe output includes `paths: <redacted>` and does not include the
-scratch path, data path, command path, OCR stdout, OCR stderr, or probe bytes.
+scratch path, data path, command path, model bytes, OCR stdout, OCR stderr, or
+probe bytes. Checksum output is limited to short digest prefixes.
 
 ## Unsafe Faults
 
@@ -84,6 +97,7 @@ The following remain not complete or BLOCKED for public release readiness:
 - service-manager kill of a user-installed daemon
 - battery-mode transition validation
 - external-drive disconnect validation
+- licensed model selection, download, and distribution validation
 - Windows and macOS service-manager fault evidence
 
 Do not simulate those by damaging user data. Use a dedicated test machine or VM

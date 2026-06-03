@@ -86,6 +86,7 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
     assert!(stdout.contains("\"disk_space_low\""));
     assert!(stdout.contains("\"file_lock\""));
     assert!(stdout.contains("\"ocr_crash\""));
+    assert!(stdout.contains("\"model_checksum\""));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!data_dir
         .join("secrets")

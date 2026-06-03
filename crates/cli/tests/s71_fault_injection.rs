@@ -266,6 +266,96 @@ fn fault_simulate_ocr_crash_reproduces_engine_failure_without_payload_or_path_le
 }
 
 #[test]
+fn fault_simulate_model_checksum_reproduces_mismatch_without_model_or_path_leak() {
+    let data_dir = temp_path("fault-model-checksum-private-data");
+    let scratch_dir = temp_path("fault-model-checksum-private-scratch");
+    let model_file = temp_path("fault-model-checksum-private-model");
+    let model_bytes = b"SYNTHETIC MODEL CHECKSUM PROBE\n";
+    fs::write(&model_file, model_bytes).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--case",
+            "model-checksum",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+            "--model-file",
+            path_str(&model_file),
+            "--expected-sha256",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ])
+        .output()
+        .expect("run model-checksum fault simulation");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("fault: model_checksum"));
+    assert!(stdout.contains("status: reproduced"));
+    assert!(stdout.contains("checksum match: no"));
+    assert!(stdout.contains("expected sha256 prefix: 00000000"));
+    assert!(stdout.contains("actual sha256 prefix: c5ef7975"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains("SYNTHETIC MODEL CHECKSUM PROBE"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(!stdout.contains(path_str(&model_file)));
+
+    let _ = fs::remove_file(&model_file);
+}
+
+#[test]
+fn fault_simulate_model_checksum_reports_match_without_path_leak() {
+    let data_dir = temp_path("fault-model-checksum-ok-private-data");
+    let scratch_dir = temp_path("fault-model-checksum-ok-private-scratch");
+    let model_file = temp_path("fault-model-checksum-ok-private-model");
+    fs::write(&model_file, b"SYNTHETIC MODEL CHECKSUM PROBE\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--case",
+            "model-checksum",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+            "--model-file",
+            path_str(&model_file),
+            "--expected-sha256",
+            "c5ef7975f1916e5f519ffa62ab13dbcbe6f1f3fc7ebe64defc4e592ba743a1b3",
+        ])
+        .output()
+        .expect("run model-checksum match simulation");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("fault: model_checksum"));
+    assert!(stdout.contains("status: not reproduced"));
+    assert!(stdout.contains("checksum match: yes"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(!stdout.contains(path_str(&model_file)));
+
+    let _ = fs::remove_file(&model_file);
+}
+
+#[test]
 fn fault_simulate_usage_errors_do_not_leak_private_paths() {
     let data_dir = temp_path("fault-usage-private-data");
     let scratch_dir = temp_path("fault-usage-private-scratch");
