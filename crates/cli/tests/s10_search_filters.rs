@@ -123,20 +123,77 @@ fn search_supports_degree_filter_and_top_k_without_query_echo() {
     remove_dir(&data_dir);
 }
 
+#[test]
+fn filtered_search_prefilters_fields_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-prefilter-data");
+    let resume_root = temp_dir("search-filter-prefilter-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("decoy-{index}.txt")),
+            format!("Candidate Decoy {index}\nSkills: Java\n{noisy_query_text}\n"),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("target-rust-candidate.txt"),
+        "Candidate Target\nSkills: Rust\nneedle\n",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--skills-any",
+            "rust",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run prefiltered skill search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("target-rust-candidate.txt"));
+    assert!(!stdout.contains("decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
 fn import_fixtures(data_dir: &Path) {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("tests/fixtures/resumes");
+    import_root(data_dir, &fixture_root);
+}
+
+fn import_root(data_dir: &Path, root: &Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
             path_str(data_dir),
             "import",
             "--root",
-            path_str(&fixture_root),
+            path_str(root),
         ])
         .output()
-        .expect("import fixtures");
+        .expect("import root");
     assert!(output.status.success());
 }
 

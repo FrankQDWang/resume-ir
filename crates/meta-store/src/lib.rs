@@ -626,6 +626,113 @@ impl MetaStore {
         Ok(mentions)
     }
 
+    pub fn searchable_document_ids_with_entity_values(
+        &self,
+        entity_type: EntityType,
+        normalized_values: &[String],
+        min_confidence: f32,
+        case_insensitive: bool,
+    ) -> Result<Vec<DocumentId>> {
+        if normalized_values.is_empty() {
+            return Ok(Vec::new());
+        }
+        validate_confidence_threshold(min_confidence, "entity_mention.confidence")?;
+
+        let value_placeholders = (0..normalized_values.len())
+            .map(|index| format!("?{}", index + 3))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let value_expression = if case_insensitive {
+            "LOWER(mention.normalized_value)"
+        } else {
+            "mention.normalized_value"
+        };
+        let sql = format!(
+            "\
+            SELECT DISTINCT version.document_id
+            FROM entity_mention AS mention
+            JOIN resume_version AS version ON version.id = mention.resume_version_id
+            JOIN document AS document ON document.id = version.document_id
+            WHERE document.is_deleted = 0
+                AND document.status IN ('indexed_partial', 'searchable')
+                AND version.visibility = 'searchable'
+                AND mention.entity_type = ?1
+                AND mention.confidence >= ?2
+                AND {value_expression} IN ({value_placeholders})
+            ORDER BY version.document_id"
+        );
+        let mut values = vec![
+            Value::Text(entity_type_to_storage(&entity_type).to_string()),
+            Value::Real(f64::from(min_confidence)),
+        ];
+        for value in normalized_values {
+            values.push(Value::Text(if case_insensitive {
+                value.to_ascii_lowercase()
+            } else {
+                value.clone()
+            }));
+        }
+
+        let connection = self.connection.borrow();
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params_from_iter(values))
+            .map_err(MetaStoreError::storage)?;
+        let mut document_ids = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            document_ids.push(read_id::<DocumentId>(row, 0, "document.id")?);
+        }
+
+        Ok(document_ids)
+    }
+
+    pub fn searchable_document_ids_with_numeric_entity_min(
+        &self,
+        entity_type: EntityType,
+        min_value: f32,
+        min_confidence: f32,
+    ) -> Result<Vec<DocumentId>> {
+        if !min_value.is_finite() {
+            return Err(MetaStoreError::invalid_value(
+                "entity_mention.normalized_value",
+            ));
+        }
+        validate_confidence_threshold(min_confidence, "entity_mention.confidence")?;
+
+        let connection = self.connection.borrow();
+        let mut statement = connection
+            .prepare(
+                "\
+                SELECT DISTINCT version.document_id
+                FROM entity_mention AS mention
+                JOIN resume_version AS version ON version.id = mention.resume_version_id
+                JOIN document AS document ON document.id = version.document_id
+                WHERE document.is_deleted = 0
+                    AND document.status IN ('indexed_partial', 'searchable')
+                    AND version.visibility = 'searchable'
+                    AND mention.entity_type = ?1
+                    AND mention.confidence >= ?2
+                    AND CAST(mention.normalized_value AS REAL) >= ?3
+                ORDER BY version.document_id",
+            )
+            .map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                entity_type_to_storage(&entity_type),
+                f64::from(min_confidence),
+                f64::from(min_value),
+            ])
+            .map_err(MetaStoreError::storage)?;
+        let mut document_ids = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            document_ids.push(read_id::<DocumentId>(row, 0, "document.id")?);
+        }
+
+        Ok(document_ids)
+    }
+
     pub fn upsert_ocr_page_cache_entry(&self, entry: &OcrPageCacheEntry) -> Result<()> {
         validate_ocr_page_cache_entry(entry)?;
         let connection = self.connection.borrow();
@@ -3806,6 +3913,13 @@ fn validate_entity_mention(version_id: &ResumeVersionId, mention: &EntityMention
         }
     }
 
+    Ok(())
+}
+
+fn validate_confidence_threshold(confidence: f32, field: &'static str) -> Result<()> {
+    if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
+        return Err(MetaStoreError::invalid_value(field));
+    }
     Ok(())
 }
 

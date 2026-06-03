@@ -2,6 +2,7 @@ pub fn crate_name() -> &'static str {
     "index-fulltext"
 }
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
@@ -11,9 +12,11 @@ use std::sync::{Mutex, OnceLock};
 
 use regex::Regex;
 use tantivy::collector::TopDocs;
-use tantivy::query::QueryParser;
-use tantivy::schema::{Field, Schema, TantivyDocument, Value, FAST, STORED, STRING, TEXT};
-use tantivy::{Index, IndexReader, IndexWriter};
+use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
+use tantivy::schema::{
+    Field, IndexRecordOption, Schema, TantivyDocument, Value, FAST, STORED, STRING, TEXT,
+};
+use tantivy::{Index, IndexReader, IndexWriter, Term};
 
 const WRITER_HEAP_BYTES: usize = 50_000_000;
 const DEFAULT_LIMIT: usize = 10;
@@ -252,6 +255,26 @@ impl FullTextIndex {
     }
 
     pub fn search(&self, query: SearchQuery) -> Result<Vec<SearchHit>> {
+        self.search_internal(query, None)
+    }
+
+    pub fn search_allowed_doc_ids(
+        &self,
+        query: SearchQuery,
+        allowed_doc_ids: &BTreeSet<String>,
+    ) -> Result<Vec<SearchHit>> {
+        self.search_internal(query, Some(allowed_doc_ids))
+    }
+
+    fn search_internal(
+        &self,
+        query: SearchQuery,
+        allowed_doc_ids: Option<&BTreeSet<String>>,
+    ) -> Result<Vec<SearchHit>> {
+        if allowed_doc_ids.is_some_and(BTreeSet::is_empty) {
+            return Ok(Vec::new());
+        }
+
         self.reload()?;
         let searcher = self.reader.searcher();
         let query_parser = QueryParser::for_index(
@@ -268,10 +291,14 @@ impl FullTextIndex {
         }
 
         let (parsed_query, _parse_errors) = query_parser.parse_query_lenient(query.text());
+        let parsed_query = match allowed_doc_ids {
+            Some(doc_ids) => with_doc_id_filter(parsed_query, self.fields.doc_id, doc_ids),
+            None => parsed_query,
+        };
         let candidate_limit = query.limit();
         let top_docs = searcher
             .search(
-                &parsed_query,
+                parsed_query.as_ref(),
                 &TopDocs::with_limit(candidate_limit).order_by_score(),
             )
             .map_err(FullTextError::tantivy)?;
@@ -310,6 +337,40 @@ impl FullTextIndex {
 
         Ok(hits)
     }
+}
+
+fn with_doc_id_filter(
+    parsed_query: Box<dyn Query>,
+    doc_id_field: Field,
+    allowed_doc_ids: &BTreeSet<String>,
+) -> Box<dyn Query> {
+    let doc_filter_query = if allowed_doc_ids.len() == 1 {
+        let doc_id = allowed_doc_ids.iter().next().expect("non-empty doc id set");
+        Box::new(TermQuery::new(
+            Term::from_field_text(doc_id_field, doc_id),
+            IndexRecordOption::Basic,
+        )) as Box<dyn Query>
+    } else {
+        Box::new(BooleanQuery::new(
+            allowed_doc_ids
+                .iter()
+                .map(|doc_id| {
+                    (
+                        Occur::Should,
+                        Box::new(TermQuery::new(
+                            Term::from_field_text(doc_id_field, doc_id),
+                            IndexRecordOption::Basic,
+                        )) as Box<dyn Query>,
+                    )
+                })
+                .collect(),
+        )) as Box<dyn Query>
+    };
+
+    Box::new(BooleanQuery::new(vec![
+        (Occur::Must, parsed_query),
+        (Occur::Must, doc_filter_query),
+    ]))
 }
 
 pub fn publish_snapshot<I>(index_root: &Path, snapshot_name: &str, documents: I) -> Result<()>

@@ -58,6 +58,7 @@ const DEFAULT_SERVICE_IPC_LISTEN: &str = "127.0.0.1:0";
 const FAULT_PROBE_MAX_BYTES: u64 = 1024 * 1024;
 const OCR_CRASH_PROBE_BYTES: &[u8] = b"SYNTHETIC OCR CRASH PROBE BYTES";
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
+const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
 const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, doctor, or export-diagnostics";
 
 fn main() {
@@ -3144,15 +3145,97 @@ fn run_fulltext_search(
 ) -> Result<Vec<SearchOutputHit>> {
     let plan = plan_search(&search_args.query, candidate_limit)
         .map_err(|_| CliError::user("search query is empty"))?;
-    let hits = index
-        .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
-        .map_err(CliError::fulltext)?;
+    let allowed_doc_ids = field_filter_doc_id_prefilter(store, &search_args.filters)?;
+    let query = SearchQuery::new(plan.query_text()).with_limit(plan.limit());
+    let hits = match &allowed_doc_ids {
+        Some(doc_ids) => index.search_allowed_doc_ids(query, doc_ids),
+        None => index.search(query),
+    }
+    .map_err(CliError::fulltext)?;
 
     if search_args.filters.is_empty() {
         visible_hits(store, hits, candidate_limit)
     } else {
         filter_hits(store, hits, &search_args.filters, candidate_limit)
     }
+}
+
+fn field_filter_doc_id_prefilter(
+    store: &MetaStore,
+    filters: &SearchFilters,
+) -> Result<Option<BTreeSet<String>>> {
+    if filters.is_empty() {
+        return Ok(None);
+    }
+
+    let mut allowed_doc_ids = None;
+    if let Some(degree_min) = filters.degree_min() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Degree,
+                    &degree_filter_values(degree_min),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    false,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.skills_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Skill,
+                    filters.skills_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if let Some(years_min) = filters.years_experience_min() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_numeric_entity_min(
+                    EntityType::YearsExperience,
+                    years_min,
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+
+    Ok(allowed_doc_ids)
+}
+
+fn merge_filter_doc_ids(current: &mut Option<BTreeSet<String>>, next: Vec<DocumentId>) {
+    let next = next
+        .into_iter()
+        .map(|document_id| document_id.to_string())
+        .collect::<BTreeSet<_>>();
+    match current {
+        Some(current) => {
+            *current = current.intersection(&next).cloned().collect();
+        }
+        None => *current = Some(next),
+    }
+}
+
+fn degree_filter_values(min_degree: DegreeLevel) -> Vec<String> {
+    [
+        DegreeLevel::HighSchool,
+        DegreeLevel::Associate,
+        DegreeLevel::Bachelor,
+        DegreeLevel::Master,
+        DegreeLevel::Doctor,
+    ]
+    .into_iter()
+    .filter(|degree| *degree >= min_degree)
+    .map(|degree| degree.canonical().to_string())
+    .collect()
 }
 
 fn print_search_hits(hits: Vec<SearchOutputHit>) {

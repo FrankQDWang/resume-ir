@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S86 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S87 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -53,6 +53,7 @@ obsolete preliminary files and checklists are not product scope.
   index updates.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
   education/company/title/skills/certs/years, persisted entity mentions,
+  metadata-indexed field prefiltering before the full-text TopDocs cutoff,
   contact HMAC assignment, and candidate folding exist. Missing production work
   includes broader dictionaries, stronger normalization, soft-dedupe scoring,
   labeled F1 metrics, encrypted local storage, and physical purge.
@@ -189,8 +190,72 @@ obsolete preliminary files and checklists are not product scope.
 | S84 | Product benchmark-gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked` first failed because `evaluate_benchmark_gate_json` and `BenchmarkGateConfig` did not exist; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings`, the `resume-benchmark synthetic-query` plus `resume-benchmark gate` smoke, `./scripts/ci/check-runbooks.sh`, `git diff --check`, and `./scripts/ci/verify-local.sh` passed. | None for this synthetic benchmark gate and workflow wiring slice; 100k/1M real-corpus benchmark datasets, real-corpus nightly/release performance gates, semantic/vector quality gates, OCR throughput gates, Windows/macOS benchmark runners, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S85 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_model_checksum --locked` first failed because `model-checksum` was unsupported; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/check-runbooks.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this controlled local model artifact checksum probe slice; real licensed model selection/download/distribution, model package manifest governance, semantic/vector quality gates, battery mode, external-drive disconnect, destructive actual ENOSPC/service-manager drills, Windows/macOS validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S86 | Product model-governance slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker model_manifest_validate --locked` first failed because `model validate-manifest` was unsupported, then failed after schema tightening because the implementation only accepted a single-model manifest instead of `model_pack_id` plus `models[]`; `./scripts/ci/verify-local.sh` also exposed a daemon scheduler test race where a post-startup queued task could be claimed before its scan scope was written, fixed by using the existing atomic `insert_import_task_with_scan_scope` API in the test helper. After implementation and the stability fix, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/check-runbooks.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local model-pack manifest validation slice and daemon scheduler test stability repair; real licensed OCR/embedding model selection/download/distribution, model quality evaluation, ANN production indexing, semantic/vector quality gates, production model performance proof, and cross-platform release evidence remain not complete or BLOCKED. |
+| S87 | Product search slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_fields_before_fulltext_top_k_cutoff --locked -- --exact` first failed because field filters were applied only after the full-text TopDocs cutoff, causing a synthetic Rust candidate outside the top five unfiltered keyword hits to be missed with `--top-k 1`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p index-fulltext -p meta-store --all-targets --locked -- -D warnings`, `git diff --check`, `./scripts/ci/check-runbooks.sh`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this metadata-indexed field prefilter slice; broader dictionaries, stronger normalization, labeled field F1, ANN/vector quality gates, SQLCipher/encrypted metadata, physical purge, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S87
+
+Design target:
+
+- Make full-text search with structured filters constrain recall by persisted
+  field metadata before the full-text TopDocs cutoff.
+- Keep the final profile filter as a correctness guard after hydration.
+- Avoid any real resume data; use synthetic `.txt` files in a temporary local
+  directory only.
+- Do not claim field F1, dictionary completeness, or million-scale performance
+  from this slice.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_fields_before_fulltext_top_k_cutoff --locked -- --exact
+```
+
+Output summary:
+
+- Exit 101 before implementation because `resume-cli search needle
+  --skills-any rust --top-k 1` returned `results: 0` when five high-scoring
+  decoy documents occupied the unfiltered full-text TopDocs window and the
+  lower-scoring Rust candidate was filtered out before it could be considered.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p index-fulltext -p meta-store --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The RED test now passes and returns the field-matching synthetic Rust
+  candidate even when `--top-k 1`.
+- `s10_search_filters`: exit 0; 2 tests passed.
+- `index-fulltext`: exit 0; 12 tests passed.
+- `meta-store`: exit 0; 41 tests passed.
+- Focused clippy: exit 0.
+- `git diff --check`: exit 0.
+- `check-runbooks.sh`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S87 adds indexed metadata prefiltering for current degree, skill, and years
+  filters before full-text TopDocs retrieval. It does not prove field F1,
+  complete dictionaries, million-scale latency, ANN quality, encrypted
+  metadata, physical purge, or cross-platform release validation.
+- Full product is still not complete.
 
 ### S86
 
