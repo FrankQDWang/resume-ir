@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
-use meta_store::{DocumentId, MetaStore, UnixTimestamp};
+use meta_store::{DocumentId, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, UnixTimestamp};
 
 #[test]
 fn delete_soft_tombstones_document_and_removes_it_from_default_search() {
@@ -317,6 +317,36 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
         .unwrap();
     assert_eq!(vector_index.snapshot().unwrap().vector_count(), 2);
 
+    let deleted_document_id = DocumentId::from_str(&deleted_doc_id).unwrap();
+    let (ocr_cache_key, ocr_job_id) = {
+        let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+        store.run_migrations().unwrap();
+        let deleted_document = store
+            .document_by_id(&deleted_document_id)
+            .unwrap()
+            .expect("deleted candidate document before tombstone");
+        let content_hash = deleted_document.content_hash.clone().expect("content hash");
+        let ocr_cache_key = OcrPageCacheKey::new(content_hash, 1, 300, "eng", "balanced").unwrap();
+        let ocr_cache_entry = OcrPageCacheEntry::succeeded(
+            ocr_cache_key.clone(),
+            "PRIVATE_PURGE_OCR_TEXT_SHOULD_NOT_SURVIVE",
+            0.91,
+            "fixture-ocr-engine",
+            17,
+            UnixTimestamp::from_unix_seconds(1_800_014_000),
+        )
+        .unwrap();
+        store.upsert_ocr_page_cache_entry(&ocr_cache_entry).unwrap();
+        let ocr_job = store
+            .enqueue_ocr_job_for_document(
+                &deleted_document.id,
+                UnixTimestamp::from_unix_seconds(1_800_014_001),
+            )
+            .unwrap()
+            .job;
+        (ocr_cache_key, ocr_job.id)
+    };
+
     let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
@@ -348,9 +378,12 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     assert!(stdout.contains("purged documents: 1"));
     assert!(stdout.contains("index rebuilt: true"));
     assert!(stdout.contains("vector documents purged: 1"));
+    assert!(stdout.contains("ingest jobs purged: 1"));
+    assert!(stdout.contains("ocr cache entries purged: 1"));
     assert!(stdout.contains("metadata vacuum: yes"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains("PRIVATE_PURGE_OCR_TEXT"));
     assert!(!stdout.contains("PRIVATE"));
 
     let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
@@ -363,6 +396,11 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
         .document_by_id(&DocumentId::from_str(&live_doc_id).unwrap())
         .unwrap()
         .is_some());
+    assert!(store
+        .ocr_page_cache_entry(&ocr_cache_key)
+        .unwrap()
+        .is_none());
+    assert!(store.ingest_job_by_id(&ocr_job_id).unwrap().is_none());
     assert_eq!(snapshot_dir_count(&data_dir), 1);
     let reopened_vector = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
     assert_eq!(reopened_vector.snapshot().unwrap().vector_count(), 1);

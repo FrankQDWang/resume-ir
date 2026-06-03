@@ -3630,8 +3630,30 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .iter()
         .map(|document_id| document_id.to_string())
         .collect::<BTreeSet<_>>();
+    let mut deleted_content_hashes = BTreeSet::new();
+    for document_id in &deleted_document_ids {
+        if let Some(document) = store.document_by_id(document_id).map_err(CliError::store)? {
+            if let Some(content_hash) = document.content_hash {
+                deleted_content_hashes.insert(content_hash);
+            }
+        }
+    }
+    let live_content_hashes = store
+        .visible_documents()
+        .map_err(CliError::store)?
+        .into_iter()
+        .filter_map(|document| document.content_hash)
+        .collect::<BTreeSet<_>>();
+    deleted_content_hashes.retain(|content_hash| !live_content_hashes.contains(content_hash));
 
     let vector_documents_purged = purge_vector_documents(data_dir, &deleted_doc_id_set)?;
+    let ingest_jobs_purged = store
+        .purge_ingest_jobs_for_documents(&deleted_document_ids)
+        .map_err(CliError::store)?;
+    let ocr_cache_hashes = deleted_content_hashes.into_iter().collect::<Vec<_>>();
+    let ocr_cache_entries_purged = store
+        .purge_ocr_page_cache_by_content_hashes(&ocr_cache_hashes)
+        .map_err(CliError::store)?;
     let now = current_timestamp()?;
     let rebuild = if deleted_document_ids.is_empty() {
         None
@@ -3662,6 +3684,8 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
         snapshot_purge.removed_staging()
     );
     println!("vector documents purged: {vector_documents_purged}");
+    println!("ingest jobs purged: {ingest_jobs_purged}");
+    println!("ocr cache entries purged: {ocr_cache_entries_purged}");
     println!("metadata vacuum: yes");
     println!("physical purge scope: local best-effort, not forensic erase");
 

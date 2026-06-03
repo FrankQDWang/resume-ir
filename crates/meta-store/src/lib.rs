@@ -392,6 +392,52 @@ impl MetaStore {
         Ok(deleted)
     }
 
+    pub fn purge_ingest_jobs_for_documents(&self, document_ids: &[DocumentId]) -> Result<usize> {
+        if document_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let placeholders = (0..document_ids.len())
+            .map(|index| format!("?{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let delete_sql = format!("DELETE FROM ingest_job WHERE document_id IN ({placeholders})");
+        let delete_params = document_ids
+            .iter()
+            .map(|document_id| Value::Text(document_id.as_str().to_string()))
+            .collect::<Vec<_>>();
+        let connection = self.connection.borrow();
+
+        connection
+            .execute(&delete_sql, params_from_iter(delete_params))
+            .map_err(MetaStoreError::storage)
+    }
+
+    pub fn purge_ocr_page_cache_by_content_hashes(
+        &self,
+        content_hashes: &[String],
+    ) -> Result<usize> {
+        if content_hashes.is_empty() {
+            return Ok(0);
+        }
+
+        let placeholders = (0..content_hashes.len())
+            .map(|index| format!("?{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let delete_sql =
+            format!("DELETE FROM ocr_page_cache WHERE file_content_hash IN ({placeholders})");
+        let delete_params = content_hashes
+            .iter()
+            .map(|content_hash| Value::Text(content_hash.clone()))
+            .collect::<Vec<_>>();
+        let connection = self.connection.borrow();
+
+        connection
+            .execute(&delete_sql, params_from_iter(delete_params))
+            .map_err(MetaStoreError::storage)
+    }
+
     pub fn upsert_candidate(&self, candidate: &Candidate) -> Result<()> {
         validate_candidate(candidate)?;
         let connection = self.connection.borrow();

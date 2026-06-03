@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S89 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S90 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -55,10 +55,11 @@ obsolete preliminary files and checklists are not product scope.
   metadata-indexed field prefiltering before the full-text TopDocs cutoff,
   contact HMAC assignment, candidate folding, and explicit best-effort local
   purge of tombstoned documents across metadata, obsolete full-text snapshots,
-  full-text staging directories, and vector records exist. Missing production
-  work includes broader dictionaries, stronger normalization, soft-dedupe
-  scoring, labeled F1 metrics, encrypted local storage, complete PII surface
-  purge coverage, and forensic erase proof.
+  full-text staging directories, vector records, current ingest jobs, and
+  current OCR page-cache records exist. Missing production work includes
+  broader dictionaries, stronger normalization, soft-dedupe scoring, labeled
+  F1 metrics, encrypted local storage, future bbox/PII surface purge coverage,
+  and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, linear KNN, RRF helpers, embedding worker, model/dimension-scoped
   durable per-version embedding jobs, model-scoped vector query isolation,
@@ -79,10 +80,12 @@ obsolete preliminary files and checklists are not product scope.
   indexing exist. The daemon can now claim queued OCR jobs, execute configured
   local PDF render and OCR commands, persist cache entries for each page, index
   combined OCR text with page count, honor persistent pause state, and keep
-  serving status IPC while OCR runs. Missing or BLOCKED work includes selecting
-  and installing a concrete PDF renderer/OCR engine with license evidence,
-  real Poppler/PDFium/Tesseract witness runs, bbox persistence, backpressure,
-  full OCR cache/job purge coverage, and real scanned-resume witness runs.
+  serving status IPC while OCR runs. Deleted-document purge now removes current
+  OCR jobs and current OCR page-cache entries that are no longer shared by
+  visible documents. Missing or BLOCKED work includes selecting and installing
+  a concrete PDF renderer/OCR engine with license evidence, real Poppler/
+  PDFium/Tesseract witness runs, bbox persistence, backpressure, and real
+  scanned-resume witness runs.
 - P5 packaging/platform: not production-ready. A local CLI service lifecycle
   now writes, reports, removes, and dry-run starts/stops a macOS user
   LaunchAgent plist without CLI path disclosure. Installer packaging, signing,
@@ -200,8 +203,73 @@ obsolete preliminary files and checklists are not product scope.
 | S87 | Product search slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_fields_before_fulltext_top_k_cutoff --locked -- --exact` first failed because field filters were applied only after the full-text TopDocs cutoff, causing a synthetic Rust candidate outside the top five unfiltered keyword hits to be missed with `--top-k 1`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p index-fulltext -p meta-store --all-targets --locked -- -D warnings`, `git diff --check`, `./scripts/ci/check-runbooks.sh`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this metadata-indexed field prefilter slice; broader dictionaries, stronger normalization, labeled field F1, ANN/vector quality gates, SQLCipher/encrypted metadata, physical purge, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S88 | Product privacy/delete slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact` first failed because `resume-cli purge` was unsupported; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p index-fulltext -p index-vector -p meta-store --all-targets --locked -- -D warnings`, `git diff --check`, `./scripts/ci/check-runbooks.sh`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this explicit best-effort local deleted-document purge slice; SQLCipher/encrypted metadata, forensic erase, full OCR/cache/job-retention purge coverage, real-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S89 | Product OCR slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_processes_all_scanned_pdf_pages_before_indexing --locked -- --exact` first failed because OCR worker behavior was single-page/cache-write `1`; after implementation, focused CLI, daemon, OCR client, import-pipeline, parser-pdf, fmt, clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local PDF render command protocol and multi-page OCR fan-out slice; concrete PDF renderer/OCR engine install and license evidence, real Poppler/PDFium/Tesseract witness runs, bbox persistence, backpressure, full OCR cache/job purge coverage, real scanned-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
+| S90 | Product privacy/delete slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact` first failed after the test was tightened because `purge --deleted` did not report or remove OCR cache/job retention surfaces; after implementation, the focused RED/GREEN test, full `s14_delete_search`, `meta-store`, focused clippy, fmt, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this current OCR cache/job purge slice; SQLCipher/encrypted metadata, forensic erase, future OCR bbox purge surfaces, real-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S90
+
+Design target:
+
+- Extend `resume-cli purge --deleted` so tombstoned-document cleanup also
+  removes current ingest jobs and OCR page-cache entries associated with the
+  purged documents.
+- Keep cache deletion content-hash scoped, but preserve shared OCR cache entries
+  when the same content hash is still referenced by a visible document.
+- Print only aggregate counts for the new purge surfaces; do not print OCR text,
+  local paths, data directories, fixture roots, or command payloads.
+- Use synthetic fixtures only.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- Exit 101 after tightening the purge test because stdout did not contain
+  `ingest jobs purged: 1`, exposing that current purge output and cleanup did
+  not cover OCR job/cache retention surfaces.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Target RED/GREEN test: exit 0 after implementation.
+- `s14_delete_search`: exit 0; 7 tests passed, including tombstoned metadata,
+  full-text snapshots/staging, vector records, OCR job, and OCR page-cache
+  cleanup without private text/path leakage.
+- `meta-store`: exit 0; 41 tests passed plus doc-tests.
+- Focused clippy: exit 0.
+- `cargo fmt --check`: exit 0 after formatting.
+- `git diff --check`: exit 0.
+- `check-runbooks.sh`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S90 covers current OCR page-cache rows and ingest jobs for purged documents.
+  It does not claim encrypted storage, forensic erase, future OCR bbox/table
+  purge coverage, real-resume witness proof, large-corpus proof, or cross-
+  platform validation.
+- Full product is still not complete.
 
 ### S89
 
