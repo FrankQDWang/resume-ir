@@ -42,6 +42,9 @@ use rank_fusion::{
 };
 use search_planner::plan_search;
 use sectionizer::Sectionizer;
+use sysinfo::{
+    get_current_pid, DiskRefreshKind, Disks, ProcessRefreshKind, ProcessesToUpdate, System,
+};
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 const LOCAL_DISCOVERY_DEFAULT_MAX_FILES: usize = 10_000;
@@ -3671,6 +3674,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     let index_diagnostic = inspect_search_index(data_dir);
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
+    let resource_telemetry = collect_resource_telemetry(data_dir);
 
     println!("resume-ir doctor");
     println!("metadata: ok");
@@ -3709,6 +3713,20 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     );
     println!("staging orphans: {}", index_diagnostic.staging_orphans());
     println!("contact hash key: {}", contact_key.state().label());
+    println!("resource telemetry: {}", resource_telemetry.status_label());
+    println!(
+        "data disk total bytes: {}",
+        resource_telemetry.format_disk_total()
+    );
+    println!(
+        "data disk available bytes: {}",
+        resource_telemetry.format_disk_available()
+    );
+    println!(
+        "process memory bytes: {}",
+        resource_telemetry.format_process_memory()
+    );
+    println!("cpu cores: {}", resource_telemetry.cpu_cores);
     println!("fault simulations: available");
     println!(
         "fault simulation hooks: daemon_restart,index_snapshot_corrupt,disk_space_low,permission_denied"
@@ -3730,6 +3748,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let index_diagnostic = inspect_search_index(data_dir);
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
+    let resource_telemetry = collect_resource_telemetry(data_dir);
 
     println!("{{");
     println!("  \"schema_version\": \"diagnostics.v1\",");
@@ -3807,6 +3826,23 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "  \"contact_hash_key\": \"{}\",",
         contact_key.state().label()
     );
+    println!("  \"resource_telemetry\": {{");
+    println!("    \"status\": \"{}\",", resource_telemetry.status_label());
+    println!("    \"paths\": \"<redacted>\",");
+    println!(
+        "    \"data_disk_total_bytes\": {},",
+        resource_telemetry.format_json_disk_total()
+    );
+    println!(
+        "    \"data_disk_available_bytes\": {},",
+        resource_telemetry.format_json_disk_available()
+    );
+    println!(
+        "    \"process_memory_bytes\": {},",
+        resource_telemetry.format_json_process_memory()
+    );
+    println!("    \"cpu_cores\": {}", resource_telemetry.cpu_cores);
+    println!("  }},");
     println!("  \"fault_simulations\": [");
     println!("    \"daemon_restart\",");
     println!("    \"index_snapshot_corrupt\",");
@@ -3817,6 +3853,123 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("}}");
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ResourceTelemetry {
+    data_disk_total_bytes: Option<u64>,
+    data_disk_available_bytes: Option<u64>,
+    process_memory_bytes: Option<u64>,
+    cpu_cores: usize,
+}
+
+impl ResourceTelemetry {
+    fn status_label(&self) -> &'static str {
+        if self.data_disk_total_bytes.is_some()
+            && self.data_disk_available_bytes.is_some()
+            && self.process_memory_bytes.is_some()
+            && self.cpu_cores > 0
+        {
+            "available"
+        } else {
+            "degraded"
+        }
+    }
+
+    fn format_disk_total(&self) -> String {
+        format_optional_u64(self.data_disk_total_bytes)
+    }
+
+    fn format_disk_available(&self) -> String {
+        format_optional_u64(self.data_disk_available_bytes)
+    }
+
+    fn format_process_memory(&self) -> String {
+        format_optional_u64(self.process_memory_bytes)
+    }
+
+    fn format_json_disk_total(&self) -> String {
+        format_json_optional_u64(self.data_disk_total_bytes)
+    }
+
+    fn format_json_disk_available(&self) -> String {
+        format_json_optional_u64(self.data_disk_available_bytes)
+    }
+
+    fn format_json_process_memory(&self) -> String {
+        format_json_optional_u64(self.process_memory_bytes)
+    }
+}
+
+fn collect_resource_telemetry(data_dir: &Path) -> ResourceTelemetry {
+    let (data_disk_total_bytes, data_disk_available_bytes) = data_disk_telemetry(data_dir)
+        .map(|disk| (Some(disk.total_bytes), Some(disk.available_bytes)))
+        .unwrap_or((None, None));
+    let process_memory_bytes = process_memory_bytes();
+    let cpu_cores = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(0);
+
+    ResourceTelemetry {
+        data_disk_total_bytes,
+        data_disk_available_bytes,
+        process_memory_bytes,
+        cpu_cores,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DiskTelemetry {
+    total_bytes: u64,
+    available_bytes: u64,
+}
+
+fn data_disk_telemetry(data_dir: &Path) -> Option<DiskTelemetry> {
+    let target = nearest_existing_ancestor(data_dir)?;
+    let disks = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
+
+    disks
+        .list()
+        .iter()
+        .filter(|disk| target.starts_with(disk.mount_point()))
+        .max_by_key(|disk| disk.mount_point().components().count())
+        .map(|disk| DiskTelemetry {
+            total_bytes: disk.total_space(),
+            available_bytes: disk.available_space(),
+        })
+}
+
+fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut current = path;
+    loop {
+        if current.exists() {
+            return Some(current.to_path_buf());
+        }
+        current = current.parent()?;
+    }
+}
+
+fn process_memory_bytes() -> Option<u64> {
+    let pid = get_current_pid().ok()?;
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_memory().without_tasks(),
+    );
+    system.process(pid).map(|process| process.memory())
+}
+
+fn format_optional_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn format_json_optional_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string())
 }
 
 fn parse_search_args(args: &[String]) -> Result<SearchArgs> {

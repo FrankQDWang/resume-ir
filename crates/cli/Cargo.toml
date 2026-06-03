@@ -21,6 +21,7 @@ rank-fusion = { path = "../rank-fusion" }
 search-planner = { path = "../search-planner" }
 sectionizer = { path = "../sectionizer" }
 serde_json = "1"
+sysinfo = { version = "0.39.3", default-features = false, features = ["disk", "system"] }
 
 [lints]
 workspace = true

@@ -93,6 +93,56 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
 }
 
 #[test]
+fn doctor_and_diagnostics_report_redacted_resource_telemetry() {
+    let data_dir = temp_dir("diagnostics-resource-private-data");
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with resource telemetry");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("resource telemetry: available"));
+    assert!(stdout.contains("data disk total bytes: "));
+    assert!(stdout.contains("data disk available bytes: "));
+    assert!(stdout.contains("process memory bytes: "));
+    assert!(stdout.contains("cpu cores: "));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with resource telemetry");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"resource_telemetry\": {"));
+    assert!(stdout.contains("\"status\": \"available\""));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(stdout.contains("\"data_disk_total_bytes\": "));
+    assert!(stdout.contains("\"data_disk_available_bytes\": "));
+    assert!(stdout.contains("\"process_memory_bytes\": "));
+    assert!(stdout.contains("\"cpu_cores\": "));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let telemetry = json["resource_telemetry"].as_object().unwrap();
+    assert_eq!(telemetry["status"], "available");
+    assert_eq!(telemetry["paths"], "<redacted>");
+    assert!(telemetry["data_disk_total_bytes"].as_u64().unwrap() > 0);
+    assert!(telemetry["data_disk_available_bytes"].as_u64().unwrap() > 0);
+    assert!(telemetry["process_memory_bytes"].as_u64().unwrap() > 0);
+    assert!(telemetry["cpu_cores"].as_u64().unwrap() > 0);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_values() {
     let data_dir = temp_dir("diagnostics-vector-private-data");
     let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
