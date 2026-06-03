@@ -121,6 +121,79 @@ fn status_ipc_auto_discovers_endpoint_without_path_leak() {
 }
 
 #[test]
+fn status_watch_import_ipc_auto_streams_redacted_progress_without_local_store() {
+    let data_dir = temp_dir_path("watch-import-auto");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let token = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+    write_ipc_endpoint_file_with_token(&data_dir, addr, token);
+    let server = thread::spawn(move || {
+        let (mut status_stream, _) = accept_with_timeout(&listener);
+        let status_request = read_http_request(&mut status_stream);
+        assert!(status_request.starts_with("GET /status HTTP/1.1"));
+        assert!(!status_request.contains("Authorization:"));
+        let status_body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":1,\"import_tasks_cancelled\":0}";
+        write!(
+            status_stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            status_body.len(),
+            status_body
+        )
+        .expect("write fake status response");
+        drop(status_stream);
+
+        let (mut progress_stream, _) = accept_with_timeout(&listener);
+        let progress_request = read_http_request(&mut progress_stream);
+        assert!(progress_request.starts_with("GET /imports/progress HTTP/1.1"));
+        assert!(progress_request.contains(&format!("Authorization: Bearer {token}")));
+        let first = "{\"schema_version\":\"daemon.import_progress.v1\",\"event\":\"snapshot\",\"latest_import_scan\":{\"scan_profile\":\"explicit\",\"files_discovered\":7,\"ignored_entries\":1,\"scan_errors\":0,\"searchable_documents\":3,\"ocr_required_documents\":2,\"ocr_jobs_queued\":2,\"failed_documents\":0,\"deleted_documents\":0,\"scan_budget_observed\":7,\"scan_budget_limit\":9,\"scan_budget_exhausted\":false}}\n";
+        let second = "{\"schema_version\":\"daemon.import_progress.v1\",\"event\":\"snapshot\",\"latest_import_scan\":{\"scan_profile\":\"explicit\",\"files_discovered\":8,\"ignored_entries\":1,\"scan_errors\":0,\"searchable_documents\":4,\"ocr_required_documents\":2,\"ocr_jobs_queued\":2,\"failed_documents\":0,\"deleted_documents\":0,\"scan_budget_observed\":8,\"scan_budget_limit\":9,\"scan_budget_exhausted\":false}}\n";
+        let body = format!("{first}{second}");
+        write!(
+            progress_stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .expect("write fake progress stream");
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "status",
+            "--watch-import",
+            "--ipc",
+            "auto",
+        ])
+        .output()
+        .expect("run resume-cli status --watch-import --ipc auto");
+
+    server.join().expect("fake daemon joined");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("resume-ir import progress stream"));
+    assert!(stdout.contains("latest import files discovered: 7"));
+    assert!(stdout.contains("latest import files discovered: 8"));
+    assert!(stdout.contains("latest import searchable documents: 4"));
+    assert!(stdout.contains("latest import scan budget: 8/9 exhausted=no"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains("ipc.auth"));
+    assert!(!stdout.contains(token));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn status_ipc_connect_failure_does_not_fallback_to_sqlite() {
     let data_dir = temp_dir_path("connect-failure");
     let status_url = unused_loopback_status_url();
@@ -194,7 +267,22 @@ fn status_ipc_rejects_non_loopback_and_wrong_path() {
         .expect("run resume-cli status --ipc wrong path");
     assert!(!wrong_path.status.success());
     assert_eq!(wrong_path.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&wrong_path.stderr).contains("resume-cli status [--ipc"));
+    assert!(String::from_utf8_lossy(&wrong_path.stderr).contains("resume-cli status"));
+
+    let wrong_progress_path = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "status",
+            "--watch-import",
+            "--ipc",
+            "http://127.0.0.1:4000/status",
+            "--ipc-token-file",
+            "/tmp/resume-ir-token",
+        ])
+        .output()
+        .expect("run resume-cli status --watch-import wrong path");
+    assert!(!wrong_progress_path.status.success());
+    assert_eq!(wrong_progress_path.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&wrong_progress_path.stderr).contains("resume-cli status"));
 }
 
 fn read_http_request(stream: &mut impl Read) -> String {
@@ -237,10 +325,15 @@ fn write_ipc_endpoint_file(data_dir: &Path, addr: SocketAddr) {
     fs::write(
         data_dir.join("ipc.endpoints.json"),
         format!(
-            "{{\"schema_version\":\"resume-ir.daemon-ipc.v1\",\"status\":\"http://{addr}/status\",\"imports\":\"http://{addr}/imports\",\"search\":\"http://{addr}/search\",\"details\":\"http://{addr}/details\"}}"
+            "{{\"schema_version\":\"resume-ir.daemon-ipc.v1\",\"status\":\"http://{addr}/status\",\"imports\":\"http://{addr}/imports\",\"import_cancel\":\"http://{addr}/imports/cancel\",\"import_progress\":\"http://{addr}/imports/progress\",\"search\":\"http://{addr}/search\",\"details\":\"http://{addr}/details\"}}"
         ),
     )
     .unwrap();
+}
+
+fn write_ipc_endpoint_file_with_token(data_dir: &Path, addr: SocketAddr, token: &str) {
+    write_ipc_endpoint_file(data_dir, addr);
+    fs::write(data_dir.join("ipc.auth"), format!("{token}\n")).unwrap();
 }
 
 fn unused_loopback_status_url() -> String {

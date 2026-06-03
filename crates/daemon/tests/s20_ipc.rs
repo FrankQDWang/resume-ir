@@ -57,6 +57,10 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
         format!("{base_endpoint}/imports/cancel")
     );
     assert_eq!(
+        endpoint_manifest_json["import_progress"],
+        format!("{base_endpoint}/imports/progress")
+    );
+    assert_eq!(
         endpoint_manifest_json["search"],
         format!("{base_endpoint}/search")
     );
@@ -87,6 +91,60 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
     assert!(!endpoint_manifest_path.exists());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_streams_redacted_import_progress_over_loopback_ipc() {
+    let data_dir = temp_dir("ipc-import-progress-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let task_id = seed_running_import_task(
+        &data_dir,
+        "progress-stream",
+        &canonical_fixture_root,
+        1_800_040_000,
+    );
+    seed_import_progress_scope(&data_dir, &task_id, &canonical_fixture_root);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_get_import_progress(&endpoint, Some(&token));
+
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    assert!(response.contains("Content-Type: application/x-ndjson"));
+    assert!(response.contains("\"schema_version\":\"daemon.import_progress.v1\""));
+    assert!(response.contains("\"event\":\"snapshot\""));
+    assert!(response.contains("\"files_discovered\":42"));
+    assert!(response.contains("\"searchable_documents\":13"));
+    assert!(response.contains("\"scan_budget_observed\":42"));
+    assert!(response.contains("\"scan_budget_limit\":100"));
+    assert!(!response.contains(path_str(&data_dir)));
+    assert!(!response.contains(path_str(&fixture_root)));
+    assert!(!response.contains(path_str(&canonical_fixture_root)));
+    assert!(!response.contains(&token));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
 
     remove_dir(&data_dir);
 }
@@ -921,6 +979,25 @@ fn http_get(endpoint: &str) -> String {
     try_http_get(endpoint).expect("read response")
 }
 
+fn http_get_import_progress(endpoint: &str, token: Option<&str>) -> String {
+    let rest = endpoint
+        .strip_prefix("http://")
+        .expect("endpoint has http scheme");
+    let (addr, _path) = rest.split_once('/').expect("endpoint has path");
+    let authorization = token
+        .map(|token| format!("Authorization: Bearer {token}\r\n"))
+        .unwrap_or_default();
+    let mut stream = TcpStream::connect(addr).expect("connect daemon ipc");
+    write!(
+        stream,
+        "GET /imports/progress HTTP/1.1\r\nHost: {addr}\r\n{authorization}Connection: close\r\n\r\n"
+    )
+    .expect("write import progress request");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+    response
+}
+
 fn try_http_get(endpoint: &str) -> io::Result<String> {
     let rest = endpoint
         .strip_prefix("http://")
@@ -1161,6 +1238,34 @@ fn seed_running_import_task(
         })
         .unwrap();
     task_id
+}
+
+fn seed_import_progress_scope(data_dir: &Path, task_id: &ImportTaskId, canonical_root: &Path) {
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .upsert_import_scan_scope(&ImportScanScope {
+            import_task_id: task_id.clone(),
+            root_kind: ImportRootKind::Explicit,
+            root_preset: None,
+            scan_profile: ImportScanProfile::Explicit,
+            requested_root_path: path_str(canonical_root).to_string(),
+            canonical_root_path: path_str(canonical_root).to_string(),
+            files_discovered: 42,
+            ignored_entries: 3,
+            scan_errors: 2,
+            searchable_documents: 13,
+            ocr_required_documents: 5,
+            ocr_jobs_queued: 4,
+            failed_documents: 1,
+            deleted_documents: 0,
+            scan_budget_kind: Some(meta_store::ImportScanBudgetKind::Files),
+            scan_budget_limit: Some(100),
+            scan_budget_observed: Some(42),
+            scan_budget_exhausted: false,
+            updated_at: UnixTimestamp::from_unix_seconds(1_800_040_100),
+        })
+        .unwrap();
 }
 
 fn fixture_root() -> PathBuf {

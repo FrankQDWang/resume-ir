@@ -111,7 +111,11 @@ fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    if let Some(endpoint) = parse_status_ipc_arg(data_dir, args)? {
+    let status_args = parse_status_args(data_dir, args)?;
+    if let Some(watch) = status_args.watch_import {
+        return status_watch_import_command(&watch.endpoint, &watch.token_file);
+    }
+    if let Some(endpoint) = status_args.ipc_endpoint {
         return status_ipc_command(&endpoint);
     }
 
@@ -164,6 +168,16 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     Ok(())
 }
 
+struct StatusArgs {
+    ipc_endpoint: Option<IpcStatusEndpoint>,
+    watch_import: Option<ImportProgressWatchArgs>,
+}
+
+struct ImportProgressWatchArgs {
+    endpoint: IpcImportProgressEndpoint,
+    token_file: PathBuf,
+}
+
 fn print_import_scan_progress(scope: &ImportScanScope) {
     println!(
         "latest import scan profile: {}",
@@ -213,22 +227,101 @@ fn import_scan_budget_progress_label(scope: &ImportScanScope) -> String {
     }
 }
 
-fn parse_status_ipc_arg(data_dir: &Path, args: &[String]) -> Result<Option<IpcStatusEndpoint>> {
-    if args.is_empty() {
-        return Ok(None);
-    }
-    if args.len() != 2 || args.first().map(String::as_str) != Some("--ipc") {
-        return Err(CliError::usage(status_usage()));
-    }
-    if args[1] == "auto" {
-        return discover_status_ipc_endpoint(data_dir).map(Some);
+fn parse_status_args(data_dir: &Path, args: &[String]) -> Result<StatusArgs> {
+    let mut watch_import = false;
+    let mut ipc_value = None;
+    let mut ipc_token_file = None;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--watch-import" => {
+                if watch_import {
+                    return Err(CliError::usage(status_usage()));
+                }
+                watch_import = true;
+                index += 1;
+            }
+            "--ipc" => {
+                if ipc_value.is_some() {
+                    return Err(CliError::usage(status_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(status_usage()));
+                };
+                ipc_value = Some(value.as_str());
+                index += 2;
+            }
+            "--ipc-token-file" => {
+                if ipc_token_file.is_some() {
+                    return Err(CliError::usage(status_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(status_usage()));
+                };
+                ipc_token_file = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(status_usage())),
+        }
     }
 
-    parse_status_ipc_endpoint(&args[1]).map(Some)
+    if !watch_import && ipc_token_file.is_some() {
+        return Err(CliError::usage(status_usage()));
+    }
+
+    let Some(ipc_value) = ipc_value else {
+        if watch_import {
+            return Err(CliError::usage(status_usage()));
+        }
+        return Ok(StatusArgs {
+            ipc_endpoint: None,
+            watch_import: None,
+        });
+    };
+
+    if watch_import {
+        if ipc_value == "auto" {
+            if ipc_token_file.is_some() {
+                return Err(CliError::usage(status_usage()));
+            }
+            let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
+            let endpoint = discover_import_progress_ipc_endpoint(data_dir)?;
+            ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
+            verify_auto_ipc_status(&status_endpoint)?;
+            return Ok(StatusArgs {
+                ipc_endpoint: None,
+                watch_import: Some(ImportProgressWatchArgs {
+                    endpoint,
+                    token_file: auto_ipc_token_file(data_dir),
+                }),
+            });
+        }
+        let token_file = ipc_token_file.ok_or_else(|| CliError::usage(status_usage()))?;
+        return Ok(StatusArgs {
+            ipc_endpoint: None,
+            watch_import: Some(ImportProgressWatchArgs {
+                endpoint: parse_import_progress_ipc_endpoint(ipc_value)?,
+                token_file,
+            }),
+        });
+    }
+
+    if ipc_value == "auto" {
+        return Ok(StatusArgs {
+            ipc_endpoint: Some(discover_status_ipc_endpoint(data_dir)?),
+            watch_import: None,
+        });
+    }
+
+    Ok(StatusArgs {
+        ipc_endpoint: Some(parse_status_ipc_endpoint(ipc_value)?),
+        watch_import: None,
+    })
 }
 
 fn status_usage() -> &'static str {
-    "usage: resume-cli status [--ipc <auto|http://127.0.0.1:port/status>]"
+    "usage: resume-cli status [--watch-import] [--ipc <auto|http://127.0.0.1:port/status|/imports/progress>] [--ipc-token-file <path>]"
 }
 
 fn parse_status_ipc_endpoint(value: &str) -> Result<IpcStatusEndpoint> {
@@ -253,6 +346,45 @@ fn parse_status_ipc_endpoint(value: &str) -> Result<IpcStatusEndpoint> {
 fn status_ipc_command(endpoint: &IpcStatusEndpoint) -> Result<()> {
     let body = request_status_ipc_body(endpoint)?;
     render_ipc_status(&body);
+    Ok(())
+}
+
+fn status_watch_import_command(
+    endpoint: &IpcImportProgressEndpoint,
+    token_file: &Path,
+) -> Result<()> {
+    let token = fs::read_to_string(token_file)
+        .map_err(|_| CliError::user("unable to read daemon import progress ipc token"))?;
+    let token = validate_daemon_ipc_token(&token, "daemon import progress ipc token is invalid")?;
+    let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
+        .map_err(|_| CliError::user("unable to connect to daemon import progress ipc"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|_| CliError::user("unable to configure daemon import progress ipc"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon import progress ipc"))?;
+    let request = format!(
+        "GET /imports/progress HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+        endpoint.addr, token
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|_| CliError::user("unable to request daemon import progress ipc"))?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|_| CliError::user("unable to read daemon import progress ipc"))?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| CliError::user("daemon import progress ipc response is invalid"))?;
+    let status_line = headers.lines().next().unwrap_or_default();
+    if !status_line.starts_with("HTTP/1.1 200 ") && !status_line.starts_with("HTTP/1.0 200 ") {
+        return Err(CliError::user(
+            "daemon import progress ipc returned an error",
+        ));
+    }
+    render_import_progress_stream(body)?;
     Ok(())
 }
 
@@ -359,6 +491,27 @@ fn render_ipc_status(body: &serde_json::Value) {
     println!("search index: daemon ipc (full-text state reported by daemon)");
 }
 
+fn render_import_progress_stream(body: &str) -> Result<()> {
+    println!("resume-ir import progress stream");
+    for line in body.lines().filter(|line| !line.trim().is_empty()) {
+        let event: serde_json::Value = serde_json::from_str(line)
+            .map_err(|_| CliError::user("daemon import progress ipc returned invalid json"))?;
+        if json_str(&event, "schema_version") != Some("daemon.import_progress.v1") {
+            return Err(CliError::user(
+                "daemon import progress ipc returned invalid protocol",
+            ));
+        }
+        println!(
+            "import progress event: {}",
+            json_str(&event, "event").unwrap_or("unknown")
+        );
+        if let Some(latest_import) = event.get("latest_import_scan") {
+            render_ipc_import_scan_progress(latest_import);
+        }
+    }
+    Ok(())
+}
+
 fn render_ipc_import_scan_progress(body: &serde_json::Value) {
     if !body.is_object() {
         return;
@@ -453,6 +606,10 @@ struct IpcImportCancelEndpoint {
     addr: SocketAddr,
 }
 
+struct IpcImportProgressEndpoint {
+    addr: SocketAddr,
+}
+
 #[derive(Clone)]
 struct IpcSearchEndpoint {
     addr: SocketAddr,
@@ -477,6 +634,10 @@ fn discover_import_ipc_endpoint(data_dir: &Path) -> Result<IpcImportEndpoint> {
 
 fn discover_import_cancel_ipc_endpoint(data_dir: &Path) -> Result<IpcImportCancelEndpoint> {
     parse_import_cancel_ipc_endpoint(&discover_ipc_url(data_dir, "import_cancel")?)
+}
+
+fn discover_import_progress_ipc_endpoint(data_dir: &Path) -> Result<IpcImportProgressEndpoint> {
+    parse_import_progress_ipc_endpoint(&discover_ipc_url(data_dir, "import_progress")?)
 }
 
 fn discover_search_ipc_endpoint(data_dir: &Path) -> Result<IpcSearchEndpoint> {
@@ -1129,6 +1290,27 @@ fn parse_import_cancel_ipc_endpoint(value: &str) -> Result<IpcImportCancelEndpoi
     }
 
     Ok(IpcImportCancelEndpoint { addr })
+}
+
+fn parse_import_progress_ipc_endpoint(value: &str) -> Result<IpcImportProgressEndpoint> {
+    let rest = value
+        .strip_prefix("http://")
+        .ok_or_else(|| CliError::usage(status_usage()))?;
+    let (authority, path) = rest
+        .split_once('/')
+        .ok_or_else(|| CliError::usage(status_usage()))?;
+    if path != "imports/progress" {
+        return Err(CliError::usage(status_usage()));
+    }
+
+    let addr = SocketAddr::from_str(authority).map_err(|_| CliError::usage(status_usage()))?;
+    if !addr.ip().is_loopback() {
+        return Err(CliError::usage(
+            "import progress ipc endpoint must be loopback",
+        ));
+    }
+
+    Ok(IpcImportProgressEndpoint { addr })
 }
 
 fn parse_root_preset(value: &str) -> Result<RootPreset> {

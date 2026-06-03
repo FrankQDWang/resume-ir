@@ -46,6 +46,8 @@ const IPC_ENDPOINT_FILE: &str = "ipc.endpoints.json";
 const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
 const IPC_AUTH_TOKEN_BYTES: usize = 32;
 const IPC_MAX_REQUEST_BYTES: usize = 64 * 1024;
+const IMPORT_PROGRESS_STREAM_EVENTS: usize = 3;
+const IMPORT_PROGRESS_STREAM_INTERVAL_MS: u64 = 25;
 const DEFAULT_OCR_ENGINE_PROFILE: &str = "local-command";
 const DEFAULT_OCR_LANG: &str = "eng";
 const DEFAULT_OCR_PROFILE: &str = "balanced";
@@ -1285,6 +1287,7 @@ fn write_ipc_endpoint_manifest(data_dir: &Path, addr: SocketAddr) -> Result<()> 
         "status": format!("http://{addr}/status"),
         "imports": format!("http://{addr}/imports"),
         "import_cancel": format!("http://{addr}/imports/cancel"),
+        "import_progress": format!("http://{addr}/imports/progress"),
         "search": format!("http://{addr}/search"),
         "details": format!("http://{addr}/details"),
     })
@@ -1446,6 +1449,13 @@ fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
         return handle_import_cancel_command_ipc(data_dir, &request, &mut stream);
+    }
+
+    if request.method == "GET"
+        && request.path == "/imports/progress"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_import_progress_stream_ipc(data_dir, &request, &mut stream);
     }
 
     if request.method == "POST"
@@ -1651,6 +1661,39 @@ fn handle_import_cancel_command_ipc(
         }
         Err(IpcCommandError::Internal(error)) => Err(error),
     }
+}
+
+fn handle_import_progress_stream_ipc(
+    data_dir: &Path,
+    request: &IpcRequest,
+    stream: &mut TcpStream,
+) -> Result<()> {
+    if !ipc_command_authorized(data_dir, &request.headers)? {
+        let body = serde_json::json!({
+            "schema_version": "daemon.error.v1",
+            "status": "unauthorized",
+        })
+        .to_string();
+        return write_http_response(stream, 401, "application/json", &body);
+    }
+
+    stream
+        .write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n",
+        )
+        .map_err(|_| DaemonError::user("unable to write daemon import progress stream"))?;
+    for event_index in 0..IMPORT_PROGRESS_STREAM_EVENTS {
+        let event = import_progress_stream_event_json(data_dir)?;
+        stream
+            .write_all(event.as_bytes())
+            .and_then(|_| stream.write_all(b"\n"))
+            .and_then(|_| stream.flush())
+            .map_err(|_| DaemonError::user("unable to write daemon import progress stream"))?;
+        if event_index + 1 < IMPORT_PROGRESS_STREAM_EVENTS {
+            thread::sleep(Duration::from_millis(IMPORT_PROGRESS_STREAM_INTERVAL_MS));
+        }
+    }
+    Ok(())
 }
 
 fn ipc_command_authorized(data_dir: &Path, headers: &[(String, String)]) -> Result<bool> {
@@ -2708,6 +2751,21 @@ fn status_json(data_dir: &Path) -> Result<String> {
         "active_profile": "balanced",
         "index_health": index_health_label(summary.index_health),
         "snapshot_present": summary.last_snapshot_id.is_some(),
+    });
+    Ok(body.to_string())
+}
+
+fn import_progress_stream_event_json(data_dir: &Path) -> Result<String> {
+    let store = open_store(data_dir)?;
+    let latest_import_scan = store
+        .latest_import_scan_scope()
+        .map_err(DaemonError::store)?
+        .map(|scope| latest_import_scan_json(&scope))
+        .unwrap_or(serde_json::Value::Null);
+    let body = serde_json::json!({
+        "schema_version": "daemon.import_progress.v1",
+        "event": "snapshot",
+        "latest_import_scan": latest_import_scan,
     });
     Ok(body.to_string())
 }
