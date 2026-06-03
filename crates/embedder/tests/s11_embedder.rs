@@ -183,7 +183,7 @@ fn local_command_embedder_times_out_and_keeps_input_file_private() {
     let slow_command = write_fixture_executable(
         "fixture-embedding-slow",
         r#"#!/bin/sh
-permissions="$(stat -f '%Lp' "$RESUME_IR_EMBEDDING_INPUT_PATH" 2>/dev/null || stat -c '%a' "$RESUME_IR_EMBEDDING_INPUT_PATH")"
+permissions="$(stat -c '%a' "$RESUME_IR_EMBEDDING_INPUT_PATH" 2>/dev/null || stat -f '%Lp' "$RESUME_IR_EMBEDDING_INPUT_PATH")"
 printf '%s' "$permissions" > "$1"
 sleep 5
 "#,

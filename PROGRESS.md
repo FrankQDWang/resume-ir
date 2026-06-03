@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S72 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S73 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -164,8 +164,42 @@ obsolete preliminary files and checklists are not product scope.
 | S68 | Product governance slice complete | `./scripts/ci/configure-github-repo.sh FrankQDWang resume-ir` failed at `gh repo edit` with `HTTP 422` because `--allow-forking` is only applicable to org-owned private repositories, `sh -n scripts/ci/configure-github-repo.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed after removing that invalid option. | Branch protection still has to be rerun after S68 is pushed. Hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
 | S71 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, and `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings` passed after the RED test first failed because `fault-simulate` did not exist. | None for this safe fault-simulation CLI slice; actual disk-fill/ENOSPC, real file-lock semantics, kill-daemon fault injection, OCR worker crash injection, migration-failure injection, model checksum fault, battery mode, external-drive disconnect, and cross-platform validation remain not complete or BLOCKED. |
 | S72 | Stability slice complete | `./scripts/ci/verify-local.sh` first exposed a concurrent local-command embedder temp-directory collision as `EngineFailed`; after the fix, `/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder --locked` passed with 6 tests and `./scripts/ci/verify-local.sh` passed end to end. | None for this CI stability slice; licensed model packaging, ANN, real semantic quality metrics, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
+| S73 | CI portability slice complete | GitHub Actions PR #9 `rust workspace` failed on Linux because the embedder permission test used macOS `stat -f` before GNU `stat -c`; the fixture command now uses GNU `stat -c` first and falls back to macOS `stat -f`. | None for this Linux CI test portability slice; broader Linux package validation, Windows validation, signed installers, notarization, and full cross-platform release evidence remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S73
+
+Design target:
+
+- PR #9 required GitHub Actions should pass on Linux, not only local macOS.
+- The embedder permission test should inspect owner-only temp input file
+  permissions using portable `stat` invocation order.
+
+Observed RED:
+
+```bash
+gh pr checks 9 --repo FrankQDWang/resume-ir --watch --interval 10
+gh run view 26863418606 --repo FrankQDWang/resume-ir --log-failed
+```
+
+Output summary:
+
+- `rust workspace` failed in GitHub Actions after 1m40s.
+- The failing test was `local_command_embedder_times_out_and_keeps_input_file_private`.
+- On Linux, `stat -f '%Lp'` returned filesystem information plus `600`
+  instead of failing, so the assertion compared a multi-line string to `600`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder --locked
+```
+
+Scope note:
+
+- S73 changes only the synthetic test fixture command. It does not alter the
+  product embedder protocol or claim Linux installer/release readiness.
 
 ### S72
 
