@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S68 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
-- Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67. No release, upload of runtime data, signing, or notarization has been performed. The first repository settings/protection run failed before branch protection because `--allow-forking` is not applicable to a personal public repository; S68 removes that invalid option.
+- Data policy: S0-S69 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, updated to `135f927` after S67, and updated to `d0798fa` after S68. During S69, repository settings and main branch protection were configured successfully. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
 ## Production Gap Audit
@@ -161,8 +161,56 @@ obsolete preliminary files and checklists are not product scope.
 | S66 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s66_service_lifecycle --locked`, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace --locked`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed with no matches. | None for this macOS LaunchAgent CLI lifecycle slice; live `launchctl` start/stop was implemented but not exercised against the user's real login session, and Windows service/MSI, signed pkg/dmg, notarization, real upgrade/uninstall, hosted runner validation, and complete release packaging remain not complete or BLOCKED. |
 | S67 | Product governance slice complete | `gh repo view FrankQDWang/resume-ir` showed the repository was initially absent, `gh repo create FrankQDWang/resume-ir --public --source=. --remote=origin --description "Local-first resume search engine" --disable-wiki` created it, `git remote -v` showed HTTPS origin, `./scripts/ci/guard-public-repo.sh` passed, `git push -u origin main` pushed `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, and `sh -n scripts/ci/configure-github-repo.sh` plus `git diff --check` passed after the HTTPS fallback script fix. | Branch protection is intentionally deferred until this S67 progress/script-fix commit is pushed. PR creation, hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
 | S68 | Product governance slice complete | `./scripts/ci/configure-github-repo.sh FrankQDWang resume-ir` failed at `gh repo edit` with `HTTP 422` because `--allow-forking` is only applicable to org-owned private repositories, `sh -n scripts/ci/configure-github-repo.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed after removing that invalid option. | Branch protection still has to be rerun after S68 is pushed. Hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
+| S69 | Product governance slice complete on branch | `./scripts/ci/configure-github-repo.sh FrankQDWang resume-ir` reran successfully after S68 was pushed, and `gh api /repos/FrankQDWang/resume-ir/branches/main/protection --jq ...` verified strict checks for `rust workspace`, `public repository guard`, `license policy`, and `dependency tree`, admin enforcement, CODEOWNER review, linear history, and force-push/deletion denial. This S69 progress record is on branch `codex/record-github-protection` because main is now protected. | This branch still needs to be pushed and opened as a PR. Hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S69
+
+Design target:
+
+- S69 records the successful post-S68 GitHub repository settings and branch
+  protection run.
+- Because main protection was intentionally enabled after all direct main pushes,
+  this progress entry is committed on `codex/record-github-protection` and must
+  be merged through the newly protected workflow.
+
+Checks and remote operations:
+
+```bash
+./scripts/ci/configure-github-repo.sh FrankQDWang resume-ir
+git switch -c codex/record-github-protection
+gh api /repos/FrankQDWang/resume-ir/branches/main/protection --jq '{strict:.required_status_checks.strict,contexts:.required_status_checks.contexts,enforce_admins:.enforce_admins.enabled,code_owner_reviews:.required_pull_request_reviews.require_code_owner_reviews,linear_history:.required_linear_history.enabled,force_pushes:.allow_force_pushes.enabled,deletions:.allow_deletions.enabled}'
+git diff --check
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `configure-github-repo.sh`: exit 0 after `public repo guard passed`,
+  `Everything up-to-date`, and upstream confirmation.
+- The branch protection API response showed strict required checks for
+  `rust workspace`, `public repository guard`, `license policy`, and
+  `dependency tree`; CODEOWNER review with one approval; admin enforcement;
+  required linear history; force pushes disabled; and deletions disabled.
+- The script printed `configured FrankQDWang/resume-ir at main
+  d0798fa13d41304177df5550ef1a0bc9a3d57d9e`.
+- `git switch -c codex/record-github-protection`: exit 0 with escalated git
+  ref write access after sandboxed branch creation failed.
+- `gh api .../branches/main/protection --jq ...`: exit 0 and returned strict
+  checks `true`, the four required contexts, admin enforcement `true`,
+  CODEOWNER review `true`, linear history `true`, force pushes `false`, and
+  deletions `false`.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+
+Scope note:
+
+- S69 does not prove hosted check completion; checks will run when this branch
+  is pushed and a PR is opened.
+- Full product is still not complete.
 
 ### S68
 
