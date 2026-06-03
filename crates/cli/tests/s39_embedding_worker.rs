@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -8,6 +9,201 @@ use meta_store::{
     Document, DocumentId, DocumentStatus, FileExtension, MetaStore, ResumeVersion, ResumeVersionId,
     ResumeVisibility, UnixTimestamp,
 };
+
+#[test]
+fn model_manifest_validate_accepts_reviewed_local_artifact_without_path_or_payload_leak() {
+    let data_dir = temp_dir("model-manifest-valid-private-data");
+    let model_file = temp_file("model-manifest-valid-private-model");
+    let manifest_file = temp_file("model-manifest-valid-private-manifest");
+    let model_bytes = b"SYNTHETIC REVIEWED MODEL ARTIFACT\n";
+    fs::write(&model_file, model_bytes).unwrap();
+    fs::write(
+        &manifest_file,
+        format!(
+            r#"{{
+  "schema_version": "resume-ir.model-manifest.v1",
+  "model_pack_id": "fixture-pack-reviewed",
+  "models": [
+    {{
+      "id": "fixture-reviewed-embedding-model",
+      "type": "embedding",
+      "dim": 4,
+      "format": "onnx",
+      "artifact": {{
+        "path": "{}",
+        "sha256": "57aac1132f550796663cdadce2ae702cb0bbf96b8620bc12f385d7b8aae0e492"
+      }},
+      "license": {{
+        "id": "Apache-2.0",
+        "reviewed": true
+      }}
+    }}
+  ]
+}}"#,
+            json_path(&model_file)
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "model",
+            "validate-manifest",
+            "--manifest",
+            path_str(&manifest_file),
+        ])
+        .output()
+        .expect("validate reviewed model manifest");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("model manifest: valid"));
+    assert!(stdout.contains("model pack: fixture-pack-reviewed"));
+    assert!(stdout.contains("models: 1"));
+    assert!(stdout.contains("model id: fixture-reviewed-embedding-model"));
+    assert!(stdout.contains("type: embedding"));
+    assert!(stdout.contains("dimension: 4"));
+    assert!(stdout.contains("license reviewed: yes"));
+    assert!(stdout.contains("checksum match: yes"));
+    assert!(stdout.contains("sha256 prefix: 57aac113"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains("SYNTHETIC REVIEWED MODEL ARTIFACT"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&model_file)));
+    assert!(!stdout.contains(path_str(&manifest_file)));
+
+    remove_dir(&data_dir);
+    let _ = fs::remove_file(&model_file);
+    let _ = fs::remove_file(&manifest_file);
+}
+
+#[test]
+fn model_manifest_validate_rejects_checksum_mismatch_without_path_or_payload_leak() {
+    let data_dir = temp_dir("model-manifest-mismatch-private-data");
+    let model_file = temp_file("model-manifest-mismatch-private-model");
+    let manifest_file = temp_file("model-manifest-mismatch-private-manifest");
+    fs::write(&model_file, b"SYNTHETIC MISMATCH MODEL ARTIFACT\n").unwrap();
+    fs::write(
+        &manifest_file,
+        format!(
+            r#"{{
+  "schema_version": "resume-ir.model-manifest.v1",
+  "model_pack_id": "fixture-pack-mismatch",
+  "models": [
+    {{
+      "id": "fixture-mismatch-embedding-model",
+      "type": "embedding",
+      "dim": 4,
+      "format": "onnx",
+      "artifact": {{
+        "path": "{}",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }},
+      "license": {{
+        "id": "Apache-2.0",
+        "reviewed": true
+      }}
+    }}
+  ]
+}}"#,
+            json_path(&model_file)
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "model",
+            "validate-manifest",
+            "--manifest",
+            path_str(&manifest_file),
+        ])
+        .output()
+        .expect("reject checksum mismatch model manifest");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("model manifest blocked: checksum mismatch"));
+    assert!(!stderr.contains("SYNTHETIC MISMATCH MODEL ARTIFACT"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&model_file)));
+    assert!(!stderr.contains(path_str(&manifest_file)));
+
+    remove_dir(&data_dir);
+    let _ = fs::remove_file(&model_file);
+    let _ = fs::remove_file(&manifest_file);
+}
+
+#[test]
+fn model_manifest_validate_rejects_unreviewed_license_without_path_or_payload_leak() {
+    let data_dir = temp_dir("model-manifest-unreviewed-private-data");
+    let model_file = temp_file("model-manifest-unreviewed-private-model");
+    let manifest_file = temp_file("model-manifest-unreviewed-private-manifest");
+    fs::write(&model_file, b"SYNTHETIC UNREVIEWED MODEL ARTIFACT\n").unwrap();
+    fs::write(
+        &manifest_file,
+        format!(
+            r#"{{
+  "schema_version": "resume-ir.model-manifest.v1",
+  "model_pack_id": "fixture-pack-unreviewed",
+  "models": [
+    {{
+      "id": "fixture-unreviewed-embedding-model",
+      "type": "embedding",
+      "dim": 4,
+      "format": "onnx",
+      "artifact": {{
+        "path": "{}",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }},
+      "license": {{
+        "id": "Proprietary",
+        "reviewed": false
+      }}
+    }}
+  ]
+}}"#,
+            json_path(&model_file)
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "model",
+            "validate-manifest",
+            "--manifest",
+            path_str(&manifest_file),
+        ])
+        .output()
+        .expect("reject unreviewed model manifest");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("model manifest blocked: license has not been reviewed"));
+    assert!(!stderr.contains("SYNTHETIC UNREVIEWED MODEL ARTIFACT"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&model_file)));
+    assert!(!stderr.contains(path_str(&manifest_file)));
+
+    remove_dir(&data_dir);
+    let _ = fs::remove_file(&model_file);
+    let _ = fs::remove_file(&manifest_file);
+}
 
 #[test]
 fn embed_worker_without_command_reports_blocked_without_path_leak() {
@@ -610,8 +806,20 @@ fn temp_dir(label: &str) -> PathBuf {
     path
 }
 
+fn temp_file(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("resume-ir-s39-cli-{label}-{unique}.tmp"))
+}
+
 fn path_str(path: &Path) -> &str {
     path.to_str().unwrap()
+}
+
+fn json_path(path: &Path) -> String {
+    path_str(path).replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn remove_dir(path: &Path) {

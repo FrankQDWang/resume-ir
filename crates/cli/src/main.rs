@@ -57,7 +57,8 @@ const DEFAULT_SERVICE_LABEL: &str = "com.resume-ir.daemon";
 const DEFAULT_SERVICE_IPC_LISTEN: &str = "127.0.0.1:0";
 const FAULT_PROBE_MAX_BYTES: u64 = 1024 * 1024;
 const OCR_CRASH_PROBE_BYTES: &[u8] = b"SYNTHETIC OCR CRASH PROBE BYTES";
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, service, fault-simulate, doctor, or export-diagnostics";
+const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, doctor, or export-diagnostics";
 
 fn main() {
     if let Err(error) = run() {
@@ -90,6 +91,7 @@ fn run() -> Result<()> {
         "resume" => task_control_command(&data_dir, &args[1..], false),
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
         "embed-worker" => embed_worker_command(&data_dir, &args[1..]),
+        "model" => model_command(&args[1..]),
         "service" => service_command(&data_dir, &args[1..]),
         "fault-simulate" => fault_simulate_command(&data_dir, &args[1..]),
         "doctor" => {
@@ -117,6 +119,252 @@ fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
     let path = PathBuf::from(args.remove(1));
     args.remove(0);
     Ok(path)
+}
+
+fn model_command(args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(model_usage()));
+    };
+
+    match action {
+        "validate-manifest" => model_validate_manifest_command(&args[1..]),
+        _ => Err(CliError::usage(model_usage())),
+    }
+}
+
+fn model_validate_manifest_command(args: &[String]) -> Result<()> {
+    let manifest_path = parse_model_validate_manifest_args(args)?;
+    let validation = validate_model_manifest(&manifest_path)?;
+
+    println!("model manifest: valid");
+    println!("model pack: {}", validation.model_pack_id);
+    println!("models: {}", validation.models.len());
+    for model in &validation.models {
+        println!("model id: {}", model.model_id);
+        println!("type: {}", model.model_type);
+        if let Some(dimension) = model.dimension {
+            println!("dimension: {dimension}");
+        }
+        println!("license reviewed: yes");
+        println!("checksum match: yes");
+        println!("sha256 prefix: {}", checksum_prefix(&model.sha256));
+    }
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn parse_model_validate_manifest_args(args: &[String]) -> Result<PathBuf> {
+    let mut manifest = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--manifest" => {
+                if manifest.is_some() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(model_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                manifest = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(model_usage())),
+        }
+    }
+
+    manifest.ok_or_else(|| CliError::usage(model_usage()))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ModelManifestValidation {
+    model_pack_id: String,
+    models: Vec<ModelManifestModelValidation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ModelManifestModelValidation {
+    model_id: String,
+    model_type: String,
+    dimension: Option<usize>,
+    sha256: String,
+}
+
+fn validate_model_manifest(manifest_path: &Path) -> Result<ModelManifestValidation> {
+    let manifest_text = fs::read_to_string(manifest_path)
+        .map_err(|_| CliError::user("model manifest blocked: manifest is unavailable"))?;
+    let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
+        .map_err(|_| CliError::user("model manifest blocked: invalid manifest"))?;
+
+    let schema_version = model_manifest_string(&manifest_json, "schema_version")?;
+    if schema_version != MODEL_MANIFEST_SCHEMA_VERSION {
+        return Err(CliError::user(
+            "model manifest blocked: unsupported schema version",
+        ));
+    }
+
+    let model_pack_id = model_manifest_string(&manifest_json, "model_pack_id")?;
+    if !valid_model_manifest_identifier(model_pack_id) {
+        return Err(CliError::user(
+            "model manifest blocked: invalid model pack id",
+        ));
+    }
+
+    let models = model_manifest_array(&manifest_json, "models")?
+        .iter()
+        .map(|model| validate_model_manifest_model(manifest_path, model))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(ModelManifestValidation {
+        model_pack_id: model_pack_id.to_string(),
+        models,
+    })
+}
+
+fn validate_model_manifest_model(
+    manifest_path: &Path,
+    model: &serde_json::Value,
+) -> Result<ModelManifestModelValidation> {
+    if !model.is_object() {
+        return Err(CliError::user("model manifest blocked: invalid manifest"));
+    }
+
+    let model_id = model_manifest_string(model, "id")?;
+    if !valid_model_manifest_identifier(model_id) {
+        return Err(CliError::user("model manifest blocked: invalid model id"));
+    }
+
+    let model_type = model_manifest_string(model, "type")?;
+    let dimension = match model_type {
+        "embedding" => Some(model_manifest_positive_usize(model, "dim")?),
+        "ner" | "ocr" => None,
+        _ => {
+            return Err(CliError::user(
+                "model manifest blocked: unsupported model type",
+            ))
+        }
+    };
+
+    let format = model_manifest_string(model, "format")?;
+    if !valid_model_manifest_identifier(format) {
+        return Err(CliError::user(
+            "model manifest blocked: invalid model format",
+        ));
+    }
+
+    let artifact = model_manifest_object(model, "artifact")?;
+    let artifact_path = model_manifest_string(artifact, "path")?;
+    if artifact_path.trim().is_empty()
+        || artifact_path.contains('\n')
+        || artifact_path.contains('\r')
+    {
+        return Err(CliError::user("model manifest blocked: invalid artifact"));
+    }
+    let expected_sha256 = model_manifest_sha256(model_manifest_string(artifact, "sha256")?)?;
+
+    let license = model_manifest_object(model, "license")?;
+    let license_id = model_manifest_string(license, "id")?;
+    if !valid_model_manifest_identifier(license_id) {
+        return Err(CliError::user("model manifest blocked: invalid license"));
+    }
+    let reviewed = license
+        .get("reviewed")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid license"))?;
+    if !reviewed {
+        return Err(CliError::user(
+            "model manifest blocked: license has not been reviewed",
+        ));
+    }
+
+    let artifact_path = model_manifest_artifact_path(manifest_path, artifact_path);
+    let actual_sha256 = file_sha256_hex(&artifact_path)
+        .map_err(|_| CliError::user("model manifest blocked: artifact is unavailable"))?;
+    if actual_sha256 != expected_sha256 {
+        return Err(CliError::user("model manifest blocked: checksum mismatch"));
+    }
+
+    Ok(ModelManifestModelValidation {
+        model_id: model_id.to_string(),
+        model_type: model_type.to_string(),
+        dimension,
+        sha256: actual_sha256,
+    })
+}
+
+fn model_manifest_object<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a serde_json::Value> {
+    value
+        .get(key)
+        .filter(|field| field.is_object())
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid manifest"))
+}
+
+fn model_manifest_array<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a [serde_json::Value]> {
+    let array = value
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid manifest"))?;
+    if array.is_empty() {
+        return Err(CliError::user("model manifest blocked: invalid manifest"));
+    }
+    Ok(array)
+}
+
+fn model_manifest_string<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|field| !field.trim().is_empty())
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid manifest"))
+}
+
+fn model_manifest_positive_usize(value: &serde_json::Value, key: &str) -> Result<usize> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|field| usize::try_from(field).ok())
+        .filter(|field| *field > 0)
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid manifest"))
+}
+
+fn model_manifest_sha256(value: &str) -> Result<String> {
+    let value = value.to_ascii_lowercase();
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(CliError::user("model manifest blocked: invalid checksum"));
+    }
+    Ok(value)
+}
+
+fn model_manifest_artifact_path(manifest_path: &Path, artifact_path: &str) -> PathBuf {
+    let artifact_path = PathBuf::from(artifact_path);
+    if artifact_path.is_absolute() {
+        artifact_path
+    } else {
+        manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(artifact_path)
+    }
+}
+
+fn valid_model_manifest_identifier(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '-' | '_' | '.' | '/' | ':' | '+')
+        })
+}
+
+fn model_usage() -> &'static str {
+    "usage: resume-cli model validate-manifest --manifest <path>"
 }
 
 fn service_command(data_dir: &Path, args: &[String]) -> Result<()> {

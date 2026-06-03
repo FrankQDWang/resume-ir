@@ -381,7 +381,12 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
     let output = wait_daemon(child, BufReader::new(stdout));
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
-    assert!(output.stdout.contains("import worker processed: 1"));
+    assert!(
+        output.stdout.contains("import worker processed: 1"),
+        "stdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
     assert!(output
         .stdout
         .contains("import worker searchable documents: 2"));
@@ -511,39 +516,38 @@ fn seed_queued_import_task(
     store.run_migrations().unwrap();
     let now = UnixTimestamp::from_unix_seconds(queued_at_seconds);
     let task_id = ImportTaskId::from_non_secret_parts(&["s43", label]);
+    let task = ImportTask {
+        id: task_id.clone(),
+        root_path: path_str(canonical_root).to_string(),
+        status: ImportTaskStatus::Queued,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    };
+    let scope = ImportScanScope {
+        import_task_id: task_id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: path_str(canonical_root).to_string(),
+        canonical_root_path: path_str(canonical_root).to_string(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
+        updated_at: now,
+    };
     store
-        .insert_import_task(&ImportTask {
-            id: task_id.clone(),
-            root_path: path_str(canonical_root).to_string(),
-            status: ImportTaskStatus::Queued,
-            queued_at: now,
-            started_at: None,
-            finished_at: None,
-            updated_at: now,
-        })
-        .unwrap();
-    store
-        .upsert_import_scan_scope(&ImportScanScope {
-            import_task_id: task_id.clone(),
-            root_kind: ImportRootKind::Explicit,
-            root_preset: None,
-            scan_profile: ImportScanProfile::Explicit,
-            requested_root_path: path_str(canonical_root).to_string(),
-            canonical_root_path: path_str(canonical_root).to_string(),
-            files_discovered: 0,
-            ignored_entries: 0,
-            scan_errors: 0,
-            searchable_documents: 0,
-            ocr_required_documents: 0,
-            ocr_jobs_queued: 0,
-            failed_documents: 0,
-            deleted_documents: 0,
-            scan_budget_kind: None,
-            scan_budget_limit: None,
-            scan_budget_observed: None,
-            scan_budget_exhausted: false,
-            updated_at: now,
-        })
+        .insert_import_task_with_scan_scope(&task, &scope)
         .unwrap();
     task_id
 }

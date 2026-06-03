@@ -11,6 +11,28 @@ The product does not bundle a licensed OCR engine or embedding model yet. Those
 remain BLOCKED until model and engine licenses are reviewed and distribution is
 approved.
 
+## Model Manifest Validation
+
+Canonical local command form:
+`resume-cli model validate-manifest --manifest <path>`.
+
+Validate a reviewed local model pack before wiring it into an embedding or OCR
+worker:
+
+```bash
+resume-cli --data-dir <local-data-dir> model validate-manifest \
+  --manifest <local-model-manifest.json>
+```
+
+The manifest schema is `resume-ir.model-manifest.v1` with a `model_pack_id` and
+one or more `models`. Each model entry must include `id`, `type`, `format`,
+`artifact.path`, `artifact.sha256`, and a `license` object with `id` and
+`reviewed: true`. Embedding models must also include `dim`.
+
+The validator reads only local files, verifies artifact checksums, and blocks
+unreviewed licenses. It must not print local paths, model bytes, or complete
+digests.
+
 ## OCR Worker
 
 Canonical local command form: `resume-cli ocr-worker --once`.

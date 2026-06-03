@@ -52,6 +52,17 @@ benchmark-smoke.json`.
 The explicit `--allow-synthetic` flag is required for synthetic smoke artifacts.
 Do not treat a passing synthetic gate as 100k or 1M real-corpus proof.
 
+Validate any proposed local model pack before worker configuration:
+
+```bash
+resume-cli --data-dir <local-data-dir> model validate-manifest \
+  --manifest <local-model-manifest.json>
+```
+
+This command is governance evidence only. A valid manifest does not by itself
+complete licensed model selection, model quality evaluation, distribution
+approval, or production performance proof.
+
 ## Stable Release Exit Criteria
 
 Stable release requires current evidence for:
@@ -65,6 +76,7 @@ Stable release requires current evidence for:
   and notarization
 - 100k and 1M benchmark runs on representative hardware
 - OCR and embedding model license review
+- model pack manifest checksum validation
 
 If any item is missing, keep the release blocked and update `PROGRESS.md` with
 the exact missing evidence and owner.

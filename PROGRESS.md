@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S85 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S86 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -59,15 +59,16 @@ obsolete preliminary files and checklists are not product scope.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, linear KNN, RRF helpers, embedding worker, model/dimension-scoped
   durable per-version embedding jobs, model-scoped vector query isolation,
-  section-level vector inputs, and CLI semantic/hybrid query execution now
+  section-level vector inputs, CLI semantic/hybrid query execution, and local
+  model-pack manifest validation with checksum plus license-reviewed gates now
   exist. The daemon can now execute a configured local embedding command in
   one-shot or long-running worker mode, persist a vector snapshot while serving
   status IPC, skip already completed version jobs across daemon restarts,
   re-embed completed versions when the configured model id or dimension
   changes, and write document plus section vectors inside one version job.
-  Missing or BLOCKED work includes licensed model selection/distribution,
-  ONNX/HNSW/FAISS or equivalent ANN, semantic quality metrics, and real
-  performance proof.
+  Missing or BLOCKED work includes licensed model selection/download/
+  distribution, ONNX/HNSW/FAISS or equivalent ANN, semantic quality metrics,
+  and real performance proof.
 - P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
   cache schema, local OCR command client, timeout/cancel/temp cleanup, and OCR
   text indexing exist. The daemon can now claim queued OCR jobs, execute a
@@ -88,8 +89,9 @@ obsolete preliminary files and checklists are not product scope.
   disk-space budget, permission-denied probes, file-lock contention probes,
   daemon-kill/restart probes against configured daemon binaries, OCR command
   crash probes, model-checksum probes against controlled local model artifacts,
-  targeted fault tests, local-only production runbooks, and a runbook CI policy
-  guard exist. The benchmark runner now has an explicit synthetic benchmark
+  local model-pack manifest validation, targeted fault tests, local-only
+  production runbooks, and a runbook CI policy guard exist. The benchmark runner
+  now has an explicit synthetic benchmark
   gate wired into PR and nightly smoke workflows; synthetic runs must opt in
   with `--allow-synthetic` and cannot prove 100k/1M production performance.
   Missing or BLOCKED work includes 100k/1M real-corpus benchmarks,
@@ -186,8 +188,82 @@ obsolete preliminary files and checklists are not product scope.
 | S83 | Product runbook/CI guard slice complete | `sh scripts/ci/check-runbooks.sh` first failed with `missing required runbook: docs/runbooks/diagnostics-redaction.md`; after adding local-only runbooks and wiring the guard into local/hosted CI, `./scripts/ci/check-runbooks.sh`, `sh -n scripts/ci/check-runbooks.sh scripts/ci/verify-local.sh scripts/ci/guard-public-repo.sh scripts/ci/check-licenses.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and `./scripts/ci/verify-local.sh` passed. | None for this production runbook and policy-guard slice; 100k/1M real-corpus benchmarks, nightly performance gates, destructive service-level kill/actual ENOSPC fault injection, model checksum fault, battery mode, external-drive disconnect, Windows/macOS service validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S84 | Product benchmark-gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked` first failed because `evaluate_benchmark_gate_json` and `BenchmarkGateConfig` did not exist; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings`, the `resume-benchmark synthetic-query` plus `resume-benchmark gate` smoke, `./scripts/ci/check-runbooks.sh`, `git diff --check`, and `./scripts/ci/verify-local.sh` passed. | None for this synthetic benchmark gate and workflow wiring slice; 100k/1M real-corpus benchmark datasets, real-corpus nightly/release performance gates, semantic/vector quality gates, OCR throughput gates, Windows/macOS benchmark runners, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S85 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_model_checksum --locked` first failed because `model-checksum` was unsupported; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/check-runbooks.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this controlled local model artifact checksum probe slice; real licensed model selection/download/distribution, model package manifest governance, semantic/vector quality gates, battery mode, external-drive disconnect, destructive actual ENOSPC/service-manager drills, Windows/macOS validation, and cross-platform performance evidence remain not complete or BLOCKED. |
+| S86 | Product model-governance slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker model_manifest_validate --locked` first failed because `model validate-manifest` was unsupported, then failed after schema tightening because the implementation only accepted a single-model manifest instead of `model_pack_id` plus `models[]`; `./scripts/ci/verify-local.sh` also exposed a daemon scheduler test race where a post-startup queued task could be claimed before its scan scope was written, fixed by using the existing atomic `insert_import_task_with_scan_scope` API in the test helper. After implementation and the stability fix, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/check-runbooks.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local model-pack manifest validation slice and daemon scheduler test stability repair; real licensed OCR/embedding model selection/download/distribution, model quality evaluation, ANN production indexing, semantic/vector quality gates, production model performance proof, and cross-platform release evidence remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S86
+
+Design target:
+
+- Add a local-only model package manifest validation command:
+  `resume-cli model validate-manifest --manifest <path>`.
+- Validate schema `resume-ir.model-manifest.v1`, `model_pack_id`, non-empty
+  `models[]`, per-model id/type/format, embedding `dim`, local artifact
+  checksum, and `license.reviewed: true`.
+- Keep outputs redacted: no manifest path, model artifact path, model bytes, or
+  complete digest should be printed.
+- Record that this is governance evidence only; it does not select, download,
+  distribute, or quality-evaluate a real OCR/embedding model.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker model_manifest_validate --locked
+```
+
+Output summary:
+
+- Exit 101 before implementation because `model` was not a supported top-level
+  CLI command.
+- After aligning the test with the production model-pack schema, the same
+  command failed again because the initial implementation accepted only a
+  single-model manifest and rejected `model_pack_id` plus `models[]` as an
+  invalid manifest.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `s39_embedding_worker`: exit 0; 9 tests passed, including valid reviewed
+  model-pack manifest, unreviewed-license rejection, checksum-mismatch
+  rejection, existing local embedding worker, semantic, and hybrid search paths.
+- `verify-local.sh` initially failed twice in
+  `foreground_import_scheduler_processes_task_enqueued_after_startup` because
+  the test helper inserted a queued import task before writing its scan scope,
+  allowing the running daemon to claim the task and mark it failed under
+  parallel test timing; the helper now uses the existing atomic
+  `insert_import_task_with_scan_scope` API.
+- `s4_daemon`: exit 0 after the stability repair; 10 tests passed.
+- `resume-cli` clippy: exit 0.
+- `check-runbooks.sh`: exit 0; worker and release runbooks now require
+  `resume-cli model validate-manifest`.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S86 adds local governance for model-pack checksum and license-review evidence.
+  It does not choose/download/distribute a real model, prove semantic/vector
+  quality, implement ANN, prove production model performance, or complete model
+  release approval.
+- Full product is still not complete.
 
 ### S85
 
