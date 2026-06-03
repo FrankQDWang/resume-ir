@@ -3,6 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use meta_store::{
+    ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
+    MetaStore, UnixTimestamp,
+};
+
 #[test]
 fn status_creates_store_and_reports_empty_aggregates() {
     let data_dir = temp_dir("status-data");
@@ -20,6 +25,68 @@ fn status_creates_store_and_reports_empty_aggregates() {
     assert!(!stdout.contains(path_str(&data_dir)));
 
     remove_dir(&data_dir);
+}
+
+#[test]
+fn status_reports_latest_import_scan_progress_without_path_leak() {
+    let data_dir = temp_dir("status-import-progress-data");
+    let private_root = temp_dir("status-import-progress-private-root");
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_700_000_200);
+    let task_id = ImportTaskId::from_non_secret_parts(&["status-import-progress"]);
+    store
+        .insert_import_task(&ImportTask {
+            id: task_id.clone(),
+            root_path: path_str(&private_root).to_string(),
+            status: ImportTaskStatus::Running,
+            queued_at: now,
+            started_at: Some(now),
+            finished_at: None,
+            updated_at: now,
+        })
+        .unwrap();
+    store
+        .upsert_import_scan_scope(&ImportScanScope {
+            import_task_id: task_id,
+            root_kind: ImportRootKind::Explicit,
+            root_preset: None,
+            scan_profile: ImportScanProfile::Explicit,
+            requested_root_path: path_str(&private_root).to_string(),
+            canonical_root_path: path_str(&private_root).to_string(),
+            files_discovered: 9,
+            ignored_entries: 2,
+            scan_errors: 1,
+            searchable_documents: 4,
+            ocr_required_documents: 1,
+            ocr_jobs_queued: 1,
+            failed_documents: 1,
+            deleted_documents: 0,
+            scan_budget_kind: None,
+            scan_budget_limit: None,
+            scan_budget_observed: None,
+            scan_budget_exhausted: false,
+            updated_at: now,
+        })
+        .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "status"])
+        .output()
+        .expect("run resume-cli status with import progress");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("latest import files discovered: 9"));
+    assert!(stdout.contains("latest import searchable documents: 4"));
+    assert!(stdout.contains("latest import ocr required documents: 1"));
+    assert!(stdout.contains("latest import scan errors: 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
 }
 
 #[test]

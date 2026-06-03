@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S60 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S61 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -29,12 +29,13 @@ obsolete preliminary files and checklists are not product scope.
   backoff, running-task heartbeat, stale-running task recovery, queued/
   retryable/running cancellation markers, cancelled-task status reporting, and
   cooperative cancellation checks during import scanning plus per-file import
-  processing. The daemon can serve loopback status IPC while import, OCR, or
-  embedding worker loops run. The daemon now writes a local endpoint discovery
-  manifest, and the CLI can use `--ipc auto` for status, import, search, and
-  detail commands. Missing production control-plane work includes live import
-  progress streaming, daemon index-maintenance workers, service lifecycle, CI,
-  CODEOWNERS, and macOS/Windows validation.
+  processing, and status-pollable live import progress persisted in scan scope
+  counters without path disclosure. The daemon can serve loopback status IPC
+  while import, OCR, or embedding worker loops run. The daemon now writes a
+  local endpoint discovery manifest, and the CLI can use `--ipc auto` for
+  status, import, search, and detail commands. Missing production control-plane
+  work includes a dedicated progress stream, daemon index-maintenance workers,
+  service lifecycle, CI, CODEOWNERS, and macOS/Windows validation.
 - P1 import/search: directory scanning, DOCX/text-layer PDF/UTF-8 and
   BOM-marked UTF-16 TXT parsing, cleaning, sectioning, full-text snapshot
   publish/recover, delete rebuild, and redacted snippets exist. Missing
@@ -141,8 +142,73 @@ obsolete preliminary files and checklists are not product scope.
 | S58 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this high-confidence name mention slice; broad name dictionaries, multilingual name normalization, name-based soft-dedupe scoring, labeled field F1 metrics, encrypted local storage, and physical purge remain not complete. |
 | S59 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s49_detail_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this local IPC endpoint auto-discovery slice; live progress streaming, cooperative cancellation of already-running import scans, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, and Windows/macOS validation remain not complete. |
 | S60 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p fs-crawler`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this running-import cooperative cancellation slice; live progress streaming, cancel-over-IPC UX, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, and Windows/macOS validation remain not complete. |
+| S61 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this status-pollable import progress slice; dedicated push progress streaming, cancel-over-IPC UX, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, and Windows/macOS validation remain not complete. |
 
 ## Command Log
+
+### S61
+
+Design target:
+
+- S61 closes the local status visibility gap where import scan scopes were
+  initialized and finalized but did not receive pipeline-owned progress updates
+  while import work advanced.
+- `import-pipeline` now updates an existing `ImportScanScope` after scan error
+  persistence, periodically during per-file processing, after deletion
+  propagation, during searchable document finalization, and after final index
+  state update. The update path is a no-op when no scope exists, preserving older
+  direct import callers.
+- `resume-cli status` now prints latest import progress counters without root
+  paths. Daemon `/status` now includes a `latest_import_scan` object with the
+  same redacted counters, and CLI IPC status renders it.
+- This is status-pollable live progress, not a dedicated push/SSE progress
+  stream.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline tests::import_root_updates_existing_scan_scope_progress_without_daemon_postprocessing -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli status_reports_latest_import_scan_progress_without_path_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc status_can_read_redacted_daemon_status_over_loopback_ipc -- --exact
+```
+
+Output summary:
+
+- `import-pipeline` failed before implementation because the existing scan
+  scope still had `files_discovered = 0` after import completed without daemon
+  post-processing.
+- Local CLI status failed before implementation because it did not print latest
+  import progress counters.
+- IPC status rendering failed before implementation because CLI ignored
+  daemon-provided latest import progress fields.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `cargo test -p import-pipeline`: exit 0; 5 unit tests passed.
+- `cargo test -p resume-cli`: exit 0.
+- `cargo test -p resume-daemon`: exit 0.
+- `cargo clippy --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0.
+
+Scope note:
+
+- S61 does not implement a dedicated progress stream, cancel-over-IPC UX, token
+  rotation/revocation, singleton service lifecycle, real whole-machine witness
+  runs, or Windows/macOS validation. Those remain incomplete or externally
+  blocked.
 
 ### S60
 

@@ -279,6 +279,12 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
     assert!(!response.contains(&token));
     assert!(!response.contains("PRIVATE"));
     assert!(status_response.contains("\"import_tasks_queued\":1"));
+    assert!(status_response.contains("\"latest_import_scan\""));
+    assert!(status_response.contains("\"files_discovered\":0"));
+    assert!(status_response.contains("\"scan_profile\":\"explicit\""));
+    assert!(!status_response.contains(path_str(&data_dir)));
+    assert!(!status_response.contains(path_str(&fixture_root)));
+    assert!(!status_response.contains(path_str(&canonical_fixture_root)));
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);

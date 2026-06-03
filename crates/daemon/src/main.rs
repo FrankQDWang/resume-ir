@@ -2581,6 +2581,11 @@ struct DaemonResumeDetailField {
 fn status_json(data_dir: &Path) -> Result<String> {
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(DaemonError::store)?;
+    let latest_import_scan = store
+        .latest_import_scan_scope()
+        .map_err(DaemonError::store)?
+        .map(|scope| latest_import_scan_json(&scope))
+        .unwrap_or(serde_json::Value::Null);
     let body = serde_json::json!({
         "schema_version": "daemon.status.v1",
         "status": "ok",
@@ -2599,11 +2604,29 @@ fn status_json(data_dir: &Path) -> Result<String> {
         "import_tasks_cancelled": summary.import_tasks_cancelled,
         "import_scan_scopes": summary.import_scan_scopes,
         "import_scan_errors": summary.import_scan_errors,
+        "latest_import_scan": latest_import_scan,
         "active_profile": "balanced",
         "index_health": index_health_label(summary.index_health),
         "snapshot_present": summary.last_snapshot_id.is_some(),
     });
     Ok(body.to_string())
+}
+
+fn latest_import_scan_json(scope: &ImportScanScope) -> serde_json::Value {
+    serde_json::json!({
+        "scan_profile": import_scan_profile_label(scope.scan_profile),
+        "files_discovered": scope.files_discovered,
+        "ignored_entries": scope.ignored_entries,
+        "scan_errors": scope.scan_errors,
+        "searchable_documents": scope.searchable_documents,
+        "ocr_required_documents": scope.ocr_required_documents,
+        "ocr_jobs_queued": scope.ocr_jobs_queued,
+        "failed_documents": scope.failed_documents,
+        "deleted_documents": scope.deleted_documents,
+        "scan_budget_observed": scope.scan_budget_observed,
+        "scan_budget_limit": scope.scan_budget_limit,
+        "scan_budget_exhausted": scope.scan_budget_exhausted,
+    })
 }
 
 fn write_http_response(

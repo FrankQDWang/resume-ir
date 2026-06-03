@@ -117,6 +117,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
+    let latest_import_scan = store.latest_import_scan_scope().map_err(CliError::store)?;
     let ocr_task = store
         .worker_task_control(WorkerTaskKind::Ocr)
         .map_err(CliError::store)?;
@@ -143,6 +144,9 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("import tasks cancelled: {}", summary.import_tasks_cancelled);
     println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("import scan errors: {}", summary.import_scan_errors);
+    if let Some(scope) = latest_import_scan.as_ref() {
+        print_import_scan_progress(scope);
+    }
     println!("active profile: balanced");
     println!("index health: {}", index_health_label(summary.index_health));
     println!(
@@ -158,6 +162,55 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
 
     Ok(())
+}
+
+fn print_import_scan_progress(scope: &ImportScanScope) {
+    println!(
+        "latest import scan profile: {}",
+        store_import_scan_profile_label(scope.scan_profile)
+    );
+    println!("latest import files discovered: {}", scope.files_discovered);
+    println!("latest import ignored entries: {}", scope.ignored_entries);
+    println!("latest import scan errors: {}", scope.scan_errors);
+    println!(
+        "latest import searchable documents: {}",
+        scope.searchable_documents
+    );
+    println!(
+        "latest import ocr required documents: {}",
+        scope.ocr_required_documents
+    );
+    println!("latest import ocr jobs queued: {}", scope.ocr_jobs_queued);
+    println!("latest import failed documents: {}", scope.failed_documents);
+    println!(
+        "latest import deleted documents: {}",
+        scope.deleted_documents
+    );
+    println!(
+        "latest import scan budget: {}",
+        import_scan_budget_progress_label(scope)
+    );
+}
+
+fn store_import_scan_profile_label(profile: StoreImportScanProfile) -> &'static str {
+    match profile {
+        StoreImportScanProfile::Explicit => "explicit",
+        StoreImportScanProfile::Discovery => "discovery",
+    }
+}
+
+fn import_scan_budget_progress_label(scope: &ImportScanScope) -> String {
+    match (scope.scan_budget_observed, scope.scan_budget_limit) {
+        (Some(observed), Some(limit)) => format!(
+            "{observed}/{limit} exhausted={}",
+            if scope.scan_budget_exhausted {
+                "yes"
+            } else {
+                "no"
+            }
+        ),
+        _ => "none".to_string(),
+    }
 }
 
 fn parse_status_ipc_arg(data_dir: &Path, args: &[String]) -> Result<Option<IpcStatusEndpoint>> {
@@ -286,6 +339,9 @@ fn render_ipc_status(body: &serde_json::Value) {
         "import scan errors: {}",
         json_u64(body, "import_scan_errors")
     );
+    if let Some(latest_import) = body.get("latest_import_scan") {
+        render_ipc_import_scan_progress(latest_import);
+    }
     println!(
         "active profile: {}",
         json_str(body, "active_profile").unwrap_or("unknown")
@@ -301,6 +357,72 @@ fn render_ipc_status(body: &serde_json::Value) {
     };
     println!("last snapshot: {snapshot_label}");
     println!("search index: daemon ipc (full-text state reported by daemon)");
+}
+
+fn render_ipc_import_scan_progress(body: &serde_json::Value) {
+    if !body.is_object() {
+        return;
+    }
+    println!(
+        "latest import scan profile: {}",
+        json_str(body, "scan_profile").unwrap_or("unknown")
+    );
+    println!(
+        "latest import files discovered: {}",
+        json_u64(body, "files_discovered")
+    );
+    println!(
+        "latest import ignored entries: {}",
+        json_u64(body, "ignored_entries")
+    );
+    println!(
+        "latest import scan errors: {}",
+        json_u64(body, "scan_errors")
+    );
+    println!(
+        "latest import searchable documents: {}",
+        json_u64(body, "searchable_documents")
+    );
+    println!(
+        "latest import ocr required documents: {}",
+        json_u64(body, "ocr_required_documents")
+    );
+    println!(
+        "latest import ocr jobs queued: {}",
+        json_u64(body, "ocr_jobs_queued")
+    );
+    println!(
+        "latest import failed documents: {}",
+        json_u64(body, "failed_documents")
+    );
+    println!(
+        "latest import deleted documents: {}",
+        json_u64(body, "deleted_documents")
+    );
+    println!(
+        "latest import scan budget: {}",
+        ipc_import_scan_budget_progress_label(body)
+    );
+}
+
+fn ipc_import_scan_budget_progress_label(body: &serde_json::Value) -> String {
+    let observed = body
+        .get("scan_budget_observed")
+        .and_then(serde_json::Value::as_u64);
+    let limit = body
+        .get("scan_budget_limit")
+        .and_then(serde_json::Value::as_u64);
+    match (observed, limit) {
+        (Some(observed), Some(limit)) => format!(
+            "{observed}/{limit} exhausted={}",
+            if json_bool(body, "scan_budget_exhausted") {
+                "yes"
+            } else {
+                "no"
+            }
+        ),
+        _ => "none".to_string(),
+    }
 }
 
 fn json_u64(body: &serde_json::Value, key: &str) -> u64 {

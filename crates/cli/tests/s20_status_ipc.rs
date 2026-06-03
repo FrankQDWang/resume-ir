@@ -40,7 +40,7 @@ fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
         let request = String::from_utf8_lossy(&request);
         assert!(request.starts_with("GET /status HTTP/1.1"));
 
-        let body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":1}";
+        let body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":1,\"latest_import_scan\":{\"files_discovered\":9,\"ignored_entries\":2,\"scan_errors\":1,\"searchable_documents\":4,\"ocr_required_documents\":1,\"ocr_jobs_queued\":1,\"failed_documents\":1,\"deleted_documents\":0,\"scan_budget_observed\":9,\"scan_budget_limit\":10,\"scan_budget_exhausted\":false}}";
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -68,6 +68,9 @@ fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
     assert!(stdout.contains("index health: ready"));
     assert!(stdout.contains("import tasks queued: 0"));
     assert!(stdout.contains("import tasks cancelled: 1"));
+    assert!(stdout.contains("latest import files discovered: 9"));
+    assert!(stdout.contains("latest import searchable documents: 4"));
+    assert!(stdout.contains("latest import scan errors: 1"));
     assert!(!stdout.contains("raw_resume_text"));
     assert!(!stdout.contains("PRIVATE"));
 }

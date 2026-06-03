@@ -14,9 +14,9 @@ use fs_crawler::{
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use meta_store::{
     Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
-    ImportScanError, ImportScanErrorKind, ImportScanErrorOperation, ImportTask, ImportTaskId,
-    ImportTaskStatus, IndexState, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp,
+    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanError, ImportScanErrorKind,
+    ImportScanErrorOperation, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
+    IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_docx::DocxParser;
@@ -130,6 +130,7 @@ fn run_import(
     store
         .replace_import_scan_errors(&task.id, &scan_errors)
         .map_err(ImportPipelineError::store)?;
+    publish_import_progress(store, &task.id, &summary, now)?;
     ensure_import_not_cancelled(store, &task.id)?;
     let mut pending_index_documents = Vec::new();
     let sectionizer = Sectionizer::default();
@@ -140,7 +141,8 @@ fn run_import(
         .map(|file| file.document_id.as_str().to_string())
         .collect::<BTreeSet<_>>();
 
-    for file in report.files {
+    let total_files = report.files.len();
+    for (index, file) in report.files.into_iter().enumerate() {
         ensure_not_cancelled()?;
         match process_file(
             data_dir,
@@ -166,6 +168,9 @@ fn run_import(
                 summary.failed_documents += 1;
             }
         }
+        if should_publish_import_progress(index, total_files) {
+            publish_import_progress(store, &task.id, &summary, now)?;
+        }
     }
 
     if can_propagate_deletions {
@@ -179,6 +184,7 @@ fn run_import(
             &discovered_doc_ids,
             now,
         )?;
+        publish_import_progress(store, &task.id, &summary, now)?;
     }
 
     let pending_doc_ids = pending_index_documents
@@ -202,7 +208,8 @@ fn run_import(
     ensure_import_not_cancelled(store, &task.id)?;
     write_full_text_index(data_dir, &snapshot_token, index_documents)?;
 
-    for (mut document, _) in pending_index_documents {
+    let pending_searchable_total = pending_index_documents.len();
+    for (index, (mut document, _)) in pending_index_documents.into_iter().enumerate() {
         ensure_import_not_cancelled(store, &task.id)?;
         document.status = DocumentStatus::Searchable;
         document.updated_at = now;
@@ -210,12 +217,56 @@ fn run_import(
             .upsert_document(&document)
             .map_err(ImportPipelineError::store)?;
         summary.searchable_documents += 1;
+        if should_publish_import_progress(index, pending_searchable_total) {
+            publish_import_progress(store, &task.id, &summary, now)?;
+        }
     }
 
     ensure_import_not_cancelled(store, &task.id)?;
     update_index_state(store, now, snapshot_token)?;
+    publish_import_progress(store, &task.id, &summary, now)?;
 
     Ok(summary)
+}
+
+const IMPORT_PROGRESS_UPDATE_EVERY_FILES: usize = 32;
+
+fn should_publish_import_progress(index: usize, total: usize) -> bool {
+    let processed = index + 1;
+    processed == total || processed.is_multiple_of(IMPORT_PROGRESS_UPDATE_EVERY_FILES)
+}
+
+fn publish_import_progress(
+    store: &MetaStore,
+    task_id: &ImportTaskId,
+    summary: &ImportSummary,
+    updated_at: UnixTimestamp,
+) -> Result<()> {
+    let Some(mut scope) = store
+        .import_scan_scope_by_task_id(task_id)
+        .map_err(ImportPipelineError::store)?
+    else {
+        return Ok(());
+    };
+
+    scope.files_discovered = summary.files_discovered as u64;
+    scope.ignored_entries = summary.ignored_entries as u64;
+    scope.scan_errors = summary.scan_errors as u64;
+    scope.searchable_documents = summary.searchable_documents as u64;
+    scope.ocr_required_documents = summary.ocr_required_documents as u64;
+    scope.ocr_jobs_queued = summary.ocr_jobs_queued as u64;
+    scope.failed_documents = summary.failed_documents as u64;
+    scope.deleted_documents = summary.deleted_documents as u64;
+    scope.scan_budget_kind = summary.scan_budget.map(|budget| match budget.kind {
+        ImportScanBudgetKind::Files => StoreImportScanBudgetKind::Files,
+    });
+    scope.scan_budget_limit = summary.scan_budget.map(|budget| budget.limit as u64);
+    scope.scan_budget_observed = summary.scan_budget.map(|budget| budget.observed as u64);
+    scope.scan_budget_exhausted = summary.scan_budget.is_some_and(|budget| budget.exhausted);
+    scope.updated_at = current_timestamp_or(updated_at);
+    store
+        .upsert_import_scan_scope(&scope)
+        .map_err(ImportPipelineError::store)
 }
 
 fn ensure_import_not_cancelled(store: &MetaStore, task_id: &ImportTaskId) -> Result<()> {
@@ -1130,7 +1181,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use fs_crawler::{normalize_path, NormalizedPath, ScanProfile};
-    use meta_store::{ImportTask, ImportTaskStatus, MetaStore, UnixTimestamp};
+    use meta_store::{
+        ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskStatus,
+        MetaStore, UnixTimestamp,
+    };
 
     use super::{
         current_timestamp_or, document_path_is_deletion_candidate, import_root_with_options,
@@ -1230,6 +1284,70 @@ mod tests {
         assert_eq!(stored_task.status, ImportTaskStatus::FailedRetryable);
         assert_eq!(store.status_summary().unwrap().searchable_documents, 0);
         assert!(!data_dir.join("search-index").join("active").exists());
+    }
+
+    #[test]
+    fn import_root_updates_existing_scan_scope_progress_without_daemon_postprocessing() {
+        let temp = TestDir::new("import-pipeline-live-progress");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("synthetic-resume.txt"),
+            b"Synthetic Candidate\nEmail: synthetic@example.test\nSkills: Rust",
+        )
+        .unwrap();
+
+        let store = MetaStore::open_in_memory().unwrap();
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_100);
+        let task = import_task("live-progress-import", root.to_str().unwrap(), now);
+        store.insert_import_task(&task).unwrap();
+        store
+            .upsert_import_scan_scope(&ImportScanScope {
+                import_task_id: task.id.clone(),
+                root_kind: ImportRootKind::Explicit,
+                root_preset: None,
+                scan_profile: ImportScanProfile::Explicit,
+                requested_root_path: root.to_str().unwrap().to_string(),
+                canonical_root_path: root.to_str().unwrap().to_string(),
+                files_discovered: 0,
+                ignored_entries: 0,
+                scan_errors: 0,
+                searchable_documents: 0,
+                ocr_required_documents: 0,
+                ocr_jobs_queued: 0,
+                failed_documents: 0,
+                deleted_documents: 0,
+                scan_budget_kind: None,
+                scan_budget_limit: None,
+                scan_budget_observed: None,
+                scan_budget_exhausted: false,
+                updated_at: now,
+            })
+            .unwrap();
+
+        let summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(summary.files_discovered, 1);
+        assert_eq!(summary.searchable_documents, 1);
+        let scope = store
+            .import_scan_scope_by_task_id(&task.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(scope.files_discovered, 1);
+        assert_eq!(scope.searchable_documents, 1);
+        assert_eq!(scope.scan_budget_observed, None);
+        assert!(!format!("{scope:?}").contains(root.to_str().unwrap()));
     }
 
     fn import_task(label: &str, root_path: &str, now: UnixTimestamp) -> ImportTask {
