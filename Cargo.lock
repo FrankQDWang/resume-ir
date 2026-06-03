@@ -644,6 +644,7 @@ dependencies = [
  "index-fulltext",
  "meta-store",
  "parser-common",
+ "parser-doc",
  "parser-docx",
  "parser-pdf",
  "parser-text",
@@ -948,6 +949,13 @@ name = "parser-common"
 version = "0.1.0"
 dependencies = [
  "core-domain",
+]
+
+[[package]]
+name = "parser-doc"
+version = "0.1.0"
+dependencies = [
+ "parser-common",
 ]
 
 [[package]]

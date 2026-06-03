@@ -19,6 +19,7 @@ use meta_store::{
     IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
+use parser_doc::DocParser;
 use parser_docx::DocxParser;
 use parser_pdf::PdfParser;
 use parser_text::TxtParser;
@@ -694,6 +695,12 @@ fn process_file(
                 ResourceBudget::default(),
             )
             .map_err(|error| (error, document.clone())),
+        FileExtension::Doc => DocParser::default()
+            .parse(
+                ParseInput::from_bytes(Some(extension), &bytes),
+                ResourceBudget::default(),
+            )
+            .map_err(|error| (error, document.clone())),
         FileExtension::Pdf => PdfParser
             .parse(
                 ParseInput::from_bytes(Some(extension), &bytes),
@@ -1204,6 +1211,7 @@ enum ImportPipelineErrorKind {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1378,6 +1386,54 @@ mod tests {
         assert!(!format!("{scope:?}").contains(root.to_str().unwrap()));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn import_root_parses_legacy_doc_with_local_converter_without_path_leak() {
+        let temp = TestDir::new("import-pipeline-doc-converter");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("legacy-word.doc"), synthetic_ole_doc()).unwrap();
+        let converter = write_doc_converter(temp.path());
+        let _env = EnvVarGuard::set(
+            "RESUME_IR_DOC_TEXT_COMMAND",
+            converter.to_str().unwrap().to_string(),
+        );
+
+        let store = MetaStore::open_in_memory().unwrap();
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_200);
+        let task = import_task("legacy-doc-import", root.to_str().unwrap(), now);
+        store.insert_import_task(&task).unwrap();
+
+        let summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(summary.files_discovered, 1);
+        assert_eq!(summary.searchable_documents, 1);
+        assert_eq!(summary.failed_documents, 0);
+        let status = store.status_summary().unwrap();
+        assert_eq!(status.searchable_documents, 1);
+        let document = store.visible_documents().unwrap().remove(0);
+        let versions = store.resume_versions_for_document(&document.id).unwrap();
+        assert_eq!(versions.len(), 1);
+        assert!(versions[0]
+            .clean_text
+            .as_deref()
+            .unwrap()
+            .contains("Synthetic Legacy Candidate"));
+        assert!(!format!("{summary:?}").contains(root.to_str().unwrap()));
+        assert!(!format!("{summary:?}").contains(converter.to_str().unwrap()));
+    }
+
     fn import_task(label: &str, root_path: &str, now: UnixTimestamp) -> ImportTask {
         ImportTask {
             id: meta_store::ImportTaskId::from_non_secret_parts(&[label]),
@@ -1387,6 +1443,64 @@ mod tests {
             started_at: Some(now),
             finished_at: None,
             updated_at: now,
+        }
+    }
+
+    fn synthetic_ole_doc() -> Vec<u8> {
+        let mut bytes = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1".to_vec();
+        bytes.extend_from_slice(b"SYNTHETIC PRIVATE LEGACY DOC BODY");
+        bytes
+    }
+
+    #[cfg(unix)]
+    fn write_doc_converter(directory: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = directory.join("fixture-doc-converter");
+        fs::write(
+            &path,
+            r#"#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-output" ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+if [ -z "$out" ]; then
+  exit 9
+fi
+printf 'Synthetic Legacy Candidate\nRust Search\n' > "$out"
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: String) -> Self {
+            let previous = env::var(key).ok();
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                env::set_var(self.key, previous);
+            } else {
+                env::remove_var(self.key);
+            }
         }
     }
 

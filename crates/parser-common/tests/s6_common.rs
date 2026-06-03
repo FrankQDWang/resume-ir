@@ -17,6 +17,7 @@ fn file_probe_normalizes_extension_and_classifies_support_without_path_leakage()
     assert_eq!(probe.extension(), Some("docx"));
     assert_eq!(probe.byte_len(), 22);
     assert!(probe.has_zip_header());
+    assert!(!probe.has_ole_header());
     assert_eq!(
         SupportLevel::Supported,
         SupportLevel::Supported.max(SupportLevel::Possible)

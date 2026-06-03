@@ -7,6 +7,7 @@ members = [
     "crates/cli",
     "crates/fs-crawler",
     "crates/parser-common",
+    "crates/parser-doc",
     "crates/parser-docx",
     "crates/parser-pdf",
     "crates/parser-text",

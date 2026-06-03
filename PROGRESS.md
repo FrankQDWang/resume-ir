@@ -8,7 +8,10 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S96 used synthetic fixtures only. S97 also used a private
+  local-only witness against anonymized temporary copies from the user-authorized
+  local resume sample directory; no real resume data, filenames, paths, counts,
+  raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -44,12 +47,12 @@ obsolete preliminary files and checklists are not product scope.
   license checks, and public push guardrails. Missing or BLOCKED production
   control-plane work includes full service lifecycle proof and macOS plus
   Windows validation.
-- P1 import/search: directory scanning, DOCX/text-layer PDF/UTF-8 and
-  BOM-marked UTF-16 TXT parsing, cleaning, sectioning, full-text snapshot
-  publish/recover, delete rebuild, and redacted snippets exist. Missing
-  production work includes watcher/background incremental import, legacy `.doc`
-  support, production-grade PDF coverage, large-corpus proof, and incremental
-  index updates.
+- P1 import/search: directory scanning, DOCX/legacy `.doc` via local converter,
+  text-layer PDF/UTF-8 and BOM-marked UTF-16 TXT parsing, cleaning, sectioning,
+  full-text snapshot publish/recover, delete rebuild, and redacted snippets
+  exist. Missing production work includes watcher/background incremental import,
+  production-grade PDF coverage, full legacy Word converter distribution and
+  cross-platform proof, large-corpus proof, and incremental index updates.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
   education/company/title/skills/certs/years, persisted entity mentions,
   metadata-indexed field prefiltering before the full-text TopDocs cutoff,
@@ -221,8 +224,78 @@ obsolete preliminary files and checklists are not product scope.
 | S94 | Product OCR backpressure slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker daemon_ocr_worker_once_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact` first failed because OCR max-page budget parameters and guards did not exist; after implementation, CLI OCR handoff, daemon OCR worker, service lifecycle, fmt, focused clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker guard, and `./scripts/ci/verify-local.sh` passed. | None for this OCR page-count backpressure slice; final OCR/renderer distribution policy, non-English language packs, real scanned-resume witness runs, large-corpus OCR throughput proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S95 | Product OCR remediation slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact` first failed because `status` did not report `ocr page budget blocked`; after implementation, meta-store, CLI OCR handoff, daemon OCR worker, CLI status IPC, fmt, focused clippy, and related full suites passed. | None for this redacted OCR page-budget remediation slice; final OCR/renderer distribution policy, non-English language packs, real scanned-resume witness runs, large-corpus OCR throughput proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S96 | Product OCR diagnostics slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_report_ocr_runtime_without_paths_or_language_dump --locked -- --exact` first failed because doctor did not report `ocr renderer pdftoppm`; after implementation, OCR runtime diagnostics, non-executable tool handling, full diagnostics, fmt, focused clippy, guards, and local verification passed. | None for this redacted local OCR runtime diagnostics slice; final OCR/renderer distribution policy, non-English language pack install/selection policy, real scanned-resume witness runs, large-corpus OCR throughput proof, and Windows/macOS validation remain not complete or BLOCKED. |
+| S97 | Product import slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p parser-doc --test s6_doc extracts_legacy_doc_text_with_local_converter_without_output_leakage --locked -- --exact` first failed because `DocParser::with_converter` did not exist; after implementation, parser-doc, parser-common, import-pipeline, fmt, focused clippy, and a private local-only PDF/Word witness passed with no path leaks. | None for this legacy Word local-converter slice; converter distribution policy, Windows/Linux converter proof, remaining malformed/encrypted DOC behavior, full OCR completion for scanned PDFs, large-corpus proof, and full real-resume library validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S97
+
+Design target:
+
+- Treat legacy Word `.doc` as Word input rather than permanently failing it
+  before parsing.
+- Use a local converter with private temp input/output files, fixed timeout,
+  bounded output size, hidden stdout/stderr, and redacted debug surfaces.
+- Keep synthetic tests as the committed proof; use real samples only as
+  uncommitted local witness data.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-doc --test s6_doc extracts_legacy_doc_text_with_local_converter_without_output_leakage --locked -- --exact
+```
+
+Output summary:
+
+- The test failed because `DocParser::with_converter` was not implemented.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-doc --test s6_doc extracts_legacy_doc_text_with_local_converter_without_output_leakage --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline tests::import_root_parses_legacy_doc_with_local_converter_without_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-doc --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p parser-common --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p parser-doc -p import-pipeline --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n --hidden --glob '!target/**' --glob '!.git/**' '[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension' .; then exit 1; else echo "no private witness markers"; fi
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused legacy DOC parser exact: exit 0.
+- Focused import-pipeline legacy DOC exact: exit 0.
+- `parser-doc`: exit 0; 2 tests passed.
+- `parser-common`: exit 0; 7 tests passed.
+- `import-pipeline`: exit 0; 6 tests passed.
+- Focused parser/import clippy: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- Runbook guard: exit 0.
+- Public repository guard: exit 0.
+- Private witness marker scan: exit 0.
+- Obsolete reference marker guard: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, and public repo guard.
+- Private local-only witness using anonymized temporary PDF/DOCX/DOC copies:
+  DOCX imported as searchable, text-layer/scanned PDF routed to OCR as expected,
+  most legacy DOC samples became searchable through the local converter, and one
+  DOC sample remained a safe permanent failure. No real resume path, filename,
+  count, raw text, or diagnostic payload was committed or uploaded.
+
+Scope note:
+
+- S97 adds legacy `.doc` support through a local converter path. It does not
+  finish converter packaging/distribution, Windows/Linux converter proof, full
+  OCR completion for scanned PDFs, large-corpus proof, or full-library
+  validation.
+- Full product is still not complete.
 
 ### S96
 
