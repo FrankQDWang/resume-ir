@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S63 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S64 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -36,9 +36,11 @@ obsolete preliminary files and checklists are not product scope.
   redacted import progress snapshots over loopback IPC while import, OCR, or
   embedding worker loops run. The daemon now writes a local endpoint discovery
   manifest, and the CLI can use `--ipc auto` for status, import progress,
-  import, cancel-import, search, and detail commands. Missing production
-  control-plane work includes daemon index-maintenance workers, service
-  lifecycle, CI, CODEOWNERS, and macOS plus Windows validation.
+  import, cancel-import, search, and detail commands. A daemon full-text index
+  maintenance worker can now force a local snapshot rebuild or run in a loop to
+  repair non-ready snapshot roots. Missing production control-plane work
+  includes service lifecycle, CI, CODEOWNERS, and macOS plus Windows
+  validation.
 - P1 import/search: directory scanning, DOCX/text-layer PDF/UTF-8 and
   BOM-marked UTF-16 TXT parsing, cleaning, sectioning, full-text snapshot
   publish/recover, delete rebuild, and redacted snippets exist. Missing
@@ -148,8 +150,72 @@ obsolete preliminary files and checklists are not product scope.
 | S61 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this status-pollable import progress slice; dedicated push progress streaming, cancel-over-IPC UX, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, and Windows/macOS validation remain not complete. |
 | S62 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this authenticated import cancel-over-IPC slice; dedicated progress stream, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, Windows/macOS validation, and packaging/signing remain not complete or BLOCKED. |
 | S63 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this authenticated import progress stream slice; daemon index-maintenance workers, service lifecycle, CI, CODEOWNERS, real whole-machine witness runs, Windows/macOS validation, token rotation/revocation, and packaging/signing remain not complete or BLOCKED. |
+| S64 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this daemon full-text index maintenance worker slice; queued incremental index jobs, snapshot GC/retention, vector or ANN index maintenance, service lifecycle, CI, CODEOWNERS, real whole-machine witness runs, Windows/macOS validation, token rotation/revocation, and packaging/signing remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S64
+
+Design target:
+
+- S64 closes the P0 gap where full-text index rebuild/repair existed only as a
+  local CLI operation. The daemon now accepts `--work-index-once` to force a
+  full-text snapshot rebuild from persisted local metadata and `--work-index`
+  to repair non-ready snapshot roots inside the long-running worker loop.
+- The full-text index worker is separate from embedding `UpdateIndex` jobs. It
+  does not claim or repurpose embedding job queues.
+- Because the product is not yet shipped, `--work-index` treats legacy
+  root-layout indexes as unhealthy and rebuilds the published snapshot layout
+  rather than preserving backward-compatible read behavior.
+- Worker output reports only rebuild state and indexed document count. It does
+  not print data directories, import roots, file paths, token material, raw
+  resume text, or local query contents.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon foreground_once_index_worker_rebuilds_missing_full_text_snapshot_without_path_leak --test s4_daemon
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon foreground_index_worker_loop_repairs_missing_snapshot_once_per_health_change --test s4_daemon
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon foreground_index_worker_loop_rebuilds_legacy_root_snapshot_layout --test s4_daemon
+```
+
+Output summary:
+
+- The one-shot worker test failed before implementation because
+  `--work-index-once` was not parsed and daemon usage was returned.
+- The loop worker test failed before implementation because `--work-index` was
+  not parsed and daemon usage was returned.
+- The legacy-root regression test failed before the predicate fix because the
+  loop treated a `Ready` legacy root as healthy and skipped rebuild.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `cargo test -p resume-daemon --test s4_daemon`: exit 0; 10 tests passed.
+- `cargo test -p resume-daemon`: exit 0.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`:
+  exit 0.
+- `cargo test --workspace`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+
+Scope note:
+
+- S64 does not implement queued incremental index jobs, snapshot GC/retention,
+  vector or ANN index maintenance, singleton service lifecycle, CI, CODEOWNERS,
+  token rotation/revocation, real whole-machine witness runs, Windows/macOS
+  validation, or packaging/signing. Those remain incomplete or externally
+  blocked.
 
 ### S63
 

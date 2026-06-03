@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use index_fulltext::{FullTextIndex, IndexDocument, IndexSection, SearchQuery};
 use meta_store::{
     ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
     MetaStore, UnixTimestamp,
@@ -82,6 +83,151 @@ fn foreground_once_worker_processes_queued_import_task_from_persistent_scope() {
     assert_eq!(summary.import_tasks_queued, 0);
     assert_eq!(summary.import_tasks_recoverable, 0);
     assert_eq!(summary.searchable_documents, 2);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn foreground_once_index_worker_rebuilds_missing_full_text_snapshot_without_path_leak() {
+    let data_dir = temp_dir("daemon-index-worker-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    seed_queued_import_task(
+        &data_dir,
+        "daemon-index-worker-import",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+    run_import_worker_once(&data_dir);
+    fs::remove_dir_all(data_dir.join("search-index")).unwrap();
+    assert!(FullTextIndex::open_active(&data_dir.join("search-index"))
+        .unwrap()
+        .is_none());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--once",
+            "--work-index-once",
+        ])
+        .output()
+        .expect("run resume-daemon index worker once");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("index worker rebuilt: yes"));
+    assert!(stdout.contains("index worker indexed documents: 2"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains(path_str(&canonical_fixture_root)));
+    assert!(!search_fulltext(&data_dir, "java").is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn foreground_index_worker_loop_repairs_missing_snapshot_once_per_health_change() {
+    let data_dir = temp_dir("daemon-index-loop-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    seed_queued_import_task(
+        &data_dir,
+        "daemon-index-loop-import",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+    run_import_worker_once(&data_dir);
+    fs::remove_dir_all(data_dir.join("search-index")).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-index",
+            "--worker-interval-ms",
+            "1",
+            "--max-worker-ticks",
+            "2",
+        ])
+        .output()
+        .expect("run resume-daemon index worker loop");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.matches("index worker rebuilt: yes").count(), 1);
+    assert!(stdout.contains("index worker indexed documents: 2"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains(path_str(&canonical_fixture_root)));
+    assert!(!search_fulltext(&data_dir, "java").is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn foreground_index_worker_loop_rebuilds_legacy_root_snapshot_layout() {
+    let data_dir = temp_dir("daemon-index-legacy-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    seed_queued_import_task(
+        &data_dir,
+        "daemon-index-legacy-import",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+    run_import_worker_once(&data_dir);
+    write_legacy_root_fulltext_index(&data_dir);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-index",
+            "--worker-interval-ms",
+            "1",
+            "--max-worker-ticks",
+            "2",
+        ])
+        .output()
+        .expect("run resume-daemon index worker loop over legacy root");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.matches("index worker rebuilt: yes").count(), 1);
+    assert!(stdout.contains("index worker indexed documents: 2"));
+    assert!(data_dir
+        .join("search-index")
+        .join("active-snapshot")
+        .exists());
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains(path_str(&canonical_fixture_root)));
+    assert!(!search_fulltext(&data_dir, "java").is_empty());
 
     remove_dir(&data_dir);
 }
@@ -406,6 +552,55 @@ fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("tests/fixtures/resumes")
+}
+
+fn run_import_worker_once(data_dir: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(data_dir),
+            "run",
+            "--foreground",
+            "--once",
+            "--work-imports-once",
+        ])
+        .output()
+        .expect("run resume-daemon import worker once");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn search_fulltext(data_dir: &Path, query: &str) -> Vec<index_fulltext::SearchHit> {
+    let index = FullTextIndex::open_active(&data_dir.join("search-index"))
+        .unwrap()
+        .expect("active full-text index");
+    index
+        .search(SearchQuery::new(query).with_limit(20))
+        .expect("search full-text index")
+}
+
+fn write_legacy_root_fulltext_index(data_dir: &Path) {
+    let index_root = data_dir.join("search-index");
+    fs::remove_dir_all(&index_root).unwrap();
+    let index = FullTextIndex::open_or_create(&index_root).unwrap();
+    index
+        .replace_documents([IndexDocument {
+            doc_id: "legacy-doc".to_string(),
+            version_id: "legacy-version".to_string(),
+            file_name: "legacy.txt".to_string(),
+            clean_text: "legacy root layout marker".to_string(),
+            sections: vec![IndexSection {
+                section_type: "summary".to_string(),
+                text: "legacy root layout marker".to_string(),
+            }],
+            is_deleted: false,
+        }])
+        .unwrap();
+    index.commit().unwrap();
 }
 
 fn temp_dir(label: &str) -> PathBuf {

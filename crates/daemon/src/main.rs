@@ -18,10 +18,13 @@ use embedder::{
     LocalEmbeddingCommandSpec,
 };
 use import_pipeline::{
-    import_root_with_options, index_ocr_text, ImportOptions,
+    import_root_with_options, index_ocr_text, rebuild_full_text_index, ImportOptions,
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
-use index_fulltext::{redact_contact_values, FullTextIndex, SearchHit, SearchQuery};
+use index_fulltext::{
+    inspect_snapshot_root, redact_contact_values, FullTextIndex, SearchHit, SearchQuery,
+    SnapshotReadTarget, SnapshotRootState,
+};
 use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{
     DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension, ImportRootKind,
@@ -155,14 +158,29 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: choose either --work-embeddings or --work-embeddings-once",
         ));
     }
-    if (options.worker_interval_ms.is_some() || options.max_worker_ticks.is_some())
-        && !(options.work_imports || options.work_ocr || options.work_embeddings)
-    {
+    if options.work_index_once && !options.once {
         return Err(DaemonError::usage(
-            "usage: worker loop options require --work-imports, --work-ocr, or --work-embeddings",
+            "usage: --work-index-once requires --once",
         ));
     }
-    if (options.work_imports || options.work_ocr || options.work_embeddings)
+    if options.work_index && options.once {
+        return Err(DaemonError::usage(
+            "usage: --work-index cannot be combined with --once",
+        ));
+    }
+    if options.work_index && options.work_index_once {
+        return Err(DaemonError::usage(
+            "usage: choose either --work-index or --work-index-once",
+        ));
+    }
+    if (options.worker_interval_ms.is_some() || options.max_worker_ticks.is_some())
+        && !options.has_worker_loop()
+    {
+        return Err(DaemonError::usage(
+            "usage: worker loop options require --work-imports, --work-ocr, --work-embeddings, or --work-index",
+        ));
+    }
+    if options.has_worker_loop()
         && options.ipc_listen.is_some()
         && options.max_worker_ticks.is_some()
     {
@@ -212,17 +230,19 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         let embedding_summary = run_embedding_worker_once(data_dir, &store, &options)?;
         print_embedding_worker_summary(&embedding_summary)?;
     }
+    if options.work_index_once {
+        let index_summary = run_index_worker_once(data_dir, &store, true)?;
+        print_index_worker_summary(&index_summary)?;
+    }
 
     if options.once {
         return Ok(());
     }
-    if (options.work_imports || options.work_ocr || options.work_embeddings)
-        && options.ipc_listen.is_some()
-    {
+    if options.has_worker_loop() && options.ipc_listen.is_some() {
         run_worker_with_ipc(data_dir, &options)?;
         return Ok(());
     }
-    if options.work_imports || options.work_ocr || options.work_embeddings {
+    if options.has_worker_loop() {
         run_worker_loop(data_dir, &store, &options, None)?;
         return Ok(());
     }
@@ -294,6 +314,14 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
             }
             "--work-embeddings" => {
                 options.work_embeddings = true;
+                index += 1;
+            }
+            "--work-index-once" => {
+                options.work_index_once = true;
+                index += 1;
+            }
+            "--work-index" => {
+                options.work_index = true;
                 index += 1;
             }
             "--ocr-command" => {
@@ -430,7 +458,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--ocr-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -537,6 +565,12 @@ fn run_worker_loop(
                 print_embedding_worker_summary(&embedding_summary)?;
             }
         }
+        if options.work_index {
+            let index_summary = run_index_worker_once(data_dir, store, false)?;
+            if index_summary.has_activity() {
+                print_index_worker_summary(&index_summary)?;
+            }
+        }
         if options
             .max_worker_ticks
             .is_some_and(|max_ticks| ticks >= max_ticks)
@@ -565,6 +599,36 @@ fn sleep_worker_interval(interval: Duration, stop_signal: Option<&Arc<AtomicBool
 fn run_import_worker_once(data_dir: &Path, store: &MetaStore) -> Result<ImportWorkerSummary> {
     let retryable_due_at = current_timestamp()?;
     run_import_worker_once_with_retry_due(data_dir, store, retryable_due_at)
+}
+
+fn run_index_worker_once(
+    data_dir: &Path,
+    store: &MetaStore,
+    force_rebuild: bool,
+) -> Result<IndexWorkerSummary> {
+    if !force_rebuild && !full_text_index_needs_rebuild(data_dir) {
+        return Ok(IndexWorkerSummary::default());
+    }
+
+    let summary = rebuild_full_text_index(data_dir, store, current_timestamp()?)
+        .map_err(DaemonError::import)?;
+    Ok(IndexWorkerSummary {
+        rebuilt: true,
+        indexed_documents: summary.indexed_documents,
+    })
+}
+
+fn full_text_index_needs_rebuild(data_dir: &Path) -> bool {
+    match inspect_snapshot_root(&data_dir.join("search-index")) {
+        Ok(inspection) => !matches!(
+            (inspection.state(), inspection.read_target()),
+            (
+                SnapshotRootState::Ready,
+                Some(SnapshotReadTarget::PublishedSnapshot),
+            )
+        ),
+        Err(_) => true,
+    }
 }
 
 fn run_import_worker_once_with_retry_due(
@@ -2823,6 +2887,8 @@ struct RunOptions {
     work_ocr: bool,
     work_embeddings_once: bool,
     work_embeddings: bool,
+    work_index_once: bool,
+    work_index: bool,
     ocr_command: Option<PathBuf>,
     ocr_engine_profile: String,
     ocr_lang: String,
@@ -2852,6 +2918,8 @@ impl Default for RunOptions {
             work_ocr: false,
             work_embeddings_once: false,
             work_embeddings: false,
+            work_index_once: false,
+            work_index: false,
             ocr_command: None,
             ocr_engine_profile: DEFAULT_OCR_ENGINE_PROFILE.to_string(),
             ocr_lang: DEFAULT_OCR_LANG.to_string(),
@@ -2867,6 +2935,12 @@ impl Default for RunOptions {
             worker_interval_ms: None,
             max_worker_ticks: None,
         }
+    }
+}
+
+impl RunOptions {
+    fn has_worker_loop(&self) -> bool {
+        self.work_imports || self.work_ocr || self.work_embeddings || self.work_index
     }
 }
 
@@ -2995,6 +3069,32 @@ fn print_embedding_worker_summary(summary: &EmbeddingWorkerSummary) -> Result<()
     println!("embedding worker processed: {}", summary.processed);
     println!("embedding worker vector writes: {}", summary.vector_writes);
     println!("embedding worker failed: {}", summary.failed);
+    io::stdout()
+        .flush()
+        .map_err(|_| DaemonError::user("unable to write daemon status"))
+}
+
+#[derive(Default)]
+struct IndexWorkerSummary {
+    rebuilt: bool,
+    indexed_documents: usize,
+}
+
+impl IndexWorkerSummary {
+    fn has_activity(&self) -> bool {
+        self.rebuilt
+    }
+}
+
+fn print_index_worker_summary(summary: &IndexWorkerSummary) -> Result<()> {
+    println!(
+        "index worker rebuilt: {}",
+        if summary.rebuilt { "yes" } else { "no" }
+    );
+    println!(
+        "index worker indexed documents: {}",
+        summary.indexed_documents
+    );
     io::stdout()
         .flush()
         .map_err(|_| DaemonError::user("unable to write daemon status"))
