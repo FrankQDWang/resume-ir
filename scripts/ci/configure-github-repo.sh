@@ -17,7 +17,7 @@ if ! gh repo view "$FULL_NAME" >/dev/null 2>&1; then
 fi
 
 if ! git remote get-url origin >/dev/null 2>&1; then
-  git remote add origin "git@github.com:$FULL_NAME.git"
+  git remote add origin "https://github.com/$FULL_NAME.git"
 fi
 
 ./scripts/ci/guard-public-repo.sh
