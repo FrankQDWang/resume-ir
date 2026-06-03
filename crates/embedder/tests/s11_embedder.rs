@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::sync::{Arc, Barrier};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use embedder::{
@@ -81,6 +83,51 @@ printf 'metadata=input_bytes:%s\n' "$input_size"
     assert_eq!(vectors[1].id(), "doc_rust");
     assert_eq!(vectors[1].values(), &[0.0, 1.0, 0.0]);
     assert!(!format!("{:?}", vectors[0]).contains("PRIVATE"));
+}
+
+#[cfg(unix)]
+#[test]
+fn local_command_embedder_handles_parallel_requests_without_temp_dir_collision() {
+    let command = write_fixture_executable(
+        "fixture-embedding-parallel",
+        r#"#!/bin/sh
+if [ ! -s "$RESUME_IR_EMBEDDING_INPUT_PATH" ]; then
+  exit 7
+fi
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=2\n'
+printf 'vector=doc_parallel\t1.0,0.0\n'
+"#,
+    );
+    let embedder = Arc::new(LocalEmbeddingCommandEmbedder::new(
+        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), "fixture-local-model", 2)
+            .unwrap()
+            .with_timeout_ms(5_000)
+            .unwrap(),
+    ));
+    let workers = 24;
+    let barrier = Arc::new(Barrier::new(workers));
+    let handles = (0..workers)
+        .map(|_| {
+            let embedder = Arc::clone(&embedder);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                embedder.embed_batch(
+                    &[EmbeddingInput::new("doc_parallel", "PRIVATE parallel text")],
+                    EmbeddingBudget::new(1, 128),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for handle in handles {
+        let vectors = handle.join().unwrap().unwrap();
+        assert_eq!(vectors.len(), 1);
+        assert_eq!(vectors[0].values(), &[1.0, 0.0]);
+        assert!(!format!("{:?}", vectors[0]).contains("PRIVATE"));
+    }
 }
 
 #[cfg(unix)]

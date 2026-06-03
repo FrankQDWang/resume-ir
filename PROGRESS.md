@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S71 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S72 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -163,8 +163,48 @@ obsolete preliminary files and checklists are not product scope.
 | S67 | Product governance slice complete | `gh repo view FrankQDWang/resume-ir` showed the repository was initially absent, `gh repo create FrankQDWang/resume-ir --public --source=. --remote=origin --description "Local-first resume search engine" --disable-wiki` created it, `git remote -v` showed HTTPS origin, `./scripts/ci/guard-public-repo.sh` passed, `git push -u origin main` pushed `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, and `sh -n scripts/ci/configure-github-repo.sh` plus `git diff --check` passed after the HTTPS fallback script fix. | Branch protection is intentionally deferred until this S67 progress/script-fix commit is pushed. PR creation, hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
 | S68 | Product governance slice complete | `./scripts/ci/configure-github-repo.sh FrankQDWang resume-ir` failed at `gh repo edit` with `HTTP 422` because `--allow-forking` is only applicable to org-owned private repositories, `sh -n scripts/ci/configure-github-repo.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed after removing that invalid option. | Branch protection still has to be rerun after S68 is pushed. Hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
 | S71 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, and `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings` passed after the RED test first failed because `fault-simulate` did not exist. | None for this safe fault-simulation CLI slice; actual disk-fill/ENOSPC, real file-lock semantics, kill-daemon fault injection, OCR worker crash injection, migration-failure injection, model checksum fault, battery mode, external-drive disconnect, and cross-platform validation remain not complete or BLOCKED. |
+| S72 | Stability slice complete | `./scripts/ci/verify-local.sh` first exposed a concurrent local-command embedder temp-directory collision as `EngineFailed`; after the fix, `/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder --locked` passed with 6 tests and `./scripts/ci/verify-local.sh` passed end to end. | None for this CI stability slice; licensed model packaging, ANN, real semantic quality metrics, OS-enforced no-network sandboxing for configured commands, and Windows/macOS validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S72
+
+Design target:
+
+- `verify-local.sh` must be stable enough to gate public PR work.
+- Local embedding command temp input directories must not collide when multiple
+  embedding tests or worker requests run concurrently in the same process.
+
+Observed RED:
+
+```bash
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Exit 101 before the fix; `local_command_embedder_runs_configured_binary_and_parses_structured_vectors`
+  failed with `EmbeddingError::EngineFailed` during the workspace test phase.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder --locked
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `embedder --test s11_embedder`: exit 0; 6 tests passed, including the new
+  parallel local-command request regression.
+- `verify-local.sh`: exit 0; metadata, fmt, clippy, workspace tests, license
+  check, and public repository guard passed.
+
+Scope note:
+
+- S72 only fixes local temp-directory uniqueness for the command embedder. It
+  does not add a licensed model, ANN index, semantic quality proof, or
+  OS-enforced network isolation for external embedding commands.
 
 ### S71
 

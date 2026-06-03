@@ -9,6 +9,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -23,6 +24,7 @@ const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 const EMBEDDING_OUTPUT_MAX_BYTES: usize = 4 * 1024 * 1024;
 const EMBEDDING_POLL_INTERVAL_MS: u64 = 10;
+static EMBEDDING_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub trait Embedder {
     fn model_id(&self) -> &str;
@@ -623,8 +625,9 @@ impl EmbeddingTempInput {
             .duration_since(UNIX_EPOCH)
             .map_err(|_| EmbeddingError::InvalidRequest)?
             .as_nanos();
+        let sequence = EMBEDDING_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let directory = std::env::temp_dir().join(format!(
-            "resume-ir-embedding-{}-{unique}",
+            "resume-ir-embedding-{}-{unique}-{sequence}",
             std::process::id()
         ));
         create_private_directory(&directory)?;
