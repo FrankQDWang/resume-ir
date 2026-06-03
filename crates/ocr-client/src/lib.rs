@@ -564,10 +564,8 @@ fn terminate_child(child: &mut Child) {
     #[cfg(unix)]
     {
         let process_id = child.id();
-        signal_child_processes(process_id, UnixSignal::Term);
         signal_process_group(process_id, UnixSignal::Term);
         thread::sleep(Duration::from_millis(10));
-        signal_child_processes(process_id, UnixSignal::Kill);
         signal_process_group(process_id, UnixSignal::Kill);
         if wait_for_child_exit(child, Duration::from_millis(100)) {
             return;
@@ -606,19 +604,8 @@ impl UnixSignal {
 fn signal_process_group(process_group_id: u32, signal: UnixSignal) {
     let _ = Command::new("/bin/kill")
         .arg(signal.as_kill_arg())
+        .arg("--")
         .arg(format!("-{process_group_id}"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-#[cfg(unix)]
-fn signal_child_processes(parent_process_id: u32, signal: UnixSignal) {
-    let _ = Command::new("/usr/bin/pkill")
-        .arg(signal.as_kill_arg())
-        .arg("-P")
-        .arg(parent_process_id.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
