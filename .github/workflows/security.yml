@@ -37,6 +37,17 @@ jobs:
       - name: Check licenses
         run: ./scripts/ci/check-licenses.sh
 
+  runbooks:
+    name: runbook policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check runbooks
+        run: ./scripts/ci/check-runbooks.sh
+
   dependency-tree:
     name: dependency tree
     runs-on: ubuntu-latest

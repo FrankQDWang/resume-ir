@@ -11,4 +11,5 @@ fi
 "$CARGO_BIN" clippy --workspace --all-targets --all-features --locked -- -D warnings
 "$CARGO_BIN" test --workspace --locked
 ./scripts/ci/check-licenses.sh
+./scripts/ci/check-runbooks.sh
 ./scripts/ci/guard-public-repo.sh

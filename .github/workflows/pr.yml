@@ -47,6 +47,9 @@ jobs:
       - name: License check
         run: ./scripts/ci/check-licenses.sh
 
+      - name: Runbook check
+        run: ./scripts/ci/check-runbooks.sh
+
       - name: Benchmark smoke
         run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --documents 24 --queries 6 --top-k 5 --json
 

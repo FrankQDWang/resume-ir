@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S82 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S83 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -87,10 +87,10 @@ obsolete preliminary files and checklists are not product scope.
   process memory, and CPU cores, snapshot fallback, safe fault simulation for
   disk-space budget, permission-denied probes, file-lock contention probes,
   daemon-kill/restart probes against configured daemon binaries, OCR command
-  crash probes, and targeted fault tests exist. Missing or BLOCKED work includes
-  100k/1M real-corpus benchmarks, nightly gates, destructive service-level
-  kill/actual ENOSPC fault injection, runbooks, and cross-platform performance
-  evidence.
+  crash probes, targeted fault tests, local-only production runbooks, and a
+  runbook CI policy guard exist. Missing or BLOCKED work includes 100k/1M
+  real-corpus benchmarks, nightly performance gates, destructive service-level
+  kill/actual ENOSPC fault injection, and cross-platform performance evidence.
 
 ## Slice Status
 
@@ -177,8 +177,65 @@ obsolete preliminary files and checklists are not product scope.
 | S80 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_file_lock_reproduces_contention_without_path_leak --locked` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths --locked` first failed because `file-lock` was not supported and diagnostics did not advertise `file_lock`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed. | None for this safe file-lock contention slice; 100k/1M real-corpus benchmarks, nightly gates, destructive kill/actual ENOSPC fault injection, kill-daemon/OCR-crash fault injection, model checksum fault, battery mode, external-drive disconnect, runbooks, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S81 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_daemon_kill_restarts_configured_daemon_without_path_leak -- --exact` first failed because `daemon-kill` was not supported, and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths -- --exact` first failed because diagnostics did not advertise `daemon_kill`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s81_daemon_kill --locked`, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings`, `git diff --check`, and `./scripts/ci/verify-local.sh` passed. | None for this safe daemon-kill/restart probe slice; destructive service-manager kill, actual ENOSPC, OCR-crash fault injection, model checksum fault, battery mode, external-drive disconnect, runbooks, Windows/macOS service validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 | S82 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_ocr_crash_reproduces_engine_failure_without_payload_or_path_leak -- --exact` first failed because `ocr-crash` was not supported, and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths -- --exact` first failed because diagnostics did not advertise `ocr_crash`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked`, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings`, `git diff --check`, and `./scripts/ci/verify-local.sh` passed. | None for this safe OCR command-crash probe and retryable worker-failure slice; destructive service-manager kill, actual ENOSPC, model checksum fault, battery mode, external-drive disconnect, runbooks, Windows/macOS service validation, and cross-platform performance evidence remain not complete or BLOCKED. |
+| S83 | Product runbook/CI guard slice complete | `sh scripts/ci/check-runbooks.sh` first failed with `missing required runbook: docs/runbooks/diagnostics-redaction.md`; after adding local-only runbooks and wiring the guard into local/hosted CI, `./scripts/ci/check-runbooks.sh`, `sh -n scripts/ci/check-runbooks.sh scripts/ci/verify-local.sh scripts/ci/guard-public-repo.sh scripts/ci/check-licenses.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and `./scripts/ci/verify-local.sh` passed. | None for this production runbook and policy-guard slice; 100k/1M real-corpus benchmarks, nightly performance gates, destructive service-level kill/actual ENOSPC fault injection, model checksum fault, battery mode, external-drive disconnect, Windows/macOS service validation, and cross-platform performance evidence remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S83
+
+Design target:
+
+- Close the P6 runbook gap with production runbooks for diagnostics redaction,
+  fault injection, OCR/embedding workers, and release blockers.
+- Enforce local-only privacy language and required operational commands with a
+  CI guard so runbooks cannot silently disappear from local or hosted checks.
+- Keep this slice synthetic-fixture only; do not read, scan, upload, or transmit
+  real resumes.
+
+Observed RED:
+
+```bash
+sh scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- Exit 1 before runbooks existed with `missing required runbook:
+  docs/runbooks/diagnostics-redaction.md`.
+- After the files were created, the same guard exposed missing canonical command
+  strings for `resume-cli export-diagnostics --redact` and
+  `resume-cli fault-simulate --case disk-space-low`; those checks were kept in
+  the guard and the runbooks were corrected.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-runbooks.sh
+sh -n scripts/ci/check-runbooks.sh scripts/ci/verify-local.sh scripts/ci/guard-public-repo.sh scripts/ci/check-licenses.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `check-runbooks.sh`: exit 0; required runbook files, Local-only/Do not upload/
+  Synthetic fixtures privacy language, diagnostics, fault-simulation, worker,
+  and release-blocker command strings were present.
+- `sh -n`: exit 0 for the runbook, verify-local, public guard, and license
+  scripts.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0; public repo guard passed.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S83 adds documentation and CI policy coverage only. It does not perform real
+  resume scanning, package signing/notarization, Windows/macOS release
+  validation, real 100k/1M corpus benchmarks, destructive service-manager
+  failure drills, or actual disk-exhaustion drills.
+- Full product is still not complete.
 
 ### S82
 
