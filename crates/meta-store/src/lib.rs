@@ -1893,6 +1893,75 @@ impl MetaStore {
         }
     }
 
+    pub fn completed_import_scan_scopes_due_for_requeue(
+        &self,
+        finished_at_or_before: UnixTimestamp,
+    ) -> Result<Vec<ImportScanScope>> {
+        let connection = self.connection.borrow();
+        let sql = "\
+            SELECT
+                scope.import_task_id,
+                scope.root_kind,
+                scope.root_preset,
+                scope.scan_profile,
+                scope.requested_root_path,
+                scope.canonical_root_path,
+                scope.files_discovered,
+                scope.ignored_entries,
+                scope.scan_errors,
+                scope.searchable_documents,
+                scope.ocr_required_documents,
+                scope.ocr_jobs_queued,
+                scope.failed_documents,
+                scope.deleted_documents,
+                scope.scan_budget_kind,
+                scope.scan_budget_limit,
+                scope.scan_budget_observed,
+                scope.scan_budget_exhausted,
+                scope.updated_at_seconds
+            FROM import_scan_scope AS scope
+            JOIN import_task AS task ON task.id = scope.import_task_id
+            WHERE task.status = ?1
+                AND task.finished_at_seconds <= ?2
+                AND task.rowid = (
+                    SELECT latest.rowid
+                    FROM import_task AS latest
+                    WHERE latest.root_path = task.root_path
+                        AND latest.status = ?1
+                    ORDER BY latest.finished_at_seconds DESC, latest.rowid DESC
+                    LIMIT 1
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM import_task AS pending
+                    WHERE pending.root_path = task.root_path
+                        AND pending.status IN (?3, ?4, ?5)
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM import_task_cancellation AS cancellation
+                            WHERE cancellation.import_task_id = pending.id
+                        )
+                )
+            ORDER BY task.finished_at_seconds, task.rowid";
+        let mut statement = connection.prepare(sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                import_task_status_to_storage(ImportTaskStatus::Completed),
+                finished_at_or_before.as_unix_seconds(),
+                import_task_status_to_storage(ImportTaskStatus::Queued),
+                import_task_status_to_storage(ImportTaskStatus::Running),
+                import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
+            ])
+            .map_err(MetaStoreError::storage)?;
+        let mut scopes = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            scopes.push(read_import_scan_scope(row)?);
+        }
+
+        Ok(scopes)
+    }
+
     pub fn claim_next_import_task_for_worker(
         &self,
         updated_at: UnixTimestamp,

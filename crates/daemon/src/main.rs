@@ -45,6 +45,7 @@ use search_planner::plan_search;
 use sectionizer::Sectionizer;
 
 const IMPORT_RETRY_BACKOFF_SECONDS: i64 = 60;
+const DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS: i64 = 300;
 const IMPORT_TASK_HEARTBEAT_SECONDS: u64 = 30;
 const STALE_IMPORT_TASK_SECONDS: i64 = 15 * 60;
 const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
@@ -186,6 +187,16 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: worker loop options require --work-imports, --work-ocr, --work-embeddings, or --work-index",
         ));
     }
+    if options.import_rescan_min_age_seconds.is_some() && !options.rescan_completed_imports {
+        return Err(DaemonError::usage(
+            "usage: --import-rescan-min-age-seconds requires --rescan-completed-imports",
+        ));
+    }
+    if options.rescan_completed_imports && !options.work_imports {
+        return Err(DaemonError::usage(
+            "usage: import rescan options require --work-imports",
+        ));
+    }
     if options.has_worker_loop()
         && options.ipc_listen.is_some()
         && options.max_worker_ticks.is_some()
@@ -308,6 +319,23 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
             "--work-imports" => {
                 options.work_imports = true;
                 index += 1;
+            }
+            "--rescan-completed-imports" => {
+                options.rescan_completed_imports = true;
+                index += 1;
+            }
+            "--import-rescan-min-age-seconds" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.import_rescan_min_age_seconds = Some(
+                    value
+                        .parse::<i64>()
+                        .ok()
+                        .filter(|value| *value >= 0)
+                        .ok_or_else(|| DaemonError::usage(run_usage()))?,
+                );
+                index += 2;
             }
             "--work-ocr-once" => {
                 options.work_ocr_once = true;
@@ -514,7 +542,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--import-rescan-min-age-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -600,6 +628,15 @@ fn run_worker_loop(
                 stale_recovered: recover_stale_import_tasks(store, now)?,
                 ..ImportWorkerSummary::default()
             };
+            if options.rescan_completed_imports {
+                import_summary.completed_requeued = requeue_completed_imports(
+                    store,
+                    now,
+                    options
+                        .import_rescan_min_age_seconds
+                        .unwrap_or(DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS),
+                )?;
+            }
             import_summary.extend(run_import_worker_once_with_retry_due(
                 data_dir,
                 store,
@@ -1432,6 +1469,59 @@ fn recover_stale_import_tasks(store: &MetaStore, now: UnixTimestamp) -> Result<u
             timestamp_minus_seconds(now, STALE_IMPORT_TASK_SECONDS),
         )
         .map_err(DaemonError::store)
+}
+
+fn requeue_completed_imports(
+    store: &MetaStore,
+    now: UnixTimestamp,
+    min_age_seconds: i64,
+) -> Result<usize> {
+    let due_before = timestamp_minus_seconds(now, min_age_seconds);
+    let scopes = store
+        .completed_import_scan_scopes_due_for_requeue(due_before)
+        .map_err(DaemonError::store)?;
+    let mut requeued = 0_usize;
+
+    for (index, scope) in scopes.into_iter().enumerate() {
+        let task_id = new_import_task_id(index)?;
+        let task = ImportTask {
+            id: task_id.clone(),
+            root_path: scope.canonical_root_path.clone(),
+            status: ImportTaskStatus::Queued,
+            queued_at: now,
+            started_at: None,
+            finished_at: None,
+            updated_at: now,
+        };
+        let next_scope = ImportScanScope {
+            import_task_id: task_id,
+            root_kind: scope.root_kind,
+            root_preset: scope.root_preset,
+            scan_profile: scope.scan_profile,
+            requested_root_path: scope.requested_root_path,
+            canonical_root_path: scope.canonical_root_path,
+            files_discovered: 0,
+            ignored_entries: 0,
+            scan_errors: 0,
+            searchable_documents: 0,
+            ocr_required_documents: 0,
+            ocr_jobs_queued: 0,
+            failed_documents: 0,
+            deleted_documents: 0,
+            scan_budget_kind: scope.scan_budget_kind,
+            scan_budget_limit: scope.scan_budget_limit,
+            scan_budget_observed: scope.scan_budget_limit.map(|_| 0),
+            scan_budget_exhausted: false,
+            updated_at: now,
+        };
+
+        store
+            .insert_import_task_with_scan_scope(&task, &next_scope)
+            .map_err(DaemonError::store)?;
+        requeued += 1;
+    }
+
+    Ok(requeued)
 }
 
 fn mark_import_task_failed_permanent(
@@ -3097,6 +3187,8 @@ struct RunOptions {
     max_requests: Option<usize>,
     work_imports_once: bool,
     work_imports: bool,
+    rescan_completed_imports: bool,
+    import_rescan_min_age_seconds: Option<i64>,
     work_ocr_once: bool,
     work_ocr: bool,
     work_embeddings_once: bool,
@@ -3132,6 +3224,8 @@ impl Default for RunOptions {
             max_requests: None,
             work_imports_once: false,
             work_imports: false,
+            rescan_completed_imports: false,
+            import_rescan_min_age_seconds: None,
             work_ocr_once: false,
             work_ocr: false,
             work_embeddings_once: false,
@@ -3169,6 +3263,7 @@ impl RunOptions {
 #[derive(Default)]
 struct ImportWorkerSummary {
     stale_recovered: usize,
+    completed_requeued: usize,
     processed: usize,
     cancelled: usize,
     failed: usize,
@@ -3179,6 +3274,7 @@ struct ImportWorkerSummary {
 impl ImportWorkerSummary {
     fn has_activity(&self) -> bool {
         self.stale_recovered > 0
+            || self.completed_requeued > 0
             || self.processed > 0
             || self.cancelled > 0
             || self.failed > 0
@@ -3188,6 +3284,7 @@ impl ImportWorkerSummary {
 
     fn extend(&mut self, other: Self) {
         self.stale_recovered += other.stale_recovered;
+        self.completed_requeued += other.completed_requeued;
         self.processed += other.processed;
         self.cancelled += other.cancelled;
         self.failed += other.failed;
@@ -3200,6 +3297,10 @@ fn print_import_worker_summary(import_summary: &ImportWorkerSummary) -> Result<(
     println!(
         "import worker recovered stale running: {}",
         import_summary.stale_recovered
+    );
+    println!(
+        "import worker requeued completed imports: {}",
+        import_summary.completed_requeued
     );
     println!("import worker processed: {}", import_summary.processed);
     println!("import worker cancelled: {}", import_summary.cancelled);

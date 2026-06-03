@@ -404,6 +404,71 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
 }
 
 #[test]
+fn foreground_import_scheduler_rescans_completed_root_without_path_leak() {
+    let data_dir = temp_dir("daemon-import-rescan-data");
+    let fixture_root = temp_dir("daemon-import-rescan-root");
+    fs::write(
+        fixture_root.join("first.txt"),
+        b"Synthetic first resume\nSkills: Rust",
+    )
+    .unwrap();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    seed_queued_import_task(
+        &data_dir,
+        "daemon-import-rescan-initial",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+    run_import_worker_once(&data_dir);
+    fs::write(
+        fixture_root.join("second.txt"),
+        b"Synthetic second resume\nSkills: Kubernetes",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--rescan-completed-imports",
+            "--import-rescan-min-age-seconds",
+            "0",
+            "--worker-interval-ms",
+            "1",
+            "--max-worker-ticks",
+            "1",
+        ])
+        .output()
+        .expect("run resume-daemon import scheduler with completed root rescan");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("import worker requeued completed imports: 1"));
+    assert!(stdout.contains("import worker processed: 1"));
+    assert!(stdout.contains("import worker searchable documents: 2"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains(path_str(&canonical_fixture_root)));
+    assert!(!search_fulltext(&data_dir, "kubernetes").is_empty());
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    assert_eq!(store.status_summary().unwrap().searchable_documents, 2);
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
+}
+
+#[test]
 fn foreground_import_scheduler_backs_off_retryable_failures() {
     let data_dir = temp_dir("daemon-import-scheduler-backoff-data");
     let missing_root = temp_dir("daemon-import-scheduler-backoff-missing-root");

@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96 used synthetic fixtures only. S97 also used a private
+- Data policy: S0-S96 and S98 used synthetic fixtures only. S97 also used a private
   local-only witness against anonymized temporary copies from the user-authorized
   local resume sample directory; no real resume data, filenames, paths, counts,
   raw text, or diagnostics were committed or uploaded.
@@ -34,10 +34,12 @@ obsolete preliminary files and checklists are not product scope.
   backoff, running-task heartbeat, stale-running task recovery, queued/
   retryable/running cancellation markers, cancelled-task status reporting, and
   cooperative cancellation checks during import scanning plus per-file import
-  processing, and status-pollable live import progress persisted in scan scope
-  counters without path disclosure. The daemon can also stream authenticated
-  redacted import progress snapshots over loopback IPC while import, OCR, or
-  embedding worker loops run. The daemon now writes a local endpoint discovery
+  processing, status-pollable live import progress persisted in scan scope
+  counters without path disclosure, and a polling import-rescan mode that
+  requeues completed roots for background incremental import without printing
+  root paths. The daemon can also stream authenticated redacted import progress
+  snapshots over loopback IPC while import, OCR, or embedding worker loops run.
+  The daemon now writes a local endpoint discovery
   manifest, and the CLI can use `--ipc auto` for status, import progress,
   import, cancel-import, search, and detail commands. A daemon full-text index
   maintenance worker can now force a local snapshot rebuild or run in a loop to
@@ -49,10 +51,11 @@ obsolete preliminary files and checklists are not product scope.
   Windows validation.
 - P1 import/search: directory scanning, DOCX/legacy `.doc` via local converter,
   text-layer PDF/UTF-8 and BOM-marked UTF-16 TXT parsing, cleaning, sectioning,
-  full-text snapshot publish/recover, delete rebuild, and redacted snippets
-  exist. Missing production work includes watcher/background incremental import,
-  production-grade PDF coverage, full legacy Word converter distribution and
-  cross-platform proof, large-corpus proof, and incremental index updates.
+  polling background rescan for completed import roots, full-text snapshot
+  publish/recover, delete rebuild, and redacted snippets exist. Missing
+  production work includes OS filesystem watcher integration, production-grade
+  PDF coverage, full legacy Word converter distribution and cross-platform
+  proof, large-corpus proof, and incremental index updates.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
   education/company/title/skills/certs/years, persisted entity mentions,
   metadata-indexed field prefiltering before the full-text TopDocs cutoff,
@@ -225,8 +228,70 @@ obsolete preliminary files and checklists are not product scope.
 | S95 | Product OCR remediation slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact` first failed because `status` did not report `ocr page budget blocked`; after implementation, meta-store, CLI OCR handoff, daemon OCR worker, CLI status IPC, fmt, focused clippy, and related full suites passed. | None for this redacted OCR page-budget remediation slice; final OCR/renderer distribution policy, non-English language packs, real scanned-resume witness runs, large-corpus OCR throughput proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S96 | Product OCR diagnostics slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_report_ocr_runtime_without_paths_or_language_dump --locked -- --exact` first failed because doctor did not report `ocr renderer pdftoppm`; after implementation, OCR runtime diagnostics, non-executable tool handling, full diagnostics, fmt, focused clippy, guards, and local verification passed. | None for this redacted local OCR runtime diagnostics slice; final OCR/renderer distribution policy, non-English language pack install/selection policy, real scanned-resume witness runs, large-corpus OCR throughput proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S97 | Product import slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p parser-doc --test s6_doc extracts_legacy_doc_text_with_local_converter_without_output_leakage --locked -- --exact` first failed because `DocParser::with_converter` did not exist; after implementation, parser-doc, parser-common, import-pipeline, fmt, focused clippy, and a private local-only PDF/Word witness passed with no path leaks. | None for this legacy Word local-converter slice; converter distribution policy, Windows/Linux converter proof, remaining malformed/encrypted DOC behavior, full OCR completion for scanned PDFs, large-corpus proof, and full real-resume library validation remain not complete or BLOCKED. |
+| S98 | Product import scheduler slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_rescans_completed_root_without_path_leak --locked -- --exact` first failed because daemon did not accept `--rescan-completed-imports`; after implementation, daemon import scheduler, meta-store, fmt, focused clippy, focused tests, `git diff --check`, runbook guard, public-repo guard, private-witness marker scan, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this polling background rescan slice; true OS filesystem watcher integration, large-corpus long-running rescan proof, cross-platform watcher behavior, and incremental index-update-only writes remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S98
+
+Design target:
+
+- Add a cross-platform polling background import-rescan mode for completed
+  import roots.
+- Preserve import task history by creating a new queued task from the latest
+  completed root scan scope, only when the same root has no queued/running/
+  retryable task.
+- Keep worker output redacted; do not print root paths, data directories, or
+  filenames.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_rescans_completed_root_without_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- The test failed because `resume-daemon` rejected
+  `--rescan-completed-imports` as an unknown usage path.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_rescans_completed_root_without_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon -p meta-store --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n --hidden --glob '!target/**' --glob '!.git/**' '[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension' .; then exit 1; else echo "no private witness markers"; fi
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused daemon import-rescan exact: exit 0.
+- `s4_daemon`: exit 0; 11 tests passed.
+- `s3_sqlite`: exit 0; 43 tests passed.
+- Focused daemon/meta-store clippy: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- Runbook guard: exit 0.
+- Public repository guard: exit 0.
+- Private witness marker scan: exit 0.
+- Obsolete reference marker guard: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, and public repo guard.
+
+Scope note:
+
+- S98 implements polling background rescan for completed roots. It does not
+  implement a native OS filesystem watcher, prove long-running full-library
+  rescans, or replace full snapshot rebuilds with incremental index writes.
+- Full product is still not complete.
 
 ### S97
 
