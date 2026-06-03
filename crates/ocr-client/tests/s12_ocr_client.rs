@@ -233,11 +233,7 @@ fn local_command_worker_creates_owner_only_input_file() {
     let command = write_fixture_executable(
         "stat-input-mode-ocr",
         r#"#!/bin/sh
-if stat -f %Lp "$RESUME_IR_OCR_INPUT_PATH" >/dev/null 2>&1; then
-  mode="$(stat -f %Lp "$RESUME_IR_OCR_INPUT_PATH")"
-else
-  mode="$(stat -c %a "$RESUME_IR_OCR_INPUT_PATH")"
-fi
+mode="$(stat -c %a "$RESUME_IR_OCR_INPUT_PATH" 2>/dev/null || stat -f %Lp "$RESUME_IR_OCR_INPUT_PATH")"
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.91\n'
 printf 'text:\n'

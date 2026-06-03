@@ -564,11 +564,9 @@ fn terminate_child(child: &mut Child) {
     #[cfg(unix)]
     {
         signal_process_group(child.id(), UnixSignal::Term);
-        if wait_for_child_exit(child, Duration::from_millis(100)) {
-            return;
-        }
+        let exited_after_term = wait_for_child_exit(child, Duration::from_millis(100));
         signal_process_group(child.id(), UnixSignal::Kill);
-        if wait_for_child_exit(child, Duration::from_millis(100)) {
+        if exited_after_term || wait_for_child_exit(child, Duration::from_millis(100)) {
             return;
         }
     }
