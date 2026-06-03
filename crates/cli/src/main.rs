@@ -50,7 +50,8 @@ const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
 const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
 const DEFAULT_SERVICE_LABEL: &str = "com.resume-ir.daemon";
 const DEFAULT_SERVICE_IPC_LISTEN: &str = "127.0.0.1:0";
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, service, doctor, or export-diagnostics";
+const FAULT_PROBE_MAX_BYTES: u64 = 1024 * 1024;
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, service, fault-simulate, doctor, or export-diagnostics";
 
 fn main() {
     if let Err(error) = run() {
@@ -84,6 +85,7 @@ fn run() -> Result<()> {
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
         "embed-worker" => embed_worker_command(&data_dir, &args[1..]),
         "service" => service_command(&data_dir, &args[1..]),
+        "fault-simulate" => fault_simulate_command(&data_dir, &args[1..]),
         "doctor" => {
             if args.len() != 1 {
                 return Err(CliError::usage("usage: resume-cli doctor"));
@@ -771,6 +773,191 @@ fn xml_escape(value: &str) -> String {
 
 fn service_usage() -> &'static str {
     "usage: resume-cli service <install|uninstall|status|start|stop> [--launch-agent-dir <path>] [--label <id>] [--dry-run] [--daemon-binary <path>] [--ocr-command <path>] [--embedding-command <path> --embedding-model-id <id> --embedding-dimension <n>]"
+}
+
+fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let fault_args = parse_fault_simulate_args(args)?;
+    let scratch_dir = fault_args
+        .scratch_dir
+        .unwrap_or_else(|| data_dir.join("fault-probes"));
+
+    match fault_args.case {
+        FaultSimulationCase::DiskSpaceLow => {
+            let required = fault_args
+                .required_bytes
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+            let available = fault_args
+                .available_bytes
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            println!("fault: disk_space_low");
+            println!("required bytes: {required}");
+            println!("available bytes: {available}");
+            if required > available {
+                println!("status: reproduced");
+                println!("probe writes: skipped");
+                println!("paths: <redacted>");
+                return Ok(());
+            }
+
+            let probe_bytes = required.min(FAULT_PROBE_MAX_BYTES);
+            write_fault_probe(&scratch_dir, probe_bytes)
+                .map_err(|_| CliError::user("fault simulation probe failed"))?;
+            println!("status: not reproduced");
+            println!("probe writes: completed");
+            println!("probe bytes: {probe_bytes}");
+            println!("paths: <redacted>");
+            Ok(())
+        }
+        FaultSimulationCase::PermissionDenied => {
+            println!("fault: permission_denied");
+            match write_fault_probe(&scratch_dir, 1) {
+                Ok(()) => {
+                    println!("status: not reproduced");
+                    println!("probe writes: completed");
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    println!("status: reproduced");
+                    println!("probe writes: denied");
+                }
+                Err(_) => return Err(CliError::user("fault simulation probe failed")),
+            }
+            println!("paths: <redacted>");
+            Ok(())
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FaultSimulationCase {
+    DiskSpaceLow,
+    PermissionDenied,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FaultSimulationArgs {
+    case: FaultSimulationCase,
+    scratch_dir: Option<PathBuf>,
+    required_bytes: Option<u64>,
+    available_bytes: Option<u64>,
+}
+
+fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
+    let mut case = None;
+    let mut scratch_dir = None;
+    let mut required_bytes = None;
+    let mut available_bytes = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--case" => {
+                if case.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                let value = take_fault_value(args, &mut index)?;
+                case = Some(parse_fault_case(value)?);
+            }
+            "--scratch-dir" => {
+                if scratch_dir.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                scratch_dir = Some(PathBuf::from(take_fault_value(args, &mut index)?));
+            }
+            "--required-bytes" => {
+                if required_bytes.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                required_bytes = Some(take_fault_positive_u64(args, &mut index)?);
+            }
+            "--available-bytes" => {
+                if available_bytes.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                available_bytes = Some(take_fault_positive_u64(args, &mut index)?);
+            }
+            _ => return Err(CliError::usage(fault_simulate_usage())),
+        }
+    }
+
+    let case = case.ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+    match case {
+        FaultSimulationCase::DiskSpaceLow => {
+            if required_bytes.is_none() || available_bytes.is_none() {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::PermissionDenied => {
+            if required_bytes.is_some() || available_bytes.is_some() {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+    }
+
+    Ok(FaultSimulationArgs {
+        case,
+        scratch_dir,
+        required_bytes,
+        available_bytes,
+    })
+}
+
+fn parse_fault_case(value: &str) -> Result<FaultSimulationCase> {
+    match value {
+        "disk-space-low" => Ok(FaultSimulationCase::DiskSpaceLow),
+        "permission-denied" => Ok(FaultSimulationCase::PermissionDenied),
+        _ => Err(CliError::usage(fault_simulate_usage())),
+    }
+}
+
+fn take_fault_value<'a>(args: &'a [String], index: &mut usize) -> Result<&'a str> {
+    let Some(value) = args.get(*index + 1).map(String::as_str) else {
+        return Err(CliError::usage(fault_simulate_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(fault_simulate_usage()));
+    }
+    *index += 2;
+    Ok(value)
+}
+
+fn take_fault_positive_u64(args: &[String], index: &mut usize) -> Result<u64> {
+    take_fault_value(args, index)?
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| CliError::usage(fault_simulate_usage()))
+}
+
+fn write_fault_probe(scratch_dir: &Path, bytes: u64) -> std::io::Result<()> {
+    fs::create_dir_all(scratch_dir)?;
+    let probe_path = scratch_dir.join(format!(
+        ".resume-ir-fault-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    let result = write_fault_probe_file(&probe_path, bytes);
+    let _ = fs::remove_file(&probe_path);
+    result
+}
+
+fn write_fault_probe_file(path: &Path, bytes: u64) -> std::io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    let mut remaining = bytes;
+    let buffer = [0_u8; 8192];
+    while remaining > 0 {
+        let chunk_len = remaining.min(buffer.len() as u64) as usize;
+        file.write_all(&buffer[..chunk_len])?;
+        remaining -= chunk_len as u64;
+    }
+    file.sync_all()
+}
+
+fn fault_simulate_usage() -> &'static str {
+    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -3523,7 +3710,9 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("staging orphans: {}", index_diagnostic.staging_orphans());
     println!("contact hash key: {}", contact_key.state().label());
     println!("fault simulations: available");
-    println!("fault simulation hooks: daemon_restart,index_snapshot_corrupt,disk_space_low");
+    println!(
+        "fault simulation hooks: daemon_restart,index_snapshot_corrupt,disk_space_low,permission_denied"
+    );
     println!("diagnostics redaction: available");
 
     Ok(())
@@ -3621,7 +3810,8 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("  \"fault_simulations\": [");
     println!("    \"daemon_restart\",");
     println!("    \"index_snapshot_corrupt\",");
-    println!("    \"disk_space_low\"");
+    println!("    \"disk_space_low\",");
+    println!("    \"permission_denied\"");
     println!("  ],");
     println!("  \"scope\": \"redacted skeleton; no raw resume text, paths, or queries included\"");
     println!("}}");

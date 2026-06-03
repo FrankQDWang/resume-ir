@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S68 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
-- Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67. No release, upload of runtime data, signing, or notarization has been performed. The first repository settings/protection run failed before branch protection because `--allow-forking` is not applicable to a personal public repository; S68 removes that invalid option.
+- Data policy: S0-S71 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
 ## Production Gap Audit
@@ -83,10 +83,11 @@ obsolete preliminary files and checklists are not product scope.
   workflow execution, and cross-platform validation remain absent, not complete,
   or externally blocked by platform credentials/runners.
 - P6 performance/stability: synthetic benchmark runner, status/doctor/export
-  diagnostics, snapshot fallback, and targeted fault tests exist. Missing or
+  diagnostics, snapshot fallback, safe fault simulation for disk-space budget
+  and permission-denied probes, and targeted fault tests exist. Missing or
   BLOCKED work includes 100k/1M real-corpus benchmarks, nightly gates,
-  destructive kill/disk-space fault injection, resource telemetry, runbooks, and
-  cross-platform performance evidence.
+  destructive kill/actual ENOSPC fault injection, file-lock semantics,
+  resource telemetry, runbooks, and cross-platform performance evidence.
 
 ## Slice Status
 
@@ -161,8 +162,59 @@ obsolete preliminary files and checklists are not product scope.
 | S66 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s66_service_lifecycle --locked`, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace --locked`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed with no matches. | None for this macOS LaunchAgent CLI lifecycle slice; live `launchctl` start/stop was implemented but not exercised against the user's real login session, and Windows service/MSI, signed pkg/dmg, notarization, real upgrade/uninstall, hosted runner validation, and complete release packaging remain not complete or BLOCKED. |
 | S67 | Product governance slice complete | `gh repo view FrankQDWang/resume-ir` showed the repository was initially absent, `gh repo create FrankQDWang/resume-ir --public --source=. --remote=origin --description "Local-first resume search engine" --disable-wiki` created it, `git remote -v` showed HTTPS origin, `./scripts/ci/guard-public-repo.sh` passed, `git push -u origin main` pushed `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, and `sh -n scripts/ci/configure-github-repo.sh` plus `git diff --check` passed after the HTTPS fallback script fix. | Branch protection is intentionally deferred until this S67 progress/script-fix commit is pushed. PR creation, hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
 | S68 | Product governance slice complete | `./scripts/ci/configure-github-repo.sh FrankQDWang resume-ir` failed at `gh repo edit` with `HTTP 422` because `--allow-forking` is only applicable to org-owned private repositories, `sh -n scripts/ci/configure-github-repo.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed after removing that invalid option. | Branch protection still has to be rerun after S68 is pushed. Hosted Actions results, releases, signing, notarization, Windows/macOS package validation, and real whole-machine witness runs remain not complete or BLOCKED. |
+| S71 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, and `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings` passed after the RED test first failed because `fault-simulate` did not exist. | None for this safe fault-simulation CLI slice; actual disk-fill/ENOSPC, real file-lock semantics, kill-daemon fault injection, OCR worker crash injection, migration-failure injection, model checksum fault, battery mode, external-drive disconnect, and cross-platform validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S71
+
+Design target:
+
+- S71 closes the P6 gap where doctor/export listed fault simulation hooks but
+  the CLI had no executable local fault-simulation entrypoint.
+- `resume-cli fault-simulate --case disk-space-low` now safely reproduces a
+  low-space budget condition without filling the real disk, or writes and
+  removes a bounded probe when the configured available budget is sufficient.
+- `resume-cli fault-simulate --case permission-denied` now attempts a redacted
+  local write probe and reports permission denial without printing paths.
+- Doctor/export diagnostics now include the permission-denied probe hook.
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked
+```
+
+Output summary:
+
+- Exit 101 before implementation; all four S71 tests failed because
+  `resume-cli fault-simulate` did not exist.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+```
+
+Output summary:
+
+- `resume-cli --test s71_fault_injection`: exit 0; 4 tests passed, covering
+  disk-space-low reproduction without probe writes, bounded probe write cleanup
+  when the budget is sufficient, permission-denied reproduction, and usage
+  errors without path leaks.
+- `cargo fmt --all`: exit 0.
+- `resume-cli --test s13_diagnostics`: exit 0; 8 tests passed.
+- `cargo clippy -p resume-cli --all-targets --locked -- -D warnings`: exit 0.
+
+Scope note:
+
+- S71 is a safe local simulation/probe slice. It does not fill the actual disk,
+  does not claim real ENOSPC coverage, does not implement advisory/mandatory
+  file-lock behavior, and does not cover kill-daemon or OCR crash injection.
+- Full product is still not complete.
 
 ### S68
 
