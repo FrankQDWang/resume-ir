@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
@@ -90,6 +90,89 @@ fn import_ipc_submits_authenticated_request_without_touching_local_store() {
     remove_path(&data_dir);
     remove_path(&root_dir);
     remove_path(&token_file);
+}
+
+#[test]
+fn import_ipc_auto_discovers_endpoint_and_token_file() {
+    let data_dir = temp_dir("import-ipc-auto-data");
+    let root_dir = temp_dir("import-ipc-auto-private-root");
+    let token = "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc";
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
+    let addr = listener.local_addr().unwrap();
+    write_auto_ipc_files(&data_dir, addr, token);
+    let expected_root = path_str(&root_dir).to_string();
+    let server = thread::spawn(move || {
+        let (mut status_stream, _) = accept_with_timeout(&listener);
+        let status_request = read_http_request(&mut status_stream);
+        assert!(status_request.starts_with("GET /status HTTP/1.1"));
+        assert!(!status_request.contains("Authorization:"));
+        write_auto_status_response(&mut status_stream);
+        drop(status_stream);
+
+        let (mut stream, _) = accept_with_timeout(&listener);
+        let request = read_http_request(&mut stream);
+        assert!(request.starts_with("POST /imports HTTP/1.1"));
+        assert!(request.contains(&format!("Authorization: Bearer {token}")));
+        assert!(request.contains("Content-Type: application/json"));
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+        let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(
+            payload
+                .get("roots")
+                .and_then(serde_json::Value::as_array)
+                .unwrap()[0],
+            expected_root
+        );
+        assert!(payload["root_preset"].is_null());
+        assert_eq!(payload["profile"], "explicit");
+        assert_eq!(payload["max_files"], 1);
+
+        let response = "{\"schema_version\":\"daemon.import.v1\",\"status\":\"accepted\",\"accepted_roots\":1,\"new_tasks\":1,\"task_ids\":[\"imp_auto\"],\"scan_profile\":\"explicit\",\"scan_file_limit\":1}";
+        write!(
+            stream,
+            "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.len(),
+            response
+        )
+        .expect("write fake import response");
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--ipc",
+            "auto",
+            "--root",
+            path_str(&root_dir),
+            "--max-files",
+            "1",
+        ])
+        .output()
+        .expect("run resume-cli import --ipc auto");
+
+    server.join().expect("fake daemon joined");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("import task submitted"));
+    assert!(stdout.contains("status: queued"));
+    assert!(stdout.contains("roots queued: 1"));
+    assert!(stdout.contains("task id: imp_auto"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+    assert!(!stdout.contains("ipc.auth"));
+    assert!(!stdout.contains("bcbcbcbc"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_path(&data_dir);
+    remove_path(&root_dir);
 }
 
 #[test]
@@ -472,7 +555,10 @@ fn accept_with_timeout(listener: &TcpListener) -> (std::net::TcpStream, std::net
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         match listener.accept() {
-            Ok(connection) => return connection,
+            Ok((stream, addr)) => {
+                stream.set_nonblocking(false).unwrap();
+                return (stream, addr);
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {
                     panic!("resume-cli did not connect to fake daemon");
@@ -482,6 +568,29 @@ fn accept_with_timeout(listener: &TcpListener) -> (std::net::TcpStream, std::net
             Err(error) => panic!("accept import request: {error}"),
         }
     }
+}
+
+fn write_auto_ipc_files(data_dir: &Path, addr: SocketAddr, token: &str) {
+    fs::create_dir_all(data_dir).unwrap();
+    fs::write(
+        data_dir.join("ipc.endpoints.json"),
+        format!(
+            "{{\"schema_version\":\"resume-ir.daemon-ipc.v1\",\"status\":\"http://{addr}/status\",\"imports\":\"http://{addr}/imports\",\"search\":\"http://{addr}/search\",\"details\":\"http://{addr}/details\"}}"
+        ),
+    )
+    .unwrap();
+    fs::write(data_dir.join("ipc.auth"), format!("{token}\n")).unwrap();
+}
+
+fn write_auto_status_response(stream: &mut impl Write) {
+    let response = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":0}";
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        response.len(),
+        response
+    )
+    .expect("write fake status response");
 }
 
 fn temp_path(label: &str) -> PathBuf {

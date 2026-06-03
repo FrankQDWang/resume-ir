@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S58 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S59 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: no push, PR, release, upload, signing, or notarization.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -29,7 +29,8 @@ obsolete preliminary files and checklists are not product scope.
   backoff, running-task heartbeat, stale-running task recovery, queued/
   retryable cancellation markers, and cancelled-task status reporting. The
   daemon can serve loopback status IPC while import, OCR, or embedding worker
-  loops run.
+  loops run. The daemon now writes a local endpoint discovery manifest, and the
+  CLI can use `--ipc auto` for status, import, search, and detail commands.
   Missing production control-plane work includes live import progress
   streaming, cooperative cancellation of already-running import scans, daemon
   index-maintenance workers, service lifecycle, CI, CODEOWNERS, and
@@ -138,8 +139,88 @@ obsolete preliminary files and checklists are not product scope.
 | S56 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this queued/retryable import cancellation slice; live progress streaming, cooperative cancellation of already-running import scans, daemon endpoint discovery UX, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, and Windows/macOS validation remain not complete. |
 | S57 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p parser-text`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this TXT parser/import/search slice; legacy `.doc`, broader TXT encoding heuristics beyond UTF-8/BOM-marked UTF-16, watcher/background incremental import, production-grade PDF coverage, large-corpus proof, and incremental index updates remain not complete. |
 | S58 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules`, `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this high-confidence name mention slice; broad name dictionaries, multilingual name normalization, name-based soft-dedupe scoring, labeled field F1 metrics, encrypted local storage, and physical purge remain not complete. |
+| S59 | Product slice complete | `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `git diff --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s49_detail_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon`, `/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings`, `/Users/frankqdwang/.cargo/bin/cargo test --workspace`, and the obsolete-reference marker scan passed with no matches. | None for this local IPC endpoint auto-discovery slice; live progress streaming, cooperative cancellation of already-running import scans, token rotation/revocation, singleton service lifecycle enforcement, real whole-machine witness runs, and Windows/macOS validation remain not complete. |
 
 ## Command Log
+
+### S59
+
+Design target:
+
+- S59 closes the P0 control-plane gap where users had to copy a printed
+  daemon IPC URL and separately locate the local command token file.
+- The daemon now writes a local `ipc.endpoints.json` manifest after a loopback
+  IPC bind succeeds. The manifest includes only status/import/search/detail
+  loopback URLs and schema version; it does not include the token, token path,
+  data directory, query text, roots, or resume text.
+- CLI `status`, `import`, `search`, and `detail` now accept `--ipc auto`.
+  Status reads only the manifest. Command endpoints read the manifest and then
+  use `data-dir/ipc.auth` locally for bearer-token authentication.
+- Auto command endpoints perform an unauthenticated `/status` liveness probe
+  before sending any bearer token or private request body, and the daemon removes
+  the manifest on normal IPC shutdown. Manifest writes reject symlink/non-file
+  destinations and publish through an owner-only temporary file.
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc status_ipc_auto_discovers_endpoint_without_path_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc import_ipc_auto_discovers_endpoint_and_token_file -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_auto_discovers_endpoint_and_token_file -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_auto_rejects_stale_manifest_without_sending_token_or_query -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s49_detail_ipc detail_ipc_auto_discovers_endpoint_and_token_file -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_serves_redacted_status_over_loopback_ipc -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_rejects_symlinked_ipc_endpoint_manifest_without_clobbering_target -- --exact
+```
+
+Output summary:
+
+- Before implementation, the CLI focused tests failed because `--ipc auto` did
+  not connect to the fake daemon.
+- Before implementation, the daemon focused test failed because no endpoint
+  discovery manifest existed after IPC bind.
+- Reviewer-driven RED checks then failed because auto command endpoints did not
+  probe status before sending command payloads, normal IPC shutdown did not
+  remove the manifest, and symlinked manifests were not rejected.
+- After implementation, the focused tests passed and proved auto-discovered
+  status/import/search/detail IPC, stale-manifest rejection before token/query
+  send, manifest cleanup, symlink rejection, and manifest redaction.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s47_import_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s49_detail_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo clippy --all-targets --all-features -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test --workspace
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `cargo test -p resume-cli --test s20_status_ipc`: exit 0; 5 tests passed.
+- `cargo test -p resume-cli --test s47_import_ipc`: exit 0; 8 tests passed.
+- `cargo test -p resume-cli --test s48_search_ipc`: exit 0; 7 tests passed.
+- `cargo test -p resume-cli --test s49_detail_ipc`: exit 0; 4 tests passed.
+- `cargo test -p resume-daemon --test s20_ipc`: exit 0; 16 tests passed.
+- `cargo test -p resume-cli`: exit 0.
+- `cargo test -p resume-daemon`: exit 0.
+- `cargo clippy --all-targets --all-features -- -D warnings`: exit 0.
+- `cargo test --workspace`: exit 0.
+
+Scope note:
+
+- S59 does not implement live progress streaming, cooperative cancellation of
+  already-running import scans, token rotation/revocation, singleton service
+  lifecycle enforcement, real whole-machine witness runs, or Windows/macOS
+  validation. Those remain incomplete or externally blocked.
 
 ### S58
 

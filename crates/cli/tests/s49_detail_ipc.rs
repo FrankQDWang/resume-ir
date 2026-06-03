@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
@@ -110,6 +110,101 @@ fn detail_ipc_submits_authenticated_request_and_renders_redacted_detail_without_
 
     remove_path(&data_dir);
     remove_path(&token_file);
+}
+
+#[test]
+fn detail_ipc_auto_discovers_endpoint_and_token_file() {
+    let data_dir = temp_path("detail-ipc-auto-data");
+    let doc_id = DocumentId::from_non_secret_parts(&["s49", "detail-auto-doc"]);
+    let version_id = ResumeVersionId::from_non_secret_parts(&["s49", "detail-auto-version"]);
+    let token = "2323232323232323232323232323232323232323232323232323232323232323";
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
+    let addr = listener.local_addr().unwrap();
+    write_auto_ipc_files(&data_dir, addr, token);
+    let expected_doc_id = doc_id.to_string();
+    let expected_version_id = version_id.to_string();
+    let server = thread::spawn(move || {
+        let (mut status_stream, _) = accept_with_timeout(&listener);
+        let status_request = read_http_request(&mut status_stream);
+        assert!(status_request.starts_with("GET /status HTTP/1.1"));
+        assert!(!status_request.contains("Authorization:"));
+        write_auto_status_response(&mut status_stream);
+        drop(status_stream);
+
+        let (mut stream, _) = accept_with_timeout(&listener);
+        let request = read_http_request(&mut stream);
+        assert!(request.starts_with("POST /details HTTP/1.1"));
+        assert!(request.contains(&format!("Authorization: Bearer {token}")));
+        assert!(request.contains("Content-Type: application/json"));
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+        let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(payload["doc_id"], expected_doc_id);
+
+        let response = serde_json::json!({
+            "schema_version": "daemon.detail.v1",
+            "status": "ok",
+            "document": {
+                "doc_id": expected_doc_id,
+                "version_id": expected_version_id,
+                "file_name": "candidate@example.test-auto.pdf",
+                "extension": "pdf",
+                "document_status": "searchable",
+                "visibility": "searchable",
+                "byte_size": 2048,
+                "fields": [{
+                    "type": "email",
+                    "value": "candidate@example.test",
+                    "confidence": 0.99,
+                    "evidence": "candidate@example.test",
+                    "extractor": "rules-v1"
+                }],
+                "snippet": "Auto detail candidate@example.test 155-555-0199"
+            }
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.len(),
+            response
+        )
+        .expect("write fake detail response");
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "detail",
+            "--doc-id",
+            doc_id.as_str(),
+            "--ipc",
+            "auto",
+        ])
+        .output()
+        .expect("run resume-cli detail --ipc auto");
+
+    server.join().expect("fake daemon joined");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("resume detail"));
+    assert!(stdout.contains(&format!("doc_id: {doc_id}")));
+    assert!(stdout.contains(&format!("version_id: {version_id}")));
+    assert!(stdout.contains("field: email"));
+    assert!(!stdout.contains("candidate@example.test"));
+    assert!(!stdout.contains("155-555-0199"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains("ipc.auth"));
+    assert!(!stdout.contains("23232323"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_path(&data_dir);
 }
 
 #[test]
@@ -324,7 +419,10 @@ fn accept_with_timeout(listener: &TcpListener) -> (std::net::TcpStream, std::net
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         match listener.accept() {
-            Ok(connection) => return connection,
+            Ok((stream, addr)) => {
+                stream.set_nonblocking(false).unwrap();
+                return (stream, addr);
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {
                     panic!("resume-cli did not connect to fake daemon");
@@ -344,6 +442,29 @@ fn temp_valid_token(label: &str) -> PathBuf {
     )
     .unwrap();
     token
+}
+
+fn write_auto_ipc_files(data_dir: &Path, addr: SocketAddr, token: &str) {
+    fs::create_dir_all(data_dir).unwrap();
+    fs::write(
+        data_dir.join("ipc.endpoints.json"),
+        format!(
+            "{{\"schema_version\":\"resume-ir.daemon-ipc.v1\",\"status\":\"http://{addr}/status\",\"imports\":\"http://{addr}/imports\",\"search\":\"http://{addr}/search\",\"details\":\"http://{addr}/details\"}}"
+        ),
+    )
+    .unwrap();
+    fs::write(data_dir.join("ipc.auth"), format!("{token}\n")).unwrap();
+}
+
+fn write_auto_status_response(stream: &mut impl Write) {
+    let response = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":0}";
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        response.len(),
+        response
+    )
+    .expect("write fake status response");
 }
 
 fn temp_path(label: &str) -> PathBuf {

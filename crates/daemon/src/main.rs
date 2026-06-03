@@ -42,6 +42,8 @@ const IMPORT_RETRY_BACKOFF_SECONDS: i64 = 60;
 const IMPORT_TASK_HEARTBEAT_SECONDS: u64 = 30;
 const STALE_IMPORT_TASK_SECONDS: i64 = 15 * 60;
 const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
+const IPC_ENDPOINT_FILE: &str = "ipc.endpoints.json";
+const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
 const IPC_AUTH_TOKEN_BYTES: usize = 32;
 const IPC_MAX_REQUEST_BYTES: usize = 64 * 1024;
 const DEFAULT_OCR_ENGINE_PROFILE: &str = "local-command";
@@ -481,6 +483,7 @@ fn run_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
         options.max_requests,
         &worker_result_receiver,
     );
+    remove_ipc_endpoint_manifest(data_dir);
     stop_worker.store(true, Ordering::Relaxed);
     worker_handle
         .join()
@@ -1247,7 +1250,9 @@ fn parse_loopback_addr(value: &str) -> Result<SocketAddr> {
 
 fn serve_ipc(data_dir: &Path, addr: SocketAddr, max_requests: Option<usize>) -> Result<()> {
     let listener = bind_ipc_listener(data_dir, addr)?;
-    serve_ipc_listener(data_dir, &listener, max_requests)
+    let result = serve_ipc_listener(data_dir, &listener, max_requests);
+    remove_ipc_endpoint_manifest(data_dir);
+    result
 }
 
 fn bind_ipc_listener(data_dir: &Path, addr: SocketAddr) -> Result<TcpListener> {
@@ -1257,11 +1262,87 @@ fn bind_ipc_listener(data_dir: &Path, addr: SocketAddr) -> Result<TcpListener> {
     let local_addr = listener
         .local_addr()
         .map_err(|_| DaemonError::user("unable to inspect daemon ipc listener"))?;
+    write_ipc_endpoint_manifest(data_dir, local_addr)?;
     println!("ipc status endpoint: http://{local_addr}/status");
     io::stdout()
         .flush()
         .map_err(|_| DaemonError::user("unable to write daemon status"))?;
     Ok(listener)
+}
+
+fn write_ipc_endpoint_manifest(data_dir: &Path, addr: SocketAddr) -> Result<()> {
+    fs::create_dir_all(data_dir)
+        .map_err(|_| DaemonError::user("unable to prepare daemon ipc auto-discovery"))?;
+    let body = serde_json::json!({
+        "schema_version": IPC_ENDPOINT_SCHEMA_VERSION,
+        "status": format!("http://{addr}/status"),
+        "imports": format!("http://{addr}/imports"),
+        "search": format!("http://{addr}/search"),
+        "details": format!("http://{addr}/details"),
+    })
+    .to_string();
+    let path = data_dir.join(IPC_ENDPOINT_FILE);
+    reject_unsafe_ipc_endpoint_manifest_path(&path)?;
+    let temp_path = ipc_endpoint_temp_path(data_dir);
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temp_path)
+        .map_err(|_| DaemonError::user("unable to write daemon ipc auto-discovery"))?;
+    file.write_all(body.as_bytes())
+        .map_err(|_| DaemonError::user("unable to write daemon ipc auto-discovery"))?;
+    file.flush()
+        .map_err(|_| DaemonError::user("unable to write daemon ipc auto-discovery"))?;
+    #[cfg(unix)]
+    {
+        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))
+            .map_err(|_| DaemonError::user("unable to secure daemon ipc auto-discovery"))?;
+    }
+    if fs::rename(&temp_path, &path).is_err() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(DaemonError::user(
+            "unable to publish daemon ipc auto-discovery",
+        ));
+    }
+    Ok(())
+}
+
+fn reject_unsafe_ipc_endpoint_manifest_path(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            let file_type = metadata.file_type();
+            if file_type.is_symlink() || !file_type.is_file() {
+                return Err(DaemonError::user(
+                    "unable to secure daemon ipc auto-discovery",
+                ));
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(DaemonError::user(
+            "unable to inspect daemon ipc auto-discovery",
+        )),
+    }
+}
+
+fn ipc_endpoint_temp_path(data_dir: &Path) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    data_dir.join(format!(
+        ".ipc.endpoints.{}.{}.tmp",
+        std::process::id(),
+        unique
+    ))
+}
+
+fn remove_ipc_endpoint_manifest(data_dir: &Path) {
+    let _ = fs::remove_file(data_dir.join(IPC_ENDPOINT_FILE));
 }
 
 fn serve_ipc_listener(
@@ -1321,6 +1402,9 @@ fn serve_ipc_listener_with_worker_monitor(
 }
 
 fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
+    stream
+        .set_nonblocking(false)
+        .map_err(|_| DaemonError::user("unable to configure daemon ipc stream"))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .map_err(|_| DaemonError::user("unable to set daemon ipc timeout"))?;

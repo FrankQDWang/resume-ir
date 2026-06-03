@@ -44,6 +44,9 @@ use sectionizer::Sectionizer;
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 const LOCAL_DISCOVERY_DEFAULT_MAX_FILES: usize = 10_000;
+const IPC_ENDPOINT_FILE: &str = "ipc.endpoints.json";
+const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
+const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
 
 fn main() {
     if let Err(error) = run() {
@@ -108,7 +111,7 @@ fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    if let Some(endpoint) = parse_status_ipc_arg(args)? {
+    if let Some(endpoint) = parse_status_ipc_arg(data_dir, args)? {
         return status_ipc_command(&endpoint);
     }
 
@@ -157,19 +160,22 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn parse_status_ipc_arg(args: &[String]) -> Result<Option<IpcStatusEndpoint>> {
+fn parse_status_ipc_arg(data_dir: &Path, args: &[String]) -> Result<Option<IpcStatusEndpoint>> {
     if args.is_empty() {
         return Ok(None);
     }
     if args.len() != 2 || args.first().map(String::as_str) != Some("--ipc") {
         return Err(CliError::usage(status_usage()));
     }
+    if args[1] == "auto" {
+        return discover_status_ipc_endpoint(data_dir).map(Some);
+    }
 
     parse_status_ipc_endpoint(&args[1]).map(Some)
 }
 
 fn status_usage() -> &'static str {
-    "usage: resume-cli status [--ipc <http://127.0.0.1:port/status>]"
+    "usage: resume-cli status [--ipc <auto|http://127.0.0.1:port/status>]"
 }
 
 fn parse_status_ipc_endpoint(value: &str) -> Result<IpcStatusEndpoint> {
@@ -192,6 +198,12 @@ fn parse_status_ipc_endpoint(value: &str) -> Result<IpcStatusEndpoint> {
 }
 
 fn status_ipc_command(endpoint: &IpcStatusEndpoint) -> Result<()> {
+    let body = request_status_ipc_body(endpoint)?;
+    render_ipc_status(&body);
+    Ok(())
+}
+
+fn request_status_ipc_body(endpoint: &IpcStatusEndpoint) -> Result<serde_json::Value> {
     let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
         .map_err(|_| CliError::user("unable to connect to daemon status ipc"))?;
     stream
@@ -222,7 +234,17 @@ fn status_ipc_command(endpoint: &IpcStatusEndpoint) -> Result<()> {
 
     let body: serde_json::Value = serde_json::from_str(body)
         .map_err(|_| CliError::user("daemon status ipc returned invalid json"))?;
-    render_ipc_status(&body);
+    Ok(body)
+}
+
+fn verify_auto_ipc_status(endpoint: &IpcStatusEndpoint) -> Result<()> {
+    let body = request_status_ipc_body(endpoint)
+        .map_err(|_| CliError::user("daemon ipc auto-discovery is stale"))?;
+    if json_str(&body, "schema_version") != Some("daemon.status.v1")
+        || json_str(&body, "status") != Some("ok")
+    {
+        return Err(CliError::user("daemon ipc auto-discovery is stale"));
+    }
     Ok(())
 }
 
@@ -315,8 +337,56 @@ struct IpcDetailEndpoint {
     addr: SocketAddr,
 }
 
+fn auto_ipc_token_file(data_dir: &Path) -> PathBuf {
+    data_dir.join(IPC_AUTH_TOKEN_FILE)
+}
+
+fn discover_status_ipc_endpoint(data_dir: &Path) -> Result<IpcStatusEndpoint> {
+    parse_status_ipc_endpoint(&discover_ipc_url(data_dir, "status")?)
+}
+
+fn discover_import_ipc_endpoint(data_dir: &Path) -> Result<IpcImportEndpoint> {
+    parse_import_ipc_endpoint(&discover_ipc_url(data_dir, "imports")?)
+}
+
+fn discover_search_ipc_endpoint(data_dir: &Path) -> Result<IpcSearchEndpoint> {
+    parse_search_ipc_endpoint(&discover_ipc_url(data_dir, "search")?)
+}
+
+fn discover_detail_ipc_endpoint(data_dir: &Path) -> Result<IpcDetailEndpoint> {
+    parse_detail_ipc_endpoint(&discover_ipc_url(data_dir, "details")?)
+}
+
+fn ensure_auto_ipc_same_daemon(status_addr: SocketAddr, command_addr: SocketAddr) -> Result<()> {
+    if status_addr != command_addr {
+        return Err(CliError::user("daemon ipc auto-discovery is invalid"));
+    }
+    Ok(())
+}
+
+fn discover_ipc_url(data_dir: &Path, key: &str) -> Result<String> {
+    let manifest = fs::read_to_string(data_dir.join(IPC_ENDPOINT_FILE))
+        .map_err(|_| CliError::user("daemon ipc auto-discovery is unavailable"))?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest)
+        .map_err(|_| CliError::user("daemon ipc auto-discovery is invalid"))?;
+    if json_str(&manifest, "schema_version") != Some(IPC_ENDPOINT_SCHEMA_VERSION) {
+        return Err(CliError::user("daemon ipc auto-discovery is invalid"));
+    }
+    json_str(&manifest, key)
+        .map(str::to_string)
+        .ok_or_else(|| CliError::user("daemon ipc auto-discovery is invalid"))
+}
+
 fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let import_args = parse_import_args(args)?;
+    if import_args.ipc_auto {
+        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
+        let endpoint = discover_import_ipc_endpoint(data_dir)?;
+        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
+        verify_auto_ipc_status(&status_endpoint)?;
+        let token_file = auto_ipc_token_file(data_dir);
+        return import_ipc_command_with_token_file(&endpoint, &token_file, &import_args);
+    }
     if let Some(endpoint) = &import_args.ipc_endpoint {
         return import_ipc_command(endpoint, &import_args);
     }
@@ -459,6 +529,14 @@ fn import_ipc_command(endpoint: &IpcImportEndpoint, import_args: &ImportArgs) ->
         .ipc_token_file
         .as_ref()
         .ok_or_else(import_usage)?;
+    import_ipc_command_with_token_file(endpoint, token_file, import_args)
+}
+
+fn import_ipc_command_with_token_file(
+    endpoint: &IpcImportEndpoint,
+    token_file: &Path,
+    import_args: &ImportArgs,
+) -> Result<()> {
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon import ipc token"))?;
     let token = validate_daemon_ipc_token(&token, "daemon import ipc token is invalid")?;
@@ -670,6 +748,7 @@ struct ImportArgs {
     profile: ScanProfile,
     max_files: Option<usize>,
     enqueue: bool,
+    ipc_auto: bool,
     ipc_endpoint: Option<IpcImportEndpoint>,
     ipc_token_file: Option<PathBuf>,
 }
@@ -709,6 +788,7 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
     let mut profile_seen = false;
     let mut max_files = None;
     let mut enqueue = false;
+    let mut ipc_auto = false;
     let mut ipc_endpoint = None;
     let mut ipc_token_file = None;
     let mut index = 0;
@@ -767,14 +847,18 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
                 max_files = Some(parse_positive_usize(value)?);
             }
             "--ipc" => {
-                if ipc_endpoint.is_some() {
+                if ipc_auto || ipc_endpoint.is_some() {
                     return Err(import_usage());
                 }
                 index += 1;
                 let Some(value) = args.get(index) else {
                     return Err(import_usage());
                 };
-                ipc_endpoint = Some(parse_import_ipc_endpoint(value)?);
+                if value == "auto" {
+                    ipc_auto = true;
+                } else {
+                    ipc_endpoint = Some(parse_import_ipc_endpoint(value)?);
+                }
             }
             "--ipc-token-file" => {
                 if ipc_token_file.is_some() {
@@ -790,7 +874,10 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
         }
         index += 1;
     }
-    if ipc_endpoint.is_some() != ipc_token_file.is_some() {
+    if ipc_auto && ipc_token_file.is_some() {
+        return Err(import_usage());
+    }
+    if !ipc_auto && ipc_endpoint.is_some() != ipc_token_file.is_some() {
         return Err(import_usage());
     }
 
@@ -817,6 +904,7 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
         profile: profile.unwrap_or(default_profile),
         max_files,
         enqueue,
+        ipc_auto,
         ipc_endpoint,
         ipc_token_file,
     })
@@ -862,7 +950,7 @@ fn parse_positive_usize(value: &str) -> Result<usize> {
 
 fn import_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli import [--enqueue] [--ipc <http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]",
+        "usage: resume-cli import [--enqueue] [--ipc auto|<http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]",
     )
 }
 
@@ -964,6 +1052,14 @@ fn pending_import_task(
 
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let search_args = parse_search_args(args)?;
+    if search_args.ipc_auto {
+        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
+        let endpoint = discover_search_ipc_endpoint(data_dir)?;
+        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
+        verify_auto_ipc_status(&status_endpoint)?;
+        let token_file = auto_ipc_token_file(data_dir);
+        return search_ipc_command_with_token_file(&endpoint, &token_file, &search_args);
+    }
     if let Some(endpoint) = &search_args.ipc_endpoint {
         return search_ipc_command(endpoint, &search_args);
     }
@@ -1015,6 +1111,14 @@ fn search_ipc_command(endpoint: &IpcSearchEndpoint, search_args: &SearchArgs) ->
         .ipc_token_file
         .as_ref()
         .ok_or_else(|| CliError::usage(search_usage()))?;
+    search_ipc_command_with_token_file(endpoint, token_file, search_args)
+}
+
+fn search_ipc_command_with_token_file(
+    endpoint: &IpcSearchEndpoint,
+    token_file: &Path,
+    search_args: &SearchArgs,
+) -> Result<()> {
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon search ipc token"))?;
     let token = validate_daemon_ipc_token(&token, "daemon search ipc token is invalid")?;
@@ -1145,6 +1249,14 @@ fn print_search_hits(hits: Vec<SearchOutputHit>) {
 
 fn detail_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let detail_args = parse_detail_args(args)?;
+    if detail_args.ipc_auto {
+        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
+        let endpoint = discover_detail_ipc_endpoint(data_dir)?;
+        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
+        verify_auto_ipc_status(&status_endpoint)?;
+        let token_file = auto_ipc_token_file(data_dir);
+        return detail_ipc_command_with_token_file(&endpoint, &token_file, &detail_args);
+    }
     if let Some(endpoint) = &detail_args.ipc_endpoint {
         return detail_ipc_command(endpoint, &detail_args);
     }
@@ -1163,6 +1275,14 @@ fn detail_ipc_command(endpoint: &IpcDetailEndpoint, detail_args: &DetailArgs) ->
         .ipc_token_file
         .as_ref()
         .ok_or_else(|| CliError::usage(detail_usage()))?;
+    detail_ipc_command_with_token_file(endpoint, token_file, detail_args)
+}
+
+fn detail_ipc_command_with_token_file(
+    endpoint: &IpcDetailEndpoint,
+    token_file: &Path,
+    detail_args: &DetailArgs,
+) -> Result<()> {
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon detail ipc token"))?;
     let token = validate_daemon_ipc_token(&token, "daemon detail ipc token is invalid")?;
@@ -2384,6 +2504,7 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
     let mut dimension = None;
     let mut vector_top_k = None;
     let mut embedding_timeout_ms = 30_000_u64;
+    let mut ipc_auto = false;
     let mut ipc_endpoint = None;
     let mut ipc_token_file = None;
     let mut index = 1_usize;
@@ -2391,13 +2512,17 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
     while index < args.len() {
         match args[index].as_str() {
             "--ipc" => {
-                if ipc_endpoint.is_some() {
+                if ipc_auto || ipc_endpoint.is_some() {
                     return Err(CliError::usage(search_usage()));
                 }
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
                 };
-                ipc_endpoint = Some(parse_search_ipc_endpoint(value)?);
+                if value == "auto" {
+                    ipc_auto = true;
+                } else {
+                    ipc_endpoint = Some(parse_search_ipc_endpoint(value)?);
+                }
                 index += 2;
             }
             "--ipc-token-file" => {
@@ -2519,7 +2644,10 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
             _ => return Err(CliError::usage(search_usage())),
         }
     }
-    if ipc_endpoint.is_some() != ipc_token_file.is_some() {
+    if ipc_auto && ipc_token_file.is_some() {
+        return Err(CliError::usage(search_usage()));
+    }
+    if !ipc_auto && ipc_endpoint.is_some() != ipc_token_file.is_some() {
         return Err(CliError::usage(search_usage()));
     }
 
@@ -2533,13 +2661,14 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
         dimension,
         vector_top_k,
         embedding_timeout_ms,
+        ipc_auto,
         ipc_endpoint,
         ipc_token_file,
     })
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc <http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
 }
 
 fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
@@ -2563,6 +2692,7 @@ fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
 
 fn parse_detail_args(args: &[String]) -> Result<DetailArgs> {
     let mut doc_id = None;
+    let mut ipc_auto = false;
     let mut ipc_endpoint = None;
     let mut ipc_token_file = None;
     let mut index = 0_usize;
@@ -2583,13 +2713,17 @@ fn parse_detail_args(args: &[String]) -> Result<DetailArgs> {
                 index += 2;
             }
             "--ipc" => {
-                if ipc_endpoint.is_some() {
+                if ipc_auto || ipc_endpoint.is_some() {
                     return Err(CliError::usage(detail_usage()));
                 }
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(detail_usage()));
                 };
-                ipc_endpoint = Some(parse_detail_ipc_endpoint(value)?);
+                if value == "auto" {
+                    ipc_auto = true;
+                } else {
+                    ipc_endpoint = Some(parse_detail_ipc_endpoint(value)?);
+                }
                 index += 2;
             }
             "--ipc-token-file" => {
@@ -2606,19 +2740,23 @@ fn parse_detail_args(args: &[String]) -> Result<DetailArgs> {
         }
     }
 
-    if ipc_endpoint.is_some() != ipc_token_file.is_some() {
+    if ipc_auto && ipc_token_file.is_some() {
+        return Err(CliError::usage(detail_usage()));
+    }
+    if !ipc_auto && ipc_endpoint.is_some() != ipc_token_file.is_some() {
         return Err(CliError::usage(detail_usage()));
     }
 
     Ok(DetailArgs {
         doc_id: doc_id.ok_or_else(|| CliError::usage(detail_usage()))?,
+        ipc_auto,
         ipc_endpoint,
         ipc_token_file,
     })
 }
 
 fn detail_usage() -> &'static str {
-    "usage: resume-cli detail --doc-id <doc_id> [--ipc <http://127.0.0.1:port/details|/status> --ipc-token-file <path>]"
+    "usage: resume-cli detail --doc-id <doc_id> [--ipc auto|<http://127.0.0.1:port/details|/status> --ipc-token-file <path>]"
 }
 
 fn parse_detail_ipc_endpoint(value: &str) -> Result<IpcDetailEndpoint> {
@@ -3032,12 +3170,14 @@ struct SearchArgs {
     dimension: Option<usize>,
     vector_top_k: Option<usize>,
     embedding_timeout_ms: u64,
+    ipc_auto: bool,
     ipc_endpoint: Option<IpcSearchEndpoint>,
     ipc_token_file: Option<PathBuf>,
 }
 
 struct DetailArgs {
     doc_id: String,
+    ipc_auto: bool,
     ipc_endpoint: Option<IpcDetailEndpoint>,
     ipc_token_file: Option<PathBuf>,
 }

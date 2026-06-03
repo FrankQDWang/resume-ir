@@ -1,5 +1,6 @@
+use std::fs;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
@@ -69,6 +70,51 @@ fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
     assert!(stdout.contains("import tasks cancelled: 1"));
     assert!(!stdout.contains("raw_resume_text"));
     assert!(!stdout.contains("PRIVATE"));
+}
+
+#[test]
+fn status_ipc_auto_discovers_endpoint_without_path_leak() {
+    let data_dir = temp_dir_path("auto-discovery");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    write_ipc_endpoint_file(&data_dir, addr);
+    let server = thread::spawn(move || {
+        let (mut stream, _) = accept_with_timeout(&listener);
+        let request = read_http_request(&mut stream);
+        assert!(request.starts_with("GET /status HTTP/1.1"));
+
+        let body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":0}";
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .expect("write fake status response");
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "status", "--ipc", "auto"])
+        .output()
+        .expect("run resume-cli status --ipc auto");
+
+    server.join().expect("fake daemon joined");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("resume-ir status"));
+    assert!(stdout.contains("index health: ready"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains("ipc.auth"));
+    assert!(!stdout.contains("raw_resume_text"));
+
+    remove_dir(&data_dir);
 }
 
 #[test]
@@ -164,6 +210,36 @@ fn read_http_request(stream: &mut impl Read) -> String {
     String::from_utf8_lossy(&request).into_owned()
 }
 
+fn accept_with_timeout(listener: &TcpListener) -> (std::net::TcpStream, std::net::SocketAddr) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match listener.accept() {
+            Ok((stream, addr)) => {
+                stream.set_nonblocking(false).unwrap();
+                return (stream, addr);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    panic!("resume-cli did not connect to fake daemon");
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => panic!("accept status request: {error}"),
+        }
+    }
+}
+
+fn write_ipc_endpoint_file(data_dir: &Path, addr: SocketAddr) {
+    fs::create_dir_all(data_dir).unwrap();
+    fs::write(
+        data_dir.join("ipc.endpoints.json"),
+        format!(
+            "{{\"schema_version\":\"resume-ir.daemon-ipc.v1\",\"status\":\"http://{addr}/status\",\"imports\":\"http://{addr}/imports\",\"search\":\"http://{addr}/search\",\"details\":\"http://{addr}/details\"}}"
+        ),
+    )
+    .unwrap();
+}
+
 fn unused_loopback_status_url() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind unused loopback port");
     let addr = listener.local_addr().unwrap();
@@ -181,4 +257,8 @@ fn temp_dir_path(label: &str) -> PathBuf {
 
 fn path_str(path: &Path) -> &str {
     path.to_str().unwrap()
+}
+
+fn remove_dir(path: &PathBuf) {
+    let _ = fs::remove_dir_all(path);
 }

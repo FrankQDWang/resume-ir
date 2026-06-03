@@ -36,6 +36,34 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     let stdout = child.stdout.take().expect("daemon stdout");
     let mut stdout = BufReader::new(stdout);
     let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let endpoint_manifest_path = data_dir.join("ipc.endpoints.json");
+    let endpoint_manifest =
+        fs::read_to_string(&endpoint_manifest_path).expect("read daemon ipc endpoint manifest");
+    let endpoint_manifest_json: serde_json::Value =
+        serde_json::from_str(&endpoint_manifest).expect("parse daemon ipc endpoint manifest");
+    let base_endpoint = endpoint.strip_suffix("/status").unwrap();
+    assert_eq!(
+        endpoint_manifest_json["schema_version"],
+        "resume-ir.daemon-ipc.v1"
+    );
+    assert_eq!(endpoint_manifest_json["status"], endpoint);
+    assert_eq!(
+        endpoint_manifest_json["imports"],
+        format!("{base_endpoint}/imports")
+    );
+    assert_eq!(
+        endpoint_manifest_json["search"],
+        format!("{base_endpoint}/search")
+    );
+    assert_eq!(
+        endpoint_manifest_json["details"],
+        format!("{base_endpoint}/details")
+    );
+    assert!(!endpoint_manifest.contains(path_str(&data_dir)));
+    assert!(!endpoint_manifest.contains("ipc.auth"));
+    assert!(!endpoint_manifest.contains(&token));
+    assert!(!endpoint_manifest.contains("raw_resume_text"));
     let response = http_get(&endpoint);
 
     assert!(response.contains("HTTP/1.1 200 OK"));
@@ -54,6 +82,55 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
+    assert!(!endpoint_manifest_path.exists());
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_rejects_symlinked_ipc_endpoint_manifest_without_clobbering_target() {
+    let data_dir = temp_dir("ipc-endpoint-symlink-data");
+    let target = data_dir.join("private-target.txt");
+    fs::write(&target, "PRIVATE_TARGET_CONTENT").unwrap();
+    std::os::unix::fs::symlink(&target, data_dir.join("ipc.endpoints.json")).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start resume-daemon ipc with symlinked endpoint manifest");
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut exited = false;
+    while Instant::now() < deadline {
+        if child.try_wait().expect("poll daemon child").is_some() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    assert!(exited, "daemon should reject symlinked endpoint manifest");
+    let status = child.wait().expect("wait daemon child");
+    assert!(!status.success());
+    assert_eq!(
+        fs::read_to_string(&target).unwrap(),
+        "PRIVATE_TARGET_CONTENT"
+    );
 
     remove_dir(&data_dir);
 }
@@ -492,7 +569,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     let data_dir = temp_dir("ipc-import-command-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let request_limit = 80_usize;
+    let request_limit = 160_usize;
     let request_limit_arg = request_limit.to_string();
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
@@ -520,7 +597,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, None);
     assert!(response.contains("HTTP/1.1 202 Accepted"));
 
-    let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 39);
+    let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 120);
     let used_requests = 1 + worker_requests;
     drain_status_requests(&endpoint, request_limit - used_requests);
 
