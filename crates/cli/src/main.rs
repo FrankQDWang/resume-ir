@@ -37,7 +37,8 @@ use meta_store::{
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
     LocalPdfRenderCommandSpec, OcrClient, OcrErrorKind, OcrOptions, OcrPageRequest,
-    OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage,
+    OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage, TesseractOcrClient,
+    TesseractOcrSpec,
 };
 use privacy::inspect_contact_hash_key;
 use rank_fusion::{
@@ -3900,11 +3901,11 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    let Some(command) = worker_args.command.clone() else {
+    if worker_args.command.is_none() && worker_args.tesseract_command.is_none() {
         return Err(CliError::user(
             "ocr worker blocked: local OCR command not configured",
         ));
-    };
+    }
 
     let Some(job) = store
         .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
@@ -3916,7 +3917,7 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Ok(());
     };
 
-    let result = run_claimed_ocr_job(data_dir, &store, &job, &worker_args, command, now);
+    let result = run_claimed_ocr_job(data_dir, &store, &job, &worker_args, now);
     match result {
         Ok(summary) => {
             println!("ocr worker: completed");
@@ -3937,7 +3938,6 @@ fn run_claimed_ocr_job(
     store: &MetaStore,
     job: &meta_store::IngestJob,
     worker_args: &OcrWorkerArgs,
-    command: PathBuf,
     now: UnixTimestamp,
 ) -> Result<OcrWorkerSummary> {
     let Some(document) = store
@@ -3961,14 +3961,28 @@ fn run_claimed_ocr_job(
     let cancellation = CancellationToken::new();
     let options = OcrOptions::new(worker_args.lang.as_str(), worker_args.profile.as_str())
         .map_err(CliError::ocr)?;
-    let client = LocalOcrCommandClient::new(
-        LocalOcrCommandSpec::new(
-            command,
-            Vec::<String>::new(),
-            worker_args.engine_profile.as_str(),
-        )
-        .map_err(CliError::ocr)?,
-    );
+    let command_client = worker_args
+        .command
+        .clone()
+        .map(|command| {
+            LocalOcrCommandSpec::new(
+                command,
+                Vec::<String>::new(),
+                worker_args.engine_profile.as_str(),
+            )
+            .map(LocalOcrCommandClient::new)
+            .map_err(CliError::ocr)
+        })
+        .transpose()?;
+    let tesseract_client = worker_args
+        .tesseract_command
+        .clone()
+        .map(|tesseract_command| {
+            TesseractOcrSpec::new(tesseract_command, worker_args.engine_profile.as_str())
+                .map(TesseractOcrClient::new)
+                .map_err(CliError::ocr)
+        })
+        .transpose()?;
     let renderer = worker_args
         .render_command
         .clone()
@@ -4078,7 +4092,16 @@ fn run_claimed_ocr_job(
         };
         let request = OcrPageRequest::new(rendered_page, options.clone()).map_err(CliError::ocr)?;
 
-        let page = match client.recognize_page(request, budget, &cancellation) {
+        let page_result = if let Some(client) = &command_client {
+            client.recognize_page(request, budget, &cancellation)
+        } else if let Some(client) = &tesseract_client {
+            client.recognize_page(request, budget, &cancellation)
+        } else {
+            return Err(CliError::user(
+                "ocr worker blocked: local OCR command not configured",
+            ));
+        };
+        let page = match page_result {
             Ok(page) => page,
             Err(error) => {
                 let entry = OcrPageCacheEntry::failed_retryable(
@@ -4148,6 +4171,7 @@ struct OcrWorkerSummary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OcrWorkerArgs {
     command: Option<PathBuf>,
+    tesseract_command: Option<PathBuf>,
     render_command: Option<PathBuf>,
     pdftoppm_command: Option<PathBuf>,
     engine_profile: String,
@@ -4160,6 +4184,7 @@ struct OcrWorkerArgs {
 fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
     let mut seen_once = false;
     let mut command = None;
+    let mut tesseract_command = None;
     let mut render_command = None;
     let mut pdftoppm_command = None;
     let mut engine_profile = "local-command".to_string();
@@ -4187,6 +4212,17 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
                     return Err(ocr_worker_usage());
                 }
                 command = Some(PathBuf::from(value));
+                index += 1;
+            }
+            "--tesseract-command" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(ocr_worker_usage());
+                };
+                if tesseract_command.is_some() {
+                    return Err(ocr_worker_usage());
+                }
+                tesseract_command = Some(PathBuf::from(value));
                 index += 1;
             }
             "--render-command" => {
@@ -4275,12 +4311,16 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
     if !seen_once {
         return Err(ocr_worker_usage());
     }
+    if command.is_some() && tesseract_command.is_some() {
+        return Err(ocr_worker_usage());
+    }
     if render_command.is_some() && pdftoppm_command.is_some() {
         return Err(ocr_worker_usage());
     }
 
     Ok(OcrWorkerArgs {
         command,
+        tesseract_command,
         render_command,
         pdftoppm_command,
         engine_profile,
@@ -4293,7 +4333,7 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
 
 fn ocr_worker_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli ocr-worker --once [--command <path>] [--render-command <path>|--pdftoppm-command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>]",
+        "usage: resume-cli ocr-worker --once [--command <path>|--tesseract-command <path>] [--render-command <path>|--pdftoppm-command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>]",
     )
 }
 

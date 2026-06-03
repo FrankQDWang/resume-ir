@@ -313,6 +313,97 @@ printf 'S91DaemonPdftoppmRenderedToken rendered daemon page text\n'
 
 #[cfg(unix)]
 #[test]
+fn daemon_ocr_worker_once_uses_tesseract_for_rendered_image_before_indexing() {
+    let Some(tesseract) = find_command("tesseract") else {
+        eprintln!("skipping tesseract daemon worker witness because tesseract is not installed");
+        return;
+    };
+    let Some(pango_view) = find_command("pango-view") else {
+        eprintln!("skipping tesseract daemon worker witness because pango-view is not installed");
+        return;
+    };
+    let data_dir = temp_dir("ocr-worker-tesseract-data");
+    let private_document_path =
+        seed_scanned_document_with_bytes(&data_dir, &valid_blank_pdf_bytes());
+    let render_command = write_text_png_render_executable(
+        "fixture-daemon-ocr-worker-tesseract-render",
+        &pango_view,
+        "S92 OCR TEST",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--once",
+            "--work-ocr-once",
+            "--ocr-tesseract-command",
+            path_str(&tesseract),
+            "--ocr-render-command",
+            path_str(&render_command),
+            "--ocr-engine-profile",
+            "fixture-daemon-tesseract-engine",
+            "--ocr-render-dpi",
+            "200",
+            "--ocr-page-timeout-ms",
+            "10000",
+        ])
+        .output()
+        .expect("run daemon OCR worker once with tesseract");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr worker processed: 1"));
+    assert!(stdout.contains("ocr worker cache writes: 1"));
+    assert!(stdout.contains("ocr worker cache hits: 0"));
+    assert!(stdout.contains("ocr worker failed: 0"));
+    assert!(!stdout.contains("S92 OCR TEST"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_document_path)));
+    assert!(!stdout.contains(path_str(&tesseract)));
+    assert!(!stdout.contains(path_str(&render_command)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::Searchable);
+    assert!(store.retryable_jobs().unwrap().is_empty());
+    let cache_key = OcrPageCacheKey::new(
+        scanned.content_hash.expect("content hash"),
+        1,
+        200,
+        "eng",
+        "balanced",
+    )
+    .unwrap();
+    let cache_entry = store
+        .ocr_page_cache_entry(&cache_key)
+        .unwrap()
+        .expect("OCR cache entry");
+    assert_eq!(cache_entry.status(), OcrPageCacheStatus::Succeeded);
+    assert_eq!(
+        cache_entry.engine_profile(),
+        Some("fixture-daemon-tesseract-engine")
+    );
+    let text = cache_entry.text().unwrap();
+    assert!(text.contains("S92"), "OCR text: {text:?}");
+    assert!(text.contains("OCR"), "OCR text: {text:?}");
+    assert!(text.contains("TEST"), "OCR text: {text:?}");
+    assert_eq!(search_fulltext(&data_dir, "S92").len(), 1);
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn daemon_ocr_worker_once_records_command_crash_as_retryable_without_leaks() {
     let data_dir = temp_dir("ocr-worker-crash-data");
     let private_document_path = seed_scanned_document(&data_dir);
@@ -735,4 +826,25 @@ fn write_fixture_executable(name: &str, body: &str) -> PathBuf {
     permissions.set_mode(0o700);
     fs::set_permissions(&path, permissions).unwrap();
     path
+}
+
+#[cfg(unix)]
+fn write_text_png_render_executable(name: &str, pango_view: &Path, text: &str) -> PathBuf {
+    let body = format!(
+        r#"#!/bin/sh
+set -eu
+image="${{TMPDIR:-/tmp}}/resume-ir-s92-render-$$.png"
+trap 'rm -f "$image"' EXIT
+{} -q --font='Verdana Bold 48' --background=white --foreground=black --text={} --output="$image" >/dev/null 2>&1
+cat "$image"
+"#,
+        shell_quote(path_str(pango_view)),
+        shell_quote(text)
+    );
+    write_fixture_executable(name, &body)
+}
+
+#[cfg(unix)]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }

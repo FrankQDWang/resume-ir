@@ -2,7 +2,7 @@ use ocr_client::{
     CancellationToken, DisabledOcrWorkerClient, LocalOcrCommandClient, LocalOcrCommandSpec,
     LocalPdfRenderCommandClient, LocalPdfRenderCommandSpec, OcrCacheKey, OcrClient, OcrErrorKind,
     OcrOptions, OcrPage, OcrPageRequest, OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec,
-    RenderedPage,
+    RenderedPage, TesseractOcrClient, TesseractOcrSpec,
 };
 
 #[cfg(unix)]
@@ -177,6 +177,50 @@ fn pdftoppm_renderer_renders_valid_pdf_page_to_ppm_without_payload_debug_leaks()
     );
     assert!(!format!("{rendered:?}").contains("%PDF"));
     assert!(!format!("{rendered:?}").contains("P6\n72 72"));
+}
+
+#[cfg(unix)]
+#[test]
+fn tesseract_worker_recognizes_synthetic_image_without_payload_debug_leaks() {
+    let Some(tesseract) = find_command("tesseract") else {
+        eprintln!("skipping tesseract OCR witness because tesseract is not installed");
+        return;
+    };
+    let Some(image_bytes) = synthetic_text_pgm_bytes("S92 OCR TEST") else {
+        eprintln!("skipping tesseract OCR witness because no usable local test font was found");
+        return;
+    };
+    let client = TesseractOcrClient::new(
+        TesseractOcrSpec::new(tesseract, "tesseract-5-eng").expect("tesseract spec"),
+    );
+
+    let page = client
+        .recognize_page(
+            ocr_request(1, image_bytes),
+            OcrWorkerBudget::new(5_000).unwrap(),
+            &CancellationToken::new(),
+        )
+        .unwrap();
+
+    assert_eq!(page.page_no(), 1);
+    assert_eq!(page.engine_profile(), "tesseract-5-eng");
+    assert!((0.0..=1.0).contains(&page.confidence()));
+    assert!(
+        page.text().contains("S92"),
+        "recognized text: {:?}",
+        page.text()
+    );
+    assert!(
+        page.text().contains("OCR"),
+        "recognized text: {:?}",
+        page.text()
+    );
+    assert!(
+        page.text().contains("TEST"),
+        "recognized text: {:?}",
+        page.text()
+    );
+    assert!(!format!("{page:?}").contains("S92 OCR TEST"));
 }
 
 #[test]
@@ -458,6 +502,92 @@ fn valid_blank_pdf_bytes() -> Vec<u8> {
         format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
     );
     output
+}
+
+#[cfg(unix)]
+fn synthetic_text_pgm_bytes(text: &str) -> Option<Vec<u8>> {
+    use ab_glyph::{point, Font, FontArc, PxScale, ScaleFont};
+
+    let font_bytes = fs::read(find_test_font()?).ok()?;
+    let font = FontArc::try_from_vec(font_bytes).ok()?;
+    let scale = PxScale::from(72.0);
+    let scaled = font.as_scaled(scale);
+    let width = 1100_usize;
+    let height = 180_usize;
+    let mut pixels = vec![255_u8; width * height];
+    let mut caret_x = 40.0_f32;
+    let baseline_y = 115.0_f32;
+    let mut previous = None;
+
+    for character in text.chars() {
+        let glyph_id = font.glyph_id(character);
+        if let Some(previous_id) = previous {
+            caret_x += scaled.kern(previous_id, glyph_id);
+        }
+        let glyph = glyph_id.with_scale_and_position(scale, point(caret_x, baseline_y));
+        if let Some(outlined) = font.outline_glyph(glyph) {
+            let bounds = outlined.px_bounds();
+            outlined.draw(|x, y, coverage| {
+                let x = bounds.min.x as i32 + x as i32;
+                let y = bounds.min.y as i32 + y as i32;
+                if x < 0 || y < 0 {
+                    return;
+                }
+                let x = x as usize;
+                let y = y as usize;
+                if x < width && y < height {
+                    let index = y * width + x;
+                    let ink = (coverage * 255.0).round().clamp(0.0, 255.0) as u8;
+                    pixels[index] = pixels[index].saturating_sub(ink);
+                }
+            });
+        }
+        caret_x += scaled.h_advance(glyph_id);
+        previous = Some(glyph_id);
+    }
+
+    let mut output = format!("P5\n{width} {height}\n255\n").into_bytes();
+    output.extend_from_slice(&pixels);
+    Some(output)
+}
+
+#[cfg(unix)]
+fn find_test_font() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("RESUME_IR_TEST_FONT").map(PathBuf::from) {
+        if usable_font_path(&path) {
+            return Some(path);
+        }
+    }
+
+    let fc_match = std::process::Command::new("fc-match")
+        .args(["-f", "%{file}\n", "DejaVu Sans"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|stdout| PathBuf::from(stdout.trim()));
+    if let Some(path) = fc_match.filter(|path| usable_font_path(path)) {
+        return Some(path);
+    }
+
+    [
+        "/System/Library/Fonts/Supplemental/Verdana Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/SFNS.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|path| usable_font_path(path))
+}
+
+#[cfg(unix)]
+fn usable_font_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("ttf" | "otf")
+    ) && path.exists()
 }
 
 #[cfg(unix)]

@@ -161,6 +161,108 @@ impl OcrClient for LocalOcrCommandClient {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+pub struct TesseractOcrSpec {
+    program: PathBuf,
+    engine_profile: String,
+    page_segmentation_mode: u8,
+}
+
+impl TesseractOcrSpec {
+    pub fn new(
+        program: impl Into<PathBuf>,
+        engine_profile: impl Into<String>,
+    ) -> Result<Self, OcrError> {
+        let program = program.into();
+        let engine_profile = engine_profile.into();
+        if program.as_os_str().is_empty() || engine_profile.trim().is_empty() {
+            return Err(OcrError::new(OcrErrorKind::InvalidRequest));
+        }
+
+        Ok(Self {
+            program,
+            engine_profile,
+            page_segmentation_mode: 6,
+        })
+    }
+
+    pub fn engine_profile(&self) -> &str {
+        &self.engine_profile
+    }
+}
+
+impl fmt::Debug for TesseractOcrSpec {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TesseractOcrSpec")
+            .field("program", &"<redacted>")
+            .field("engine_profile", &self.engine_profile)
+            .field("page_segmentation_mode", &self.page_segmentation_mode)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TesseractOcrClient {
+    spec: TesseractOcrSpec,
+}
+
+impl TesseractOcrClient {
+    pub fn new(spec: TesseractOcrSpec) -> Self {
+        Self { spec }
+    }
+}
+
+impl OcrClient for TesseractOcrClient {
+    fn recognize_page(
+        &self,
+        request: OcrPageRequest,
+        budget: OcrWorkerBudget,
+        cancellation: &CancellationToken,
+    ) -> Result<OcrPage, OcrError> {
+        if cancellation.is_cancelled() {
+            return Err(OcrError::new(OcrErrorKind::Cancelled));
+        }
+
+        let input = OcrTempInput::write_named(request.page().bytes(), "page-image.ppm")?;
+        let started_at = Instant::now();
+        let mut child = spawn_tesseract_command(&self.spec, &request, input.path())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
+        let stdout_reader = spawn_output_reader(stdout, OCR_OUTPUT_MAX_BYTES);
+        let stderr_reader = spawn_output_reader(stderr, OCR_OUTPUT_MAX_BYTES);
+
+        let status = match wait_for_ocr_child(&mut child, budget, cancellation) {
+            Ok(status) => status,
+            Err(error) => {
+                let _ = join_output_reader(stdout_reader);
+                let _ = join_output_reader(stderr_reader);
+                return Err(error);
+            }
+        };
+        #[cfg(unix)]
+        terminate_process_group(child.id());
+        let stdout = join_output_reader(stdout_reader)?;
+        let _stderr = join_output_reader(stderr_reader)?;
+        if !status.success() {
+            return Err(OcrError::new(OcrErrorKind::EngineFailed));
+        }
+
+        parse_tesseract_tsv(
+            request.page().page_no(),
+            &stdout,
+            self.spec.engine_profile(),
+            elapsed_millis(started_at),
+        )
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct LocalPdfRenderCommandSpec {
     program: PathBuf,
     args: Vec<String>,
@@ -700,6 +802,33 @@ fn spawn_ocr_command(
     })
 }
 
+fn spawn_tesseract_command(
+    spec: &TesseractOcrSpec,
+    request: &OcrPageRequest,
+    input_path: &Path,
+) -> Result<Child, OcrError> {
+    let mut command = Command::new(&spec.program);
+    command
+        .arg(input_path.as_os_str())
+        .arg("stdout")
+        .arg("--psm")
+        .arg(spec.page_segmentation_mode.to_string())
+        .arg("-l")
+        .arg(request.options().lang())
+        .arg("tsv")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_process_isolation(&mut command);
+
+    command.spawn().map_err(|error| match error.kind() {
+        io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {
+            OcrError::new(OcrErrorKind::WorkerUnavailable)
+        }
+        _ => OcrError::new(OcrErrorKind::EngineFailed),
+    })
+}
+
 fn spawn_pdf_render_command(
     spec: &LocalPdfRenderCommandSpec,
     page_no: u32,
@@ -953,6 +1082,52 @@ fn parse_ocr_output(
     )
 }
 
+fn parse_tesseract_tsv(
+    page_no: u32,
+    stdout: &[u8],
+    engine_profile: &str,
+    duration_ms: u64,
+) -> Result<OcrPage, OcrError> {
+    let output = String::from_utf8(stdout.to_vec())
+        .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?
+        .replace("\r\n", "\n");
+    let mut words = Vec::new();
+    let mut confidence_sum = 0.0_f32;
+    let mut confidence_count = 0_usize;
+
+    for line in output.lines().skip(1) {
+        let columns: Vec<&str> = line.split('\t').collect();
+        if columns.len() < 12 || columns[0] != "5" {
+            continue;
+        }
+        let word = columns[11..].join("\t");
+        let word = word.trim();
+        if word.is_empty() {
+            continue;
+        }
+        let confidence = columns[10]
+            .parse::<f32>()
+            .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?;
+        if confidence >= 0.0 {
+            confidence_sum += (confidence / 100.0).clamp(0.0, 1.0);
+            confidence_count += 1;
+        }
+        words.push(word.to_string());
+    }
+
+    let text = if words.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", words.join(" "))
+    };
+    let confidence = if confidence_count == 0 {
+        0.0
+    } else {
+        confidence_sum / confidence_count as f32
+    };
+    OcrPage::new(page_no, text, confidence, engine_profile, duration_ms)
+}
+
 fn parse_confidence(metadata: &str) -> Result<f32, OcrError> {
     let confidence = metadata
         .lines()
@@ -977,6 +1152,10 @@ struct OcrTempInput {
 
 impl OcrTempInput {
     fn write(bytes: &[u8]) -> Result<Self, OcrError> {
+        Self::write_named(bytes, "page-image.bin")
+    }
+
+    fn write_named(bytes: &[u8], file_name: &str) -> Result<Self, OcrError> {
         for attempt in 0..32 {
             let directory = std::env::temp_dir().join(format!(
                 "resume-ir-ocr-input-{}-{}-{attempt}.bin",
@@ -989,7 +1168,7 @@ impl OcrTempInput {
                 Err(_) => return Err(OcrError::new(OcrErrorKind::WorkerUnavailable)),
             }
 
-            let path = directory.join("page-image.bin");
+            let path = directory.join(file_name);
             match create_private_temp_file(&path) {
                 Ok(mut file) => {
                     if file.write_all(bytes).is_ok() {

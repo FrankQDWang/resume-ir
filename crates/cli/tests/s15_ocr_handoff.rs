@@ -3,8 +3,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    DocumentStatus, IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey,
-    OcrPageCacheStatus, UnixTimestamp,
+    Document, DocumentId, DocumentStatus, FileExtension, IngestJobKind, IngestJobStatus, MetaStore,
+    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, UnixTimestamp,
 };
 
 #[test]
@@ -584,6 +584,119 @@ printf 'S91PdftoppmRenderedToken rendered page text\n'
 
 #[cfg(unix)]
 #[test]
+fn ocr_worker_uses_tesseract_for_rendered_image_before_indexing() {
+    let Some(tesseract) = find_command("tesseract") else {
+        eprintln!("skipping tesseract CLI worker witness because tesseract is not installed");
+        return;
+    };
+    let Some(pango_view) = find_command("pango-view") else {
+        eprintln!("skipping tesseract CLI worker witness because pango-view is not installed");
+        return;
+    };
+    let data_dir = temp_dir("ocr-worker-tesseract-data");
+    let private_document_path = seed_ocr_pdf_document_with_bytes(
+        &data_dir,
+        valid_blank_pdf_bytes(),
+        "s92-cli-tesseract-content-hash",
+    );
+    let render_command = write_text_png_render_executable(
+        "fixture-ocr-worker-tesseract-render",
+        &pango_view,
+        "S92 OCR TEST",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--tesseract-command",
+            path_str(&tesseract),
+            "--render-command",
+            path_str(&render_command),
+            "--engine-profile",
+            "fixture-tesseract-engine",
+            "--render-dpi",
+            "200",
+            "--page-timeout-ms",
+            "10000",
+        ])
+        .output()
+        .expect("run ocr worker with tesseract");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr worker: completed"));
+    assert!(stdout.contains("documents processed: 1"));
+    assert!(stdout.contains("cache writes: 1"));
+    assert!(stdout.contains("cache hits: 0"));
+    assert!(!stdout.contains("S92 OCR TEST"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_document_path)));
+    assert!(!stdout.contains(path_str(&tesseract)));
+    assert!(!stdout.contains(path_str(&render_command)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::Searchable);
+    assert!(store.retryable_jobs().unwrap().is_empty());
+    let cache_key = OcrPageCacheKey::new(
+        scanned.content_hash.expect("content hash"),
+        1,
+        200,
+        "eng",
+        "balanced",
+    )
+    .unwrap();
+    let cache_entry = store
+        .ocr_page_cache_entry(&cache_key)
+        .unwrap()
+        .expect("OCR cache entry");
+    assert_eq!(cache_entry.status(), OcrPageCacheStatus::Succeeded);
+    assert_eq!(
+        cache_entry.engine_profile(),
+        Some("fixture-tesseract-engine")
+    );
+    let text = cache_entry.text().unwrap();
+    assert!(text.contains("S92"), "OCR text: {text:?}");
+    assert!(text.contains("OCR"), "OCR text: {text:?}");
+    assert!(text.contains("TEST"), "OCR text: {text:?}");
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "S92",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run resume-cli search for tesseract OCR text");
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(
+        search_stdout.contains("results: 1"),
+        "stdout:\n{search_stdout}"
+    );
+    assert!(search_stdout.contains("synthetic-scanned-resume.pdf"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&private_document_path)));
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn ocr_worker_command_crash_records_retryable_failure_without_leaking_outputs() {
     let data_dir = temp_dir("ocr-worker-crash-data");
     let fixture_root = fixture_root();
@@ -931,6 +1044,40 @@ fn valid_blank_pdf_bytes() -> Vec<u8> {
     output
 }
 
+fn seed_ocr_pdf_document_with_bytes(
+    data_dir: &Path,
+    bytes: Vec<u8>,
+    content_hash: &str,
+) -> PathBuf {
+    let now = UnixTimestamp::from_unix_seconds(1_900_000_092);
+    let private_root = data_dir.join("private-resumes");
+    std::fs::create_dir_all(&private_root).unwrap();
+    let document_path = private_root.join("synthetic-scanned-resume.pdf");
+    std::fs::write(&document_path, bytes).unwrap();
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let doc_id = DocumentId::from_non_secret_parts(&["s15", content_hash]);
+    store
+        .upsert_document(&Document {
+            id: doc_id.clone(),
+            source_uri: format!("file://{}", path_str(&document_path)),
+            normalized_path: path_str(&document_path).to_string(),
+            file_name: "synthetic-scanned-resume.pdf".to_string(),
+            extension: FileExtension::Pdf,
+            byte_size: std::fs::metadata(&document_path).unwrap().len(),
+            mtime: now,
+            content_hash: Some(content_hash.to_string()),
+            text_hash: None,
+            is_deleted: false,
+            created_at: now,
+            updated_at: now,
+            status: DocumentStatus::OcrRequired,
+        })
+        .unwrap();
+    store.enqueue_ocr_job_for_document(&doc_id, now).unwrap();
+    document_path
+}
+
 fn temp_dir(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -960,4 +1107,25 @@ fn write_fixture_executable(name: &str, body: &str) -> PathBuf {
     permissions.set_mode(0o700);
     std::fs::set_permissions(&path, permissions).unwrap();
     path
+}
+
+#[cfg(unix)]
+fn write_text_png_render_executable(name: &str, pango_view: &Path, text: &str) -> PathBuf {
+    let body = format!(
+        r#"#!/bin/sh
+set -eu
+image="${{TMPDIR:-/tmp}}/resume-ir-s92-render-$$.png"
+trap 'rm -f "$image"' EXIT
+{} -q --font='Verdana Bold 48' --background=white --foreground=black --text={} --output="$image" >/dev/null 2>&1
+cat "$image"
+"#,
+        shell_quote(path_str(pango_view)),
+        shell_quote(text)
+    );
+    write_fixture_executable(name, &body)
+}
+
+#[cfg(unix)]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }

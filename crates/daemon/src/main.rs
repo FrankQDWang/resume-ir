@@ -37,7 +37,7 @@ use meta_store::{
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
     LocalPdfRenderCommandSpec, OcrClient, OcrOptions, OcrPageRequest, OcrWorkerBudget,
-    PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage,
+    PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage, TesseractOcrClient, TesseractOcrSpec,
 };
 use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
@@ -190,7 +190,10 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: --max-worker-ticks cannot be combined with --ipc-listen",
         ));
     }
-    if (options.work_ocr_once || options.work_ocr) && options.ocr_command.is_none() {
+    if (options.work_ocr_once || options.work_ocr)
+        && options.ocr_command.is_none()
+        && options.ocr_tesseract_command.is_none()
+    {
         return Err(DaemonError::user(
             "ocr worker blocked: local OCR command not configured",
         ));
@@ -336,6 +339,16 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 options.ocr_command = Some(PathBuf::from(value));
                 index += 2;
             }
+            "--ocr-tesseract-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                if options.ocr_tesseract_command.is_some() {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.ocr_tesseract_command = Some(PathBuf::from(value));
+                index += 2;
+            }
             "--ocr-render-command" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(DaemonError::usage(run_usage()));
@@ -475,6 +488,9 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
             "usage: --max-requests requires --ipc-listen",
         ));
     }
+    if options.ocr_command.is_some() && options.ocr_tesseract_command.is_some() {
+        return Err(DaemonError::usage(run_usage()));
+    }
     if options.ocr_render_command.is_some() && options.ocr_pdftoppm_command.is_some() {
         return Err(DaemonError::usage(run_usage()));
     }
@@ -483,7 +499,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -743,11 +759,11 @@ fn run_ocr_worker_once(
         });
     }
 
-    let Some(command) = options.ocr_command.clone() else {
+    if options.ocr_command.is_none() && options.ocr_tesseract_command.is_none() {
         return Err(DaemonError::user(
             "ocr worker blocked: local OCR command not configured",
         ));
-    };
+    }
 
     let Some(job) = store
         .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
@@ -756,7 +772,7 @@ fn run_ocr_worker_once(
         return Ok(OcrWorkerSummary::default());
     };
 
-    run_claimed_ocr_job(data_dir, store, &job, options, command, now)
+    run_claimed_ocr_job(data_dir, store, &job, options, now)
 }
 
 fn run_claimed_ocr_job(
@@ -764,7 +780,6 @@ fn run_claimed_ocr_job(
     store: &MetaStore,
     job: &IngestJob,
     options: &RunOptions,
-    command: PathBuf,
     now: UnixTimestamp,
 ) -> Result<OcrWorkerSummary> {
     let Some(document) = store
@@ -806,14 +821,28 @@ fn run_claimed_ocr_job(
     let cancellation = CancellationToken::new();
     let ocr_options = OcrOptions::new(options.ocr_lang.as_str(), options.ocr_profile.as_str())
         .map_err(DaemonError::ocr)?;
-    let client = LocalOcrCommandClient::new(
-        LocalOcrCommandSpec::new(
-            command,
-            Vec::<String>::new(),
-            options.ocr_engine_profile.as_str(),
-        )
-        .map_err(DaemonError::ocr)?,
-    );
+    let command_client = options
+        .ocr_command
+        .clone()
+        .map(|command| {
+            LocalOcrCommandSpec::new(
+                command,
+                Vec::<String>::new(),
+                options.ocr_engine_profile.as_str(),
+            )
+            .map(LocalOcrCommandClient::new)
+            .map_err(DaemonError::ocr)
+        })
+        .transpose()?;
+    let tesseract_client = options
+        .ocr_tesseract_command
+        .clone()
+        .map(|tesseract_command| {
+            TesseractOcrSpec::new(tesseract_command, options.ocr_engine_profile.as_str())
+                .map(TesseractOcrClient::new)
+                .map_err(DaemonError::ocr)
+        })
+        .transpose()?;
     let renderer = options
         .ocr_render_command
         .clone()
@@ -922,7 +951,16 @@ fn run_claimed_ocr_job(
         let request =
             OcrPageRequest::new(rendered_page, ocr_options.clone()).map_err(DaemonError::ocr)?;
 
-        let page = match client.recognize_page(request, budget, &cancellation) {
+        let page_result = if let Some(client) = &command_client {
+            client.recognize_page(request, budget, &cancellation)
+        } else if let Some(client) = &tesseract_client {
+            client.recognize_page(request, budget, &cancellation)
+        } else {
+            return Err(DaemonError::user(
+                "ocr worker blocked: local OCR command not configured",
+            ));
+        };
+        let page = match page_result {
             Ok(page) => page,
             Err(error) => {
                 let entry = OcrPageCacheEntry::failed_retryable(
@@ -2998,6 +3036,7 @@ struct RunOptions {
     work_index_once: bool,
     work_index: bool,
     ocr_command: Option<PathBuf>,
+    ocr_tesseract_command: Option<PathBuf>,
     ocr_render_command: Option<PathBuf>,
     ocr_pdftoppm_command: Option<PathBuf>,
     ocr_engine_profile: String,
@@ -3031,6 +3070,7 @@ impl Default for RunOptions {
             work_index_once: false,
             work_index: false,
             ocr_command: None,
+            ocr_tesseract_command: None,
             ocr_render_command: None,
             ocr_pdftoppm_command: None,
             ocr_engine_profile: DEFAULT_OCR_ENGINE_PROFILE.to_string(),
