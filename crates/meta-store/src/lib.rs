@@ -27,6 +27,7 @@ const SCHEMA_VERSION_V12: u32 = 12;
 const SCHEMA_VERSION_V13: u32 = 13;
 const SCHEMA_VERSION_V14: u32 = 14;
 const SCHEMA_VERSION_V15: u32 = 15;
+const SCHEMA_VERSION_V16: u32 = 16;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -38,11 +39,13 @@ const RESUME_VERSION_COLUMNS: &str = "\
     page_count, raw_text, clean_text, quality_score, visibility";
 const INGEST_JOB_COLUMNS: &str = "\
     id, document_id, resume_version_id, kind, status, attempt_count, max_attempts, \
-    queued_at_seconds, started_at_seconds, finished_at_seconds, updated_at_seconds";
+    queued_at_seconds, started_at_seconds, finished_at_seconds, updated_at_seconds, \
+    failure_kind";
 const INGEST_JOB_COLUMNS_JOB_ALIAS: &str = "\
     job.id, job.document_id, job.resume_version_id, job.kind, job.status, \
     job.attempt_count, job.max_attempts, job.queued_at_seconds, \
-    job.started_at_seconds, job.finished_at_seconds, job.updated_at_seconds";
+    job.started_at_seconds, job.finished_at_seconds, job.updated_at_seconds, \
+    job.failure_kind";
 const IMPORT_TASK_COLUMNS: &str = "\
     id, root_path, status, queued_at_seconds, started_at_seconds, finished_at_seconds, \
     updated_at_seconds";
@@ -131,6 +134,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V13, SCHEMA_V13),
             (SCHEMA_VERSION_V14, SCHEMA_V14),
             (SCHEMA_VERSION_V15, SCHEMA_V15),
+            (SCHEMA_VERSION_V16, SCHEMA_V16),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -963,9 +967,10 @@ impl MetaStore {
                 "\
                 INSERT INTO ingest_job (
                     id, document_id, resume_version_id, kind, status, attempt_count, max_attempts,
-                    queued_at_seconds, started_at_seconds, finished_at_seconds, updated_at_seconds
+                    queued_at_seconds, started_at_seconds, finished_at_seconds, updated_at_seconds,
+                    failure_kind
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     job.id.as_str(),
                     job.document_id.as_str(),
@@ -978,6 +983,7 @@ impl MetaStore {
                     job.started_at.map(UnixTimestamp::as_unix_seconds),
                     job.finished_at.map(UnixTimestamp::as_unix_seconds),
                     job.updated_at.as_unix_seconds(),
+                    job.failure_kind.map(ingest_job_failure_kind_to_storage),
                 ],
             )
             .map_err(MetaStoreError::storage)?;
@@ -1017,6 +1023,7 @@ impl MetaStore {
             started_at: None,
             finished_at: None,
             updated_at: queued_at,
+            failure_kind: None,
         };
         let inserted = {
             let mut connection = self.connection.borrow_mut();
@@ -1055,9 +1062,9 @@ impl MetaStore {
                         INSERT INTO ingest_job (
                             id, document_id, resume_version_id, kind, status, attempt_count,
                             max_attempts, queued_at_seconds, started_at_seconds,
-                            finished_at_seconds, updated_at_seconds
+                            finished_at_seconds, updated_at_seconds, failure_kind
                         )
-                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                         params![
                             job.id.as_str(),
                             job.document_id.as_str(),
@@ -1070,6 +1077,7 @@ impl MetaStore {
                             job.started_at.map(UnixTimestamp::as_unix_seconds),
                             job.finished_at.map(UnixTimestamp::as_unix_seconds),
                             job.updated_at.as_unix_seconds(),
+                            job.failure_kind.map(ingest_job_failure_kind_to_storage),
                         ],
                     )
                     .map_err(MetaStoreError::storage)?;
@@ -1122,6 +1130,7 @@ impl MetaStore {
             started_at: None,
             finished_at: None,
             updated_at: queued_at,
+            failure_kind: None,
         };
         let inserted = {
             let mut connection = self.connection.borrow_mut();
@@ -1165,9 +1174,9 @@ impl MetaStore {
                         INSERT INTO ingest_job (
                             id, document_id, resume_version_id, kind, status, attempt_count,
                             max_attempts, queued_at_seconds, started_at_seconds,
-                            finished_at_seconds, updated_at_seconds
+                            finished_at_seconds, updated_at_seconds, failure_kind
                         )
-                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                         params![
                             job.id.as_str(),
                             job.document_id.as_str(),
@@ -1180,6 +1189,7 @@ impl MetaStore {
                             job.started_at.map(UnixTimestamp::as_unix_seconds),
                             job.finished_at.map(UnixTimestamp::as_unix_seconds),
                             job.updated_at.as_unix_seconds(),
+                            job.failure_kind.map(ingest_job_failure_kind_to_storage),
                         ],
                     )
                     .map_err(MetaStoreError::storage)?;
@@ -1276,6 +1286,25 @@ impl MetaStore {
         status: IngestJobStatus,
         updated_at: UnixTimestamp,
     ) -> Result<()> {
+        self.update_job_status_with_failure_kind(id, status, None, updated_at)
+    }
+
+    pub fn update_job_status_with_failure_kind(
+        &self,
+        id: &IngestJobId,
+        status: IngestJobStatus,
+        failure_kind: Option<IngestJobFailureKind>,
+        updated_at: UnixTimestamp,
+    ) -> Result<()> {
+        if failure_kind.is_some()
+            && !matches!(
+                status,
+                IngestJobStatus::FailedRetryable | IngestJobStatus::FailedPermanent
+            )
+        {
+            return Err(MetaStoreError::invalid_value("ingest_job.failure_kind"));
+        }
+
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
         let current_status = {
@@ -1312,7 +1341,11 @@ impl MetaStore {
                         WHEN ?1 IN (?3, ?4, ?6) THEN ?5
                         ELSE finished_at_seconds
                     END,
-                    updated_at_seconds = ?5
+                    updated_at_seconds = ?5,
+                    failure_kind = CASE
+                        WHEN ?1 IN (?4, ?6) THEN ?9
+                        ELSE NULL
+                    END
                 WHERE id = ?7 AND status = ?8",
                 params![
                     ingest_job_status_to_storage(status),
@@ -1323,6 +1356,7 @@ impl MetaStore {
                     ingest_job_status_to_storage(IngestJobStatus::FailedPermanent),
                     id.as_str(),
                     ingest_job_status_to_storage(current_status),
+                    failure_kind.map(ingest_job_failure_kind_to_storage),
                 ],
             )
             .map_err(MetaStoreError::storage)?;
@@ -1408,7 +1442,8 @@ impl MetaStore {
                         attempt_count = attempt_count + 1,
                         started_at_seconds = ?2,
                         finished_at_seconds = NULL,
-                        updated_at_seconds = ?2
+                        updated_at_seconds = ?2,
+                        failure_kind = NULL
                     WHERE id = ?3
                         AND (
                             status IN (?4, ?5)
@@ -1502,7 +1537,8 @@ impl MetaStore {
                         attempt_count = attempt_count + 1,
                         started_at_seconds = ?2,
                         finished_at_seconds = NULL,
-                        updated_at_seconds = ?2
+                        updated_at_seconds = ?2,
+                        failure_kind = NULL
                     WHERE id = ?3
                         AND (
                             status IN (?4, ?5)
@@ -2322,6 +2358,27 @@ impl MetaStore {
                 |row| row.get::<_, i64>(0),
             )
             .map_err(MetaStoreError::storage)?;
+        let ocr_page_budget_blocked = connection
+            .query_row(
+                "\
+                SELECT COUNT(*)
+                FROM ingest_job AS job
+                JOIN document AS document ON document.id = job.document_id
+                WHERE job.kind = ?1
+                    AND job.status IN (?2, ?3)
+                    AND job.failure_kind = ?4
+                    AND document.is_deleted = 0
+                    AND document.status <> ?5",
+                params![
+                    ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                    ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                    ingest_job_status_to_storage(IngestJobStatus::FailedPermanent),
+                    ingest_job_failure_kind_to_storage(IngestJobFailureKind::OcrPageBudgetExceeded),
+                    document_status_to_storage(DocumentStatus::Deleted),
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?;
         let embedding_jobs_queued = connection
             .query_row(
                 "\
@@ -2472,6 +2529,10 @@ impl MetaStore {
             import_scan_scopes: i64_to_u64(import_scan_scopes, "status.import_scan_scopes")?,
             import_scan_errors: i64_to_u64(import_scan_errors, "status.import_scan_errors")?,
             ocr_jobs_queued: i64_to_u64(ocr_jobs_queued, "status.ocr_jobs_queued")?,
+            ocr_page_budget_blocked: i64_to_u64(
+                ocr_page_budget_blocked,
+                "status.ocr_page_budget_blocked",
+            )?,
             entity_mentions: i64_to_u64(entity_mentions, "status.entity_mentions")?,
             index_health,
             last_snapshot_id,
@@ -2847,6 +2908,12 @@ pub struct IngestJob {
     pub started_at: Option<UnixTimestamp>,
     pub finished_at: Option<UnixTimestamp>,
     pub updated_at: UnixTimestamp,
+    pub failure_kind: Option<IngestJobFailureKind>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IngestJobFailureKind {
+    OcrPageBudgetExceeded,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3033,6 +3100,7 @@ pub struct StoreStatusSummary {
     pub import_scan_scopes: u64,
     pub import_scan_errors: u64,
     pub ocr_jobs_queued: u64,
+    pub ocr_page_budget_blocked: u64,
     pub entity_mentions: u64,
     pub index_health: IndexStateStatus,
     pub last_snapshot_id: Option<String>,
@@ -3063,6 +3131,7 @@ impl fmt::Debug for IngestJob {
             .field("started_at", &self.started_at)
             .field("finished_at", &self.finished_at)
             .field("updated_at", &self.updated_at)
+            .field("failure_kind", &self.failure_kind)
             .finish()
     }
 }
@@ -3620,6 +3689,13 @@ const SCHEMA_V15: &str = r#"
 ALTER TABLE ocr_page_cache ADD COLUMN word_boxes_json TEXT;
 "#;
 
+const SCHEMA_V16: &str = r#"
+ALTER TABLE ingest_job
+    ADD COLUMN failure_kind TEXT CHECK (
+        failure_kind IS NULL OR failure_kind IN ('ocr_page_budget_exceeded')
+    );
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -3722,6 +3798,10 @@ fn read_ingest_job(row: &Row<'_>) -> Result<IngestJob> {
         started_at: read_optional_timestamp(row, 8)?,
         finished_at: read_optional_timestamp(row, 9)?,
         updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 10)?),
+        failure_kind: read_optional_string(row, 11)?
+            .as_deref()
+            .map(ingest_job_failure_kind_from_storage)
+            .transpose()?,
     })
 }
 
@@ -4520,6 +4600,19 @@ fn ingest_job_status_from_storage(value: &str) -> Result<IngestJobStatus> {
         "failed_retryable" => Ok(IngestJobStatus::FailedRetryable),
         "failed_permanent" => Ok(IngestJobStatus::FailedPermanent),
         _ => Err(MetaStoreError::invalid_value("ingest_job.status")),
+    }
+}
+
+fn ingest_job_failure_kind_to_storage(kind: IngestJobFailureKind) -> &'static str {
+    match kind {
+        IngestJobFailureKind::OcrPageBudgetExceeded => "ocr_page_budget_exceeded",
+    }
+}
+
+fn ingest_job_failure_kind_from_storage(value: &str) -> Result<IngestJobFailureKind> {
+    match value {
+        "ocr_page_budget_exceeded" => Ok(IngestJobFailureKind::OcrPageBudgetExceeded),
+        _ => Err(MetaStoreError::invalid_value("ingest_job.failure_kind")),
     }
 }
 

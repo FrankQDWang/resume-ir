@@ -7,8 +7,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{FullTextIndex, SearchQuery};
 use meta_store::{
-    Document, DocumentId, DocumentStatus, FileExtension, IngestJobStatus, MetaStore,
-    OcrPageCacheKey, OcrPageCacheStatus, UnixTimestamp, WorkerTaskKind,
+    Document, DocumentId, DocumentStatus, FileExtension, IngestJobFailureKind, IngestJobStatus,
+    MetaStore, OcrPageCacheKey, OcrPageCacheStatus, UnixTimestamp, WorkerTaskKind,
 };
 
 #[cfg(unix)]
@@ -254,6 +254,10 @@ exit 31
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].status, IngestJobStatus::FailedRetryable);
     assert_eq!(jobs[0].attempt_count, 1);
+    assert_eq!(
+        jobs[0].failure_kind,
+        Some(IngestJobFailureKind::OcrPageBudgetExceeded)
+    );
     let content_hash = scanned.content_hash.expect("content hash");
     for page_no in [1, 2] {
         let cache_key =

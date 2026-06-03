@@ -8,8 +8,8 @@ use meta_store::{
     EntityMentionId, EntityType, FileExtension, ImportRootKind, ImportRootPreset,
     ImportScanBudgetKind, ImportScanError, ImportScanErrorKind, ImportScanErrorOperation,
     ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
-    IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus, MetaStore,
-    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ResumeVersion,
+    IndexStateStatus, IngestJob, IngestJobFailureKind, IngestJobId, IngestJobKind, IngestJobStatus,
+    MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ResumeVersion,
     ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
 };
 use rusqlite::{params, Connection};
@@ -23,9 +23,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     );
-    assert_eq!(store.schema_version().unwrap(), 15);
+    assert_eq!(store.schema_version().unwrap(), 16);
 
     for table_name in [
         "candidate",
@@ -47,7 +47,7 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 15);
+    assert_eq!(store.schema_version().unwrap(), 16);
 }
 
 #[test]
@@ -1343,7 +1343,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7, 15]);
-        assert_eq!(reopened.schema_version().unwrap(), 15);
+        assert_eq!(reopened.schema_version().unwrap(), 16);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1627,6 +1627,48 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
 }
 
 #[test]
+fn ocr_job_failure_kind_persists_reports_and_clears_on_retry_claim() {
+    let store = migrated_store();
+    let now = UnixTimestamp::from_unix_seconds(1_800_010_000);
+    let document = document(
+        "ocr-page-budget-document-placeholder",
+        false,
+        DocumentStatus::OcrRequired,
+    );
+    let mut job = job(
+        "ocr-page-budget-job-placeholder",
+        &document.id,
+        IngestJobStatus::FailedRetryable,
+        1,
+        3,
+    )
+    .finished_at(now);
+    job.kind = IngestJobKind::OcrDocument;
+    job.failure_kind = Some(IngestJobFailureKind::OcrPageBudgetExceeded);
+
+    store.upsert_document(&document).unwrap();
+    store.insert_ingest_job(&job).unwrap();
+
+    let persisted = store.ingest_job_by_id(&job.id).unwrap().unwrap();
+    assert_eq!(
+        persisted.failure_kind,
+        Some(IngestJobFailureKind::OcrPageBudgetExceeded)
+    );
+    assert_eq!(store.status_summary().unwrap().ocr_page_budget_blocked, 1);
+
+    let claimed = store
+        .claim_next_job_by_kind(
+            IngestJobKind::OcrDocument,
+            UnixTimestamp::from_unix_seconds(1_800_010_050),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.status, IngestJobStatus::Running);
+    assert_eq!(claimed.failure_kind, None);
+    assert_eq!(store.status_summary().unwrap().ocr_page_budget_blocked, 0);
+}
+
+#[test]
 fn import_tasks_persist_without_document_foreign_key() {
     let db_path = temp_db_path("import-task-placeholder");
     let task = import_task(
@@ -1648,7 +1690,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 15);
+        assert_eq!(reopened.schema_version().unwrap(), 16);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -2096,7 +2138,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             report.applied_versions(),
             &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 15);
+        assert_eq!(reopened.schema_version().unwrap(), 16);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -2128,7 +2170,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 15);
+        assert_eq!(reopened.schema_version().unwrap(), 16);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 
@@ -2536,6 +2578,7 @@ fn job(
         started_at: None,
         finished_at: None,
         updated_at: now,
+        failure_kind: None,
     }
 }
 

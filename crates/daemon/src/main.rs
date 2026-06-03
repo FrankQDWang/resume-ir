@@ -30,9 +30,10 @@ use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{
     DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension, ImportRootKind,
     ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask,
-    ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobKind, IngestJobStatus,
-    MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion,
-    ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
+    ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobFailureKind,
+    IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey,
+    OcrPageCacheStatus, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    WorkerTaskKind,
 };
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
@@ -59,6 +60,8 @@ const DEFAULT_OCR_PROFILE: &str = "balanced";
 const DEFAULT_OCR_RENDER_DPI: u32 = 300;
 const DEFAULT_OCR_PAGE_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
+const OCR_PAGE_BUDGET_REMEDIATION: &str =
+    "raise OCR max pages per document or skip oversized scanned PDFs";
 const DEFAULT_EMBEDDING_MAX_DOCS: usize = 64;
 const DEFAULT_EMBEDDING_MAX_TEXT_BYTES: usize = 1_000_000;
 const DEFAULT_EMBEDDING_TIMEOUT_MS: u64 = 30_000;
@@ -830,7 +833,12 @@ fn run_claimed_ocr_job(
         }
     };
     if page_count > options.ocr_max_pages_per_document {
-        mark_ocr_job_failed_retryable(store, job, now)?;
+        mark_ocr_job_failed_retryable_with_failure_kind(
+            store,
+            job,
+            IngestJobFailureKind::OcrPageBudgetExceeded,
+            now,
+        )?;
         return Ok(OcrWorkerSummary {
             failed: 1,
             ..OcrWorkerSummary::default()
@@ -1067,6 +1075,22 @@ fn mark_ocr_job_failed_retryable(
 ) -> Result<()> {
     store
         .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+        .map_err(DaemonError::store)
+}
+
+fn mark_ocr_job_failed_retryable_with_failure_kind(
+    store: &MetaStore,
+    job: &IngestJob,
+    failure_kind: IngestJobFailureKind,
+    now: UnixTimestamp,
+) -> Result<()> {
+    store
+        .update_job_status_with_failure_kind(
+            &job.id,
+            IngestJobStatus::FailedRetryable,
+            Some(failure_kind),
+            now,
+        )
         .map_err(DaemonError::store)
 }
 
@@ -2988,6 +3012,12 @@ fn status_json(data_dir: &Path) -> Result<String> {
         "recovery_queue_depth": summary.recovery_queue_depth,
         "ocr_queue_depth": summary.ocr_queue_depth,
         "ocr_jobs_queued": summary.ocr_jobs_queued,
+        "ocr_page_budget_blocked": summary.ocr_page_budget_blocked,
+        "ocr_remediation": if summary.ocr_page_budget_blocked > 0 {
+            OCR_PAGE_BUDGET_REMEDIATION
+        } else {
+            "none"
+        },
         "embedding_queue_depth": summary.embedding_queue_depth,
         "entity_mentions": summary.entity_mentions,
         "import_tasks_queued": summary.import_tasks_queued,

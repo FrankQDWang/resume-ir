@@ -30,9 +30,10 @@ use meta_store::{
     Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
     ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
     ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanProfile as StoreImportScanProfile,
-    ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobKind,
-    IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp, WorkerTaskKind,
+    ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus,
+    IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry,
+    OcrPageCacheKey, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    WorkerTaskKind,
 };
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
@@ -61,6 +62,8 @@ const DEFAULT_SERVICE_IPC_LISTEN: &str = "127.0.0.1:0";
 const FAULT_PROBE_MAX_BYTES: u64 = 1024 * 1024;
 const OCR_CRASH_PROBE_BYTES: &[u8] = b"SYNTHETIC OCR CRASH PROBE BYTES";
 const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
+const OCR_PAGE_BUDGET_REMEDIATION: &str =
+    "raise OCR max pages per document or skip oversized scanned PDFs";
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
 const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, doctor, or export-diagnostics";
@@ -1689,6 +1692,13 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("ocr queue: {}", summary.ocr_queue_depth);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
+    println!(
+        "ocr page budget blocked: {}",
+        summary.ocr_page_budget_blocked
+    );
+    if summary.ocr_page_budget_blocked > 0 {
+        println!("ocr remediation: {}", OCR_PAGE_BUDGET_REMEDIATION);
+    }
     println!("ocr task: {}", worker_task_status_label(ocr_task.paused));
     println!("embedding queue: {}", summary.embedding_queue_depth);
     println!("entity mentions: {}", summary.entity_mentions);
@@ -1998,6 +2008,11 @@ fn render_ipc_status(body: &serde_json::Value) {
     println!("recovery queue: {}", json_u64(body, "recovery_queue_depth"));
     println!("ocr queue: {}", json_u64(body, "ocr_queue_depth"));
     println!("ocr jobs queued: {}", json_u64(body, "ocr_jobs_queued"));
+    let ocr_page_budget_blocked = json_u64(body, "ocr_page_budget_blocked");
+    println!("ocr page budget blocked: {ocr_page_budget_blocked}");
+    if ocr_page_budget_blocked > 0 {
+        println!("ocr remediation: {}", OCR_PAGE_BUDGET_REMEDIATION);
+    }
     println!(
         "embedding queue: {}",
         json_u64(body, "embedding_queue_depth")
@@ -3943,7 +3958,11 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
             Ok(())
         }
         Err(error) => {
-            let _ = store.update_job_status(&job.id, IngestJobStatus::FailedRetryable, now);
+            if let Ok(Some(current_job)) = store.ingest_job_by_id(&job.id) {
+                if current_job.status == IngestJobStatus::Running {
+                    let _ = store.update_job_status(&job.id, IngestJobStatus::FailedRetryable, now);
+                }
+            }
             Err(error)
         }
     }
@@ -3974,6 +3993,14 @@ fn run_claimed_ocr_job(
     let page_count =
         detect_ocr_page_count(&document.extension, &bytes).map_err(CliError::import)?;
     if page_count > worker_args.max_pages_per_document {
+        store
+            .update_job_status_with_failure_kind(
+                &job.id,
+                IngestJobStatus::FailedRetryable,
+                Some(IngestJobFailureKind::OcrPageBudgetExceeded),
+                now,
+            )
+            .map_err(CliError::store)?;
         return Err(CliError::user(
             "ocr worker blocked: OCR page count exceeds configured limit",
         ));
@@ -4756,6 +4783,13 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr queue: {}", summary.ocr_queue_depth);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
+    println!(
+        "ocr page budget blocked: {}",
+        summary.ocr_page_budget_blocked
+    );
+    if summary.ocr_page_budget_blocked > 0 {
+        println!("ocr remediation: {}", OCR_PAGE_BUDGET_REMEDIATION);
+    }
     println!("entity mentions: {}", summary.entity_mentions);
     println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("import scan errors: {}", summary.import_scan_errors);
@@ -4838,6 +4872,18 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
     println!("    \"ocr_queue_depth\": {},", summary.ocr_queue_depth);
     println!("    \"ocr_jobs_queued\": {},", summary.ocr_jobs_queued);
+    println!(
+        "    \"ocr_page_budget_blocked\": {},",
+        summary.ocr_page_budget_blocked
+    );
+    println!(
+        "    \"ocr_remediation\": \"{}\",",
+        if summary.ocr_page_budget_blocked > 0 {
+            OCR_PAGE_BUDGET_REMEDIATION
+        } else {
+            "none"
+        }
+    );
     println!("    \"entity_mentions\": {},", summary.entity_mentions);
     println!(
         "    \"import_scan_scopes\": {},",

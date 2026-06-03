@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S94 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S95 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -78,16 +78,19 @@ obsolete preliminary files and checklists are not product scope.
   protocol, local Poppler `pdftoppm` PDF renderer adapter, local Tesseract OCR
   adapter with TSV confidence and word-box parsing, timeout/cancel/temp cleanup,
   page-count detection for scanned PDFs, multi-page OCR fan-out, per-page cache
-  entries with persisted OCR word boxes, aggregate OCR text indexing, and a
-  per-document OCR page-count backpressure guard exist. The CLI and daemon can
-  now claim queued OCR jobs, reject scanned PDFs above the configured local page
-  budget before renderer/OCR invocation, render valid PDF pages through local
-  `pdftoppm` or a configured renderer, execute local OCR commands or local
-  Tesseract on the rendered image, persist cache entries for each page, index
-  combined OCR text with page count, honor persistent pause state, and keep
-  serving status IPC while OCR runs. Deleted-document purge now removes current
-  OCR jobs and current OCR page-cache entries that are no longer shared by
-  visible documents. Missing or BLOCKED work includes final OCR/renderer
+  entries with persisted OCR word boxes, aggregate OCR text indexing, a
+  per-document OCR page-count backpressure guard, and redacted page-budget
+  remediation diagnostics exist. The CLI and daemon can now claim queued OCR
+  jobs, reject scanned PDFs above the configured local page budget before
+  renderer/OCR invocation, persist a safe `ocr_page_budget_exceeded` job
+  failure kind, surface aggregate page-budget blocks through local status,
+  doctor, redacted diagnostics, and daemon status IPC, render valid PDF pages
+  through local `pdftoppm` or a configured renderer, execute local OCR commands
+  or local Tesseract on the rendered image, persist cache entries for each
+  page, index combined OCR text with page count, honor persistent pause state,
+  and keep serving status IPC while OCR runs. Deleted-document purge now removes
+  current OCR jobs and current OCR page-cache entries that are no longer shared
+  by visible documents. Missing or BLOCKED work includes final OCR/renderer
   distribution policy, non-English language pack policy, real scanned-resume
   witness runs, large-corpus OCR throughput proof, and Windows/macOS validation.
 - P5 packaging/platform: not production-ready. A local CLI service lifecycle
@@ -98,7 +101,8 @@ obsolete preliminary files and checklists are not product scope.
   or externally blocked by platform credentials/runners.
 - P6 performance/stability: synthetic benchmark runner, status/doctor/export
   diagnostics, redacted resource telemetry for the data-disk volume, current
-  process memory, and CPU cores, snapshot fallback, explicit obsolete
+  process memory, CPU cores, and OCR page-budget remediation, snapshot fallback,
+  explicit obsolete
   full-text snapshot and staging cleanup for deleted-document purge, safe fault
   simulation for disk-space budget, permission-denied probes, file-lock
   contention probes, daemon-kill/restart probes against configured daemon
@@ -211,9 +215,88 @@ obsolete preliminary files and checklists are not product scope.
 | S91 | Product OCR slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client pdftoppm_renderer_renders_valid_pdf_page_to_ppm_without_payload_debug_leaks --locked -- --exact` first failed because `PdftoppmPdfRenderer` and `PdftoppmRenderSpec` did not exist; after implementation, OCR client, CLI handoff, daemon worker, fmt, focused clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local Poppler `pdftoppm` renderer adapter and CLI/daemon worker wiring slice; Tesseract or equivalent real OCR recognition engine, renderer/OCR distribution policy, bbox persistence, backpressure, real scanned-resume witness runs, large-corpus proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S92 | Product OCR slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client tesseract_worker_recognizes_synthetic_image_without_payload_debug_leaks -- --exact` first failed because `TesseractOcrClient` and `TesseractOcrSpec` did not exist; after implementation, local Tesseract 5.5.2 was installed, the focused Tesseract OCR client, CLI worker, daemon worker, fmt, focused clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this local Tesseract adapter and CLI/daemon wiring slice; final OCR/renderer distribution policy, non-English language packs, OCR bbox persistence, backpressure, real scanned-resume witness runs, large-corpus OCR throughput proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S93 | Product OCR slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client tesseract_worker_recognizes_synthetic_image_without_payload_debug_leaks --locked -- --exact` and `/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite ocr_page_cache_persists_word_boxes_without_debug_payload_leak --locked -- --exact` first failed because OCR word-box APIs and cache persistence did not exist; after implementation, OCR client, meta-store, CLI handoff, daemon worker, fmt, focused clippy, `git diff --check`, schema expectation guard, and `./scripts/ci/verify-local.sh` passed. | None for this OCR word-box persistence slice; final OCR/renderer distribution policy, non-English language packs, backpressure, real scanned-resume witness runs, large-corpus OCR throughput proof, Windows/macOS validation, and future OCR bbox purge surface audits remain not complete or BLOCKED. |
-| S94 | Product OCR backpressure slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker daemon_ocr_worker_once_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact` first failed because OCR max-page budget parameters and guards did not exist; after implementation, CLI OCR handoff, daemon OCR worker, service lifecycle, fmt, focused clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker guard, and `./scripts/ci/verify-local.sh` passed. | None for this OCR page-count backpressure slice; final OCR/renderer distribution policy, non-English language packs, real scanned-resume witness runs, large-corpus OCR throughput proof, Windows/macOS validation, and user-facing remediation UX for over-budget OCR documents remain not complete or BLOCKED. |
+| S94 | Product OCR backpressure slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker daemon_ocr_worker_once_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact` first failed because OCR max-page budget parameters and guards did not exist; after implementation, CLI OCR handoff, daemon OCR worker, service lifecycle, fmt, focused clippy, `git diff --check`, runbook guard, public-repo guard, obsolete-reference marker guard, and `./scripts/ci/verify-local.sh` passed. | None for this OCR page-count backpressure slice; final OCR/renderer distribution policy, non-English language packs, real scanned-resume witness runs, large-corpus OCR throughput proof, and Windows/macOS validation remain not complete or BLOCKED. |
+| S95 | Product OCR remediation slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact` first failed because `status` did not report `ocr page budget blocked`; after implementation, meta-store, CLI OCR handoff, daemon OCR worker, CLI status IPC, fmt, focused clippy, and related full suites passed. | None for this redacted OCR page-budget remediation slice; final OCR/renderer distribution policy, non-English language packs, real scanned-resume witness runs, large-corpus OCR throughput proof, and Windows/macOS validation remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S95
+
+Design target:
+
+- Persist an enum-only OCR job failure reason for scanned PDFs blocked by the
+  local page budget. Do not persist raw worker stderr, local paths, commands,
+  resume text, or OCR payloads as failure diagnostics.
+- Surface aggregate remediation through `resume-cli status`, daemon status IPC,
+  `resume-cli doctor`, and `resume-cli export-diagnostics --redact`.
+- Keep over-budget documents non-searchable, avoid renderer/OCR invocation, and
+  preserve the S94 no-partial-cache/no-partial-index behavior.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact
+```
+
+Output summary:
+
+- The test failed after adding status/doctor/diagnostics expectations because
+  `resume-cli status` did not report `ocr page budget blocked: 1`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite ocr_job_failure_kind_persists_reports_and_clears_on_retry_claim --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker daemon_ocr_worker_once_backpressures_scanned_pdf_above_page_limit_without_invoking_ocr --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc status_can_read_redacted_daemon_status_over_loopback_ipc --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s4_cli --locked
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused meta-store, CLI, daemon, and IPC checks passed after implementation.
+- `s3_sqlite`: exit 0; 43 tests passed, including schema v16, persisted
+  `OcrPageBudgetExceeded`, aggregate blocked count, and clearing stale failure
+  kind when the job is reclaimed.
+- `s15_ocr_handoff`: exit 0; 12 tests passed, including local
+  status/doctor/redacted diagnostics reporting the page-budget block without
+  path, command, marker, or OCR payload leakage.
+- `s50_ocr_worker`: exit 0; 8 tests passed, including daemon page-budget
+  failure-kind persistence.
+- `s20_status_ipc`: exit 0; 6 tests passed, including daemon status IPC
+  rendering of the aggregate blocked count and remediation text.
+- `cargo fmt --check`: exit 0.
+- Focused clippy: exit 0.
+- `s13_diagnostics`: exit 0; 9 tests passed after the diagnostics output
+  changes.
+- `s4_cli`: exit 0; 6 tests passed after the status output changes.
+- `git diff --check`: exit 0.
+- `check-runbooks.sh`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker guard: exit 0 with no matches.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, runbook check, and public repository guard passed.
+
+Scope note:
+
+- S95 adds redacted visibility/remediation for over-budget OCR documents. It
+  does not implement real scanned-resume witness runs, large-corpus OCR
+  throughput proof, final OCR/renderer distribution policy, non-English
+  language-pack policy, or Windows/macOS validation.
+- Full product is still not complete.
 
 ### S94
 
@@ -279,11 +362,11 @@ Output summary:
 
 Scope note:
 
-- S94 prevents over-budget OCR execution and partial indexing. It does not add a
-  user-facing remediation flow for increasing the budget/retrying, large-corpus
-  OCR throughput proof, real scanned-resume witness runs, OCR/renderer
-  distribution policy, non-English language-pack policy, or Windows/macOS
-  validation.
+- S94 prevents over-budget OCR execution and partial indexing. S95 later adds
+  redacted user-facing remediation diagnostics. Large-corpus OCR throughput
+  proof, real scanned-resume witness runs, OCR/renderer distribution policy,
+  non-English language-pack policy, and Windows/macOS validation remain not
+  complete or BLOCKED.
 - Full product is still not complete.
 
 ### S93
