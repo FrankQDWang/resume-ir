@@ -12,6 +12,7 @@ use embedder::{
     Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
     LocalEmbeddingCommandSpec,
 };
+use fs4::fs_std::FileExt;
 use import_pipeline::{
     import_root_with_options, index_ocr_text, rebuild_full_text_index, ImportOptions,
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
@@ -828,6 +829,24 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
             println!("paths: <redacted>");
             Ok(())
         }
+        FaultSimulationCase::FileLock => {
+            println!("fault: file_lock");
+            match contend_file_lock_probe(&scratch_dir) {
+                Ok(FileLockProbeResult::Contended) => {
+                    println!("status: reproduced");
+                    println!("lock holder: active");
+                    println!("contended lock: denied");
+                }
+                Ok(FileLockProbeResult::NotContended) => {
+                    println!("status: not reproduced");
+                    println!("lock holder: active");
+                    println!("contended lock: acquired");
+                }
+                Err(_) => return Err(CliError::user("fault simulation probe failed")),
+            }
+            println!("paths: <redacted>");
+            Ok(())
+        }
     }
 }
 
@@ -835,6 +854,7 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
 enum FaultSimulationCase {
     DiskSpaceLow,
     PermissionDenied,
+    FileLock,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -890,7 +910,7 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
         }
-        FaultSimulationCase::PermissionDenied => {
+        FaultSimulationCase::PermissionDenied | FaultSimulationCase::FileLock => {
             if required_bytes.is_some() || available_bytes.is_some() {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
@@ -909,6 +929,7 @@ fn parse_fault_case(value: &str) -> Result<FaultSimulationCase> {
     match value {
         "disk-space-low" => Ok(FaultSimulationCase::DiskSpaceLow),
         "permission-denied" => Ok(FaultSimulationCase::PermissionDenied),
+        "file-lock" => Ok(FaultSimulationCase::FileLock),
         _ => Err(CliError::usage(fault_simulate_usage())),
     }
 }
@@ -959,8 +980,53 @@ fn write_fault_probe_file(path: &Path, bytes: u64) -> std::io::Result<()> {
     file.sync_all()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileLockProbeResult {
+    Contended,
+    NotContended,
+}
+
+fn contend_file_lock_probe(scratch_dir: &Path) -> std::io::Result<FileLockProbeResult> {
+    fs::create_dir_all(scratch_dir)?;
+    let lock_path = scratch_dir.join(format!(
+        ".resume-ir-lock-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+
+    let result = contend_file_lock_probe_file(&lock_path);
+    let _ = fs::remove_file(&lock_path);
+    result
+}
+
+fn contend_file_lock_probe_file(path: &Path) -> std::io::Result<FileLockProbeResult> {
+    let holder = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    holder.lock_exclusive()?;
+
+    let contender = fs::OpenOptions::new().read(true).write(true).open(path)?;
+    let result = match contender.try_lock_exclusive() {
+        Ok(true) => {
+            contender.unlock()?;
+            Ok(FileLockProbeResult::NotContended)
+        }
+        Ok(false) => Ok(FileLockProbeResult::Contended),
+        Err(error) => Err(error),
+    };
+
+    holder.unlock()?;
+    result
+}
+
 fn fault_simulate_usage() -> &'static str {
-    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>]"
+    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -3729,7 +3795,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("cpu cores: {}", resource_telemetry.cpu_cores);
     println!("fault simulations: available");
     println!(
-        "fault simulation hooks: daemon_restart,index_snapshot_corrupt,disk_space_low,permission_denied"
+        "fault simulation hooks: daemon_restart,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock"
     );
     println!("diagnostics redaction: available");
 
@@ -3847,7 +3913,8 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("    \"daemon_restart\",");
     println!("    \"index_snapshot_corrupt\",");
     println!("    \"disk_space_low\",");
-    println!("    \"permission_denied\"");
+    println!("    \"permission_denied\",");
+    println!("    \"file_lock\"");
     println!("  ],");
     println!("  \"scope\": \"redacted skeleton; no raw resume text, paths, or queries included\"");
     println!("}}");

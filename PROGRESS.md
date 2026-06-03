@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S79 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
+- Data policy: S0-S80 used synthetic fixtures only; user has authorized future local-only real resume scanning/verification as long as resume data is not uploaded or transmitted over the network.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, and draft PR #8 exists for the branch-protection progress record. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -85,10 +85,11 @@ obsolete preliminary files and checklists are not product scope.
 - P6 performance/stability: synthetic benchmark runner, status/doctor/export
   diagnostics, redacted resource telemetry for the data-disk volume, current
   process memory, and CPU cores, snapshot fallback, safe fault simulation for
-  disk-space budget and permission-denied probes, and targeted fault tests
-  exist. Missing or BLOCKED work includes 100k/1M real-corpus benchmarks,
-  nightly gates, destructive kill/actual ENOSPC fault injection, file-lock
-  semantics, runbooks, and cross-platform performance evidence.
+  disk-space budget, permission-denied probes, file-lock contention probes, and
+  targeted fault tests exist. Missing or BLOCKED work includes 100k/1M
+  real-corpus benchmarks, nightly gates, destructive kill/actual ENOSPC fault
+  injection, kill-daemon fault injection, runbooks, and cross-platform
+  performance evidence.
 
 ## Slice Status
 
@@ -172,8 +173,64 @@ obsolete preliminary files and checklists are not product scope.
 | S77 | CI fix attempt; superseded by S78 | GitHub Actions PR #9 `rust workspace` failed after S76 in `local_command_worker_terminates_descendants_that_keep_output_pipes_open`; the timeout returned only after the descendant closed inherited pipes. The S77 fix used `/bin/kill <signal> -- -PGID` for OCR Unix process-group signaling and removed the unreliable direct-child `pkill -P` helper. Focused local checks passed for `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s50_ocr_worker --locked`; `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan also passed. | GitHub Actions later passed OCR but failed with exit 143 while running daemon embedding worker tests, exposing the same process-group signaling gap in the embedder; S78 follows. |
 | S78 | CI portability slice complete | GitHub Actions PR #9 `rust workspace` failed after S77 with exit 143 while running `tests/s51_embedding_worker.rs`, after OCR tests had passed. The S78 fix applies the same `/bin/kill <signal> -- -PGID` Unix process-group syntax to the local command embedder and adds an embedder inherited-pipe descendant timeout regression test. Focused local checks passed for `/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker --locked`, and `/Users/frankqdwang/.cargo/bin/cargo test -p ocr-client --test s12_ocr_client --locked`; `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and PR #9 hosted checks also passed after formatting. | None for this process-cleanup portability slice. Real embedding model packaging, ANN, Linux/macOS/Windows service validation, signed installers, notarization, and full release evidence remain not complete or BLOCKED. |
 | S79 | Product diagnostics slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_report_redacted_resource_telemetry --locked` first failed because doctor/export did not report resource telemetry; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, the obsolete-reference marker scan, and PR #9 hosted checks passed. | None for this redacted resource telemetry slice; 100k/1M real-corpus benchmarks, nightly gates, destructive kill/actual ENOSPC fault injection, file-lock semantics, runbooks, and cross-platform performance evidence remain not complete or BLOCKED. |
+| S80 | Product fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_file_lock_reproduces_contention_without_path_leak --locked` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths --locked` first failed because `file-lock` was not supported and diagnostics did not advertise `file_lock`; after implementation, `/Users/frankqdwang/.cargo/bin/cargo fmt --check`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked`, `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked`, `/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings`, `./scripts/ci/verify-local.sh`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, and the obsolete-reference marker scan passed. | None for this safe file-lock contention slice; 100k/1M real-corpus benchmarks, nightly gates, destructive kill/actual ENOSPC fault injection, kill-daemon/OCR-crash fault injection, model checksum fault, battery mode, external-drive disconnect, runbooks, and cross-platform performance evidence remain not complete or BLOCKED. |
 
 ## Command Log
+
+### S80
+
+Design target:
+
+- Add a real local file-lock contention probe to `resume-cli fault-simulate`
+  without leaking paths or leaving probe files behind.
+- Expose the new `file_lock` hook in doctor/export diagnostics.
+- Keep the probe synthetic and local-only; do not scan or upload user data.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_file_lock_reproduces_contention_without_path_leak --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths --locked
+```
+
+Output summary:
+
+- `s71_fault_injection`: exit 101 before implementation because
+  `fault-simulate --case file-lock` returned the usage error.
+- `s13_diagnostics`: exit 101 before implementation because diagnostics did
+  not include `"file_lock"`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+./scripts/ci/verify-local.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '<obsolete wrapper/doc markers>' .
+```
+
+Output summary:
+
+- `resume-cli --test s71_fault_injection`: exit 0; 5 tests passed, including
+  `fault_simulate_file_lock_reproduces_contention_without_path_leak`.
+- `resume-cli --test s13_diagnostics`: exit 0; 9 tests passed.
+- `cargo clippy -p resume-cli --all-targets --locked -- -D warnings`: exit 0.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license check, and public repository guard passed.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- Obsolete-reference marker scan: exit 1 with no matches.
+
+Scope note:
+
+- S80 exercises advisory file-lock contention against a local synthetic probe
+  file. It does not implement destructive ENOSPC, daemon-kill, OCR-crash,
+  model-checksum, battery-mode, or external-drive-disconnect fault injection.
+- Full product is still not complete.
 
 ### S79
 
@@ -227,7 +284,7 @@ Scope note:
 
 - S79 reports local resource numbers only; it does not run real-resume witness
   scans, does not prove 100k/1M corpus performance, and does not implement
-  destructive ENOSPC, kill-daemon, or file-lock fault injection.
+  destructive ENOSPC or kill-daemon fault injection.
 - Full product is still not complete.
 
 ### S78

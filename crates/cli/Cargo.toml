@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 embedder = { path = "../embedder" }
+fs4 = "0.13.1"
 import-pipeline = { path = "../import-pipeline" }
 index-fulltext = { path = "../index-fulltext" }
 index-vector = { path = "../index-vector" }

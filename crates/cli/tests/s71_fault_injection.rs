@@ -130,6 +130,45 @@ fn fault_simulate_permission_denied_reproduces_without_path_leak() {
 }
 
 #[test]
+fn fault_simulate_file_lock_reproduces_contention_without_path_leak() {
+    let data_dir = temp_path("fault-lock-private-data");
+    let scratch_dir = temp_path("fault-lock-private-scratch");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--case",
+            "file-lock",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+        ])
+        .output()
+        .expect("run file-lock fault simulation");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("fault: file_lock"));
+    assert!(stdout.contains("status: reproduced"));
+    assert!(stdout.contains("lock holder: active"));
+    assert!(stdout.contains("contended lock: denied"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(scratch_dir.exists());
+    assert!(fs::read_dir(&scratch_dir).unwrap().next().is_none());
+
+    remove_dir(&scratch_dir);
+}
+
+#[test]
 fn fault_simulate_usage_errors_do_not_leak_private_paths() {
     let data_dir = temp_path("fault-usage-private-data");
     let scratch_dir = temp_path("fault-usage-private-scratch");

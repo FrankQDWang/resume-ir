@@ -1080,6 +1080,7 @@ name = "resume-cli"
 version = "0.1.0"
 dependencies = [
  "embedder",
+ "fs4",
  "import-pipeline",
  "index-fulltext",
  "index-vector",
