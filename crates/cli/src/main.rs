@@ -97,7 +97,41 @@ const WITNESS_FIELD_LABELS: &[&str] = &[
     "years_experience",
     "location",
 ];
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, privacy, service, fault-simulate, witness, doctor, or export-diagnostics";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
+const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
+    (
+        "signing certificates",
+        "production signing certificates are not available",
+    ),
+    (
+        "macOS notarization",
+        "notarization credentials and ticket evidence are not available",
+    ),
+    (
+        "Windows installer lifecycle",
+        "MSI install, upgrade, uninstall, rollback, and service validation are not proven",
+    ),
+    (
+        "macOS installer lifecycle",
+        "signed pkg/dmg install, upgrade, uninstall, rollback, and Gatekeeper validation are not proven",
+    ),
+    (
+        "100k/1M real-corpus benchmarks",
+        "representative private real-corpus performance evidence is not available",
+    ),
+    (
+        "OCR engine license/distribution",
+        "reviewed OCR engine and language-pack distribution evidence is not complete",
+    ),
+    (
+        "embedding model license/distribution",
+        "reviewed licensed embedding model selection and distribution evidence is not complete",
+    ),
+    (
+        "cross-platform release validation",
+        "Windows and macOS release validation evidence is not complete",
+    ),
+];
 
 fn main() {
     if let Err(error) = run() {
@@ -138,8 +172,32 @@ fn run() -> Result<()> {
         "witness" => witness_command(&args[1..]),
         "doctor" => doctor_command(&data_dir, &args[1..]),
         "export-diagnostics" => export_diagnostics_command(&data_dir, &args[1..]),
+        "release-readiness" => release_readiness_command(&args[1..]),
         _ => Err(CliError::usage(TOP_LEVEL_USAGE)),
     }
+}
+
+fn release_readiness_command(args: &[String]) -> Result<()> {
+    if !args.is_empty() {
+        return Err(CliError::usage(release_readiness_usage()));
+    }
+
+    println!("resume-ir release readiness");
+    println!("stable release: blocked");
+    println!("local dry-run artifacts: evidence only");
+    println!("blocked evidence:");
+    for (label, detail) in RELEASE_READINESS_BLOCKERS {
+        println!("- {label}: blocked ({detail})");
+    }
+    println!("next gate: keep release blocked until every item has current local evidence");
+
+    Err(CliError::user(
+        "release readiness blocked: stable release criteria are not met",
+    ))
+}
+
+fn release_readiness_usage() -> &'static str {
+    "usage: resume-cli release-readiness"
 }
 
 fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
