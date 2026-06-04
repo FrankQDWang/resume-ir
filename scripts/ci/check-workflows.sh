@@ -58,9 +58,12 @@ require_text "$platform_workflow" "cargo test --workspace --locked"
 
 require_text "$verify_script" "./scripts/ci/check-workflows.sh"
 require_text "$verify_script" "./scripts/ci/check-release-artifacts.sh"
+require_text "$verify_script" "./scripts/ci/check-release-sbom.sh"
 
 require_text "$release_workflow" "scripts/release/create-artifact-manifest.sh"
+require_text "$release_workflow" "scripts/release/create-sbom.sh"
 require_text "$release_workflow" "release-artifacts.json"
+require_text "$release_workflow" "release-sbom.json"
 require_text "$release_workflow" "actions/upload-artifact"
 require_text "$release_workflow" "Packaging, signing, notarization"
 

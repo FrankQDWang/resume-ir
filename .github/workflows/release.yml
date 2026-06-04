@@ -48,19 +48,26 @@ jobs:
             --target-dir target/release \
             --out-dir release-dry-run
 
+      - name: Create release SBOM
+        run: |
+          scripts/release/create-sbom.sh \
+            --version "${{ inputs.version }}" \
+            --out-dir release-dry-run
+
       - name: Check public artifact boundary
         run: |
           test ! -d local-data
           test ! -d diagnostics
           test ! -d model-cache
           test -f release-dry-run/release-artifacts.json
+          test -f release-dry-run/release-sbom.json
 
       - name: Upload release dry-run manifest
         uses: actions/upload-artifact@v4
         with:
           name: release-dry-run
-          path: release-dry-run/release-artifacts.json
+          path: release-dry-run/*.json
 
       - name: Release gate
         run: |
-          echo "Packaging, signing, notarization, SBOM, and GitHub Release upload are gated until explicit release approval."
+          echo "Packaging, signing, notarization, and GitHub Release upload are gated until explicit release approval."

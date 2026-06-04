@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, and S121 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, and S124 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, and S123 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -155,7 +155,8 @@ obsolete preliminary files and checklists are not product scope.
   Hosted macOS and Windows workspace build/test checks now run for pull
   requests through Platform CI. A release dry-run workflow can now generate and
   upload a redacted `release-artifacts.json` checksum manifest for locally built
-  release binaries without recording local paths or runtime data.
+  release binaries and a redacted SPDX 2.3 `release-sbom.json` from locked Cargo
+  metadata without recording local paths or runtime data.
   Installer packaging, signing, notarization, Windows service/MSI, real upgrade/
   uninstall runs, hosted release workflow execution, and platform installer/
   service validation remain absent, not complete, or externally blocked by
@@ -173,8 +174,8 @@ obsolete preliminary files and checklists are not product scope.
   tests, persistent vector snapshot writer-lock protection against stale
   concurrent writers, hosted-Windows full-text snapshot read-open retry,
   local-only macOS LaunchAgent start/stop witness evidence, local-only
-  production runbooks, a runbook CI policy guard, a workflow policy guard, and a
-  release artifact manifest policy guard, and a synthetic OCR throughput
+  production runbooks, a runbook CI policy guard, a workflow policy guard, and
+  release artifact manifest plus SBOM policy guards, and a synthetic OCR throughput
   benchmark/gate exist.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, and labeled vector-quality benchmark gates; query, OCR, and
@@ -314,8 +315,70 @@ obsolete preliminary files and checklists are not product scope.
 | S121 | Product release dry-run manifest slice complete | `sh scripts/ci/check-release-artifacts.sh` first failed because `scripts/release/create-artifact-manifest.sh` did not exist. After implementation, the release artifact guard, workflow guard, runbook guard, diff check, and `./scripts/ci/verify-local.sh` passed. | None for this dry-run manifest/checksum slice; it does not build MSI/pkg/dmg installers, sign, notarize, generate an SBOM, create a GitHub Release, upload release binaries, or prove install/upgrade/uninstall/rollback behavior. |
 | S122 | Product local witness search-probe slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_search_runs_private_query_without_leaking_query_or_paths --locked -- --exact` first failed because `witness` rejected `--probe-search`. After implementation, the focused exact test, full `s9_import_search` suite, focused CLI clippy, fmt, diff, marker scan, public guard, `./scripts/ci/verify-local.sh`, private local-only import/search witness, private local-only bounded OCR/search witness, and final hosted PR checks passed. | None for this redacted witness search-probe slice; it does not prove full-library OCR completion, real search quality, real large-corpus latency/throughput, production embedding model readiness, Windows/Linux real sample behavior, or installer/release readiness. |
 | S123 | Product local witness field-probe slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_fields_reports_aggregate_counts_without_values_or_paths --locked -- --exact` first failed because `witness` rejected `--probe-fields`. After implementation, the focused exact test, full `s9_import_search` suite, focused CLI clippy, fmt, diff, marker scan, public guard, `./scripts/ci/verify-local.sh`, private local-only field witness, and private local-only bounded OCR/field witness passed with metadata-only field-type aggregation, redacted aggregate output, and temporary private data removal. | None for this redacted witness field-probe slice; it does not prove field extraction quality, real labeled field F1, full-library OCR completion, real search/ranking quality, large-corpus latency/throughput, Windows/Linux real sample behavior, or installer/release readiness. |
+| S124 | Product release SBOM dry-run slice complete | `./scripts/ci/check-release-sbom.sh` first failed because the release SBOM guard did not exist. After implementation, the release SBOM guard, release artifact guard, workflow guard, runbook guard, shell syntax checks, diff check, public guard, `./scripts/ci/verify-local.sh`, and hosted PR checks passed. | None for this release SBOM dry-run slice; it does not build MSI/pkg/dmg installers, sign, notarize, create a GitHub Release, upload release binaries, validate installer lifecycle behavior, or prove release readiness. |
 
 ## Command Log
+
+### S124
+
+Design target:
+
+- Generate a redacted release dry-run SBOM from locked Cargo metadata as a
+  standard SPDX 2.3 JSON document.
+- Omit local metadata paths, source paths, license-file paths, target
+  directories, runtime data, diagnostics, model caches, and resume data.
+- Wire the SBOM guard into local verification and the manual release dry-run
+  workflow while keeping packaging, signing, notarization, and GitHub Release
+  upload explicitly gated.
+
+Observed RED:
+
+```bash
+./scripts/ci/check-release-sbom.sh
+```
+
+Output summary:
+
+- The focused release SBOM guard failed because
+  `scripts/ci/check-release-sbom.sh` did not exist.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-release-sbom.sh
+./scripts/ci/check-release-artifacts.sh
+./scripts/ci/check-workflows.sh
+./scripts/ci/check-runbooks.sh
+sh -n scripts/release/create-sbom.sh scripts/ci/check-release-sbom.sh scripts/release/create-artifact-manifest.sh scripts/ci/check-release-artifacts.sh scripts/ci/check-workflows.sh scripts/ci/verify-local.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Release SBOM guard: exit 0; generated `release-sbom.json`, verified SPDX
+  2.3 metadata, workspace package PURLs, registry/workspace source-kind
+  annotations, invalid-version rejection, workflow wiring, local verify wiring,
+  and absence of temp paths, repo-local paths, target paths, runtime-data
+  markers, manifest paths, source paths, and license-file paths.
+- Release artifact guard: exit 0; the dry-run artifact manifest still records
+  binary names, byte counts, and sha256 hashes without temp paths.
+- Workflow guard: exit 0; release workflow now generates and uploads both
+  `release-artifacts.json` and `release-sbom.json`.
+- Runbook guard: exit 0.
+- Shell syntax checks: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, release
+  artifact check, release SBOM check, and public repository guard passed.
+
+Scope note:
+
+- S124 adds release dry-run SBOM evidence only. It does not build installers,
+  sign or notarize artifacts, create a GitHub Release, upload release binaries,
+  validate installer lifecycle behavior, or complete release readiness.
 
 ### S123
 

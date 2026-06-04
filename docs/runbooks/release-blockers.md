@@ -60,11 +60,16 @@ scripts/release/create-artifact-manifest.sh \
   --version v0.1.0 \
   --target-dir target/release \
   --out-dir release-dry-run
+scripts/release/create-sbom.sh \
+  --version v0.1.0 \
+  --out-dir release-dry-run
 ```
 
 The generated `release-artifacts.json` records binary names, byte counts, and
-sha256 hashes. It is not an installer, signature, notarization ticket, SBOM, or
-GitHub Release upload, and it must not contain local paths or runtime data.
+sha256 hashes. The generated `release-sbom.json` is a redacted SPDX 2.3 package
+inventory derived from locked Cargo metadata. These dry-run files are not an
+installer, signature, notarization ticket, or GitHub Release upload, and they
+must not contain local paths or runtime data.
 
 Validate any proposed local model pack before worker configuration:
 

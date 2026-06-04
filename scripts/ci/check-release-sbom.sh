@@ -1,0 +1,90 @@
+#!/usr/bin/env sh
+set -eu
+
+fail() {
+  printf '%s\n' "$1" >&2
+  exit 1
+}
+
+require_file() {
+  if [ ! -f "$1" ]; then
+    fail "missing required release SBOM file: $1"
+  fi
+}
+
+require_text() {
+  file="$1"
+  text="$2"
+  if ! grep -Fq -- "$text" "$file"; then
+    fail "$file is missing required text: $text"
+  fi
+}
+
+script="scripts/release/create-sbom.sh"
+workflow=".github/workflows/release.yml"
+verify_script="scripts/ci/verify-local.sh"
+workflow_guard="scripts/ci/check-workflows.sh"
+
+require_file "$script"
+require_file "$workflow"
+require_file "$verify_script"
+require_file "$workflow_guard"
+
+if [ ! -x "$script" ]; then
+  fail "release SBOM script is not executable"
+fi
+
+tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-sbom-check.XXXXXX")
+trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
+
+out_dir="$tmpdir/out"
+"$script" --version v0.0.0 --out-dir "$out_dir"
+sbom="$out_dir/release-sbom.json"
+require_file "$sbom"
+require_text "$sbom" '"spdxVersion": "SPDX-2.3"'
+require_text "$sbom" '"name": "resume-ir-v0.0.0"'
+require_text "$sbom" '"SPDXID": "SPDXRef-DOCUMENT"'
+require_text "$sbom" '"filesAnalyzed": false'
+require_text "$sbom" '"referenceType": "purl"'
+require_text "$sbom" '"referenceLocator": "pkg:cargo/resume-cli@0.1.0"'
+require_text "$sbom" '"referenceLocator": "pkg:cargo/resume-daemon@0.1.0"'
+require_text "$sbom" '"referenceLocator": "pkg:cargo/benchmark-runner@0.1.0"'
+require_text "$sbom" '"licenseDeclared": "MIT"'
+require_text "$sbom" '"source_kind=workspace"'
+require_text "$sbom" '"source_kind=registry"'
+
+if grep -Fq "$tmpdir" "$sbom"; then
+  fail "release SBOM leaked an absolute temp path"
+fi
+if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' "$sbom"; then
+  fail "release SBOM leaked a local path or runtime-data marker"
+fi
+
+python3 - "$sbom" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+
+packages = document.get("packages")
+if not isinstance(packages, list) or not packages:
+    raise SystemExit("SBOM package list is empty")
+if not any(package.get("name") == "resume-cli" for package in packages):
+    raise SystemExit("SBOM does not include resume-cli")
+if not all("manifest_path" not in package for package in packages):
+    raise SystemExit("SBOM contains manifest_path")
+PY
+
+if "$script" --version 0.0.0 --out-dir "$out_dir/invalid" >/dev/null 2>&1; then
+  fail "release SBOM script accepted an invalid version"
+fi
+
+require_text "$workflow" "scripts/release/create-sbom.sh"
+require_text "$workflow" "release-sbom.json"
+require_text "$workflow" "release-dry-run/*.json"
+require_text "$workflow" "Packaging, signing, notarization"
+require_text "$verify_script" "./scripts/ci/check-release-sbom.sh"
+require_text "$workflow_guard" "check-release-sbom.sh"
+
+printf '%s\n' "release SBOM check passed"

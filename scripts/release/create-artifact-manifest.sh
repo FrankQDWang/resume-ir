@@ -119,10 +119,9 @@ tmp_manifest="$manifest.tmp"
   printf '    "packaging",\n'
   printf '    "signing",\n'
   printf '    "notarization",\n'
-  printf '    "sbom",\n'
   printf '    "github_release_upload"\n'
   printf '  ],\n'
-  printf '  "notes": "Dry-run manifest only; installer packaging, signing, notarization, SBOM generation, and release upload remain blocked until explicit release approval."\n'
+  printf '  "notes": "Dry-run manifest only; installer packaging, signing, notarization, and release upload remain blocked until explicit release approval. Generate release-sbom.json separately during the release dry run."\n'
   printf '}\n'
 } > "$tmp_manifest"
 
