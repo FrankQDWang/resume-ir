@@ -8,8 +8,8 @@ use core_domain::{EntityMentionId, SectionType};
 use extractor_rules::{extract_strong_fields, FieldType, RuleMatch};
 pub use fs_crawler::ScanProfile;
 use fs_crawler::{
-    crawl_directory_with_options_and_control, CrawlError, CrawlErrorKind, DiscoveredFile,
-    FsOperation, NormalizedPath, ScanBudgetKind, ScanControl, ScanOptions,
+    crawl_directory_with_options_and_control, normalize_path, CrawlError, CrawlErrorKind,
+    DiscoveredFile, FsOperation, NormalizedPath, ScanBudgetKind, ScanControl, ScanOptions,
 };
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use meta_store::{
@@ -556,17 +556,32 @@ fn document_path_is_deletion_candidate(
 }
 
 fn document_path_is_under_root(document_path: &str, root: &Path) -> bool {
-    Path::new(document_path).starts_with(root)
+    let Ok(root) = normalize_path(root) else {
+        return false;
+    };
+    normalized_path_is_under_root(document_path, root.as_str())
 }
 
 fn document_path_is_under_any_normalized_root(
     document_path: &str,
     roots: &[NormalizedPath],
 ) -> bool {
-    let document_path = Path::new(document_path);
     roots
         .iter()
-        .any(|root| document_path.starts_with(Path::new(root.as_str())))
+        .any(|root| normalized_path_is_under_root(document_path, root.as_str()))
+}
+
+fn normalized_path_is_under_root(document_path: &str, root: &str) -> bool {
+    if document_path == root {
+        return true;
+    }
+    if root.ends_with('/') {
+        return document_path.starts_with(root);
+    }
+
+    document_path
+        .strip_prefix(root)
+        .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn document_parent_is_scanned(document_path: &str, scanned_directories: &[NormalizedPath]) -> bool {
@@ -1270,6 +1285,27 @@ mod tests {
             ScanProfile::Discovery,
             &scanned_directories,
             &skipped_directories,
+        ));
+    }
+
+    #[test]
+    fn deletion_candidate_matches_windows_normalized_paths() {
+        let root = Path::new(r"C:\fixture");
+        let scanned_directories = vec![normalized_path(r"C:\fixture")];
+
+        assert!(document_path_is_deletion_candidate(
+            "c:/fixture/resume.pdf",
+            root,
+            ScanProfile::Explicit,
+            &scanned_directories,
+            &[],
+        ));
+        assert!(!document_path_is_deletion_candidate(
+            "c:/fixture-neighbor/resume.pdf",
+            root,
+            ScanProfile::Explicit,
+            &scanned_directories,
+            &[],
         ));
     }
 

@@ -274,7 +274,7 @@ obsolete preliminary files and checklists are not product scope.
 | S109 | Product local OCR witness resilience slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_budget_reports_failed_documents_without_stopping_or_leaking_paths --locked -- --exact` first failed because a budgeted witness stopped as `blocked` on the first per-document OCR failure; after implementation, the focused exact, full `s9_import_search`, focused CLI clippy, fmt, diff, guard checks, marker scans, `./scripts/ci/verify-local.sh`, and private local-only PDF/Word witness runs passed with redacted aggregate output and temporary private data removal. | None for this bounded local witness resilience slice; it does not prove OCR quality, full-library OCR completion, non-English OCR behavior, packaged runtime distribution, 100k/1M corpus performance, or Windows/Linux behavior. |
 | S110 | Product vector-quality gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_report_scores_labeled_samples_without_text_id_path_or_vector_leakage --locked -- --exact` first failed because vector-quality APIs did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_quality_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` rejected `vector-quality`; after implementation, focused vector-quality tests, full benchmark-runner tests, focused benchmark-runner clippy, fmt, diff, guard checks, `./scripts/ci/verify-local.sh`, and private local-only bounded PDF/Word witness runs passed with redacted aggregate output and temporary private data removal. | None for this labeled vector-quality evaluator/gate slice; it does not supply real business labeled semantic datasets, choose/license/package a production embedding model, add ANN production indexing, prove large-corpus semantic latency, or validate Windows/Linux behavior. |
 | S111 | Product vector workflow-gate slice complete | `./scripts/ci/check-workflows.sh` first failed because PR/nightly workflows did not include `vector-quality`; after implementation, workflow guard, strict local vector smoke/gate reproduction with redaction scan, shell syntax, workflow YAML parse, diff, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this vector-quality workflow wiring slice; it uses a synthetic labeled smoke dataset and temporary fixture embedding command, so it does not prove real semantic quality, licensed production model selection, ANN latency, 100k/1M corpus performance, or Windows/Linux behavior. |
-| S112 | Hosted validation fix in progress | `./scripts/ci/check-workflows.sh` first failed because `.github/workflows/ci-platform.yml` did not include a PR trigger; after implementation, workflow guard, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` passed. Hosted Platform CI then exposed two test-portability gaps: Windows command fixtures that were Unix shell scripts only, and hosted macOS daemon integration tests whose wait budget was too short for slow runners. Local fixes now keep OCR/embedding command tests enabled on Windows with `.cmd` fixtures, extend daemon test waiting without changing product tick limits, and the affected local test suites pass. | Hosted macOS/Windows re-run is pending for the current fix. This Platform CI PR-trigger slice still does not prove installer packaging, signing, notarization, Windows service/MSI install/upgrade/uninstall/rollback, macOS pkg/dmg install/upgrade/uninstall/rollback, or platform-specific service lifecycle behavior. |
+| S112 | Hosted validation fix in progress | `./scripts/ci/check-workflows.sh` first failed because `.github/workflows/ci-platform.yml` did not include a PR trigger; after implementation, workflow guard, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` passed. Hosted Platform CI then exposed two test-portability gaps, a hosted macOS test wait budget issue, and a real Windows path-normalization bug in missing-file deletion propagation. Local fixes now keep OCR/embedding command tests enabled on Windows with `.cmd` fixtures, extend daemon test waiting without changing product tick limits, compare deletion candidates using normalized paths, and the affected local test suites pass. | Hosted macOS/Windows re-run is pending for the current fix. This Platform CI PR-trigger slice still does not prove installer packaging, signing, notarization, Windows service/MSI install/upgrade/uninstall/rollback, macOS pkg/dmg install/upgrade/uninstall/rollback, or platform-specific service lifecycle behavior. |
 
 ## Command Log
 
@@ -354,6 +354,24 @@ Hosted CI follow-up:
   and
   `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked`
   passed.
+- The next hosted Windows Platform CI run reached `resume-cli --test
+  s14_delete_search` and failed three reimport deletion assertions. Root cause:
+  deletion propagation compared stored slash-normalized document paths like
+  `d:/...` against native Windows `PathBuf` roots with `Path::starts_with`,
+  so missing files were not consistently recognized under the import root on
+  Windows.
+- The fix now normalizes import roots with `fs_crawler::normalize_path` and
+  compares normalized path boundaries for root/skipped-subtree checks.
+- Local focused verification after the Windows path fix:
+  `/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline --locked` and
+  `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked`
+  passed.
+- Red/green verification: with the old native `Path::starts_with` comparison
+  temporarily restored, `/Users/frankqdwang/.cargo/bin/cargo test -p
+  import-pipeline deletion_candidate_matches_windows_normalized_paths --locked`
+  failed on the Windows-style normalized path assertion; after restoring the
+  fix, the same focused regression, `s14_delete_search`, `cargo fmt --check`,
+  public guard/marker scans, and `./scripts/ci/verify-local.sh` passed.
 
 Scope note:
 
