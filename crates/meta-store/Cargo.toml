@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 core-domain = { path = "../core-domain" }
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
 serde_json = "1"
 
 [lints]

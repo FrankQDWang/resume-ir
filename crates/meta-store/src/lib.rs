@@ -71,22 +71,68 @@ pub fn crate_name() -> &'static str {
 
 pub type Result<T> = std::result::Result<T, MetaStoreError>;
 
+fn validate_metadata_encryption_key(key: &[u8]) -> Result<()> {
+    if key.len() != 32 {
+        return Err(MetaStoreError::invalid_value("metadata.encryption_key"));
+    }
+
+    Ok(())
+}
+
+fn apply_sqlcipher_key(connection: &Connection, key: &[u8]) -> Result<()> {
+    let key_hex = encode_hex(key);
+    connection
+        .execute_batch(&format!("PRAGMA key = \"x'{key_hex}'\";"))
+        .map_err(MetaStoreError::storage)
+}
+
+fn verify_sqlcipher_key(connection: &Connection) -> Result<()> {
+    connection
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map(|_| ())
+        .map_err(MetaStoreError::storage)
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
+}
+
 pub struct MetaStore {
     connection: RefCell<Connection>,
+    metadata_encryption_state: MetadataEncryptionState,
 }
 
 impl MetaStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path).map_err(MetaStoreError::storage)?;
-        Self::from_connection(connection, true)
+        Self::from_connection(connection, true, MetadataEncryptionState::Plaintext)
+    }
+
+    pub fn open_encrypted(path: impl AsRef<Path>, key: &[u8]) -> Result<Self> {
+        validate_metadata_encryption_key(key)?;
+        let connection = Connection::open(path).map_err(MetaStoreError::storage)?;
+        apply_sqlcipher_key(&connection, key)?;
+        verify_sqlcipher_key(&connection)?;
+        Self::from_connection(connection, true, MetadataEncryptionState::SqlCipher)
     }
 
     pub fn open_in_memory() -> Result<Self> {
         let connection = Connection::open_in_memory().map_err(MetaStoreError::storage)?;
-        Self::from_connection(connection, false)
+        Self::from_connection(connection, false, MetadataEncryptionState::Plaintext)
     }
 
-    fn from_connection(connection: Connection, file_backed: bool) -> Result<Self> {
+    fn from_connection(
+        connection: Connection,
+        file_backed: bool,
+        metadata_encryption_state: MetadataEncryptionState,
+    ) -> Result<Self> {
         connection
             .busy_timeout(Duration::from_millis(5_000))
             .map_err(MetaStoreError::storage)?;
@@ -101,6 +147,7 @@ impl MetaStore {
 
         Ok(Self {
             connection: RefCell::new(connection),
+            metadata_encryption_state,
         })
     }
 
@@ -176,7 +223,7 @@ impl MetaStore {
     }
 
     pub fn metadata_encryption_state(&self) -> MetadataEncryptionState {
-        MetadataEncryptionState::Plaintext
+        self.metadata_encryption_state
     }
 
     pub fn schema_table_exists(&self, table_name: &str) -> Result<bool> {
@@ -3245,12 +3292,14 @@ pub struct StoreStatusSummary {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MetadataEncryptionState {
     Plaintext,
+    SqlCipher,
 }
 
 impl MetadataEncryptionState {
     pub fn label(self) -> &'static str {
         match self {
             MetadataEncryptionState::Plaintext => "plaintext",
+            MetadataEncryptionState::SqlCipher => "sqlcipher",
         }
     }
 }

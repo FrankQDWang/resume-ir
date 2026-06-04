@@ -7777,6 +7777,7 @@ fn index_health_label(status: IndexStateStatus) -> &'static str {
 fn metadata_encryption_remediation(state: MetadataEncryptionState) -> &'static str {
     match state {
         MetadataEncryptionState::Plaintext => METADATA_ENCRYPTION_REMEDIATION,
+        MetadataEncryptionState::SqlCipher => "",
     }
 }
 

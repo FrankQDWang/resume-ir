@@ -63,6 +63,56 @@ fn metadata_encryption_state_reports_plaintext_until_sqlcipher_is_enabled() {
 }
 
 #[test]
+fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_header() {
+    let db_path = temp_db_path("encrypted-metadata-store");
+    let key = [7_u8; 32];
+    let wrong_key = [8_u8; 32];
+    let document = document(
+        "encrypted-store-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+
+    {
+        let store = MetaStore::open_encrypted(&db_path, &key).unwrap();
+        assert_eq!(
+            store.metadata_encryption_state(),
+            MetadataEncryptionState::SqlCipher
+        );
+        assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
+        store.run_migrations().unwrap();
+        store.upsert_document(&document).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 16);
+    }
+
+    let encrypted_bytes = fs::read(&db_path).unwrap();
+    assert!(!encrypted_bytes.starts_with(b"SQLite format 3"));
+    assert!(!encrypted_bytes
+        .windows(b"encrypted-store-document".len())
+        .any(|window| window == b"encrypted-store-document"));
+
+    let plaintext_open_error = MetaStore::open(&db_path)
+        .and_then(|store| store.schema_version().map(|_| ()))
+        .unwrap_err();
+    assert_redacted_store_error(plaintext_open_error);
+
+    let wrong_key_error = MetaStore::open_encrypted(&db_path, &wrong_key).unwrap_err();
+    assert_redacted_store_error(wrong_key_error);
+
+    let reopened = MetaStore::open_encrypted(&db_path, &key).unwrap();
+    assert_eq!(
+        reopened.metadata_encryption_state(),
+        MetadataEncryptionState::SqlCipher
+    );
+    assert_eq!(
+        reopened.document_by_id(&document.id).unwrap().unwrap().id,
+        document.id
+    );
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
 fn worker_task_control_defaults_to_running_and_persists_pause_state() {
     let db_path = temp_db_path("worker-task-control-placeholder");
     let pause_at = UnixTimestamp::from_unix_seconds(1_800_000_330);
