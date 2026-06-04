@@ -111,6 +111,7 @@ fn service_status_and_uninstall_are_redacted_and_preserve_user_data() {
     let stdout = String::from_utf8_lossy(&status.stdout);
     assert!(stdout.contains("service: installed"));
     assert!(stdout.contains("label: com.resume-ir.daemon"));
+    assert!(stdout.contains("runtime: "));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&launch_agent_dir)));
 
@@ -148,6 +149,7 @@ fn service_status_and_uninstall_are_redacted_and_preserve_user_data() {
     assert!(status_after.status.success());
     let stdout = String::from_utf8_lossy(&status_after.stdout);
     assert!(stdout.contains("service: not installed"));
+    assert!(stdout.contains("runtime: not_loaded"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&launch_agent_dir)));
 

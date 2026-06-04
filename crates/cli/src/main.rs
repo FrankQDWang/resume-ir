@@ -957,23 +957,32 @@ fn run_launchctl(args: &[&str]) -> Result<()> {
 }
 
 fn query_service_runtime_state(label: &str) -> Result<ServiceRuntimeState> {
-    let domain = current_user_launchctl_domain()?;
-    let target = format!("{domain}/{label}");
-    let output = Command::new("/bin/launchctl")
-        .args(["print", target.as_str()])
-        .output();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = label;
+        return Ok(ServiceRuntimeState::Unknown);
+    }
 
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Ok(service_runtime_state_from_launchctl_result(
-                output.status.success(),
-                &stdout,
-                &stderr,
-            ))
+    #[cfg(target_os = "macos")]
+    {
+        let domain = current_user_launchctl_domain()?;
+        let target = format!("{domain}/{label}");
+        let output = Command::new("/bin/launchctl")
+            .args(["print", target.as_str()])
+            .output();
+
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Ok(service_runtime_state_from_launchctl_result(
+                    output.status.success(),
+                    &stdout,
+                    &stderr,
+                ))
+            }
+            Err(_) => Ok(ServiceRuntimeState::Unknown),
         }
-        Err(_) => Ok(ServiceRuntimeState::Unknown),
     }
 }
 
