@@ -13,7 +13,9 @@ unresolved.
 
 - signing certificates are not available for production installers
 - notarization credentials are not available for macOS release artifacts
-- Windows MSI/service install, upgrade, uninstall, and rollback are not proven
+- Windows MSI install, upgrade, uninstall, and rollback are not proven
+- Windows service install, start, stop, status, uninstall, rollback, and recovery
+  are not proven
 - macOS signed pkg/dmg install, upgrade, uninstall, and rollback are not proven
 - 100k and 1M real-corpus benchmarks are not available
 - a reviewed licensed OCR engine is not selected or distributed
@@ -135,6 +137,31 @@ counts, hashes, unsigned status, MSI kind, and still-blocked release steps. The
 MSI file is local evidence only. It is not signed, not uploaded, and does not
 prove install, upgrade, uninstall, rollback, Windows service registration, or
 service lifecycle behavior.
+
+Generate local Windows Service dry-run evidence without registering a service:
+
+```bash
+resume-cli --data-dir <local-data-dir> service install \
+  --platform windows-service \
+  --daemon-binary <path-to-resume-daemon.exe> \
+  --dry-run
+resume-cli --data-dir <local-data-dir> service status \
+  --platform windows-service \
+  --dry-run
+resume-cli --data-dir <local-data-dir> service start \
+  --platform windows-service \
+  --dry-run
+resume-cli --data-dir <local-data-dir> service stop \
+  --platform windows-service \
+  --dry-run
+resume-cli --data-dir <local-data-dir> service uninstall \
+  --platform windows-service \
+  --dry-run
+```
+
+These dry-runs are redacted command-plan evidence only. They do not prove
+Windows service registration, service recovery, rollback, upgrade behavior, or
+administrator-elevated install/uninstall.
 
 Validate any proposed local model pack before worker configuration:
 

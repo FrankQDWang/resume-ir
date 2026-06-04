@@ -19,6 +19,7 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("signing certificates: blocked"));
     assert!(stdout.contains("macOS notarization: blocked"));
     assert!(stdout.contains("Windows installer lifecycle: blocked"));
+    assert!(stdout.contains("Windows service lifecycle: blocked"));
     assert!(stdout.contains("macOS installer lifecycle: blocked"));
     assert!(stdout.contains("100k/1M real-corpus benchmarks: blocked"));
     assert!(stdout.contains("OCR engine license/distribution: blocked"));
@@ -60,7 +61,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     );
 
     let blockers = report["blockers"].as_array().expect("blockers array");
-    assert_eq!(blockers.len(), 9);
+    assert_eq!(blockers.len(), 10);
     let labels = blockers
         .iter()
         .map(|blocker| blocker["label"].as_str().expect("blocker label"))
@@ -68,6 +69,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(labels.contains(&"signing certificates"));
     assert!(labels.contains(&"macOS notarization"));
     assert!(labels.contains(&"Windows installer lifecycle"));
+    assert!(labels.contains(&"Windows service lifecycle"));
     assert!(labels.contains(&"macOS installer lifecycle"));
     assert!(labels.contains(&"100k/1M real-corpus benchmarks"));
     assert!(labels.contains(&"OCR engine license/distribution"));

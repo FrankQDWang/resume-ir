@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, and S172 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, and S173 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -250,7 +250,11 @@ obsolete preliminary files and checklists are not product scope.
   immediately after DMG creation, so the macOS DMG verification path now uses a
   bounded retry helper. The full hosted Release workflow has now executed
   successfully with release manifest/SBOM, macOS package dry-run, and Windows
-  MSI dry-run artifacts uploaded as non-expired workflow artifacts.
+  MSI dry-run artifacts uploaded as non-expired workflow artifacts. The CLI
+  service lifecycle surface now has an explicit Windows Service dry-run mode
+  for install, status, start, stop, and uninstall command-plan evidence without
+  touching LaunchAgent files or exposing local paths, and release-readiness now
+  tracks Windows service lifecycle as a separate blocked release criterion.
   Signing, notarization, Windows service validation, real upgrade/uninstall runs,
   GitHub Release upload, and platform installer/service
   validation remain absent, not complete, or externally blocked by platform
@@ -479,8 +483,60 @@ obsolete preliminary files and checklists are not product scope.
 | S170 | Product active import daemon kill/restart recovery complete locally | A focused daemon scheduler test first failed because restart drills could not lower stale-running recovery or retry-backoff thresholds, so a freshly killed running import task could not be recovered and reprocessed deterministically. After implementation, `resume-daemon run --work-imports` accepts `--stale-import-task-seconds <n>` and `--import-retry-backoff-seconds <n>` with production defaults unchanged at 15 minutes and 60 seconds. The regression starts a foreground import over 1,024 synthetic files, waits until the task is `Running`, kills the daemon, restarts with zero-second drill thresholds, proves one stale task recovered, one import processed, 1,024 searchable documents indexed, full-text search succeeds, and stdout/stderr omit data paths. Focused RED/GREEN, full S4 daemon scheduler tests, fmt, full local verification, and public repo guard passed locally. | This slice covers synthetic active-import kill/restart recovery only. It does not prove destructive service-level chaos, real external storage interruption, 100k/1M import recovery latency, cross-platform service lifecycle, installer validation, signing, notarization, OCR/model licensing, or stable release readiness. |
 | S171 | Product private local PDF/Word witness rerun complete locally | The explicit-root witness was rerun against the user-authorized local resume sample directory for PDF/Word import plus redacted search and field probes. A second bounded OCR witness used local `tesseract` and `pdftoppm` with document/page limits. Both runs completed locally, printed only redacted aggregate status, removed private temporary witness data, and did not emit source paths, filenames, raw text, private queries, diagnostics, or committed counts. | This slice is private local witness evidence only. It does not upload evidence, commit sample counts, prove full-library OCR completion, prove real-corpus quality/latency targets, clear platform installer/service validation, signing, notarization, OCR/model licensing, or stable release readiness. |
 | S172 | Product hosted Windows full-text staging-orphan test stability complete locally | PR #9 hosted Windows Platform CI failed in `published_snapshot_becomes_active_without_reading_staging_orphans` during the synthetic staging-orphan fixture write with Windows `os error 33`. Root cause: the test used direct `fs::write` immediately after publishing a snapshot, while the same test file already has a bounded retry helper for transient Windows file locks. After implementation, the fixture write uses `write_snapshot_test_file_with_retry`, preserving the test's behavior while tolerating transient setup locks. The hosted-failing exact test, full `index-fulltext`, fmt, diff check, public repo guard, and full local verification passed locally. | This slice covers hosted Windows synthetic test harness stability only. It does not change production full-text behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear large-corpus, installer/service, signing, notarization, OCR/model licensing, or stable release blockers. |
+| S173 | Product Windows service dry-run evidence surface complete locally | A focused service lifecycle test first failed because `resume-cli service` did not accept `--platform windows-service`, and focused release-readiness tests first failed because Windows service lifecycle was not tracked separately from MSI installer lifecycle. After implementation, explicit Windows Service dry-run mode reports redacted install/status/start/stop/uninstall command plans without touching LaunchAgent files, requiring `HOME`, or exposing local paths, and release-readiness plus its CI guard include a separate `Windows service lifecycle` blocker. Focused RED/GREEN service and readiness tests, service lifecycle suite, readiness guard, runbook guard, fmt, focused clippy, diff check, public repo guard, and full local verification passed locally. | This slice adds local redacted Windows Service command-plan evidence only. It does not register a Windows service, prove administrator-elevated service install/start/stop/status/uninstall, prove recovery/rollback/upgrade behavior, validate MSI lifecycle, or clear signing, notarization, platform validation, real benchmark, OCR/model licensing, or stable release blockers. |
 
 ## Command Log
+
+### S173
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s66_service_lifecycle windows_service_dry_run_actions_do_not_touch_disk_or_leak_local_paths
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness
+```
+
+Output summary:
+
+- `s66_service_lifecycle` failed because `resume-cli service` rejected
+  `--platform windows-service`.
+- `s161_release_readiness` failed because `Windows service lifecycle` was not
+  emitted and the JSON blocker count was still 9.
+- After the first platform implementation, the Windows Service dry-run test was
+  tightened to remove `HOME` and omit `--launch-agent-dir`; it failed until the
+  Windows Service platform stopped requiring a macOS LaunchAgent default.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s66_service_lifecycle windows_service_dry_run_actions_do_not_touch_disk_or_leak_local_paths
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s66_service_lifecycle
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets -- -D warnings
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The focused Windows Service dry-run test passed.
+- The focused release-readiness suite passed with the separate Windows service
+  lifecycle blocker.
+- The full service lifecycle integration suite passed.
+- Release-readiness and runbook guards passed.
+- `cargo fmt --all --check`, `git diff --check`, focused CLI clippy, public repo
+  guard, and full local verification passed.
+
+Scope note:
+
+- S173 is a redacted local dry-run evidence surface only. It does not perform
+  real Windows service registration, administrator-elevated service control,
+  service recovery, installer upgrade/uninstall/rollback, signing,
+  notarization, or stable release validation.
 
 ### S172
 

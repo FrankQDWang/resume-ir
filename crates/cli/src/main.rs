@@ -109,7 +109,11 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "Windows installer lifecycle",
-        "MSI install, upgrade, uninstall, rollback, and service validation are not proven",
+        "MSI install, upgrade, uninstall, and rollback are not proven",
+    ),
+    (
+        "Windows service lifecycle",
+        "Windows service install, start, stop, status, uninstall, rollback, and recovery are not proven",
     ),
     (
         "macOS installer lifecycle",
@@ -627,7 +631,6 @@ fn service_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
 fn service_install_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let install_args = parse_service_install_args(args)?;
-    let plist_path = service_plist_path(&install_args.common);
     let daemon_binary = install_args
         .daemon_binary
         .as_ref()
@@ -641,6 +644,16 @@ fn service_install_command(data_dir: &Path, args: &[String]) -> Result<()> {
     }
 
     let program_arguments = service_program_arguments(data_dir, &daemon_binary, &install_args)?;
+    if install_args.common.platform == ServicePlatform::WindowsService {
+        if !install_args.common.dry_run {
+            return Err(windows_service_control_blocked("install"));
+        }
+        print_windows_service_dry_run("install", &install_args.common, "sc.exe create");
+        println!("service command: <redacted>");
+        return Ok(());
+    }
+
+    let plist_path = service_plist_path(&install_args.common);
     let stdout_path = data_dir.join("logs").join("resume-daemon.stdout.log");
     let stderr_path = data_dir.join("logs").join("resume-daemon.stderr.log");
     let plist = render_launch_agent_plist(
@@ -676,8 +689,25 @@ fn service_install_command(data_dir: &Path, args: &[String]) -> Result<()> {
 }
 
 fn service_uninstall_command(args: &[String]) -> Result<()> {
-    let common = parse_service_common_args(args, false)?;
+    let common = parse_service_common_args(args, true)?;
+    if common.platform == ServicePlatform::WindowsService {
+        if !common.dry_run {
+            return Err(windows_service_control_blocked("uninstall"));
+        }
+        print_windows_service_dry_run("uninstall", &common, "sc.exe delete");
+        return Ok(());
+    }
+
     let plist_path = service_plist_path(&common);
+    if common.dry_run {
+        println!("service: uninstall dry-run");
+        println!("label: {}", common.label);
+        println!("platform: macos-launch-agent");
+        println!("launch agent: would remove");
+        println!("paths: <redacted>");
+        return Ok(());
+    }
+
     match fs::remove_file(&plist_path) {
         Ok(()) => {
             println!("service: uninstalled");
@@ -698,13 +728,28 @@ fn service_uninstall_command(args: &[String]) -> Result<()> {
 }
 
 fn service_status_command(args: &[String]) -> Result<()> {
-    let common = parse_service_common_args(args, false)?;
+    let common = parse_service_common_args(args, true)?;
+    if common.platform == ServicePlatform::WindowsService {
+        if !common.dry_run {
+            return Err(windows_service_control_blocked("status"));
+        }
+        print_windows_service_dry_run("status", &common, "sc.exe query");
+        return Ok(());
+    }
+
     let plist_path = service_plist_path(&common);
     let installed = plist_path.exists();
     if installed {
         println!("service: installed");
     } else {
         println!("service: not installed");
+    }
+    if common.dry_run {
+        println!("label: {}", common.label);
+        println!("platform: macos-launch-agent");
+        println!("launchctl print: <redacted>");
+        println!("paths: <redacted>");
+        return Ok(());
     }
     let runtime_state = if installed {
         query_service_runtime_state(&common.label)?
@@ -720,6 +765,14 @@ fn service_status_command(args: &[String]) -> Result<()> {
 
 fn service_start_command(args: &[String]) -> Result<()> {
     let common = parse_service_common_args(args, true)?;
+    if common.platform == ServicePlatform::WindowsService {
+        if !common.dry_run {
+            return Err(windows_service_control_blocked("start"));
+        }
+        print_windows_service_dry_run("start", &common, "sc.exe start");
+        return Ok(());
+    }
+
     let plist_path = service_plist_path(&common);
     if !plist_path.exists() {
         return Err(CliError::user(
@@ -748,6 +801,14 @@ fn service_start_command(args: &[String]) -> Result<()> {
 
 fn service_stop_command(args: &[String]) -> Result<()> {
     let common = parse_service_common_args(args, true)?;
+    if common.platform == ServicePlatform::WindowsService {
+        if !common.dry_run {
+            return Err(windows_service_control_blocked("stop"));
+        }
+        print_windows_service_dry_run("stop", &common, "sc.exe stop");
+        return Ok(());
+    }
+
     let plist_path = service_plist_path(&common);
     if !plist_path.exists() {
         return Err(CliError::user(
@@ -774,8 +835,24 @@ fn service_stop_command(args: &[String]) -> Result<()> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ServiceCommonArgs {
     label: String,
+    platform: ServicePlatform,
     launch_agent_dir: PathBuf,
     dry_run: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServicePlatform {
+    MacosLaunchAgent,
+    WindowsService,
+}
+
+impl ServicePlatform {
+    fn label(self) -> &'static str {
+        match self {
+            ServicePlatform::MacosLaunchAgent => "macos-launch-agent",
+            ServicePlatform::WindowsService => "windows-service",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -799,6 +876,8 @@ struct ServiceInstallArgs {
 
 fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
     let mut label = DEFAULT_SERVICE_LABEL.to_string();
+    let mut platform = ServicePlatform::MacosLaunchAgent;
+    let mut platform_seen = false;
     let mut launch_agent_dir = None;
     let mut dry_run = false;
     let mut daemon_binary = None;
@@ -821,6 +900,13 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
         match args[index].as_str() {
             "--label" => {
                 label = parse_service_label(take_service_value(args, &mut index)?)?;
+            }
+            "--platform" => {
+                if platform_seen {
+                    return Err(CliError::usage(service_usage()));
+                }
+                platform = parse_service_platform(take_service_value(args, &mut index)?)?;
+                platform_seen = true;
             }
             "--launch-agent-dir" => {
                 if launch_agent_dir.is_some() {
@@ -945,9 +1031,8 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
     Ok(ServiceInstallArgs {
         common: ServiceCommonArgs {
             label,
-            launch_agent_dir: launch_agent_dir
-                .map(Ok)
-                .unwrap_or_else(default_launch_agent_dir)?,
+            platform,
+            launch_agent_dir: service_launch_agent_dir_or_default(platform, launch_agent_dir)?,
             dry_run,
         },
         daemon_binary,
@@ -969,6 +1054,8 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
 
 fn parse_service_common_args(args: &[String], allow_dry_run: bool) -> Result<ServiceCommonArgs> {
     let mut label = DEFAULT_SERVICE_LABEL.to_string();
+    let mut platform = ServicePlatform::MacosLaunchAgent;
+    let mut platform_seen = false;
     let mut launch_agent_dir = None;
     let mut dry_run = false;
     let mut index = 0;
@@ -977,6 +1064,13 @@ fn parse_service_common_args(args: &[String], allow_dry_run: bool) -> Result<Ser
         match args[index].as_str() {
             "--label" => {
                 label = parse_service_label(take_service_value(args, &mut index)?)?;
+            }
+            "--platform" => {
+                if platform_seen {
+                    return Err(CliError::usage(service_usage()));
+                }
+                platform = parse_service_platform(take_service_value(args, &mut index)?)?;
+                platform_seen = true;
             }
             "--launch-agent-dir" => {
                 if launch_agent_dir.is_some() {
@@ -997,9 +1091,8 @@ fn parse_service_common_args(args: &[String], allow_dry_run: bool) -> Result<Ser
 
     Ok(ServiceCommonArgs {
         label,
-        launch_agent_dir: launch_agent_dir
-            .map(Ok)
-            .unwrap_or_else(default_launch_agent_dir)?,
+        platform,
+        launch_agent_dir: service_launch_agent_dir_or_default(platform, launch_agent_dir)?,
         dry_run,
     })
 }
@@ -1155,6 +1248,20 @@ fn write_service_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn print_windows_service_dry_run(action: &str, common: &ServiceCommonArgs, command: &str) {
+    println!("service: {action} dry-run");
+    println!("label: {}", common.label);
+    println!("platform: {}", common.platform.label());
+    println!("{command}: <redacted>");
+    println!("paths: <redacted>");
+}
+
+fn windows_service_control_blocked(action: &str) -> CliError {
+    CliError::user(format!(
+        "service {action} blocked: Windows service control requires a Windows service validation run"
+    ))
+}
+
 fn current_user_launchctl_domain() -> Result<String> {
     let output = Command::new("/usr/bin/id")
         .arg("-u")
@@ -1283,6 +1390,17 @@ fn default_launch_agent_dir() -> Result<PathBuf> {
     Ok(home.join("Library").join("LaunchAgents"))
 }
 
+fn service_launch_agent_dir_or_default(
+    platform: ServicePlatform,
+    launch_agent_dir: Option<PathBuf>,
+) -> Result<PathBuf> {
+    match (platform, launch_agent_dir) {
+        (_, Some(path)) => Ok(path),
+        (ServicePlatform::MacosLaunchAgent, None) => default_launch_agent_dir(),
+        (ServicePlatform::WindowsService, None) => Ok(PathBuf::new()),
+    }
+}
+
 fn parse_service_label(value: &str) -> Result<String> {
     if value.is_empty()
         || value.starts_with('.')
@@ -1294,6 +1412,14 @@ fn parse_service_label(value: &str) -> Result<String> {
         return Err(CliError::usage(service_usage()));
     }
     Ok(value.to_string())
+}
+
+fn parse_service_platform(value: &str) -> Result<ServicePlatform> {
+    match value {
+        "macos-launch-agent" => Ok(ServicePlatform::MacosLaunchAgent),
+        "windows-service" => Ok(ServicePlatform::WindowsService),
+        _ => Err(CliError::usage(service_usage())),
+    }
 }
 
 fn take_service_value<'a>(args: &'a [String], index: &mut usize) -> Result<&'a str> {
@@ -1366,7 +1492,7 @@ fn xml_escape(value: &str) -> String {
 }
 
 fn service_usage() -> &'static str {
-    "usage: resume-cli service <install|uninstall|status|start|stop> [--launch-agent-dir <path>] [--label <id>] [--dry-run] [--daemon-binary <path>] [--ocr-command <path>] [--ocr-max-pages-per-document <n>] [--embedding-command <path> --embedding-model-id <id> --embedding-dimension <n>]"
+    "usage: resume-cli service <install|uninstall|status|start|stop> [--platform <macos-launch-agent|windows-service>] [--launch-agent-dir <path>] [--label <id>] [--dry-run] [--daemon-binary <path>] [--ocr-command <path>] [--ocr-max-pages-per-document <n>] [--embedding-command <path> --embedding-model-id <id> --embedding-dimension <n>]"
 }
 
 fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
