@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use index_vector::{inspect_persistent_vector_snapshot, PersistentVectorSnapshotState};
 use meta_store::{
     Document, DocumentId, DocumentStatus, FileExtension, IngestJobId, IngestJobKind,
     IngestJobStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
@@ -374,11 +375,13 @@ fn embedding_job_id(
 fn assert_vector_snapshot(data_dir: &Path, expected_dimension: usize, expected_vectors: usize) {
     let snapshot = fs::read_to_string(data_dir.join("vector-index").join("vector.snapshot"))
         .expect("read vector snapshot");
-    let mut lines = snapshot.lines();
-    let expected_header = format!("resume-ir-vector-index-v2\tdimension\t{expected_dimension}");
-    assert_eq!(lines.next(), Some(expected_header.as_str()));
-    let vectors = lines.filter(|line| line.starts_with("V\t")).count();
-    assert_eq!(vectors, expected_vectors);
+    assert!(snapshot.starts_with("resume-ir-vector-index-encrypted-v1\n"));
+    assert!(!snapshot.contains("resume-ir-vector-index-v2"));
+    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
+    assert_eq!(inspection.state(), PersistentVectorSnapshotState::Ready);
+    let snapshot = inspection.snapshot().unwrap();
+    assert_eq!(snapshot.dimension(), expected_dimension);
+    assert_eq!(snapshot.vector_count(), expected_vectors);
 }
 
 fn read_counter(command: &Path) -> u64 {

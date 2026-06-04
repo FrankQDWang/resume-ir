@@ -6,16 +6,28 @@ use fs4::fs_std::FileExt;
 use hnsw_rs::prelude::{DistCosine, Hnsw};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::fmt::Write as FmtWrite;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    XChaCha20Poly1305, XNonce,
+};
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 const SNAPSHOT_FILE: &str = "vector.snapshot";
 const SNAPSHOT_TMP_FILE: &str = "vector.snapshot.tmp";
+const SNAPSHOT_KEY_FILE: &str = "vector.snapshot.key-v1";
 const SNAPSHOT_LOCK_FILE: &str = "vector.lock";
-const SNAPSHOT_HEADER_V1: &str = "resume-ir-vector-index-v1";
-const SNAPSHOT_HEADER_V2: &str = "resume-ir-vector-index-v2";
+const SNAPSHOT_HEADER_ENCRYPTED_V1: &str = "resume-ir-vector-index-encrypted-v1";
+const SNAPSHOT_PLAINTEXT_HEADER_V1: &str = "resume-ir-vector-index-plaintext-v1";
+const SNAPSHOT_KEY_LEN: usize = 32;
+const SNAPSHOT_NONCE_LEN: usize = 24;
 const HNSW_MAX_CONNECTIONS: usize = 24;
 const HNSW_MAX_LAYERS: usize = 16;
 const HNSW_EF_CONSTRUCTION: usize = 200;
@@ -53,6 +65,7 @@ pub struct PersistentVectorIndex {
     dimension: usize,
     snapshot_path: PathBuf,
     temp_path: PathBuf,
+    key_path: PathBuf,
     lock_path: PathBuf,
     state: Mutex<IndexState>,
     ann_backend: Mutex<HnswSearchBackend>,
@@ -71,9 +84,10 @@ impl PersistentVectorIndex {
         fs::create_dir_all(root).map_err(|_| VectorIndexError::Storage)?;
         let snapshot_path = root.join(SNAPSHOT_FILE);
         let temp_path = root.join(SNAPSHOT_TMP_FILE);
+        let key_path = root.join(SNAPSHOT_KEY_FILE);
         let lock_path = root.join(SNAPSHOT_LOCK_FILE);
         let state = if snapshot_path.exists() {
-            read_snapshot(&snapshot_path, dimension)?
+            read_snapshot(&snapshot_path, &key_path, dimension)?
         } else {
             IndexState::default()
         };
@@ -83,6 +97,7 @@ impl PersistentVectorIndex {
             dimension,
             snapshot_path,
             temp_path,
+            key_path,
             lock_path,
             state: Mutex::new(state),
             ann_backend: Mutex::new(ann_backend),
@@ -90,7 +105,7 @@ impl PersistentVectorIndex {
     }
 
     fn persist_state(&self, state: &IndexState) -> Result<(), VectorIndexError> {
-        write_snapshot(&self.temp_path, self.dimension, state)?;
+        write_snapshot(&self.temp_path, &self.key_path, self.dimension, state)?;
         fs::rename(&self.temp_path, &self.snapshot_path).map_err(|_| VectorIndexError::Storage)?;
         Ok(())
     }
@@ -152,7 +167,7 @@ impl PersistentVectorIndex {
 
     fn read_latest_state(&self) -> Result<IndexState, VectorIndexError> {
         if self.snapshot_path.exists() {
-            read_snapshot(&self.snapshot_path, self.dimension)
+            read_snapshot(&self.snapshot_path, &self.key_path, self.dimension)
         } else {
             Ok(IndexState::default())
         }
@@ -171,7 +186,9 @@ impl PersistentVectorIndex {
 pub fn inspect_persistent_vector_snapshot(
     root: impl AsRef<Path>,
 ) -> PersistentVectorSnapshotInspection {
-    let snapshot_path = root.as_ref().join(SNAPSHOT_FILE);
+    let root = root.as_ref();
+    let snapshot_path = root.join(SNAPSHOT_FILE);
+    let key_path = root.join(SNAPSHOT_KEY_FILE);
     if !snapshot_path.exists() {
         return PersistentVectorSnapshotInspection {
             state: PersistentVectorSnapshotState::Missing,
@@ -179,7 +196,7 @@ pub fn inspect_persistent_vector_snapshot(
         };
     }
 
-    match read_snapshot_unchecked_dimension(&snapshot_path) {
+    match read_snapshot_unchecked_dimension(&snapshot_path, &key_path) {
         Ok((dimension, state)) => PersistentVectorSnapshotInspection {
             state: PersistentVectorSnapshotState::Ready,
             snapshot: Some(snapshot_from_state(
@@ -744,8 +761,12 @@ fn snapshot_from_state(
     }
 }
 
-fn read_snapshot(path: &Path, expected_dimension: usize) -> Result<IndexState, VectorIndexError> {
-    let (actual_dimension, state) = read_snapshot_unchecked_dimension(path)?;
+fn read_snapshot(
+    path: &Path,
+    key_path: &Path,
+    expected_dimension: usize,
+) -> Result<IndexState, VectorIndexError> {
+    let (actual_dimension, state) = read_snapshot_unchecked_dimension(path, key_path)?;
     if actual_dimension != expected_dimension {
         return Err(VectorIndexError::InvalidDimension {
             expected: expected_dimension,
@@ -756,19 +777,57 @@ fn read_snapshot(path: &Path, expected_dimension: usize) -> Result<IndexState, V
     Ok(state)
 }
 
-fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState), VectorIndexError> {
+fn read_snapshot_unchecked_dimension(
+    path: &Path,
+    key_path: &Path,
+) -> Result<(usize, IndexState), VectorIndexError> {
     let file = File::open(path).map_err(|_| VectorIndexError::Storage)?;
     let mut lines = BufReader::new(file).lines();
     let header = lines
         .next()
         .ok_or(VectorIndexError::CorruptSnapshot)?
         .map_err(|_| VectorIndexError::Storage)?;
+    if header != SNAPSHOT_HEADER_ENCRYPTED_V1 {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    let nonce_hex = lines
+        .next()
+        .ok_or(VectorIndexError::CorruptSnapshot)?
+        .map_err(|_| VectorIndexError::Storage)?;
+    let ciphertext_hex = lines
+        .next()
+        .ok_or(VectorIndexError::CorruptSnapshot)?
+        .map_err(|_| VectorIndexError::Storage)?;
+    if lines.next().is_some() {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    let nonce = decode_fixed_hex::<SNAPSHOT_NONCE_LEN>(&nonce_hex)?;
+    let ciphertext = decode_hex(&ciphertext_hex)?;
+    let key = read_snapshot_key(key_path)?;
+    let cipher = XChaCha20Poly1305::new((&key).into());
+    let plaintext = cipher
+        .decrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: &ciphertext,
+                aad: SNAPSHOT_HEADER_ENCRYPTED_V1.as_bytes(),
+            },
+        )
+        .map_err(|_| VectorIndexError::CorruptSnapshot)?;
+
+    parse_snapshot_plaintext(&plaintext)
+}
+
+fn parse_snapshot_plaintext(bytes: &[u8]) -> Result<(usize, IndexState), VectorIndexError> {
+    let mut lines = BufReader::new(bytes).lines();
+    let header = lines
+        .next()
+        .ok_or(VectorIndexError::CorruptSnapshot)?
+        .map_err(|_| VectorIndexError::Storage)?;
     let mut header_parts = header.split('\t');
-    let snapshot_version = match header_parts.next() {
-        Some(SNAPSHOT_HEADER_V1) => SnapshotVersion::V1,
-        Some(SNAPSHOT_HEADER_V2) => SnapshotVersion::V2,
-        _ => return Err(VectorIndexError::CorruptSnapshot),
-    };
+    if header_parts.next() != Some(SNAPSHOT_PLAINTEXT_HEADER_V1) {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
     if header_parts.next() != Some("dimension") {
         return Err(VectorIndexError::CorruptSnapshot);
     }
@@ -780,7 +839,6 @@ fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState),
     if header_parts.next().is_some() {
         return Err(VectorIndexError::CorruptSnapshot);
     }
-
     let mut state = IndexState::default();
     for line in lines {
         let line = line.map_err(|_| VectorIndexError::Storage)?;
@@ -790,28 +848,17 @@ fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState),
                 let vector_id =
                     decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
                 let doc_id = decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
-                let first_payload =
+                let model_id =
                     decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
-                let (model_id, values) = match snapshot_version {
-                    SnapshotVersion::V1 => {
-                        if parts.next().is_some() {
-                            return Err(VectorIndexError::CorruptSnapshot);
-                        }
-                        (None, decode_values(&first_payload)?)
-                    }
-                    SnapshotVersion::V2 => {
-                        let values =
-                            decode_values(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
-                        if parts.next().is_some() {
-                            return Err(VectorIndexError::CorruptSnapshot);
-                        }
-                        if first_payload.is_empty() {
-                            (None, values)
-                        } else {
-                            validate_model_id(&first_payload)?;
-                            (Some(first_payload), values)
-                        }
-                    }
+                let values = decode_values(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
+                if parts.next().is_some() {
+                    return Err(VectorIndexError::CorruptSnapshot);
+                }
+                let model_id = if model_id.is_empty() {
+                    None
+                } else {
+                    validate_model_id(&model_id)?;
+                    Some(model_id)
                 };
                 validate_dimension(actual_dimension, &values)?;
                 let mut document = VectorDocument::new(vector_id.clone(), doc_id, values)?;
@@ -833,23 +880,44 @@ fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState),
     Ok((actual_dimension, state))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SnapshotVersion {
-    V1,
-    V2,
-}
-
 fn write_snapshot(
     path: &Path,
+    key_path: &Path,
     dimension: usize,
     state: &IndexState,
 ) -> Result<(), VectorIndexError> {
-    let mut file = File::create(path).map_err(|_| VectorIndexError::Storage)?;
-    writeln!(file, "{SNAPSHOT_HEADER_V2}\tdimension\t{dimension}")
+    let plaintext = snapshot_plaintext(dimension, state)?;
+    let key = load_or_create_snapshot_key(key_path)?;
+    let nonce = random_nonce()?;
+    let cipher = XChaCha20Poly1305::new((&key).into());
+    let ciphertext = cipher
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext.as_bytes(),
+                aad: SNAPSHOT_HEADER_ENCRYPTED_V1.as_bytes(),
+            },
+        )
         .map_err(|_| VectorIndexError::Storage)?;
+
+    let mut file = create_private_file(path)?;
+    writeln!(file, "{SNAPSHOT_HEADER_ENCRYPTED_V1}").map_err(|_| VectorIndexError::Storage)?;
+    writeln!(file, "{}", encode_hex(&nonce)).map_err(|_| VectorIndexError::Storage)?;
+    writeln!(file, "{}", encode_hex(&ciphertext)).map_err(|_| VectorIndexError::Storage)?;
+    file.sync_all().map_err(|_| VectorIndexError::Storage)?;
+    Ok(())
+}
+
+fn snapshot_plaintext(dimension: usize, state: &IndexState) -> Result<String, VectorIndexError> {
+    let mut output = String::new();
+    writeln!(
+        output,
+        "{SNAPSHOT_PLAINTEXT_HEADER_V1}\tdimension\t{dimension}"
+    )
+    .map_err(|_| VectorIndexError::Storage)?;
     for vector in state.vectors.values() {
         writeln!(
-            file,
+            output,
             "V\t{}\t{}\t{}\t{}",
             encode_field(vector.vector_id()),
             encode_field(vector.doc_id()),
@@ -859,10 +927,112 @@ fn write_snapshot(
         .map_err(|_| VectorIndexError::Storage)?;
     }
     for vector_id in &state.deleted {
-        writeln!(file, "D\t{}", encode_field(vector_id)).map_err(|_| VectorIndexError::Storage)?;
+        writeln!(output, "D\t{}", encode_field(vector_id))
+            .map_err(|_| VectorIndexError::Storage)?;
     }
+    Ok(output)
+}
+
+fn load_or_create_snapshot_key(
+    key_path: &Path,
+) -> Result<[u8; SNAPSHOT_KEY_LEN], VectorIndexError> {
+    match read_snapshot_key(key_path) {
+        Ok(key) => Ok(key),
+        Err(VectorIndexError::Storage) if !key_path.exists() => {
+            let key = random_key()?;
+            write_private_file(key_path, encode_hex(&key).as_bytes())?;
+            Ok(key)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn read_snapshot_key(key_path: &Path) -> Result<[u8; SNAPSHOT_KEY_LEN], VectorIndexError> {
+    let value = fs::read_to_string(key_path).map_err(|_| VectorIndexError::Storage)?;
+    decode_fixed_hex::<SNAPSHOT_KEY_LEN>(value.trim())
+}
+
+fn random_key() -> Result<[u8; SNAPSHOT_KEY_LEN], VectorIndexError> {
+    let mut key = [0_u8; SNAPSHOT_KEY_LEN];
+    getrandom::getrandom(&mut key).map_err(|_| VectorIndexError::Storage)?;
+    Ok(key)
+}
+
+fn random_nonce() -> Result<[u8; SNAPSHOT_NONCE_LEN], VectorIndexError> {
+    let mut nonce = [0_u8; SNAPSHOT_NONCE_LEN];
+    getrandom::getrandom(&mut nonce).map_err(|_| VectorIndexError::Storage)?;
+    Ok(nonce)
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), VectorIndexError> {
+    let mut file = create_private_file(path)?;
+    file.write_all(bytes)
+        .map_err(|_| VectorIndexError::Storage)?;
+    file.write_all(b"\n")
+        .map_err(|_| VectorIndexError::Storage)?;
     file.sync_all().map_err(|_| VectorIndexError::Storage)?;
+    restrict_private_file_permissions(path)?;
     Ok(())
+}
+
+fn create_private_file(path: &Path) -> Result<File, VectorIndexError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|_| VectorIndexError::Storage)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let file = options.open(path).map_err(|_| VectorIndexError::Storage)?;
+    restrict_private_file_permissions(path)?;
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn restrict_private_file_permissions(path: &Path) -> Result<(), VectorIndexError> {
+    let mut permissions = fs::metadata(path)
+        .map_err(|_| VectorIndexError::Storage)?
+        .permissions();
+    permissions.set_mode(0o600);
+    fs::set_permissions(path, permissions).map_err(|_| VectorIndexError::Storage)
+}
+
+#[cfg(not(unix))]
+fn restrict_private_file_permissions(_path: &Path) -> Result<(), VectorIndexError> {
+    Ok(())
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
+}
+
+fn decode_fixed_hex<const N: usize>(value: &str) -> Result<[u8; N], VectorIndexError> {
+    let bytes = decode_hex(value)?;
+    bytes
+        .try_into()
+        .map_err(|_| VectorIndexError::CorruptSnapshot)
+}
+
+fn decode_hex(value: &str) -> Result<Vec<u8>, VectorIndexError> {
+    if !value.len().is_multiple_of(2) {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    let mut index = 0;
+    while index < value.len() {
+        let byte = u8::from_str_radix(&value[index..index + 2], 16)
+            .map_err(|_| VectorIndexError::CorruptSnapshot)?;
+        bytes.push(byte);
+        index += 2;
+    }
+    Ok(bytes)
 }
 
 fn encode_values(values: &[f32]) -> String {

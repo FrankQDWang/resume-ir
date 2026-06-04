@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use index_vector::{inspect_persistent_vector_snapshot, PersistentVectorSnapshotState};
 use meta_store::{
     Document, DocumentId, DocumentStatus, FileExtension, MetaStore, ResumeVersion, ResumeVersionId,
     ResumeVisibility, UnixTimestamp,
@@ -197,13 +198,15 @@ fn seed_searchable_resume_versions(data_dir: &Path) -> PathBuf {
 }
 
 fn assert_vector_snapshot(data_dir: &Path, expected_dimension: usize, expected_vectors: usize) {
-    let snapshot = fs::read_to_string(data_dir.join("vector-index").join("vector.snapshot"))
-        .expect("read vector snapshot");
-    let mut lines = snapshot.lines();
-    let expected_header = format!("resume-ir-vector-index-v2\tdimension\t{expected_dimension}");
-    assert_eq!(lines.next(), Some(expected_header.as_str()));
-    let vectors = lines.filter(|line| line.starts_with("V\t")).count();
-    assert_eq!(vectors, expected_vectors);
+    let snapshot_path = data_dir.join("vector-index").join("vector.snapshot");
+    let snapshot = fs::read_to_string(&snapshot_path).expect("read vector snapshot");
+    assert!(snapshot.starts_with("resume-ir-vector-index-encrypted-v1\n"));
+    assert!(!snapshot.contains("resume-ir-vector-index-v2"));
+    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
+    assert_eq!(inspection.state(), PersistentVectorSnapshotState::Ready);
+    let snapshot = inspection.snapshot().unwrap();
+    assert_eq!(snapshot.dimension(), expected_dimension);
+    assert_eq!(snapshot.vector_count(), expected_vectors);
 }
 
 fn http_get(endpoint: &str) -> String {
@@ -230,19 +233,15 @@ fn wait_for_vector_snapshot_with_status_requests(
     max_requests: usize,
 ) -> usize {
     let deadline = Instant::now() + Duration::from_secs(5);
-    let snapshot_path = data_dir.join("vector-index").join("vector.snapshot");
     let mut requests = 0_usize;
     loop {
         requests += 1;
         let response = http_get(endpoint);
         assert!(!response.contains(path_str(data_dir)));
-        if fs::read_to_string(&snapshot_path)
-            .map(|snapshot| {
-                snapshot
-                    .lines()
-                    .filter(|line| line.starts_with("V\t"))
-                    .count()
-            })
+        let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
+        if inspection
+            .snapshot()
+            .map(|snapshot| snapshot.vector_count())
             .unwrap_or(0)
             == expected_vectors
         {

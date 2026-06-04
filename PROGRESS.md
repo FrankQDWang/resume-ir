@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, and S148 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, and S149 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -117,8 +117,8 @@ obsolete preliminary files and checklists are not product scope.
   Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
   F1 datasets/results, dedupe quality metrics, candidate merge review
-  workflows, full-text/vector/OCR-cache artifact encryption, future bbox/PII
-  surface purge coverage, and forensic erase proof.
+  workflows, full-text/OCR-cache artifact encryption, future bbox/PII surface
+  purge coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
   helpers, embedding worker, model/dimension-scoped durable per-version
@@ -137,7 +137,11 @@ obsolete preliminary files and checklists are not product scope.
   sidecar file lock, reload the latest snapshot while holding that lock, merge
   the current mutation, and refresh local HNSW state before returning, preventing
   stale CLI/daemon writers from overwriting each other's vector updates or
-  tombstones.
+  tombstones. Persistent vector snapshots are now written as local encrypted
+  XChaCha20-Poly1305 envelopes with an owner-only local snapshot key, so the
+  `vector.snapshot` artifact no longer stores vector IDs, document IDs, model
+  IDs, or float values as plaintext while reopen, inspection, semantic search,
+  daemon embedding workers, and diagnostics continue to work.
   A labeled vector-quality evaluator and gate now score recall@k, MRR, NDCG@k,
   and zero-recall queries from JSONL samples using the local embedding command
   protocol without emitting raw queries, candidate text, sample IDs, candidate
@@ -408,8 +412,67 @@ obsolete preliminary files and checklists are not product scope.
 | S146 | Product metadata SQLCipher key backup/restore slice complete locally | A focused CLI test first failed because `resume-cli privacy` did not expose metadata key backup/restore commands. After implementation, metadata key backup writes a passphrase-protected local envelope with Argon2id plus XChaCha20-Poly1305, restore recreates an owner-only metadata SQLCipher key for a copied encrypted metadata DB, wrong passphrases fail without creating a key, duplicate restores are refused, and backup files plus stdout/stderr stay free of passphrases, key material, local paths, and schema payloads. Focused metadata-key CLI tests, existing contact-key CLI tests, full meta-store tests, full CLI tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this metadata key backup/recovery slice; it does not rotate metadata SQLCipher keys, automatically sync backups, prove plaintext-to-encrypted migration for old pre-release local stores, encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, or clear non-metadata privacy blockers. |
 | S147 | Product metadata SQLCipher key rotation slice complete locally | A focused CLI test first failed because `resume-cli privacy rotate-metadata-key` did not exist. After implementation, metadata key rotation opens the encrypted metadata DB with the existing key, SQLCipher-rekeys it with fresh local key material, replaces the owner-only metadata key file, proves the old key can no longer open the DB, proves the new key can reopen schema version 16, and keeps CLI/doctor output free of local paths and old/new key material. Focused rotation CLI tests, existing metadata backup/restore CLI tests, full meta-store tests, full CLI tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this metadata key rotation slice; it does not automatically sync backups, prove crash recovery for every mid-rotation failure window, prove plaintext-to-encrypted migration for old pre-release local stores, encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, or clear non-metadata privacy blockers. |
 | S148 | Product plaintext metadata migration-to-SQLCipher slice complete locally | A focused meta-store test first failed because `MetaStore::open_data_dir` could not open an existing plaintext default metadata DB after creating the SQLCipher key. After implementation, the default data-dir open path detects a plaintext SQLite header, exports the plaintext DB to a SQLCipher temp DB with the local metadata key, atomically replaces the default DB, removes the plaintext file from the default path, preserves synthetic document/version rows, and proves plaintext open fails afterward while SQLCipher reopen succeeds. Full local verification then exposed a daemon IPC status-loop regression under SQLCipher WAL; the daemon now keeps a persistent IPC metadata connection, and the late-queued-task test seeds task/scope atomically. Focused migration test, full meta-store tests, full CLI tests, full daemon IPC tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this plaintext metadata migration slice; it does not encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, prove crash recovery for every mid-migration failure window, run migration on real user stores, or clear non-metadata privacy blockers. |
+| S149 | Product vector snapshot encryption slice complete locally | A focused `index-vector` test first failed because `vector.snapshot` was plaintext TSV with vector IDs, document IDs, model IDs, and float values. After implementation, persistent vector snapshots are written as XChaCha20-Poly1305 encrypted local envelopes with an owner-only local key file; raw snapshot files expose only an encrypted header, nonce, and ciphertext while reopen, inspection, HNSW ANN search, model-scoped semantic search, daemon embedding workers, and diagnostics continue to work without path/vector leaks. Focused RED/GREEN test, full `index-vector` tests, CLI embedding tests, daemon embedding worker/job tests, diagnostics test, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this vector snapshot artifact-encryption slice; it does not encrypt full-text snapshots or OCR-cache artifacts, select/license/distribute a real embedding model, prove large-corpus ANN latency/recall, or clear platform/signing blockers. |
 
 ## Command Log
+
+### S149
+
+Design target:
+
+- Encrypt the persistent vector snapshot artifact at rest so `vector.snapshot`
+  no longer stores vector IDs, document IDs, model IDs, or vector float payloads
+  as plaintext.
+- Preserve existing local behavior: reopen, inspection, HNSW ANN search,
+  model-scoped semantic search, daemon embedding workers, and redacted
+  diagnostics must continue to work.
+- Because the product is not shipped, remove plaintext legacy snapshot support
+  instead of keeping a compatibility path.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_encrypts_snapshot_payload_at_rest --locked -- --exact
+```
+
+Output summary:
+
+- The focused test failed because `vector.snapshot` still began with the old
+  plaintext `resume-ir-vector-index-v2` header.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_encrypts_snapshot_payload_at_rest --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_values --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s51_embedding_worker --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s52_embedding_jobs --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p index-vector -p resume-daemon -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused encrypted vector snapshot test: exit 0 after implementation; 1 test
+  passed.
+- Full `index-vector` tests: exit 0; 10 integration tests and doc-tests passed.
+- CLI embedding, vector diagnostics, daemon embedding worker, and daemon
+  embedding job tests: exit 0.
+- `cargo fmt --check`, focused clippy, `git diff --check`, public repo guard,
+  and full local verification passed.
+
+Scope note:
+
+- S149 encrypts only the persistent vector snapshot artifact. Full-text
+  snapshots, OCR-cache artifacts, real licensed embedding model
+  selection/distribution, real semantic quality datasets, large-corpus ANN
+  performance evidence, platform installer proof, signing, and notarization
+  remain incomplete or BLOCKED.
 
 ### S148
 

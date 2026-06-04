@@ -120,6 +120,45 @@ fn persistent_vector_index_reopens_snapshot_and_preserves_tombstones_without_pat
 }
 
 #[test]
+fn persistent_vector_index_encrypts_snapshot_payload_at_rest() {
+    let private_dir = temp_dir("private-encrypted-vector-index");
+    let index = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    index
+        .upsert(vec![VectorDocument::new_for_model(
+            "model-private",
+            "model-private:vec_secret",
+            "doc_secret",
+            vec![1.0, 0.5, 0.25, 0.125],
+        )
+        .unwrap()])
+        .unwrap();
+
+    let snapshot_bytes = fs::read(private_dir.join("vector.snapshot")).unwrap();
+    let snapshot_text = String::from_utf8_lossy(&snapshot_bytes);
+    assert!(snapshot_text.starts_with("resume-ir-vector-index-encrypted-v1\n"));
+    assert!(!snapshot_text.contains("model-private"));
+    assert!(!snapshot_text.contains("vec_secret"));
+    assert!(!snapshot_text.contains("doc_secret"));
+    assert!(!snapshot_text.contains("3f800000,3f000000,3e800000,3e000000"));
+
+    let reopened = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    let hits = reopened
+        .knn_for_model(
+            QueryVector::new(vec![1.0, 0.5, 0.25, 0.125]).unwrap(),
+            1,
+            "model-private",
+        )
+        .unwrap();
+    assert_eq!(hits[0].doc_id(), "doc_secret");
+    assert_eq!(
+        inspect_persistent_vector_snapshot(&private_dir).state(),
+        PersistentVectorSnapshotState::Ready
+    );
+
+    remove_dir(&private_dir);
+}
+
+#[test]
 fn persistent_vector_index_filters_knn_by_model_scope_after_reopen() {
     let private_dir = temp_dir("private-model-scoped-vector-index");
 
@@ -336,35 +375,6 @@ fn persistent_vector_index_preserves_tombstones_from_stale_concurrent_openers() 
         .knn(QueryVector::new(vec![0.0, 0.0, 1.0, 0.0]).unwrap(), 1)
         .unwrap();
     assert_eq!(new_hits[0].doc_id(), "doc_new");
-
-    remove_dir(&private_dir);
-}
-
-#[test]
-fn persistent_vector_index_filters_legacy_v1_snapshot_by_vector_id_model_prefix() {
-    let private_dir = temp_dir("private-legacy-model-scoped-vector-index");
-    fs::write(
-        private_dir.join("vector.snapshot"),
-        concat!(
-            "resume-ir-vector-index-v1\tdimension\t4\n",
-            "V\tmodel-a%3Avec_legacy\tdoc_legacy_model\t3f800000,00000000,00000000,00000000\n",
-            "V\tmodel-b%3Avec_current\tdoc_current_model\t00000000,3f800000,00000000,00000000\n",
-        ),
-    )
-    .unwrap();
-
-    let index = PersistentVectorIndex::open(&private_dir, 4).unwrap();
-    let scoped = index
-        .knn_for_model(
-            QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
-            1,
-            "model-b",
-        )
-        .unwrap();
-
-    assert_eq!(scoped.len(), 1);
-    assert_eq!(scoped[0].doc_id(), "doc_current_model");
-    assert_eq!(index.snapshot().unwrap().vector_count(), 2);
 
     remove_dir(&private_dir);
 }
