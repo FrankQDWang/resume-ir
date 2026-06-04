@@ -2497,6 +2497,7 @@ fn witness_command(args: &[String]) -> Result<()> {
             &temp_dirs.data_dir,
             &store,
             &witness_args.ocr_worker_args,
+            witness_args.ocr_max_documents,
             now,
         )?
     } else {
@@ -2547,6 +2548,7 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
     let mut run_ocr = false;
     let mut seen_ocr_option = false;
     let mut ocr_worker_args = default_ocr_worker_args();
+    let mut ocr_max_documents = None;
     let mut index = 0_usize;
 
     while index < args.len() {
@@ -2686,6 +2688,23 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
                     .ok_or_else(witness_usage)?;
                 index += 2;
             }
+            "--ocr-max-documents" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if ocr_max_documents.is_some() {
+                    return Err(witness_usage());
+                }
+                ocr_max_documents = Some(
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .ok_or_else(witness_usage)?,
+                );
+                index += 2;
+            }
             _ => return Err(witness_usage()),
         }
     }
@@ -2705,13 +2724,14 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
         root,
         max_files,
         run_ocr,
+        ocr_max_documents,
         ocr_worker_args,
     })
 }
 
 fn witness_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli witness --root <path> [--max-files <count>] [--run-ocr [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]",
+        "usage: resume-cli witness --root <path> [--max-files <count>] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]",
     )
 }
 
@@ -2734,6 +2754,7 @@ fn run_witness_ocr_jobs(
     data_dir: &Path,
     store: &MetaStore,
     worker_args: &OcrWorkerArgs,
+    max_documents: Option<usize>,
     now: UnixTimestamp,
 ) -> Result<WitnessOcrStatus> {
     if worker_args.command.is_none() && worker_args.tesseract_command.is_none() {
@@ -2742,6 +2763,7 @@ fn run_witness_ocr_jobs(
             documents_processed: 0,
             cache_writes: 0,
             cache_hits: 0,
+            budget_exhausted: false,
         });
     }
 
@@ -2750,6 +2772,16 @@ fn run_witness_ocr_jobs(
     let mut cache_hits = 0_usize;
 
     loop {
+        if max_documents.is_some_and(|limit| documents_processed >= limit) {
+            let summary = store.status_summary().map_err(CliError::store)?;
+            return Ok(WitnessOcrStatus::Completed {
+                documents_processed,
+                cache_writes,
+                cache_hits,
+                budget_exhausted: summary.ocr_jobs_queued > 0,
+            });
+        }
+
         let Some(job) = store
             .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
             .map_err(CliError::store)?
@@ -2758,6 +2790,7 @@ fn run_witness_ocr_jobs(
                 documents_processed,
                 cache_writes,
                 cache_hits,
+                budget_exhausted: false,
             });
         };
 
@@ -2779,6 +2812,8 @@ fn run_witness_ocr_jobs(
                     documents_processed,
                     cache_writes,
                     cache_hits,
+                    budget_exhausted: max_documents
+                        .is_some_and(|limit| documents_processed >= limit),
                 });
             }
         }
@@ -2792,28 +2827,39 @@ fn print_witness_ocr_status(status: &WitnessOcrStatus) {
             println!("ocr documents processed: 0");
             println!("ocr cache writes: 0");
             println!("ocr cache hits: 0");
+            println!("ocr document budget exhausted: no");
         }
         WitnessOcrStatus::Completed {
             documents_processed,
             cache_writes,
             cache_hits,
+            budget_exhausted,
         } => {
             println!("witness ocr status: completed");
             println!("ocr documents processed: {documents_processed}");
             println!("ocr cache writes: {cache_writes}");
             println!("ocr cache hits: {cache_hits}");
+            println!(
+                "ocr document budget exhausted: {}",
+                yes_no(*budget_exhausted)
+            );
         }
         WitnessOcrStatus::Blocked {
             reason,
             documents_processed,
             cache_writes,
             cache_hits,
+            budget_exhausted,
         } => {
             println!("witness ocr status: blocked");
             println!("ocr block reason: {reason}");
             println!("ocr documents processed: {documents_processed}");
             println!("ocr cache writes: {cache_writes}");
             println!("ocr cache hits: {cache_hits}");
+            println!(
+                "ocr document budget exhausted: {}",
+                yes_no(*budget_exhausted)
+            );
         }
     }
 }
@@ -2920,6 +2966,7 @@ struct WitnessArgs {
     root: PathBuf,
     max_files: usize,
     run_ocr: bool,
+    ocr_max_documents: Option<usize>,
     ocr_worker_args: OcrWorkerArgs,
 }
 
@@ -2937,12 +2984,14 @@ enum WitnessOcrStatus {
         documents_processed: usize,
         cache_writes: usize,
         cache_hits: usize,
+        budget_exhausted: bool,
     },
     Blocked {
         reason: &'static str,
         documents_processed: usize,
         cache_writes: usize,
         cache_hits: usize,
+        budget_exhausted: bool,
     },
 }
 

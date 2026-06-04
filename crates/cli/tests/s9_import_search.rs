@@ -234,6 +234,72 @@ printf 'WitnessOCRSecretToken local OCR text\n'
 }
 
 #[test]
+fn witness_run_ocr_can_budget_documents_after_full_private_scan_without_path_leak() {
+    let data_dir = temp_dir("witness-ocr-budget-unused-data-dir");
+    let private_root = temp_dir("witness-ocr-budget-private-root");
+    fs::copy(
+        fixture_root().join("synthetic-scanned-resume.pdf"),
+        private_root.join("real-person-scanned-a.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-scanned-resume.pdf"),
+        private_root.join("real-person-scanned-b.pdf"),
+    )
+    .unwrap();
+    let command = write_fixture_executable(
+        "fixture-witness-ocr-budget",
+        r#"#!/bin/sh
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.77\n'
+printf 'text:\n'
+printf 'WitnessOCRBudgetSecret local OCR text\n'
+"#,
+    );
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+
+    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "witness",
+            "--root",
+            path_str(&private_root),
+            "--run-ocr",
+            "--ocr-command",
+            path_str(&command),
+            "--ocr-max-documents",
+            "1",
+        ])
+        .output()
+        .expect("run resume-cli local witness with OCR document budget");
+
+    assert!(
+        witness.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&witness.stdout),
+        String::from_utf8_lossy(&witness.stderr)
+    );
+    assert!(witness.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&witness.stdout);
+    assert!(stdout.contains("witness ocr status: completed"));
+    assert!(stdout.contains("ocr documents processed: 1"));
+    assert!(stdout.contains("ocr cache writes: 1"));
+    assert!(stdout.contains("ocr document budget exhausted: yes"));
+    assert!(!stdout.contains("WitnessOCRBudgetSecret"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&canonical_private_root)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains("real-person"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
 fn witness_run_ocr_without_command_reports_blocked_without_persisting_private_data() {
     let data_dir = temp_dir("witness-ocr-blocked-unused-data-dir");
     let private_root = temp_dir("witness-ocr-blocked-private-root");
