@@ -13,4 +13,5 @@ fi
 ./scripts/ci/check-licenses.sh
 ./scripts/ci/check-runbooks.sh
 ./scripts/ci/check-workflows.sh
+./scripts/ci/check-release-artifacts.sh
 ./scripts/ci/guard-public-repo.sh

@@ -52,6 +52,20 @@ benchmark-smoke.json`.
 The explicit `--allow-synthetic` flag is required for synthetic smoke artifacts.
 Do not treat a passing synthetic gate as 100k or 1M real-corpus proof.
 
+Generate a local release dry-run manifest only after release binaries have been
+built:
+
+```bash
+scripts/release/create-artifact-manifest.sh \
+  --version v0.1.0 \
+  --target-dir target/release \
+  --out-dir release-dry-run
+```
+
+The generated `release-artifacts.json` records binary names, byte counts, and
+sha256 hashes. It is not an installer, signature, notarization ticket, SBOM, or
+GitHub Release upload, and it must not contain local paths or runtime data.
+
 Validate any proposed local model pack before worker configuration:
 
 ```bash

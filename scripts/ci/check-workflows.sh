@@ -23,9 +23,10 @@ require_text() {
 pr_workflow=".github/workflows/pr.yml"
 nightly_workflow=".github/workflows/bench-nightly.yml"
 platform_workflow=".github/workflows/ci-platform.yml"
+release_workflow=".github/workflows/release.yml"
 verify_script="scripts/ci/verify-local.sh"
 
-for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$verify_script"; do
+for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script"; do
   require_file "$file"
 done
 
@@ -56,5 +57,11 @@ require_text "$platform_workflow" "cargo build --workspace --locked"
 require_text "$platform_workflow" "cargo test --workspace --locked"
 
 require_text "$verify_script" "./scripts/ci/check-workflows.sh"
+require_text "$verify_script" "./scripts/ci/check-release-artifacts.sh"
+
+require_text "$release_workflow" "scripts/release/create-artifact-manifest.sh"
+require_text "$release_workflow" "release-artifacts.json"
+require_text "$release_workflow" "actions/upload-artifact"
+require_text "$release_workflow" "Packaging, signing, notarization"
 
 printf '%s\n' "workflow check passed"

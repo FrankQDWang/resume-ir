@@ -41,11 +41,25 @@ jobs:
       - name: Build release binaries
         run: cargo build --workspace --release --locked
 
+      - name: Create release artifact manifest
+        run: |
+          scripts/release/create-artifact-manifest.sh \
+            --version "${{ inputs.version }}" \
+            --target-dir target/release \
+            --out-dir release-dry-run
+
       - name: Check public artifact boundary
         run: |
           test ! -d local-data
           test ! -d diagnostics
           test ! -d model-cache
+          test -f release-dry-run/release-artifacts.json
+
+      - name: Upload release dry-run manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run
+          path: release-dry-run/release-artifacts.json
 
       - name: Release gate
         run: |

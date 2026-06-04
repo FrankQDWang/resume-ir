@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, and S120 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, and S121 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, and S110 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -146,7 +146,9 @@ obsolete preliminary files and checklists are not product scope.
   authenticated IPC auto-discovery, stopped the daemon, observed `not_loaded`
   after stop, uninstalled the LaunchAgent, and removed temporary local data.
   Hosted macOS and Windows workspace build/test checks now run for pull
-  requests through Platform CI.
+  requests through Platform CI. A release dry-run workflow can now generate and
+  upload a redacted `release-artifacts.json` checksum manifest for locally built
+  release binaries without recording local paths or runtime data.
   Installer packaging, signing, notarization, Windows service/MSI, real upgrade/
   uninstall runs, hosted release workflow execution, and platform installer/
   service validation remain absent, not complete, or externally blocked by
@@ -165,7 +167,8 @@ obsolete preliminary files and checklists are not product scope.
   concurrent writers, hosted-Windows full-text snapshot read-open retry,
   local-only macOS LaunchAgent start/stop witness evidence, local-only
   production runbooks, a runbook CI policy guard, a workflow policy guard, and a
-  synthetic OCR throughput benchmark/gate exist.
+  release artifact manifest policy guard, and a synthetic OCR throughput
+  benchmark/gate exist.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, and labeled vector-quality benchmark gates; query, OCR, and
   vector smoke gates are wired into PR and nightly workflows. Synthetic runs
@@ -301,8 +304,60 @@ obsolete preliminary files and checklists are not product scope.
 | S118 | Product service status cross-platform portability slice complete | Hosted Windows Platform CI for `288a4c9` first failed in `service_status_and_uninstall_are_redacted_and_preserve_user_data` because `service status` tried to derive a macOS launchctl domain through `/usr/bin/id` on Windows. After implementation, service lifecycle integration tests, launchctl parser tests, focused clippy, fmt, diff, public guard, and `./scripts/ci/verify-local.sh` passed. Hosted Rust Workspace for `c56e966` then exposed a non-macOS clippy dead-code gap that is handled in S119. | None for this portability fix; Windows service/MSI install/start/stop behavior remains not implemented or proven, and non-macOS service runtime status intentionally reports `unknown` for the macOS LaunchAgent command surface. |
 | S119 | Product service runtime cfg portability slice complete | Hosted Rust Workspace for `c56e966` first failed on Ubuntu clippy because non-macOS binary builds treated macOS-only launchctl parser code and `running`/`loaded` runtime states as dead code, and newer clippy flagged a needless return in the non-macOS branch. After implementation, service lifecycle integration tests, launchctl parser tests, focused CLI clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this cfg portability fix; it proves the macOS LaunchAgent command surface remains portable across hosted clippy/builds, but it does not implement Windows services/MSI or prove Windows service lifecycle behavior. |
 | S120 | Product OCR requested-language diagnostics slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_requested_ocr_language_without_language_dump --locked -- --exact` first failed because `doctor` did not accept OCR diagnostic arguments and diagnostics always reported only `eng`. After implementation, the focused exact test, full diagnostics suite, focused CLI clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this OCR runtime diagnostics slice; it does not distribute OCR engines or language packs, prove non-English OCR quality, complete full-library OCR, or validate Windows/macOS installed OCR runtime behavior beyond local/hosted command checks. |
+| S121 | Product release dry-run manifest slice complete | `sh scripts/ci/check-release-artifacts.sh` first failed because `scripts/release/create-artifact-manifest.sh` did not exist. After implementation, the release artifact guard, workflow guard, runbook guard, diff check, and `./scripts/ci/verify-local.sh` passed. | None for this dry-run manifest/checksum slice; it does not build MSI/pkg/dmg installers, sign, notarize, generate an SBOM, create a GitHub Release, upload release binaries, or prove install/upgrade/uninstall/rollback behavior. |
 
 ## Command Log
+
+### S121
+
+Design target:
+
+- Generate a release dry-run manifest for already-built binaries with artifact
+  names, byte counts, and sha256 hashes only.
+- Keep packaging status explicitly blocked until installer packaging, signing,
+  notarization, SBOM, and release upload are separately approved and proven.
+- Wire the manifest check into local verification and the release workflow
+  without recording local build paths or runtime data.
+
+Observed RED:
+
+```bash
+sh scripts/ci/check-release-artifacts.sh
+```
+
+Output summary:
+
+- The focused release artifact guard failed because
+  `scripts/release/create-artifact-manifest.sh` did not exist.
+
+Implementation checks:
+
+```bash
+sh scripts/ci/check-release-artifacts.sh
+sh scripts/ci/check-workflows.sh
+sh scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Release artifact guard: exit 0; generated a synthetic
+  `release-artifacts.json`, rejected an invalid version, rejected a missing
+  release binary, verified workflow artifact upload wiring, and verified the
+  manifest did not contain the synthetic temp path.
+- Workflow guard: exit 0.
+- Runbook guard: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, release
+  artifact check, and public repository guard passed.
+
+Scope note:
+
+- S121 is release dry-run evidence only. It does not create install packages,
+  sign or notarize artifacts, create an SBOM, create a GitHub Release, upload
+  release binaries, or validate installer/service lifecycle behavior.
 
 ### S120
 
