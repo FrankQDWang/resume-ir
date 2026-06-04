@@ -429,12 +429,8 @@ fn minimal_ocr_throughput_json(
 }
 
 fn ocr_fixture_script(label: &str) -> PathBuf {
-    let path = temp_dir(label).join("ocr-fixture.sh");
-    fs::write(
-        &path,
-        "#!/bin/sh\nprintf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s PRIVATE OCR PAYLOAD\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n",
-    )
-    .unwrap();
+    let path = temp_dir(label).join(ocr_fixture_file_name());
+    fs::write(&path, ocr_fixture_script_body()).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -446,10 +442,58 @@ fn ocr_fixture_script(label: &str) -> PathBuf {
 }
 
 fn embedding_fixture_script(label: &str) -> PathBuf {
-    let path = temp_dir(label).join("embedding-fixture.sh");
-    fs::write(
-        &path,
-        r#"#!/bin/sh
+    let path = temp_dir(label).join(embedding_fixture_file_name());
+    fs::write(&path, embedding_fixture_script_body()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+#[cfg(unix)]
+fn ocr_fixture_file_name() -> &'static str {
+    "ocr-fixture.sh"
+}
+
+#[cfg(windows)]
+fn ocr_fixture_file_name() -> &'static str {
+    "ocr-fixture.cmd"
+}
+
+#[cfg(unix)]
+fn ocr_fixture_script_body() -> &'static str {
+    "#!/bin/sh\nprintf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s PRIVATE OCR PAYLOAD\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n"
+}
+
+#[cfg(windows)]
+fn ocr_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "echo resume-ir-ocr-v1\r\n",
+        "echo confidence=0.97\r\n",
+        "echo text:\r\n",
+        "echo Synthetic OCR Candidate page %RESUME_IR_OCR_PAGE_NO% PRIVATE OCR PAYLOAD\r\n",
+        "exit /b 0\r\n"
+    )
+}
+
+#[cfg(unix)]
+fn embedding_fixture_file_name() -> &'static str {
+    "embedding-fixture.sh"
+}
+
+#[cfg(windows)]
+fn embedding_fixture_file_name() -> &'static str {
+    "embedding-fixture.cmd"
+}
+
+#[cfg(unix)]
+fn embedding_fixture_script_body() -> &'static str {
+    r#"#!/bin/sh
 printf 'resume-ir-embedding-v1\n'
 printf 'model_id=%s\n' "$RESUME_IR_EMBEDDING_MODEL_ID"
 printf 'dimension=%s\n' "$RESUME_IR_EMBEDDING_DIMENSION"
@@ -467,17 +511,32 @@ awk '
     printf "vector=%s\t%s\n", id, vector;
   }
 ' "$RESUME_IR_EMBEDDING_INPUT_PATH"
-"#,
+"#
+}
+
+#[cfg(windows)]
+fn embedding_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "echo resume-ir-embedding-v1\r\n",
+        "echo model_id=%RESUME_IR_EMBEDDING_MODEL_ID%\r\n",
+        "echo dimension=%RESUME_IR_EMBEDDING_DIMENSION%\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_EMBEDDING_INPUT_PATH%\") do (\r\n",
+        "  set \"line=%%L\"\r\n",
+        "  if \"!line:~0,6!\"==\"input=\" (\r\n",
+        "    set \"payload=!line:~6!\"\r\n",
+        "    for /f \"tokens=1\" %%I in (\"!payload!\") do set \"id=%%I\"\r\n",
+        "    set \"vector=0.0,0.0,1.0\"\r\n",
+        "    if \"!id!\"==\"query-000000\" set \"vector=1.0,0.0,0.0\"\r\n",
+        "    if \"!id!\"==\"candidate-000000-000000\" set \"vector=1.0,0.0,0.0\"\r\n",
+        "    if \"!id!\"==\"query-000001\" set \"vector=0.0,1.0,0.0\"\r\n",
+        "    if \"!id!\"==\"candidate-000001-000000\" set \"vector=0.0,1.0,0.0\"\r\n",
+        "    echo vector=!id!\t!vector!\r\n",
+        "  )\r\n",
+        ")\r\n",
+        "exit /b 0\r\n"
     )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).unwrap();
-    }
-    path
 }
 
 fn temp_dir(label: &str) -> PathBuf {

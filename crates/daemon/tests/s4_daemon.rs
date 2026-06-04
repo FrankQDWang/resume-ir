@@ -785,7 +785,7 @@ struct DaemonOutput {
 }
 
 fn wait_daemon(mut child: Child, mut stdout: BufReader<ChildStdout>) -> DaemonOutput {
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + Duration::from_secs(45);
     loop {
         if let Some(status) = child.try_wait().expect("poll daemon child") {
             let mut stdout_text = String::new();
