@@ -86,6 +86,23 @@ hashes, unsigned status, and still-blocked release steps. The pkg/dmg files are
 local evidence only. They are not signed, not notarized, not uploaded, and do
 not prove install, upgrade, uninstall, rollback, or Gatekeeper behavior.
 
+On Windows only, generate an unsigned MSI dry-run artifact after release
+binaries have been built and the WiX .NET tool is installed:
+
+```powershell
+dotnet tool install --global wix --version 7.0.0
+scripts/release/create-windows-package.ps1 `
+  -Version v0.1.0 `
+  -TargetDir target/release `
+  -OutDir release-dry-run
+```
+
+The generated `windows-package.json` records only artifact filenames, byte
+counts, hashes, unsigned status, MSI kind, and still-blocked release steps. The
+MSI file is local evidence only. It is not signed, not uploaded, and does not
+prove install, upgrade, uninstall, rollback, Windows service registration, or
+service lifecycle behavior.
+
 Validate any proposed local model pack before worker configuration:
 
 ```bash

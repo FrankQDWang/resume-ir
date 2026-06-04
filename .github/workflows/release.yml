@@ -122,3 +122,74 @@ jobs:
       - name: Release gate
         run: |
           echo "Signing, notarization, installer lifecycle validation, Windows MSI, and GitHub Release upload are gated until explicit release approval."
+
+  windows-package-dry-run:
+    name: Windows package dry run
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install WiX
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 7.0.0
+          $dotnetTools = Join-Path $env:USERPROFILE ".dotnet\tools"
+          Add-Content -Path $env:GITHUB_PATH -Value $dotnetTools
+          $env:PATH = "$dotnetTools;$env:PATH"
+          wix --version
+
+      - name: Validate version input
+        shell: pwsh
+        run: |
+          if ("${{ inputs.version }}" -notmatch '^v[0-9]+[.][0-9]+[.][0-9]+$') {
+            Write-Error "version must look like vX.Y.Z"
+            exit 1
+          }
+
+      - name: Build release binaries
+        run: cargo build --workspace --release --locked
+
+      - name: Create unsigned Windows MSI dry run
+        shell: pwsh
+        run: |
+          scripts/release/create-windows-package.ps1 `
+            -Version "${{ inputs.version }}" `
+            -TargetDir target/release `
+            -OutDir windows-package-dry-run
+
+      - name: Check Windows package boundary
+        shell: pwsh
+        run: |
+          foreach ($path in @("local-data", "diagnostics", "model-cache")) {
+            if (Test-Path -LiteralPath $path) {
+              Write-Error "$path must not exist in release dry-run workspace"
+              exit 1
+            }
+          }
+          $manifest = "windows-package-dry-run/windows-package.json"
+          $msi = "windows-package-dry-run/resume-ir-${{ inputs.version }}-windows.msi"
+          if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) { exit 1 }
+          if (-not (Test-Path -LiteralPath $msi -PathType Leaf)) { exit 1 }
+          Select-String -LiteralPath $manifest -SimpleMatch '"packaging_status": "unsigned_dry_run"'
+          Select-String -LiteralPath $manifest -SimpleMatch '"installer_kind": "msi"'
+          Select-String -LiteralPath $manifest -SimpleMatch '"signing_status": "unsigned"'
+          if (Select-String -LiteralPath $manifest -Pattern 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' -Quiet) {
+            Write-Error "Windows package manifest leaked a local path or runtime-data marker"
+            exit 1
+          }
+
+      - name: Upload unsigned Windows package dry run
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-package-dry-run
+          path: windows-package-dry-run/*
+
+      - name: Release gate
+        shell: pwsh
+        run: |
+          Write-Output "Signing, installer lifecycle validation, service validation, macOS notarization, and GitHub Release upload are gated until explicit release approval."

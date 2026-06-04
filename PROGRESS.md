@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, and S130 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, and S131 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -174,8 +174,11 @@ obsolete preliminary files and checklists are not product scope.
   executed successfully on the feature branch and produced non-expired
   `release-dry-run` and `macos-package-dry-run` artifacts. These dry-runs do
   not sign, notarize, create a GitHub Release, install, upgrade, uninstall, or
-  validate Gatekeeper behavior.
-  Signing, notarization, Windows service/MSI, real upgrade/uninstall runs,
+  validate Gatekeeper behavior. A Windows PowerShell MSI dry-run script,
+  local non-Windows guard, release runbook wiring, and Release workflow hosted
+  Windows package job are now present, but the hosted Windows MSI dry-run still
+  must run after push before it can be counted as hosted evidence.
+  Signing, notarization, Windows service validation, real upgrade/uninstall runs,
   GitHub Release upload, and platform installer/service
   validation remain absent, not complete, or externally blocked by platform
   credentials/runners.
@@ -341,8 +344,71 @@ obsolete preliminary files and checklists are not product scope.
 | S128 | Product macOS package dry-run slice complete | `./scripts/ci/check-macos-package.sh` first failed because the guard did not exist. After implementation, the macOS package guard generated unsigned synthetic pkg/dmg dry-run artifacts with `pkgbuild`, `productbuild`, and `hdiutil`, validated the pkg/dmg, verified the redacted `macos-package.json` manifest, rejected invalid versions and missing binaries, and `./scripts/ci/verify-local.sh` passed with the new guard wired in. | None for this unsigned local macOS package dry-run slice; it does not sign, notarize, upload a GitHub Release, run install/upgrade/uninstall/rollback, prove Gatekeeper behavior, build Windows MSI, or prove production release readiness. |
 | S129 | Product hosted macOS package workflow wiring slice complete | `./scripts/ci/check-workflows.sh` first failed because the Release workflow did not include the macOS package dry-run. After implementation, the Release workflow includes a hosted `macos-latest` job that builds release binaries, runs the unsigned macOS package dry-run, verifies the dmg with `hdiutil`, checks the public artifact boundary, uploads `macos-package-dry-run`, and keeps signing/notarization/release upload gated. Workflow guard, workflow YAML parsing, release artifact guard, release SBOM guard, macOS package guard, diff check, public repository guard, and `./scripts/ci/verify-local.sh` passed. | None for this workflow wiring slice; the updated hosted Release workflow still must run after push, and signing, notarization, installer lifecycle validation, Windows MSI, GitHub Release upload, and production release readiness remain absent or gated. |
 | S130 | Product hosted macOS package dry-run evidence slice complete | PR #9 checks for commit `a7dc1c0` passed: dependency tree, license policy, public repository guard, runbook policy, Rust workspace, hosted macOS Platform CI, and hosted Windows Platform CI. Release workflow run `26942549866` executed on the same commit and passed both jobs: `macOS package dry run` and `release dry run`. The run produced non-expired `macos-package-dry-run` and `release-dry-run` artifacts; the macOS job log confirmed dmg checksum verification and unsigned/not-notarized manifest status, and the release job logs did not contain the Node.js 20 action warning or v4 checkout/upload-artifact references. | None for this hosted dry-run evidence slice; it does not sign, notarize, create a GitHub Release, validate install/upgrade/uninstall/rollback behavior, prove Gatekeeper behavior, build Windows MSI, or complete release readiness. |
+| S131 | Product Windows MSI dry-run wiring slice complete | `./scripts/ci/check-workflows.sh` first failed because `verify-local` and the Release workflow did not include Windows package dry-run wiring. After implementation, `scripts/release/create-windows-package.ps1` can build an unsigned MSI dry-run through the WiX .NET tool on Windows, writes a redacted `windows-package.json`, rejects invalid versions and missing binaries, and keeps signing/release upload/service lifecycle gated. The Release workflow includes a hosted `windows-latest` job that installs WiX `7.0.0`, builds release binaries, runs the Windows package script, checks artifact boundaries, and uploads `windows-package-dry-run`. Focused workflow, Windows package, runbook, workflow YAML, diff, public guard checks, and `./scripts/ci/verify-local.sh` passed locally, with the Windows package guard explicitly skipped on this non-Windows host. | None for this wiring/local-guard slice; the updated hosted Release workflow still must run after push to prove MSI creation, and signing, service install/start/stop validation, installer lifecycle validation, GitHub Release upload, and production release readiness remain absent or gated. |
 
 ## Command Log
+
+### S131
+
+Design target:
+
+- Add a Windows-only unsigned MSI dry-run script for already-built release
+  binaries using the WiX .NET tool.
+- Wire local non-Windows guard checks into `verify-local` without pretending
+  this macOS host can build an MSI.
+- Add a hosted `windows-latest` Release workflow job that installs WiX, builds
+  release binaries, creates the MSI dry-run, checks redacted artifact
+  boundaries, and uploads `windows-package-dry-run`.
+
+Observed RED:
+
+```bash
+./scripts/ci/check-workflows.sh
+```
+
+Output summary:
+
+- The workflow guard failed because `scripts/ci/verify-local.sh` did not include
+  `./scripts/ci/check-windows-package.sh`, and the Release workflow had no
+  Windows package dry-run wiring.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-workflows.sh
+./scripts/ci/check-windows-package.sh
+./scripts/ci/check-runbooks.sh
+ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].sort.each { |f| YAML.load_file(f); puts f }'
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Workflow guard: exit 0; Release workflow now requires
+  `create-windows-package.ps1`, `windows-package.json`,
+  `windows-package-dry-run`, `windows-latest`, WiX installation, and the Windows
+  MSI artifact name.
+- Windows package guard: exit 0 on this macOS host by validating script,
+  workflow, guard, and runbook wiring, then explicitly skipping actual MSI
+  creation on non-Windows.
+- Runbook guard: exit 0.
+- Workflow YAML parse: exit 0 for all tracked workflow files.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, release
+  artifact check, release SBOM check, macOS package check, Windows package
+  wiring check, and public repository guard passed.
+
+Scope note:
+
+- S131 is Windows MSI dry-run wiring and local guard evidence only. It does not
+  prove the hosted Windows MSI build until the branch is pushed and Release is
+  rerun, and it does not sign artifacts, create/upload a GitHub Release, validate
+  install/upgrade/uninstall/rollback behavior, install/register/start/stop a
+  Windows service, or complete release readiness.
 
 ### S130
 
