@@ -275,8 +275,38 @@ obsolete preliminary files and checklists are not product scope.
 | S110 | Product vector-quality gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_report_scores_labeled_samples_without_text_id_path_or_vector_leakage --locked -- --exact` first failed because vector-quality APIs did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_quality_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` rejected `vector-quality`; after implementation, focused vector-quality tests, full benchmark-runner tests, focused benchmark-runner clippy, fmt, diff, guard checks, `./scripts/ci/verify-local.sh`, and private local-only bounded PDF/Word witness runs passed with redacted aggregate output and temporary private data removal. | None for this labeled vector-quality evaluator/gate slice; it does not supply real business labeled semantic datasets, choose/license/package a production embedding model, add ANN production indexing, prove large-corpus semantic latency, or validate Windows/Linux behavior. |
 | S111 | Product vector workflow-gate slice complete | `./scripts/ci/check-workflows.sh` first failed because PR/nightly workflows did not include `vector-quality`; after implementation, workflow guard, strict local vector smoke/gate reproduction with redaction scan, shell syntax, workflow YAML parse, diff, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this vector-quality workflow wiring slice; it uses a synthetic labeled smoke dataset and temporary fixture embedding command, so it does not prove real semantic quality, licensed production model selection, ANN latency, 100k/1M corpus performance, or Windows/Linux behavior. |
 | S112 | Product platform PR validation slice complete | `./scripts/ci/check-workflows.sh` first failed because `.github/workflows/ci-platform.yml` did not include a PR trigger; after implementation, workflow guard, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` passed. Hosted Platform CI then exposed two test-portability gaps, a hosted macOS test wait budget issue, a real Windows path-normalization bug in missing-file deletion propagation, Windows full-text snapshot publish instability during CLI imports, and Windows witness temp cleanup semantics. Local fixes now keep OCR/embedding command tests enabled on Windows with `.cmd` fixtures, extend daemon test waiting without changing product tick limits, compare deletion candidates using normalized paths, publish full-text snapshots before validation and retry transient publish locks, release witness metadata handles before cleanup, and retry witness cleanup. The final hosted PR checks passed: macOS Platform CI, Windows Platform CI, Rust workspace, dependency tree, license policy, runbook policy, and public repository guard. | None for this PR-triggered hosted build/test validation slice; it still does not prove installer packaging, signing, notarization, Windows service/MSI install/upgrade/uninstall/rollback, macOS pkg/dmg install/upgrade/uninstall/rollback, platform-specific service lifecycle behavior, real whole-machine scans, or complete release readiness. |
+| S113 | Product local PDF/Word witness validation slice complete | Two authorized local-only witness runs over the private sample root passed without uploading or committing real resume data. The import-only run selected 8720 PDF/Word files, skipped 49 unsupported entries, had 0 filesystem scan errors, completed import, produced 146 directly searchable documents, queued 8554 OCR-required documents, reported 20 failed documents, and removed private witness data. The bounded OCR run used local `tesseract` and `pdftoppm`, processed 5 OCR documents, had 0 OCR failures, wrote 7 OCR cache entries, exhausted the OCR document budget as expected, and removed private witness data. | None for this local-only private sample witness; it does not prove full-library OCR completion, OCR quality, non-English OCR quality, large-corpus latency/throughput, packaging/signing/installers, Windows/Linux real sample behavior, or production model/ANN readiness. |
 
 ## Command Log
+
+### S113
+
+Local-only private sample validation:
+
+```bash
+target/debug/resume-cli --data-dir <temporary-unused-data-dir> witness --root <authorized-private-sample-root> --max-files 10000
+target/debug/resume-cli --data-dir <temporary-unused-data-dir> witness --root <authorized-private-sample-root> --max-files 10000 --run-ocr --ocr-max-documents 5 --ocr-tesseract-command <local-tesseract> --ocr-pdftoppm-command <local-pdftoppm>
+```
+
+Output summary:
+
+- Import-only witness: exit 0; selected 8720 PDF/Word files; skipped 49
+  unsupported entries; had 0 filesystem scan errors; completed import; produced
+  146 directly searchable documents, 8554 OCR-required documents, 8554 queued
+  OCR jobs, 20 failed documents, and `private witness data: removed`.
+- Bounded OCR witness: exit 0; selected the same 8720 PDF/Word files; completed
+  import; processed 5 OCR documents with 0 OCR failures; wrote 7 OCR cache
+  entries; exhausted the OCR document budget as expected; removed private
+  witness data.
+- No real resume paths, filenames, extracted text, OCR output, tokens,
+  diagnostics packages, or model caches were committed or uploaded.
+
+Scope note:
+
+- S113 validates the current local-only import/OCR witness behavior on the
+  authorized private sample root. It does not prove full-library OCR completion,
+  quality, performance, installer/service behavior, or cross-platform real-data
+  behavior.
 
 ### S112
 
