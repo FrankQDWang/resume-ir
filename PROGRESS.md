@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, and S124 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, and S125 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, and S123 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -156,7 +156,10 @@ obsolete preliminary files and checklists are not product scope.
   requests through Platform CI. A release dry-run workflow can now generate and
   upload a redacted `release-artifacts.json` checksum manifest for locally built
   release binaries and a redacted SPDX 2.3 `release-sbom.json` from locked Cargo
-  metadata without recording local paths or runtime data.
+  metadata without recording local paths or runtime data. The tracked GitHub
+  Actions workflows now use the current Node 24-compatible major versions for
+  checkout and artifact upload actions, with the workflow policy guard rejecting
+  the deprecated Node 20 action majors.
   Installer packaging, signing, notarization, Windows service/MSI, real upgrade/
   uninstall runs, hosted release workflow execution, and platform installer/
   service validation remain absent, not complete, or externally blocked by
@@ -175,8 +178,8 @@ obsolete preliminary files and checklists are not product scope.
   concurrent writers, hosted-Windows full-text snapshot read-open retry,
   local-only macOS LaunchAgent start/stop witness evidence, local-only
   production runbooks, a runbook CI policy guard, a workflow policy guard, and
-  release artifact manifest plus SBOM policy guards, and a synthetic OCR throughput
-  benchmark/gate exist.
+  release artifact manifest plus SBOM policy guards, GitHub Actions runtime
+  compatibility guards, and a synthetic OCR throughput benchmark/gate exist.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, and labeled vector-quality benchmark gates; query, OCR, and
   vector smoke gates are wired into PR and nightly workflows. Synthetic runs
@@ -316,8 +319,85 @@ obsolete preliminary files and checklists are not product scope.
 | S122 | Product local witness search-probe slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_search_runs_private_query_without_leaking_query_or_paths --locked -- --exact` first failed because `witness` rejected `--probe-search`. After implementation, the focused exact test, full `s9_import_search` suite, focused CLI clippy, fmt, diff, marker scan, public guard, `./scripts/ci/verify-local.sh`, private local-only import/search witness, private local-only bounded OCR/search witness, and final hosted PR checks passed. | None for this redacted witness search-probe slice; it does not prove full-library OCR completion, real search quality, real large-corpus latency/throughput, production embedding model readiness, Windows/Linux real sample behavior, or installer/release readiness. |
 | S123 | Product local witness field-probe slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_fields_reports_aggregate_counts_without_values_or_paths --locked -- --exact` first failed because `witness` rejected `--probe-fields`. After implementation, the focused exact test, full `s9_import_search` suite, focused CLI clippy, fmt, diff, marker scan, public guard, `./scripts/ci/verify-local.sh`, private local-only field witness, and private local-only bounded OCR/field witness passed with metadata-only field-type aggregation, redacted aggregate output, and temporary private data removal. | None for this redacted witness field-probe slice; it does not prove field extraction quality, real labeled field F1, full-library OCR completion, real search/ranking quality, large-corpus latency/throughput, Windows/Linux real sample behavior, or installer/release readiness. |
 | S124 | Product release SBOM dry-run slice complete | `./scripts/ci/check-release-sbom.sh` first failed because the release SBOM guard did not exist. After implementation, the release SBOM guard, release artifact guard, workflow guard, runbook guard, shell syntax checks, diff check, public guard, `./scripts/ci/verify-local.sh`, and hosted PR checks passed. | None for this release SBOM dry-run slice; it does not build MSI/pkg/dmg installers, sign, notarize, create a GitHub Release, upload release binaries, validate installer lifecycle behavior, or prove release readiness. |
+| S125 | Product workflow runtime compatibility slice complete | Hosted release dry-run run `26939532282` passed but emitted a GitHub annotation warning that Node.js 20 actions are deprecated for the tracked checkout and artifact upload actions. Official GitHub action release listings showed `actions/checkout` latest `v6.0.3` and `actions/upload-artifact` latest `v7.0.1`. After implementation, workflow YAML parsing, workflow guard, release artifact guard, release SBOM guard, `cargo fmt --check`, `git diff --check`, public repository guard, and `./scripts/ci/verify-local.sh` passed. | None for this workflow runtime compatibility slice; it does not build MSI/pkg/dmg installers, sign, notarize, create a GitHub Release, validate installer lifecycle behavior, prove release readiness, or prove the updated hosted release workflow until the branch is pushed and rerun. |
 
 ## Command Log
+
+### S125
+
+Design target:
+
+- Remove the GitHub Actions Node.js 20 deprecation warning surfaced by the
+  hosted release dry-run workflow.
+- Pin tracked workflows to current Node 24-compatible checkout and artifact
+  upload action majors.
+- Extend the workflow policy guard so future workflow edits cannot reintroduce
+  the deprecated action majors.
+
+Observed hosted warning:
+
+```bash
+gh workflow run Release --ref codex/fault-injection-diagnostics -f version=v0.0.0
+gh run watch 26939532282 --exit-status
+```
+
+Output summary:
+
+- Hosted Release workflow run `26939532282` passed on the feature branch and
+  uploaded the dry-run release manifest/SBOM artifact.
+- GitHub also emitted a deprecation annotation for Node.js 20 actions affecting
+  `actions/checkout@v4` and `actions/upload-artifact@v4`.
+
+Version check:
+
+```bash
+gh release list -R actions/checkout --limit 5
+gh release list -R actions/upload-artifact --limit 5
+```
+
+Output summary:
+
+- Official GitHub release listings showed `actions/checkout` latest `v6.0.3`
+  and `actions/upload-artifact` latest `v7.0.1`.
+
+Implementation checks:
+
+```bash
+rg -n 'actions/checkout@|actions/upload-artifact@' .github/workflows
+./scripts/ci/check-workflows.sh
+./scripts/ci/check-release-sbom.sh
+./scripts/ci/check-release-artifacts.sh
+ruby -e 'require "yaml"; ARGV.each { |file| YAML.load_file(file); puts "yaml ok: #{file}" }' .github/workflows/*.yml
+cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Workflow references: exit 0; tracked workflows now use
+  `actions/checkout@v6`, with artifact uploads using
+  `actions/upload-artifact@v7`.
+- Workflow guard: exit 0; required workflow action versions are enforced and
+  deprecated `actions/checkout@v4` plus `actions/upload-artifact@v4` are
+  rejected in the guarded workflow set.
+- Release SBOM guard: exit 0.
+- Release artifact guard: exit 0.
+- Workflow YAML parse: exit 0 for every tracked workflow.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, release
+  artifact check, release SBOM check, and public repository guard passed.
+
+Scope note:
+
+- S125 removes the tracked workflow action runtime deprecation risk. It does
+  not build installers, sign or notarize artifacts, create a GitHub Release,
+  validate installer lifecycle behavior, or complete release readiness. The
+  updated hosted release dry-run still needs to run after this branch is pushed.
 
 ### S124
 

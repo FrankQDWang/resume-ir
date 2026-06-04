@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -75,7 +75,7 @@ jobs:
         run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- vector-gate --report vector-benchmark-smoke.json --min-samples 2 --min-recall-at-k 0.99 --min-mrr 0.99 --min-ndcg-at-k 0.99 --max-zero-recall-queries 0
 
       - name: Upload benchmark smoke artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-smoke
           path: |
