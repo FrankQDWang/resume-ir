@@ -647,7 +647,7 @@ fn doctor_and_search_use_last_good_snapshot_after_active_snapshot_corruption() {
         index_root
             .join("snapshots")
             .join("fulltext-1800004000-1-0-0")
-            .join("meta.json"),
+            .join("fulltext.snapshot.enc"),
         b"not a valid active snapshot",
     )
     .unwrap();

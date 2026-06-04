@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, and S149 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, and S150 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -58,8 +58,9 @@ obsolete preliminary files and checklists are not product scope.
   text-layer PDF/UTF-8 and BOM-marked UTF-16 TXT parsing, cleaning, sectioning,
   polling background rescan for completed import roots, OS filesystem watcher
   integration that requeues completed roots through the existing durable import
-  task path on local file changes, full-text snapshot publish/recover with
-  Windows transient read-open retry, delete rebuild, redacted snippets, and an
+  task path on local file changes, encrypted full-text published snapshot
+  publish/recover with Windows transient read-open retry, delete rebuild,
+  redacted snippets, and an
   isolated local PDF/Word witness command
   that can use either an explicit root or the local-discovery root preset,
   anonymizes selected inputs, runs the real import path in a temporary data
@@ -113,12 +114,17 @@ obsolete preliminary files and checklists are not product scope.
   data-dir path to SQLCipher while preserving synthetic rows and removing the
   plaintext file from the default path, reports `sqlcipher` in doctor/redacted
   diagnostics, and keeps contact-key permission failures isolated from
-  metadata-key availability.
+  metadata-key availability. Published full-text snapshots are now written as
+  local encrypted XChaCha20-Poly1305 envelopes with an owner-only local snapshot
+  key; the `snapshots/<name>` artifact no longer contains plaintext Tantivy
+  files or stored resume text, while active open, fallback recovery, CLI search,
+  daemon full-text search, and diagnostics continue to work through a private
+  temporary decrypt-and-open path.
   Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
   F1 datasets/results, dedupe quality metrics, candidate merge review
-  workflows, full-text/OCR-cache artifact encryption, future bbox/PII surface
-  purge coverage, and forensic erase proof.
+  workflows, OCR-cache artifact encryption proof, future bbox/PII surface purge
+  coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
   helpers, embedding worker, model/dimension-scoped durable per-version
@@ -413,8 +419,74 @@ obsolete preliminary files and checklists are not product scope.
 | S147 | Product metadata SQLCipher key rotation slice complete locally | A focused CLI test first failed because `resume-cli privacy rotate-metadata-key` did not exist. After implementation, metadata key rotation opens the encrypted metadata DB with the existing key, SQLCipher-rekeys it with fresh local key material, replaces the owner-only metadata key file, proves the old key can no longer open the DB, proves the new key can reopen schema version 16, and keeps CLI/doctor output free of local paths and old/new key material. Focused rotation CLI tests, existing metadata backup/restore CLI tests, full meta-store tests, full CLI tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this metadata key rotation slice; it does not automatically sync backups, prove crash recovery for every mid-rotation failure window, prove plaintext-to-encrypted migration for old pre-release local stores, encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, or clear non-metadata privacy blockers. |
 | S148 | Product plaintext metadata migration-to-SQLCipher slice complete locally | A focused meta-store test first failed because `MetaStore::open_data_dir` could not open an existing plaintext default metadata DB after creating the SQLCipher key. After implementation, the default data-dir open path detects a plaintext SQLite header, exports the plaintext DB to a SQLCipher temp DB with the local metadata key, atomically replaces the default DB, removes the plaintext file from the default path, preserves synthetic document/version rows, and proves plaintext open fails afterward while SQLCipher reopen succeeds. Full local verification then exposed a daemon IPC status-loop regression under SQLCipher WAL; the daemon now keeps a persistent IPC metadata connection, and the late-queued-task test seeds task/scope atomically. Focused migration test, full meta-store tests, full CLI tests, full daemon IPC tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this plaintext metadata migration slice; it does not encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, prove crash recovery for every mid-migration failure window, run migration on real user stores, or clear non-metadata privacy blockers. |
 | S149 | Product vector snapshot encryption slice complete locally | A focused `index-vector` test first failed because `vector.snapshot` was plaintext TSV with vector IDs, document IDs, model IDs, and float values. After implementation, persistent vector snapshots are written as XChaCha20-Poly1305 encrypted local envelopes with an owner-only local key file; raw snapshot files expose only an encrypted header, nonce, and ciphertext while reopen, inspection, HNSW ANN search, model-scoped semantic search, daemon embedding workers, and diagnostics continue to work without path/vector leaks. Focused RED/GREEN test, full `index-vector` tests, CLI embedding tests, daemon embedding worker/job tests, diagnostics test, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this vector snapshot artifact-encryption slice; it does not encrypt full-text snapshots or OCR-cache artifacts, select/license/distribute a real embedding model, prove large-corpus ANN latency/recall, or clear platform/signing blockers. |
+| S150 | Product full-text snapshot encryption slice complete locally | A focused `index-fulltext` test first failed because published full-text snapshots were plaintext Tantivy directories and no `fulltext.snapshot.enc` envelope existed. After implementation, `publish_snapshot` validates the plaintext staging index, archives it, writes an XChaCha20-Poly1305 encrypted local envelope with an owner-only local snapshot key, removes plaintext staging before publication, and opens active/fallback published snapshots through a private temporary decrypt-and-open path. Raw `snapshots/<name>` artifacts expose only the encrypted envelope while CLI search, daemon search, diagnostics, active snapshot fallback, delete/purge, and import/search flows continue to work. Focused RED/GREEN test, full `index-fulltext` tests, related CLI/daemon full-text suites, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this full-text published-snapshot artifact-encryption slice; it does not prove OCR-cache encryption beyond the default SQLCipher metadata path, encrypt transient runtime decrypt directories while a search process is actively using Tantivy, prove large-corpus full-text latency with encrypted snapshot open, or clear platform/signing blockers. |
 
 ## Command Log
+
+### S150
+
+Design target:
+
+- Encrypt published full-text snapshot artifacts at rest so
+  `search-index/snapshots/<name>` no longer contains plaintext Tantivy files or
+  stored resume text.
+- Preserve current local behavior: publish, active open, fallback recovery,
+  CLI search, daemon search IPC, diagnostics, import/search, and delete/purge
+  flows must continue to work.
+- Because the product is not shipped, do not keep plaintext published snapshot
+  compatibility as a ready state; only the separate legacy root layout remains
+  detectable for rebuild compatibility.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext published_snapshot_encrypts_payload_at_rest --locked -- --exact
+```
+
+Output summary:
+
+- The focused test failed because `fulltext.snapshot.enc` did not exist under
+  the published snapshot directory.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext published_snapshot_encrypts_payload_at_rest --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s8_search_cli --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p index-fulltext -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused encrypted full-text snapshot test: exit 0 after implementation; 1
+  test passed.
+- Full `index-fulltext` tests: exit 0; 3 unit tests, 13 integration tests, and
+  doc-tests passed.
+- Related CLI/daemon import, search, diagnostics, delete, and search-IPC suites:
+  exit 0.
+- `cargo fmt --check`, focused clippy, `git diff --check`, public repo guard,
+  and full local verification passed.
+
+Scope note:
+
+- S150 encrypts only published full-text snapshot artifacts at rest. It does
+  not encrypt transient private decrypt directories while Tantivy is actively in
+  use, does not add large-corpus latency evidence for decrypt-and-open, does not
+  independently prove OCR-cache encryption beyond the default SQLCipher metadata
+  path, and does not clear model, benchmark, installer, signing, notarization,
+  or real cross-platform validation blockers.
 
 ### S149
 

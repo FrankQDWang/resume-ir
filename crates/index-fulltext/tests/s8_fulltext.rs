@@ -353,6 +353,47 @@ fn published_snapshot_becomes_active_without_reading_staging_orphans() {
 }
 
 #[test]
+fn published_snapshot_encrypts_payload_at_rest() {
+    let index_root = temp_dir("published-encrypted-snapshot");
+    let snapshot_name = "fulltext-1800003000-1-0-0";
+    let private_payload = "PRIVATE_FULLTEXT_PAYLOAD_SECRET_1800003000";
+
+    publish_snapshot(
+        &index_root,
+        snapshot_name,
+        [IndexDocument {
+            doc_id: "doc_private_fulltext".to_string(),
+            version_id: "ver_private_fulltext".to_string(),
+            file_name: "synthetic-private-fulltext.pdf".to_string(),
+            clean_text: format!("Rust local search {private_payload}"),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: format!("Search evidence {private_payload}"),
+            }],
+            is_deleted: false,
+        }],
+    )
+    .unwrap();
+
+    let snapshot_dir = index_root.join("snapshots").join(snapshot_name);
+    let envelope = fs::read(snapshot_dir.join("fulltext.snapshot.enc")).unwrap();
+    assert!(envelope.starts_with(b"resume-ir-fulltext-snapshot-encrypted-v1\n"));
+    assert!(!snapshot_dir.join("meta.json").exists());
+    let snapshot_bytes = recursive_bytes(&snapshot_dir);
+    assert!(!String::from_utf8_lossy(&snapshot_bytes).contains(private_payload));
+
+    let reopened = FullTextIndex::open_active(&index_root).unwrap().unwrap();
+    let hits = reopened
+        .search(SearchQuery::new("Rust local search").with_limit(5))
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].doc_id, "doc_private_fulltext");
+    assert!(hits[0].snippet.contains("Rust"));
+
+    remove_dir(&index_root);
+}
+
+#[test]
 fn active_snapshot_corruption_falls_back_to_last_good_snapshot() {
     let index_root = temp_dir("snapshot-fallback");
     publish_snapshot(
@@ -381,7 +422,7 @@ fn active_snapshot_corruption_falls_back_to_last_good_snapshot() {
         index_root
             .join("snapshots")
             .join("fulltext-1800002000-1-0-0")
-            .join("meta.json"),
+            .join("fulltext.snapshot.enc"),
         b"not a valid active snapshot",
     )
     .unwrap();
@@ -477,4 +518,18 @@ fn stored_text_dump(index_dir: &Path) -> String {
     }
 
     values.join("\n")
+}
+
+fn recursive_bytes(root: &Path) -> Vec<u8> {
+    let mut output = Vec::new();
+    for entry in fs::read_dir(root).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_dir() {
+            output.extend(recursive_bytes(&path));
+        } else {
+            output.extend(fs::read(path).unwrap());
+        }
+    }
+    output
 }

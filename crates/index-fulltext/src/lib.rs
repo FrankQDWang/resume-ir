@@ -4,14 +4,17 @@ pub fn crate_name() -> &'static str {
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::fs;
-use std::io::ErrorKind;
-use std::path::Path;
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions};
+use std::io::{ErrorKind, Write};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    XChaCha20Poly1305, XNonce,
+};
 use regex::Regex;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
@@ -20,12 +23,21 @@ use tantivy::schema::{
 };
 use tantivy::{Index, IndexReader, IndexWriter, Term};
 
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 const WRITER_HEAP_BYTES: usize = 50_000_000;
 const DEFAULT_LIMIT: usize = 10;
 const MAX_LIMIT: usize = 100;
 const ACTIVE_SNAPSHOT_FILE: &str = "active-snapshot";
 const SNAPSHOTS_DIR: &str = "snapshots";
 const STAGING_DIR: &str = "staging";
+const ENCRYPTED_SNAPSHOT_FILE: &str = "fulltext.snapshot.enc";
+const SNAPSHOT_KEY_FILE: &str = "fulltext.snapshot.key-v1";
+const SNAPSHOT_HEADER_ENCRYPTED_V1: &str = "resume-ir-fulltext-snapshot-encrypted-v1";
+const SNAPSHOT_ARCHIVE_HEADER_V1: &[u8] = b"resume-ir-fulltext-snapshot-archive-v1\n";
+const SNAPSHOT_KEY_LEN: usize = 32;
+const SNAPSHOT_NONCE_LEN: usize = 24;
 const SNAPSHOT_PUBLISH_RETRY_ATTEMPTS: usize = 6;
 const SNAPSHOT_PUBLISH_RETRY_DELAY: Duration = Duration::from_millis(25);
 const INDEX_OPEN_RETRY_ATTEMPTS: usize = 6;
@@ -138,6 +150,7 @@ pub struct FullTextIndex {
     reader: IndexReader,
     writer: Option<Mutex<IndexWriter>>,
     fields: IndexFields,
+    _decrypted_snapshot_dir: Option<PrivateTempDir>,
 }
 
 impl FullTextIndex {
@@ -160,6 +173,7 @@ impl FullTextIndex {
             reader,
             writer: None,
             fields,
+            _decrypted_snapshot_dir: None,
         })
     }
 
@@ -184,15 +198,18 @@ impl FullTextIndex {
             reader,
             writer: Some(Mutex::new(writer)),
             fields,
+            _decrypted_snapshot_dir: None,
         })
     }
 
     pub fn open_active(index_root: &Path) -> Result<Option<Self>> {
-        let Some(target_dir) = active_index_dir(index_root)? else {
-            return Ok(None);
-        };
-
-        Self::open(&target_dir).map(Some)
+        match active_index_dir(index_root)? {
+            Some(ActiveIndexDir::PublishedSnapshot(snapshot_dir)) => {
+                open_published_snapshot(&snapshot_dir).map(Some)
+            }
+            Some(ActiveIndexDir::LegacyRoot(index_dir)) => Self::open(&index_dir).map(Some),
+            None => Ok(None),
+        }
     }
 
     pub fn replace_documents<I>(&self, documents: I) -> Result<()>
@@ -445,8 +462,9 @@ where
     index.replace_documents(documents)?;
     index.commit()?;
     drop(index);
+    validate_plaintext_snapshot_contents(&staging_dir)?;
 
-    publish_staging_snapshot(&staging_dir, &published_dir)?;
+    publish_encrypted_staging_snapshot(index_root, &staging_dir, &published_dir)?;
     let validation = validate_snapshot_contents(&published_dir);
     if validation.is_err() {
         let _ = fs::remove_dir_all(&published_dir);
@@ -457,13 +475,36 @@ where
     Ok(())
 }
 
-fn publish_staging_snapshot(staging_dir: &Path, published_dir: &Path) -> Result<()> {
-    publish_staging_snapshot_with(
-        staging_dir,
+fn publish_encrypted_staging_snapshot(
+    index_root: &Path,
+    staging_dir: &Path,
+    published_dir: &Path,
+) -> Result<()> {
+    let temp_published_dir = private_snapshot_dir_path(published_dir)?;
+    if temp_published_dir.exists() {
+        fs::remove_dir_all(&temp_published_dir).map_err(FullTextError::io)?;
+    }
+    fs::create_dir_all(&temp_published_dir).map_err(FullTextError::io)?;
+    restrict_private_dir_permissions(&temp_published_dir)?;
+
+    let archive = snapshot_archive_bytes(staging_dir)?;
+    write_encrypted_snapshot(
+        &temp_published_dir.join(ENCRYPTED_SNAPSHOT_FILE),
+        &index_root.join(SNAPSHOT_KEY_FILE),
+        &archive,
+    )?;
+    fs::remove_dir_all(staging_dir).map_err(FullTextError::io)?;
+
+    let publish_result = publish_staging_snapshot_with(
+        &temp_published_dir,
         published_dir,
         &FsSnapshotPublisher,
         SNAPSHOT_PUBLISH_RETRY_DELAY,
-    )
+    );
+    if publish_result.is_err() {
+        let _ = fs::remove_dir_all(&temp_published_dir);
+    }
+    publish_result
 }
 
 trait SnapshotPublisher {
@@ -511,11 +552,452 @@ fn is_transient_snapshot_publish_error(error: &std::io::Error) -> bool {
     )
 }
 
-fn validate_snapshot_contents(snapshot_dir: &Path) -> Result<()> {
+fn validate_plaintext_snapshot_contents(snapshot_dir: &Path) -> Result<()> {
     let validation = FullTextIndex::open(snapshot_dir)?;
     validation
         .search(SearchQuery::new("diagnostic").with_limit(1))
         .map(|_| ())
+}
+
+fn validate_snapshot_contents(snapshot_dir: &Path) -> Result<()> {
+    let validation = open_published_snapshot(snapshot_dir)?;
+    validation
+        .search(SearchQuery::new("diagnostic").with_limit(1))
+        .map(|_| ())
+}
+
+fn open_published_snapshot(snapshot_dir: &Path) -> Result<FullTextIndex> {
+    let encrypted_path = snapshot_dir.join(ENCRYPTED_SNAPSHOT_FILE);
+    if !encrypted_path.exists() {
+        return Err(FullTextError::internal(
+            "full-text snapshot encrypted envelope missing",
+        ));
+    }
+
+    let index_root = snapshot_dir
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| FullTextError::internal("full-text snapshot root missing"))?;
+    let archive = read_encrypted_snapshot(&encrypted_path, &index_root.join(SNAPSHOT_KEY_FILE))?;
+    let temp_dir = create_private_temp_dir("fulltext-snapshot")?;
+    extract_snapshot_archive(&archive, temp_dir.path())?;
+    let mut index = FullTextIndex::open(temp_dir.path())?;
+    index._decrypted_snapshot_dir = Some(temp_dir);
+    Ok(index)
+}
+
+fn write_encrypted_snapshot(path: &Path, key_path: &Path, plaintext: &[u8]) -> Result<()> {
+    let key = load_or_create_snapshot_key(key_path)?;
+    let nonce = random_nonce()?;
+    let cipher = XChaCha20Poly1305::new((&key).into());
+    let ciphertext = cipher
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext,
+                aad: SNAPSHOT_HEADER_ENCRYPTED_V1.as_bytes(),
+            },
+        )
+        .map_err(|_| FullTextError::internal("full-text snapshot encryption failed"))?;
+
+    let mut file = create_private_file(path)?;
+    writeln!(file, "{SNAPSHOT_HEADER_ENCRYPTED_V1}").map_err(FullTextError::io)?;
+    writeln!(file, "{}", encode_hex(&nonce)).map_err(FullTextError::io)?;
+    file.write_all(&ciphertext).map_err(FullTextError::io)?;
+    file.sync_all().map_err(FullTextError::io)?;
+    Ok(())
+}
+
+fn read_encrypted_snapshot(path: &Path, key_path: &Path) -> Result<Vec<u8>> {
+    let envelope = fs::read(path).map_err(FullTextError::io)?;
+    let first_newline = envelope
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .ok_or_else(|| FullTextError::internal("full-text snapshot envelope corrupt"))?;
+    let second_newline = envelope[first_newline + 1..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|offset| first_newline + 1 + offset)
+        .ok_or_else(|| FullTextError::internal("full-text snapshot envelope corrupt"))?;
+    let header = std::str::from_utf8(&envelope[..first_newline])
+        .map_err(|_| FullTextError::internal("full-text snapshot envelope corrupt"))?;
+    if header != SNAPSHOT_HEADER_ENCRYPTED_V1 {
+        return Err(FullTextError::internal(
+            "full-text snapshot encrypted header invalid",
+        ));
+    }
+    let nonce_hex = std::str::from_utf8(&envelope[first_newline + 1..second_newline])
+        .map_err(|_| FullTextError::internal("full-text snapshot envelope corrupt"))?;
+    let nonce = decode_fixed_hex::<SNAPSHOT_NONCE_LEN>(nonce_hex)?;
+    let ciphertext = &envelope[second_newline + 1..];
+    let key = read_snapshot_key(key_path)?;
+    let cipher = XChaCha20Poly1305::new((&key).into());
+    cipher
+        .decrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: ciphertext,
+                aad: SNAPSHOT_HEADER_ENCRYPTED_V1.as_bytes(),
+            },
+        )
+        .map_err(|_| FullTextError::internal("full-text snapshot decryption failed"))
+}
+
+fn snapshot_archive_bytes(root: &Path) -> Result<Vec<u8>> {
+    let mut entries = Vec::new();
+    collect_snapshot_archive_entries(root, root, &mut entries)?;
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let mut output = Vec::new();
+    output.extend_from_slice(SNAPSHOT_ARCHIVE_HEADER_V1);
+    output.extend_from_slice(
+        &u32::try_from(entries.len())
+            .map_err(|_| FullTextError::internal("full-text snapshot archive too large"))?
+            .to_be_bytes(),
+    );
+    for (relative_path, bytes) in entries {
+        let path_bytes = relative_path.as_bytes();
+        output.extend_from_slice(
+            &u32::try_from(path_bytes.len())
+                .map_err(|_| FullTextError::internal("full-text snapshot path too large"))?
+                .to_be_bytes(),
+        );
+        output.extend_from_slice(path_bytes);
+        output.extend_from_slice(
+            &u64::try_from(bytes.len())
+                .map_err(|_| FullTextError::internal("full-text snapshot file too large"))?
+                .to_be_bytes(),
+        );
+        output.extend_from_slice(&bytes);
+    }
+    Ok(output)
+}
+
+fn collect_snapshot_archive_entries(
+    root: &Path,
+    current: &Path,
+    entries: &mut Vec<(String, Vec<u8>)>,
+) -> Result<()> {
+    for entry in fs::read_dir(current).map_err(FullTextError::io)? {
+        let entry = entry.map_err(FullTextError::io)?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(FullTextError::io)?;
+        if file_type.is_dir() {
+            collect_snapshot_archive_entries(root, &path, entries)?;
+        } else if file_type.is_file() {
+            let relative_path = archive_relative_path(root, &path)?;
+            let bytes = fs::read(&path).map_err(FullTextError::io)?;
+            entries.push((relative_path, bytes));
+        }
+    }
+    Ok(())
+}
+
+fn extract_snapshot_archive(archive: &[u8], destination: &Path) -> Result<()> {
+    let mut cursor = Cursor::new(archive);
+    cursor.expect_prefix(SNAPSHOT_ARCHIVE_HEADER_V1)?;
+    let entry_count = cursor.read_u32()?;
+    for _ in 0..entry_count {
+        let path_len = cursor.read_u32()? as usize;
+        let path_bytes = cursor.read_bytes(path_len)?;
+        let relative_path = std::str::from_utf8(path_bytes)
+            .map_err(|_| FullTextError::internal("full-text snapshot archive path corrupt"))?;
+        let output_path = archive_destination_path(destination, relative_path)?;
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent).map_err(FullTextError::io)?;
+            restrict_private_dir_permissions(parent)?;
+        }
+        let file_len = cursor.read_u64()?;
+        let file_len = usize::try_from(file_len)
+            .map_err(|_| FullTextError::internal("full-text snapshot archive file too large"))?;
+        let file_bytes = cursor.read_bytes(file_len)?;
+        write_private_file(&output_path, file_bytes)?;
+    }
+    if !cursor.is_finished() {
+        return Err(FullTextError::internal(
+            "full-text snapshot archive trailing bytes",
+        ));
+    }
+    Ok(())
+}
+
+struct Cursor<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, position: 0 }
+    }
+
+    fn expect_prefix(&mut self, prefix: &[u8]) -> Result<()> {
+        if self.bytes.get(self.position..self.position + prefix.len()) != Some(prefix) {
+            return Err(FullTextError::internal(
+                "full-text snapshot archive header corrupt",
+            ));
+        }
+        self.position += prefix.len();
+        Ok(())
+    }
+
+    fn read_u32(&mut self) -> Result<u32> {
+        let bytes = self.read_bytes(4)?;
+        Ok(u32::from_be_bytes(bytes.try_into().map_err(|_| {
+            FullTextError::internal("full-text snapshot archive corrupt")
+        })?))
+    }
+
+    fn read_u64(&mut self) -> Result<u64> {
+        let bytes = self.read_bytes(8)?;
+        Ok(u64::from_be_bytes(bytes.try_into().map_err(|_| {
+            FullTextError::internal("full-text snapshot archive corrupt")
+        })?))
+    }
+
+    fn read_bytes(&mut self, len: usize) -> Result<&'a [u8]> {
+        let end = self
+            .position
+            .checked_add(len)
+            .ok_or_else(|| FullTextError::internal("full-text snapshot archive corrupt"))?;
+        let bytes = self
+            .bytes
+            .get(self.position..end)
+            .ok_or_else(|| FullTextError::internal("full-text snapshot archive truncated"))?;
+        self.position = end;
+        Ok(bytes)
+    }
+
+    fn is_finished(&self) -> bool {
+        self.position == self.bytes.len()
+    }
+}
+
+fn archive_relative_path(root: &Path, path: &Path) -> Result<String> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| FullTextError::internal("full-text snapshot archive path invalid"))?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(value) => {
+                let value = value.to_str().ok_or_else(|| {
+                    FullTextError::internal("full-text snapshot archive path invalid")
+                })?;
+                if value.is_empty() || value.contains('/') || value.contains('\\') {
+                    return Err(FullTextError::internal(
+                        "full-text snapshot archive path invalid",
+                    ));
+                }
+                parts.push(value.to_string());
+            }
+            _ => {
+                return Err(FullTextError::internal(
+                    "full-text snapshot archive path invalid",
+                ));
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Err(FullTextError::internal(
+            "full-text snapshot archive path invalid",
+        ));
+    }
+    Ok(parts.join("/"))
+}
+
+fn archive_destination_path(root: &Path, relative_path: &str) -> Result<PathBuf> {
+    if relative_path.is_empty()
+        || relative_path.starts_with('/')
+        || relative_path.starts_with('\\')
+        || relative_path.contains("..")
+        || relative_path.contains('\\')
+    {
+        return Err(FullTextError::internal(
+            "full-text snapshot archive path invalid",
+        ));
+    }
+    let mut output = root.to_path_buf();
+    for part in relative_path.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            return Err(FullTextError::internal(
+                "full-text snapshot archive path invalid",
+            ));
+        }
+        output.push(part);
+    }
+    Ok(output)
+}
+
+fn load_or_create_snapshot_key(key_path: &Path) -> Result<[u8; SNAPSHOT_KEY_LEN]> {
+    match read_snapshot_key(key_path) {
+        Ok(key) => Ok(key),
+        Err(FullTextError::Io { .. }) if !key_path.exists() => {
+            let key = random_key()?;
+            write_private_file(key_path, encode_hex(&key).as_bytes())?;
+            Ok(key)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn read_snapshot_key(key_path: &Path) -> Result<[u8; SNAPSHOT_KEY_LEN]> {
+    let value = fs::read_to_string(key_path).map_err(FullTextError::io)?;
+    decode_fixed_hex::<SNAPSHOT_KEY_LEN>(value.trim())
+}
+
+fn random_key() -> Result<[u8; SNAPSHOT_KEY_LEN]> {
+    let mut key = [0_u8; SNAPSHOT_KEY_LEN];
+    getrandom::getrandom(&mut key)
+        .map_err(|_| FullTextError::internal("full-text snapshot key random failed"))?;
+    Ok(key)
+}
+
+fn random_nonce() -> Result<[u8; SNAPSHOT_NONCE_LEN]> {
+    let mut nonce = [0_u8; SNAPSHOT_NONCE_LEN];
+    getrandom::getrandom(&mut nonce)
+        .map_err(|_| FullTextError::internal("full-text snapshot nonce random failed"))?;
+    Ok(nonce)
+}
+
+fn private_snapshot_dir_path(path: &Path) -> Result<PathBuf> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| FullTextError::internal("full-text snapshot parent missing"))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| FullTextError::internal("full-text snapshot path invalid"))?;
+    let mut suffix = [0_u8; 8];
+    getrandom::getrandom(&mut suffix)
+        .map_err(|_| FullTextError::internal("full-text snapshot random failed"))?;
+    Ok(parent.join(format!(".{file_name}.tmp-{}", encode_hex(&suffix))))
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(FullTextError::io)?;
+        restrict_private_dir_permissions(parent)?;
+    }
+    let mut file = create_private_file(path)?;
+    file.write_all(bytes).map_err(FullTextError::io)?;
+    file.sync_all().map_err(FullTextError::io)?;
+    restrict_private_file_permissions(path)?;
+    Ok(())
+}
+
+fn create_private_file(path: &Path) -> Result<File> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(FullTextError::io)?;
+        restrict_private_dir_permissions(parent)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let file = options.open(path).map_err(FullTextError::io)?;
+    restrict_private_file_permissions(path)?;
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn restrict_private_file_permissions(path: &Path) -> Result<()> {
+    let mut permissions = fs::metadata(path).map_err(FullTextError::io)?.permissions();
+    permissions.set_mode(0o600);
+    fs::set_permissions(path, permissions).map_err(FullTextError::io)
+}
+
+#[cfg(not(unix))]
+fn restrict_private_file_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn restrict_private_dir_permissions(path: &Path) -> Result<()> {
+    let mut permissions = fs::metadata(path).map_err(FullTextError::io)?.permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(path, permissions).map_err(FullTextError::io)
+}
+
+#[cfg(not(unix))]
+fn restrict_private_dir_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+struct PrivateTempDir {
+    path: PathBuf,
+}
+
+impl PrivateTempDir {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for PrivateTempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn create_private_temp_dir(label: &str) -> Result<PrivateTempDir> {
+    for _ in 0..32 {
+        let mut suffix = [0_u8; 8];
+        getrandom::getrandom(&mut suffix)
+            .map_err(|_| FullTextError::internal("full-text temp random failed"))?;
+        let path = std::env::temp_dir().join(format!(
+            "resume-ir-{label}-{}-{}",
+            std::process::id(),
+            encode_hex(&suffix)
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => {
+                restrict_private_dir_permissions(&path)?;
+                return Ok(PrivateTempDir { path });
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(FullTextError::io(error)),
+        }
+    }
+
+    Err(FullTextError::internal(
+        "full-text private temp directory allocation failed",
+    ))
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
+}
+
+fn decode_fixed_hex<const N: usize>(value: &str) -> Result<[u8; N]> {
+    let bytes = decode_hex(value)?;
+    bytes
+        .try_into()
+        .map_err(|_| FullTextError::internal("full-text snapshot hex length invalid"))
+}
+
+fn decode_hex(value: &str) -> Result<Vec<u8>> {
+    if !value.len().is_multiple_of(2) {
+        return Err(FullTextError::internal(
+            "full-text snapshot hex length invalid",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    let mut index = 0;
+    while index < value.len() {
+        let byte = u8::from_str_radix(&value[index..index + 2], 16)
+            .map_err(|_| FullTextError::internal("full-text snapshot hex invalid"))?;
+        bytes.push(byte);
+        index += 2;
+    }
+    Ok(bytes)
 }
 
 pub fn inspect_snapshot_root(index_root: &Path) -> Result<SnapshotRootInspection> {
@@ -523,7 +1005,7 @@ pub fn inspect_snapshot_root(index_root: &Path) -> Result<SnapshotRootInspection
     match read_active_snapshot_pointer(index_root)? {
         ActiveSnapshotPointer::Valid(snapshot_name) => {
             let snapshot_dir = index_root.join(SNAPSHOTS_DIR).join(&snapshot_name);
-            if snapshot_dir.join("meta.json").exists() && snapshot_is_usable(&snapshot_dir) {
+            if snapshot_exists(&snapshot_dir) && snapshot_is_usable(&snapshot_dir) {
                 return Ok(SnapshotRootInspection {
                     state: SnapshotRootState::Ready,
                     read_target: Some(SnapshotReadTarget::PublishedSnapshot),
@@ -544,7 +1026,7 @@ pub fn inspect_snapshot_root(index_root: &Path) -> Result<SnapshotRootInspection
             }
 
             return Ok(SnapshotRootInspection {
-                state: if snapshot_dir.join("meta.json").exists() {
+                state: if snapshot_exists(&snapshot_dir) {
                     SnapshotRootState::Corrupt
                 } else {
                     SnapshotRootState::ActiveMissing
@@ -744,7 +1226,12 @@ impl SnapshotReadTarget {
     }
 }
 
-fn active_index_dir(index_root: &Path) -> Result<Option<PathBuf>> {
+enum ActiveIndexDir {
+    PublishedSnapshot(PathBuf),
+    LegacyRoot(PathBuf),
+}
+
+fn active_index_dir(index_root: &Path) -> Result<Option<ActiveIndexDir>> {
     let inspection = inspect_snapshot_root(index_root)?;
     match inspection.state() {
         SnapshotRootState::Ready | SnapshotRootState::Recovered => match inspection.read_target() {
@@ -753,9 +1240,13 @@ fn active_index_dir(index_root: &Path) -> Result<Option<PathBuf>> {
                     .fallback_snapshot()
                     .or_else(|| inspection.active_snapshot())
                     .ok_or_else(|| FullTextError::internal("full-text snapshot pointer missing"))?;
-                Ok(Some(index_root.join(SNAPSHOTS_DIR).join(snapshot_name)))
+                Ok(Some(ActiveIndexDir::PublishedSnapshot(
+                    index_root.join(SNAPSHOTS_DIR).join(snapshot_name),
+                )))
             }
-            Some(SnapshotReadTarget::LegacyRoot) => Ok(Some(index_root.to_path_buf())),
+            Some(SnapshotReadTarget::LegacyRoot) => {
+                Ok(Some(ActiveIndexDir::LegacyRoot(index_root.to_path_buf())))
+            }
             None => Err(FullTextError::internal("full-text snapshot target missing")),
         },
         SnapshotRootState::Missing => Ok(None),
@@ -867,11 +1358,22 @@ fn snapshot_is_usable(snapshot_dir: &Path) -> bool {
     validate_snapshot_contents(snapshot_dir).is_ok()
 }
 
+fn snapshot_exists(snapshot_dir: &Path) -> bool {
+    snapshot_dir.join(ENCRYPTED_SNAPSHOT_FILE).exists() || snapshot_dir.join("meta.json").exists()
+}
+
 fn snapshot_metadata_looks_valid(snapshot_dir: &Path) -> bool {
-    let Ok(meta_json) = fs::read_to_string(snapshot_dir.join("meta.json")) else {
+    encrypted_snapshot_header_looks_valid(snapshot_dir)
+}
+
+fn encrypted_snapshot_header_looks_valid(snapshot_dir: &Path) -> bool {
+    let Ok(envelope) = fs::read(snapshot_dir.join(ENCRYPTED_SNAPSHOT_FILE)) else {
         return false;
     };
-    meta_json.trim_start().starts_with('{')
+    envelope
+        .split(|byte| *byte == b'\n')
+        .next()
+        .is_some_and(|line| line == SNAPSHOT_HEADER_ENCRYPTED_V1.as_bytes())
 }
 
 fn validate_snapshot_name(snapshot_name: &str) -> Result<()> {
