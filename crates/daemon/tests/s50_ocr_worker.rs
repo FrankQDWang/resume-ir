@@ -60,7 +60,7 @@ printf 'OCRS50DaemonOnceToken worker bytes=%s page=%s\n' "$input_size" "$RESUME_
     assert!(!stdout.contains(path_str(&private_document_path)));
     assert!(!stdout.contains(path_str(&command)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
@@ -161,7 +161,7 @@ esac
     assert!(!stdout.contains(path_str(&command)));
     assert!(!stdout.contains(path_str(&render_command)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
@@ -246,7 +246,7 @@ exit 31
     assert!(!stdout.contains(path_str(&private_document_path)));
     assert!(!stdout.contains(path_str(&command)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrRequired);
@@ -336,7 +336,7 @@ printf 'S91DaemonPdftoppmRenderedToken rendered daemon page text\n'
     assert!(!stdout.contains(path_str(&command)));
     assert!(!stdout.contains(path_str(&pdftoppm)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
@@ -440,7 +440,7 @@ fn daemon_ocr_worker_once_uses_tesseract_for_rendered_image_before_indexing() {
     assert!(!stdout.contains(path_str(&tesseract)));
     assert!(!stdout.contains(path_str(&render_command)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
@@ -525,7 +525,7 @@ exit 17
     assert!(!stdout.contains(path_str(&private_document_path)));
     assert!(!stdout.contains(path_str(&command)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrRequired);
@@ -604,7 +604,7 @@ exit 17
     assert!(!stdout.contains(path_str(&private_document_path)));
     assert!(!stdout.contains(path_str(&tesseract)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrRequired);
@@ -637,7 +637,7 @@ fn daemon_ocr_worker_once_respects_pause_without_claiming_or_invoking_command() 
     let data_dir = temp_dir("ocr-worker-paused-data");
     let private_document_path = seed_scanned_document(&data_dir);
     let missing_command = data_dir.join("private-bin").join("missing-ocr-command");
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .set_worker_task_paused(
@@ -678,7 +678,7 @@ fn daemon_ocr_worker_once_respects_pause_without_claiming_or_invoking_command() 
     assert!(!stdout.contains(path_str(&private_document_path)));
     assert!(!stdout.contains(path_str(&missing_command)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrRequired);
@@ -762,7 +762,7 @@ fn seed_scanned_document_with_bytes(data_dir: &Path, bytes: &[u8]) -> PathBuf {
     fs::create_dir_all(&private_root).unwrap();
     let document_path = private_root.join("synthetic-scanned-resume.pdf");
     fs::write(&document_path, bytes).unwrap();
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let doc_id = DocumentId::from_non_secret_parts(&["s50", "scanned-document"]);
     store

@@ -75,7 +75,7 @@ fn foreground_once_worker_processes_queued_import_task_from_persistent_scope() {
     assert!(!stdout.contains(path_str(&fixture_root)));
     assert!(!stdout.contains(path_str(&canonical_fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
@@ -243,7 +243,7 @@ fn foreground_once_worker_skips_cancelled_import_task() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .cancel_import_task(&task_id, UnixTimestamp::from_unix_seconds(1_700_000_010))
@@ -333,7 +333,7 @@ fn foreground_once_worker_continues_after_retryable_import_failure() {
     assert!(!stdout.contains(path_str(&missing_root)));
     assert!(!stdout.contains(path_str(&canonical_fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let failed_task = store.import_task_by_id(&failed_task_id).unwrap().unwrap();
     let completed_task = store
@@ -394,7 +394,7 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
     assert!(!output.stdout.contains(path_str(&fixture_root)));
     assert!(!output.stdout.contains(path_str(&canonical_fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
@@ -460,7 +460,7 @@ fn foreground_import_scheduler_rescans_completed_root_without_path_leak() {
     assert!(!stdout.contains(path_str(&canonical_fixture_root)));
     assert!(!search_fulltext(&data_dir, "kubernetes").is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     assert_eq!(store.status_summary().unwrap().searchable_documents, 2);
 
@@ -505,7 +505,7 @@ fn foreground_import_scheduler_backs_off_retryable_failures() {
     assert!(!output.stdout.contains(path_str(&data_dir)));
     assert!(!output.stdout.contains(path_str(&missing_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::FailedRetryable);
@@ -524,7 +524,7 @@ fn foreground_import_scheduler_recovers_stale_running_import_task() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .update_import_task_status(
@@ -562,7 +562,7 @@ fn foreground_import_scheduler_recovers_stale_running_import_task() {
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&canonical_fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::FailedRetryable);
@@ -643,7 +643,7 @@ fn seed_queued_import_task(
     canonical_root: &Path,
     queued_at_seconds: i64,
 ) -> ImportTaskId {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let now = UnixTimestamp::from_unix_seconds(queued_at_seconds);
     let task_id = ImportTaskId::from_non_secret_parts(&["s43", label]);
@@ -761,7 +761,7 @@ fn wait_until_metadata_store_ready(child: &mut Child, data_dir: &Path) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         if metadata_store.exists()
-            && MetaStore::open(&metadata_store)
+            && MetaStore::open_data_dir(data_dir)
                 .and_then(|store| store.status_summary().map(|_| ()))
                 .is_ok()
         {

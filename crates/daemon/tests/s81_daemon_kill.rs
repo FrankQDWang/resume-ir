@@ -57,7 +57,7 @@ fn wait_until_metadata_store_ready(child: &mut Child, data_dir: &Path) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         if metadata_store.exists()
-            && MetaStore::open(&metadata_store)
+            && MetaStore::open_data_dir(data_dir)
                 .and_then(|store| store.status_summary().map(|_| ()))
                 .is_ok()
         {

@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::fmt;
-use std::path::Path;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -28,6 +30,10 @@ const SCHEMA_VERSION_V13: u32 = 13;
 const SCHEMA_VERSION_V14: u32 = 14;
 const SCHEMA_VERSION_V15: u32 = 15;
 const SCHEMA_VERSION_V16: u32 = 16;
+const METADATA_STORE_FILE: &str = "metadata.sqlite3";
+const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
+const METADATA_ENCRYPTION_KEY_HEX_LEN: usize = METADATA_ENCRYPTION_KEY_LEN * 2;
+const METADATA_ENCRYPTION_KEY_PATH: &[&str] = &["metadata-secrets", "metadata-sqlcipher-key-v1"];
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -71,8 +77,20 @@ pub fn crate_name() -> &'static str {
 
 pub type Result<T> = std::result::Result<T, MetaStoreError>;
 
+pub fn metadata_store_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(METADATA_STORE_FILE)
+}
+
+pub fn metadata_encryption_key_path(data_dir: &Path) -> PathBuf {
+    METADATA_ENCRYPTION_KEY_PATH
+        .iter()
+        .fold(data_dir.to_path_buf(), |path, component| {
+            path.join(component)
+        })
+}
+
 fn validate_metadata_encryption_key(key: &[u8]) -> Result<()> {
-    if key.len() != 32 {
+    if key.len() != METADATA_ENCRYPTION_KEY_LEN {
         return Err(MetaStoreError::invalid_value("metadata.encryption_key"));
     }
 
@@ -104,12 +122,107 @@ fn encode_hex(bytes: &[u8]) -> String {
     output
 }
 
+fn decode_metadata_key_hex(value: &str) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
+    if value.len() != METADATA_ENCRYPTION_KEY_HEX_LEN {
+        return Err(MetaStoreError::invalid_value("metadata.encryption_key"));
+    }
+
+    let mut key = [0_u8; METADATA_ENCRYPTION_KEY_LEN];
+    for (index, slot) in key.iter_mut().enumerate() {
+        let start = index * 2;
+        *slot = u8::from_str_radix(&value[start..start + 2], 16)
+            .map_err(|_| MetaStoreError::invalid_value("metadata.encryption_key"))?;
+    }
+
+    Ok(key)
+}
+
+fn load_or_create_metadata_encryption_key(
+    data_dir: &Path,
+) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
+    let key_path = metadata_encryption_key_path(data_dir);
+    if key_path.exists() {
+        return read_metadata_encryption_key(&key_path);
+    }
+
+    let parent = key_path
+        .parent()
+        .ok_or_else(|| MetaStoreError::invalid_value("metadata.encryption_key_path"))?;
+    fs::create_dir_all(parent).map_err(MetaStoreError::io_storage)?;
+
+    let mut key = [0_u8; METADATA_ENCRYPTION_KEY_LEN];
+    getrandom::getrandom(&mut key).map_err(|_| MetaStoreError::random())?;
+    match write_new_private_file(&key_path, encode_hex(&key).as_bytes()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            return read_metadata_encryption_key(&key_path);
+        }
+        Err(error) => return Err(MetaStoreError::io_storage(error)),
+    }
+    restrict_private_file_permissions(&key_path)?;
+
+    Ok(key)
+}
+
+fn read_metadata_encryption_key(path: &Path) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
+    restrict_private_file_permissions(path)?;
+    let key_hex = fs::read_to_string(path).map_err(MetaStoreError::io_storage)?;
+    decode_metadata_key_hex(key_hex.trim())
+}
+
+fn write_new_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true).mode(0o600);
+        let mut file = options.open(path)?;
+        file.write_all(bytes)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        use std::io::Write;
+
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        file.write_all(bytes)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        Ok(())
+    }
+}
+
+fn restrict_private_file_permissions(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(MetaStoreError::io_storage)?;
+    }
+
+    Ok(())
+}
+
 pub struct MetaStore {
     connection: RefCell<Connection>,
     metadata_encryption_state: MetadataEncryptionState,
 }
 
 impl MetaStore {
+    pub fn open_data_dir(data_dir: &Path) -> Result<Self> {
+        fs::create_dir_all(data_dir).map_err(MetaStoreError::io_storage)?;
+        let key = load_or_create_metadata_encryption_key(data_dir)?;
+        Self::open_encrypted(metadata_store_path(data_dir), &key)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path).map_err(MetaStoreError::storage)?;
         Self::from_connection(connection, true, MetadataEncryptionState::Plaintext)
@@ -3364,6 +3477,18 @@ pub struct MetaStoreError {
 
 impl MetaStoreError {
     fn storage(_error: rusqlite::Error) -> Self {
+        Self {
+            kind: MetaStoreErrorKind::Storage,
+        }
+    }
+
+    fn io_storage(_error: io::Error) -> Self {
+        Self {
+            kind: MetaStoreErrorKind::Storage,
+        }
+    }
+
+    fn random() -> Self {
         Self {
             kind: MetaStoreErrorKind::Storage,
         }

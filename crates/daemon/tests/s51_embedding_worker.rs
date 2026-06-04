@@ -143,7 +143,7 @@ fn seed_searchable_resume_versions(data_dir: &Path) -> PathBuf {
     let now = UnixTimestamp::from_unix_seconds(1_800_051_000);
     let private_root = data_dir.join("private-resumes");
     fs::create_dir_all(&private_root).unwrap();
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
 
     for index in 0..2 {

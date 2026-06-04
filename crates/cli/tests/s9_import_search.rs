@@ -646,7 +646,7 @@ fn import_txt_resume_builds_searchable_index_without_path_leakage() {
     assert!(!search_stdout.contains(path_str(&private_root)));
     assert!(!search_stdout.contains(path_str(&canonical_private_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let document = store
         .visible_documents()
@@ -757,7 +757,7 @@ fn import_enqueue_persists_task_without_running_foreground_import() {
     assert!(!stdout.contains(path_str(&fixture_root)));
     assert!(!stdout.contains(path_str(&canonical_fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let summary = store.status_summary().unwrap();
     assert_eq!(summary.import_tasks_queued, 1);
@@ -949,7 +949,7 @@ fn explicit_root_import_without_max_files_has_no_default_scan_budget() {
     assert!(!import_stdout.contains(path_str(&private_root)));
     assert!(!import_stdout.contains(path_str(&canonical_private_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scope = store
         .latest_import_scan_scope()
@@ -1028,7 +1028,7 @@ fn local_discovery_root_preset_uses_discovery_profile_without_path_leak() {
     assert!(search_stdout.contains("synthetic-java-platform.pdf"));
     assert!(!search_stdout.contains("synthetic-java-engineer.docx"));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scope = store
         .latest_import_scan_scope()
@@ -1103,7 +1103,7 @@ fn local_discovery_root_preset_allows_explicit_file_budget_override_without_path
     assert!(!import_stdout.contains(path_str(&local_root)));
     assert!(!import_stdout.contains(path_str(&canonical_local_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scope = store
         .latest_import_scan_scope()
@@ -1169,7 +1169,7 @@ fn import_max_files_limits_scan_and_persists_budget_state_without_path_leak() {
     assert!(!import_stdout.contains(path_str(&private_root)));
     assert!(!import_stdout.contains(path_str(&canonical_private_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scope = store
         .latest_import_scan_scope()
@@ -1293,7 +1293,7 @@ fn import_persists_scan_errors_without_path_leak() {
     assert!(status_stdout.contains("import scan errors: 1"));
     assert!(!status_stdout.contains(path_str(&private_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scope = store
         .latest_import_scan_scope()
@@ -1345,7 +1345,7 @@ fn import_reuses_recoverable_task_after_restart() {
     assert!(!import_stdout.contains(path_str(&fixture_root)));
     assert!(!import_stdout.contains(path_str(&canonical_fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
@@ -1385,7 +1385,7 @@ fn import_does_not_take_over_live_running_task() {
     assert!(stderr.contains("import task is already running"));
     assert!(!stderr.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Running);
@@ -1418,7 +1418,7 @@ fn discovery_import_does_not_take_over_live_running_task_for_same_root() {
     assert!(stderr.contains("import task is already running"));
     assert!(!stderr.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Running);
@@ -1453,7 +1453,7 @@ fn multi_root_import_does_not_take_over_live_running_task_for_any_root() {
     assert!(!stderr.contains(path_str(&fixture_root)));
     assert!(!stderr.contains(path_str(&second_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Running);
@@ -1499,7 +1499,7 @@ fn multi_root_import_reuses_recoverable_task_for_each_root() {
     assert!(!import_stdout.contains(path_str(&canonical_fixture_root)));
     assert!(!import_stdout.contains(path_str(&canonical_second_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
@@ -1510,7 +1510,7 @@ fn multi_root_import_reuses_recoverable_task_for_each_root() {
 }
 
 fn seed_retryable_import_task(data_dir: &Path, fixture_root: &Path) -> ImportTaskId {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let queued_at = UnixTimestamp::from_unix_seconds(1_700_000_000);
     let started_at = UnixTimestamp::from_unix_seconds(1_700_000_010);
@@ -1532,7 +1532,7 @@ fn seed_retryable_import_task(data_dir: &Path, fixture_root: &Path) -> ImportTas
 }
 
 fn seed_live_running_import_task(data_dir: &Path, fixture_root: &Path) -> ImportTaskId {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let canonical_root = fs::canonicalize(fixture_root).unwrap();
     store

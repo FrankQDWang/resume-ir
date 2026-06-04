@@ -36,7 +36,7 @@ fn import_scanned_pdf_creates_durable_ocr_document_job_without_searchable_text()
     assert!(import_stdout.contains("ocr jobs queued: 1"));
     assert!(!import_stdout.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = store
         .visible_documents()
@@ -88,7 +88,7 @@ fn repeated_import_does_not_duplicate_existing_ocr_document_jobs() {
     import_fixtures(&data_dir, &fixture_root);
     import_fixtures(&data_dir, &fixture_root);
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = store
         .visible_documents()
@@ -127,7 +127,7 @@ fn ocr_worker_without_command_reports_blocked_and_leaves_job_queued() {
     assert!(!stderr.contains(path_str(&data_dir)));
     assert!(!stderr.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let retryable = store.retryable_jobs().unwrap();
     assert_eq!(retryable.len(), 1);
@@ -185,7 +185,7 @@ printf 'OCRS33PauseResumeToken worker text\n'
     assert!(!paused_stdout.contains(path_str(&fixture_root)));
 
     {
-        let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
         store.run_migrations().unwrap();
         assert_eq!(scanned_document(&store).status, DocumentStatus::OcrRequired);
         let retryable = store.retryable_jobs().unwrap();
@@ -226,7 +226,7 @@ printf 'OCRS33PauseResumeToken worker text\n'
     assert!(resumed_stdout.contains("documents processed: 1"));
     assert!(!resumed_stdout.contains("OCRS33PauseResumeToken"));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     assert_eq!(scanned_document(&store).status, DocumentStatus::Searchable);
     assert!(store.retryable_jobs().unwrap().is_empty());
@@ -280,7 +280,7 @@ printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
@@ -400,7 +400,7 @@ esac
     assert!(!stdout.contains(path_str(&command)));
     assert!(!stdout.contains(path_str(&render_command)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
@@ -500,7 +500,7 @@ exit 31
     assert!(!stderr.contains(path_str(&fixture_root)));
     assert!(!stderr.contains(path_str(&command)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrRequired);
@@ -667,7 +667,7 @@ printf 'S91PdftoppmRenderedToken rendered page text\n'
     assert!(!stdout.contains(path_str(&command)));
     assert!(!stdout.contains(path_str(&pdftoppm)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
@@ -782,7 +782,7 @@ fn ocr_worker_uses_tesseract_for_rendered_image_before_indexing() {
     assert!(!stdout.contains(path_str(&tesseract)));
     assert!(!stdout.contains(path_str(&render_command)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
@@ -879,7 +879,7 @@ exit 17
     assert!(!stderr.contains(path_str(&fixture_root)));
     assert!(!stderr.contains(path_str(&command)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrRequired);
@@ -971,7 +971,7 @@ exit 17
     assert!(!stderr.contains(path_str(&fixture_root)));
     assert!(!stderr.contains(path_str(&tesseract)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrRequired);
@@ -1062,7 +1062,7 @@ fn ocr_worker_indexes_succeeded_cache_hit_without_invoking_command() {
     import_fixtures(&data_dir, &fixture_root);
 
     {
-        let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
         store.run_migrations().unwrap();
         let scanned = scanned_document(&store);
         assert_eq!(scanned.status, DocumentStatus::OcrRequired);
@@ -1121,7 +1121,7 @@ exit 42
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     assert_eq!(scanned_document(&store).status, DocumentStatus::Searchable);
     assert!(store.retryable_jobs().unwrap().is_empty());
@@ -1194,7 +1194,7 @@ printf '    \n'
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrDone);
@@ -1327,7 +1327,7 @@ fn seed_ocr_pdf_document_with_bytes(
     std::fs::create_dir_all(&private_root).unwrap();
     let document_path = private_root.join("synthetic-scanned-resume.pdf");
     std::fs::write(&document_path, bytes).unwrap();
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let doc_id = DocumentId::from_non_secret_parts(&["s15", content_hash]);
     store

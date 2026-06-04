@@ -268,7 +268,7 @@ fn default_search_hydrates_metadata_to_hide_deleted_stale_index_hits() {
     assert!(before.contains("results: 2"));
     let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .mark_document_deleted(
@@ -319,7 +319,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
 
     let deleted_document_id = DocumentId::from_str(&deleted_doc_id).unwrap();
     let (ocr_cache_key, ocr_job_id) = {
-        let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
         store.run_migrations().unwrap();
         let deleted_document = store
             .document_by_id(&deleted_document_id)
@@ -386,7 +386,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     assert!(!stdout.contains("PRIVATE_PURGE_OCR_TEXT"));
     assert!(!stdout.contains("PRIVATE"));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     assert!(store
         .document_by_id(&DocumentId::from_str(&deleted_doc_id).unwrap())

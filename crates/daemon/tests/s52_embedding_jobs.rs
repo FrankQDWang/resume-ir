@@ -43,7 +43,7 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.5,0
 
     assert_vector_snapshot(&data_dir, 4, 2);
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     for (document_id, version_id) in &versions {
         let job_id = embedding_job_id(document_id, version_id, "fixture-local-model", 4);
@@ -100,7 +100,7 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.5,0
 
     assert_vector_snapshot(&data_dir, 4, 3);
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let job_id = embedding_job_id(&document_id, &version_id, "fixture-local-model", 4);
     let job = store
@@ -248,7 +248,7 @@ fn seed_searchable_resume_versions(
     let now = UnixTimestamp::from_unix_seconds(1_800_052_000);
     let private_root = data_dir.join("private-resumes");
     fs::create_dir_all(&private_root).unwrap();
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let mut versions = Vec::new();
 
@@ -307,7 +307,7 @@ fn seed_sectionized_resume_version(data_dir: &Path) -> (PathBuf, DocumentId, Res
     let now = UnixTimestamp::from_unix_seconds(1_800_052_100);
     let private_root = data_dir.join("private-section-resumes");
     fs::create_dir_all(&private_root).unwrap();
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
 
     let file_name = "synthetic-s52-section-embedding.pdf";

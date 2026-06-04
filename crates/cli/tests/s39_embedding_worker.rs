@@ -754,7 +754,7 @@ fn seed_searchable_metadata(
     text: &str,
 ) {
     let now = UnixTimestamp::from_unix_seconds(1_800_054_000);
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_document(&Document {

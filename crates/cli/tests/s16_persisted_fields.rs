@@ -10,7 +10,7 @@ fn filtered_search_uses_persisted_field_mentions_without_reextracting_clean_text
     let data_dir = temp_dir("persisted-fields-data");
     import_fixtures(&data_dir);
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let versions = store
         .visible_documents()

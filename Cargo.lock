@@ -1208,6 +1208,7 @@ name = "meta-store"
 version = "0.1.0"
 dependencies = [
  "core-domain",
+ "getrandom 0.2.17",
  "rusqlite",
  "serde_json",
 ]

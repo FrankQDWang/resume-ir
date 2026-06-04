@@ -8,6 +8,35 @@ use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{IndexState, IndexStateStatus, MetaStore, UnixTimestamp};
 
 #[test]
+fn doctor_uses_sqlcipher_metadata_by_default_without_key_or_path_leak() {
+    let data_dir = temp_path("doctor-sqlcipher-private-data");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("metadata encryption: sqlcipher"));
+    assert!(!stdout.contains("enable SQLCipher metadata encryption before production release"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    let encrypted_bytes = fs::read(data_dir.join("metadata.sqlite3")).unwrap();
+    assert!(!encrypted_bytes.starts_with(b"SQLite format 3"));
+    let metadata_key =
+        fs::read_to_string(data_dir.join("metadata-secrets/metadata-sqlcipher-key-v1"))
+            .expect("metadata SQLCipher key");
+    assert!(!stdout.contains(metadata_key.trim()));
+    assert!(MetaStore::open(data_dir.join("metadata.sqlite3"))
+        .and_then(|store| store.schema_version().map(|_| ()))
+        .is_err());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn doctor_reports_no_index_without_path_or_fake_benchmark() {
     let data_dir = temp_path("doctor-private-data");
 
@@ -25,10 +54,8 @@ fn doctor_reports_no_index_without_path_or_fake_benchmark() {
     assert!(stdout.contains("vector index: unavailable"));
     assert!(stdout.contains("query smoke: skipped (no full-text index)"));
     assert!(stdout.contains("contact hash key: missing"));
-    assert!(stdout.contains("metadata encryption: plaintext"));
-    assert!(stdout.contains(
-        "metadata encryption remediation: enable SQLCipher metadata encryption before production release"
-    ));
+    assert!(stdout.contains("metadata encryption: sqlcipher"));
+    assert!(!stdout.contains("enable SQLCipher metadata encryption before production release"));
     assert!(stdout.contains("fault simulations: available"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!data_dir
@@ -85,10 +112,8 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
     assert!(stdout.contains("\"search_index_state\": \"unavailable\""));
     assert!(stdout.contains("\"vector_index_state\": \"unavailable\""));
     assert!(stdout.contains("\"contact_hash_key\": \"missing\""));
-    assert!(stdout.contains("\"metadata_encryption\": \"plaintext\""));
-    assert!(stdout.contains(
-        "\"metadata_encryption_remediation\": \"enable SQLCipher metadata encryption before production release\""
-    ));
+    assert!(stdout.contains("\"metadata_encryption\": \"sqlcipher\""));
+    assert!(!stdout.contains("enable SQLCipher metadata encryption before production release"));
     assert!(stdout.contains("\"daemon_restart\""));
     assert!(stdout.contains("\"daemon_kill\""));
     assert!(stdout.contains("\"disk_space_low\""));
@@ -534,7 +559,7 @@ fn doctor_and_diagnostics_report_metadata_index_health_with_active_snapshot() {
     .unwrap();
     fs::create_dir_all(data_dir.join("search-index").join("staging").join("orphan")).unwrap();
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_index_state(&IndexState {
@@ -684,7 +709,7 @@ fn seed_searchable_metadata(data_dir: &Path) -> (String, String) {
     let now = UnixTimestamp::from_unix_seconds(1_800_003_000);
     let document_id = DocumentId::from_non_secret_parts(&["s26", "recovered"]);
     let version_id = ResumeVersionId::from_non_secret_parts(&["s26", "recovered-version"]);
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_document(&Document {

@@ -3901,7 +3901,7 @@ impl ImportTaskHeartbeat {
     fn start(data_dir: &Path, task_id: ImportTaskId) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
-        let metadata_path = data_dir.join("metadata.sqlite3");
+        let heartbeat_data_dir = data_dir.to_path_buf();
 
         let _ = thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
@@ -3913,7 +3913,7 @@ impl ImportTaskHeartbeat {
                 let Ok(now) = current_timestamp() else {
                     continue;
                 };
-                let Ok(store) = MetaStore::open(&metadata_path) else {
+                let Ok(store) = MetaStore::open_data_dir(&heartbeat_data_dir) else {
                     continue;
                 };
                 if store.run_migrations().is_err() {
@@ -3936,7 +3936,7 @@ impl Drop for ImportTaskHeartbeat {
 fn open_store(data_dir: &Path) -> Result<MetaStore> {
     fs::create_dir_all(data_dir)
         .map_err(|_| DaemonError::user("unable to prepare local metadata directory"))?;
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).map_err(DaemonError::store)?;
+    let store = MetaStore::open_data_dir(data_dir).map_err(DaemonError::store)?;
     store.run_migrations().map_err(DaemonError::store)?;
     Ok(store)
 }

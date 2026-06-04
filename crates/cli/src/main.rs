@@ -7737,7 +7737,7 @@ impl VectorIndexDiagnostic {
 fn open_store(data_dir: &Path) -> Result<MetaStore> {
     fs::create_dir_all(data_dir)
         .map_err(|_| CliError::user("unable to prepare local metadata directory"))?;
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).map_err(CliError::store)?;
+    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
     store.run_migrations().map_err(CliError::store)?;
     Ok(store)
 }

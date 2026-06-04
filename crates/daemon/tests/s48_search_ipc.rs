@@ -436,7 +436,7 @@ struct SeedResume<'a> {
 
 fn seed_searchable_resume(seed: SeedResume<'_>) {
     let now = UnixTimestamp::from_unix_seconds(1_800_048_000);
-    let store = MetaStore::open(seed.data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(seed.data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_document(&Document {
@@ -515,7 +515,7 @@ fn seed_soft_dedupe_resume(
     normalized_skill: &str,
 ) {
     let now = UnixTimestamp::from_unix_seconds(1_800_048_000);
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_document(&Document {

@@ -294,7 +294,7 @@ fn daemon_requires_bearer_token_for_import_command_ipc() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     assert_eq!(store.status_summary().unwrap().import_tasks_queued, 0);
 
@@ -353,7 +353,7 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let summary = store.status_summary().unwrap();
     assert_eq!(summary.import_tasks_queued, 1);
@@ -401,7 +401,7 @@ fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
     assert!(first_response.contains("HTTP/1.1 202 Accepted"));
     assert!(first_response.contains("\"new_tasks\":1"));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let first_scope = store.latest_import_scan_scope().unwrap().unwrap();
     store
@@ -479,7 +479,7 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scope = store.latest_import_scan_scope().unwrap().unwrap();
     assert_eq!(scope.root_kind, ImportRootKind::Preset);
@@ -548,7 +548,7 @@ fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     assert!(store.is_import_task_cancelled(&task_id).unwrap());
     let summary = store.status_summary().unwrap();
@@ -596,7 +596,7 @@ fn daemon_rejects_wrong_bearer_token_for_import_command_ipc() {
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     assert_eq!(store.status_summary().unwrap().import_tasks_queued, 0);
 
@@ -686,7 +686,7 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Running);
@@ -740,7 +740,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scope = store.latest_import_scan_scope().unwrap().unwrap();
     let task = store
@@ -848,7 +848,7 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
@@ -895,7 +895,7 @@ fn daemon_does_not_start_import_worker_when_ipc_bind_fails() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unable to bind daemon ipc listener"));
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Queued);
@@ -1135,7 +1135,7 @@ fn read_ipc_auth_token(data_dir: &Path) -> String {
 }
 
 fn seed_snapshot_state(data_dir: &Path) {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_index_state(&IndexState {
@@ -1153,7 +1153,7 @@ fn seed_queued_import_task(
     canonical_root: &Path,
     queued_at_seconds: i64,
 ) -> ImportTaskId {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let now = UnixTimestamp::from_unix_seconds(queued_at_seconds);
     let task_id = ImportTaskId::from_non_secret_parts(&["s45", label]);
@@ -1200,7 +1200,7 @@ fn seed_running_import_task(
     canonical_root: &Path,
     started_at_seconds: i64,
 ) -> ImportTaskId {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let now = UnixTimestamp::from_unix_seconds(started_at_seconds);
     let task_id = ImportTaskId::from_non_secret_parts(&["s46", label]);
@@ -1242,7 +1242,7 @@ fn seed_running_import_task(
 }
 
 fn seed_import_progress_scope(data_dir: &Path, task_id: &ImportTaskId, canonical_root: &Path) {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_import_scan_scope(&ImportScanScope {

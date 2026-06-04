@@ -69,7 +69,7 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
         "same hashed contact should assign one candidate"
     );
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let candidate = store
         .candidate_by_id(&first_candidate_id)
@@ -152,7 +152,7 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
     assert!(versions_after_reimport
         .iter()
         .all(|version| { version.candidate_id.as_ref() == Some(&first_candidate_id) }));
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let candidate = store
         .candidate_by_id(&first_candidate_id)
@@ -192,7 +192,7 @@ fn reimport_preserves_existing_candidate_assignment_without_contacts() {
         .expect("imported version");
     assert!(version.candidate_id.is_none());
     let manual_candidate_id = CandidateId::from_non_secret_parts(&["s21", "manual-candidate"]);
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_candidate(&Candidate {
@@ -236,7 +236,7 @@ fn reimport_preserves_existing_candidate_assignment_without_contacts() {
 }
 
 fn searchable_versions(data_dir: &Path) -> Vec<ResumeVersion> {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let mut versions = Vec::new();
     for document in store.visible_documents().unwrap() {

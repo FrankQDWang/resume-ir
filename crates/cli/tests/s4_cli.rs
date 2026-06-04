@@ -31,7 +31,7 @@ fn status_creates_store_and_reports_empty_aggregates() {
 fn status_reports_latest_import_scan_progress_without_path_leak() {
     let data_dir = temp_dir("status-import-progress-data");
     let private_root = temp_dir("status-import-progress-private-root");
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let now = UnixTimestamp::from_unix_seconds(1_700_000_200);
     let task_id = ImportTaskId::from_non_secret_parts(&["status-import-progress"]);
