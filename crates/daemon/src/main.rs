@@ -40,9 +40,10 @@ use notify::{
     RecommendedWatcher, RecursiveMode, Watcher,
 };
 use ocr_client::{
-    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
-    LocalPdfRenderCommandSpec, OcrClient, OcrOptions, OcrPageRequest, OcrWorkerBudget,
-    PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage, TesseractOcrClient, TesseractOcrSpec,
+    inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
+    LocalOcrCommandSpec, LocalPdfRenderCommandClient, LocalPdfRenderCommandSpec, OcrClient,
+    OcrOptions, OcrPageRequest, OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec,
+    RenderedPage, TesseractLanguageAvailability, TesseractOcrClient, TesseractOcrSpec,
 };
 use rank_fusion::{soft_dedupe_score, DedupeProfile, DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
@@ -976,6 +977,49 @@ fn run_claimed_ocr_job(
             }
             cache_hits += 1;
             continue;
+        }
+
+        if command_client.is_none() {
+            if let Some(tesseract_command) = options.ocr_tesseract_command.as_ref() {
+                match inspect_tesseract_language_availability(
+                    tesseract_command,
+                    options.ocr_lang.as_str(),
+                ) {
+                    TesseractLanguageAvailability::Available => {}
+                    TesseractLanguageAvailability::Missing => {
+                        let entry = OcrPageCacheEntry::failed_retryable(
+                            cache_key,
+                            "LanguageUnavailable",
+                            now,
+                        )
+                        .map_err(DaemonError::store)?;
+                        store
+                            .upsert_ocr_page_cache_entry(&entry)
+                            .map_err(DaemonError::store)?;
+                        mark_ocr_job_failed_retryable(store, job, now)?;
+                        return Ok(OcrWorkerSummary {
+                            failed: 1,
+                            ..OcrWorkerSummary::default()
+                        });
+                    }
+                    TesseractLanguageAvailability::Unknown => {
+                        let entry = OcrPageCacheEntry::failed_retryable(
+                            cache_key,
+                            "WorkerUnavailable",
+                            now,
+                        )
+                        .map_err(DaemonError::store)?;
+                        store
+                            .upsert_ocr_page_cache_entry(&entry)
+                            .map_err(DaemonError::store)?;
+                        mark_ocr_job_failed_retryable(store, job, now)?;
+                        return Ok(OcrWorkerSummary {
+                            failed: 1,
+                            ..OcrWorkerSummary::default()
+                        });
+                    }
+                }
+            }
         }
 
         let rendered_page = if let Some(renderer) = &renderer {

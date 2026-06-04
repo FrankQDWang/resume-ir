@@ -554,6 +554,85 @@ exit 17
 
 #[cfg(unix)]
 #[test]
+fn daemon_ocr_worker_once_blocks_missing_tesseract_language_before_engine_without_leaks() {
+    let data_dir = temp_dir("ocr-worker-missing-lang-data");
+    let private_document_path = seed_scanned_document(&data_dir);
+    let tesseract = write_fixture_executable(
+        "fixture-daemon-ocr-worker-missing-lang-tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--list-langs" ]; then
+  printf 'List of available languages (1):\n'
+  printf 'eng\n'
+  exit 0
+fi
+printf 'PRIVATE_DAEMON_TESSERACT_OCR_SHOULD_NOT_RUN\n' >&2
+exit 17
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--once",
+            "--work-ocr-once",
+            "--ocr-tesseract-command",
+            path_str(&tesseract),
+            "--ocr-lang",
+            "eng+chi_sim",
+        ])
+        .output()
+        .expect("run daemon OCR worker once with missing Tesseract language pack");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr worker processed: 0"));
+    assert!(stdout.contains("ocr worker cache writes: 0"));
+    assert!(stdout.contains("ocr worker cache hits: 0"));
+    assert!(stdout.contains("ocr worker failed: 1"));
+    assert!(!stdout.contains("PRIVATE_DAEMON_TESSERACT_OCR_SHOULD_NOT_RUN"));
+    assert!(!stdout.contains("chi_sim"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_document_path)));
+    assert!(!stdout.contains(path_str(&tesseract)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::OcrRequired);
+    let jobs = store.retryable_jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].status, IngestJobStatus::FailedRetryable);
+    assert_eq!(jobs[0].attempt_count, 1);
+    let cache_key = OcrPageCacheKey::new(
+        scanned.content_hash.expect("content hash"),
+        1,
+        300,
+        "eng+chi_sim",
+        "balanced",
+    )
+    .unwrap();
+    let cache_entry = store
+        .ocr_page_cache_entry(&cache_key)
+        .unwrap()
+        .expect("OCR missing language cache entry");
+    assert_eq!(cache_entry.status(), OcrPageCacheStatus::FailedRetryable);
+    assert_eq!(cache_entry.text(), None);
+    assert_eq!(cache_entry.error_kind(), Some("LanguageUnavailable"));
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn daemon_ocr_worker_once_respects_pause_without_claiming_or_invoking_command() {
     let data_dir = temp_dir("ocr-worker-paused-data");
     let private_document_path = seed_scanned_document(&data_dir);

@@ -930,6 +930,76 @@ exit 17
 
 #[cfg(unix)]
 #[test]
+fn ocr_worker_blocks_missing_tesseract_language_before_invoking_engine_without_leaks() {
+    let data_dir = temp_dir("ocr-worker-missing-lang-data");
+    let fixture_root = fixture_root();
+    let tesseract = write_fixture_executable(
+        "fixture-ocr-worker-missing-lang-tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--list-langs" ]; then
+  printf 'List of available languages (1):\n'
+  printf 'eng\n'
+  exit 0
+fi
+printf 'PRIVATE_TESSERACT_OCR_SHOULD_NOT_RUN\n' >&2
+exit 17
+"#,
+    );
+    import_fixtures(&data_dir, &fixture_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--tesseract-command",
+            path_str(&tesseract),
+            "--lang",
+            "eng+chi_sim",
+        ])
+        .output()
+        .expect("run OCR worker with missing Tesseract language pack");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ocr worker blocked: requested OCR language pack is unavailable"));
+    assert!(!stderr.contains("PRIVATE_TESSERACT_OCR_SHOULD_NOT_RUN"));
+    assert!(!stderr.contains("chi_sim"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+    assert!(!stderr.contains(path_str(&tesseract)));
+
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::OcrRequired);
+    let jobs = store.retryable_jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].status, IngestJobStatus::FailedRetryable);
+    assert_eq!(jobs[0].attempt_count, 1);
+    let cache_key = OcrPageCacheKey::new(
+        scanned.content_hash.expect("content hash"),
+        1,
+        300,
+        "eng+chi_sim",
+        "balanced",
+    )
+    .unwrap();
+    let cache_entry = store
+        .ocr_page_cache_entry(&cache_key)
+        .unwrap()
+        .expect("OCR missing language cache entry");
+    assert_eq!(cache_entry.status(), OcrPageCacheStatus::FailedRetryable);
+    assert_eq!(cache_entry.text(), None);
+    assert_eq!(cache_entry.error_kind(), Some("LanguageUnavailable"));
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn ocr_worker_indexes_succeeded_cache_hit_without_invoking_command() {
     let data_dir = temp_dir("ocr-worker-cache-hit-data");
     let fixture_root = fixture_root();

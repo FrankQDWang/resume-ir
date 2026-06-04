@@ -38,9 +38,10 @@ use meta_store::{
     WorkerTaskKind,
 };
 use ocr_client::{
-    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
-    LocalPdfRenderCommandSpec, OcrClient, OcrErrorKind, OcrOptions, OcrPageRequest,
-    OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage, TesseractOcrClient,
+    inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
+    LocalOcrCommandSpec, LocalPdfRenderCommandClient, LocalPdfRenderCommandSpec, OcrClient,
+    OcrErrorKind, OcrOptions, OcrPageRequest, OcrWorkerBudget, PdftoppmPdfRenderer,
+    PdftoppmRenderSpec, RenderedPage, TesseractLanguageAvailability, TesseractOcrClient,
     TesseractOcrSpec,
 };
 use privacy::inspect_contact_hash_key;
@@ -5224,6 +5225,51 @@ fn run_claimed_ocr_job(
             }
             cache_hits += 1;
             continue;
+        }
+
+        if command_client.is_none() {
+            if let Some(tesseract_command) = worker_args.tesseract_command.as_ref() {
+                match inspect_tesseract_language_availability(
+                    tesseract_command,
+                    worker_args.lang.as_str(),
+                ) {
+                    TesseractLanguageAvailability::Available => {}
+                    TesseractLanguageAvailability::Missing => {
+                        let entry = OcrPageCacheEntry::failed_retryable(
+                            cache_key,
+                            "LanguageUnavailable",
+                            now,
+                        )
+                        .map_err(CliError::store)?;
+                        store
+                            .upsert_ocr_page_cache_entry(&entry)
+                            .map_err(CliError::store)?;
+                        store
+                            .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+                            .map_err(CliError::store)?;
+                        return Err(CliError::user(
+                            "ocr worker blocked: requested OCR language pack is unavailable",
+                        ));
+                    }
+                    TesseractLanguageAvailability::Unknown => {
+                        let entry = OcrPageCacheEntry::failed_retryable(
+                            cache_key,
+                            "WorkerUnavailable",
+                            now,
+                        )
+                        .map_err(CliError::store)?;
+                        store
+                            .upsert_ocr_page_cache_entry(&entry)
+                            .map_err(CliError::store)?;
+                        store
+                            .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+                            .map_err(CliError::store)?;
+                        return Err(CliError::user(
+                            "ocr worker blocked: local OCR command failed or unavailable",
+                        ));
+                    }
+                }
+            }
         }
 
         let rendered_page = if let Some(renderer) = &renderer {

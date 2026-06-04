@@ -510,6 +510,70 @@ impl fmt::Debug for OcrCacheKey {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TesseractLanguageAvailability {
+    Available,
+    Missing,
+    Unknown,
+}
+
+pub fn valid_ocr_language_request(value: &str) -> bool {
+    ocr_language_components(value).is_some()
+}
+
+pub fn inspect_tesseract_language_availability(
+    command_path: &Path,
+    language: &str,
+) -> TesseractLanguageAvailability {
+    let Some(requested_languages) = ocr_language_components(language) else {
+        return TesseractLanguageAvailability::Missing;
+    };
+    let Ok(output) = Command::new(command_path).arg("--list-langs").output() else {
+        return TesseractLanguageAvailability::Unknown;
+    };
+    if !output.status.success() {
+        return TesseractLanguageAvailability::Unknown;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let available_languages = stdout
+        .lines()
+        .chain(stderr.lines())
+        .map(str::trim)
+        .collect::<Vec<_>>();
+
+    if requested_languages.iter().all(|language| {
+        available_languages
+            .iter()
+            .any(|available| available == language)
+    }) {
+        TesseractLanguageAvailability::Available
+    } else {
+        TesseractLanguageAvailability::Missing
+    }
+}
+
+fn ocr_language_components(value: &str) -> Option<Vec<&str>> {
+    if value.is_empty() || value.len() > 80 {
+        return None;
+    }
+
+    let mut components = Vec::new();
+    for component in value.split('+') {
+        if component.is_empty()
+            || !component.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            })
+        {
+            return None;
+        }
+        components.push(component);
+    }
+
+    Some(components)
+}
+
 #[derive(Clone, PartialEq)]
 pub struct OcrWordBox {
     text: String,
@@ -734,7 +798,7 @@ impl OcrOptions {
     pub fn new(lang: impl Into<String>, profile: impl Into<String>) -> Result<Self, OcrError> {
         let lang = lang.into();
         let profile = profile.into();
-        if lang.trim().is_empty() || profile.trim().is_empty() {
+        if !valid_ocr_language_request(lang.as_str()) || profile.trim().is_empty() {
             return Err(OcrError::new(OcrErrorKind::InvalidRequest));
         }
 
@@ -831,6 +895,7 @@ pub enum OcrErrorKind {
     Timeout,
     InvalidRequest,
     WorkerUnavailable,
+    LanguageUnavailable,
     EngineFailed,
 }
 
@@ -866,6 +931,9 @@ impl fmt::Display for OcrError {
             OcrErrorKind::Timeout => formatter.write_str("OCR request timed out"),
             OcrErrorKind::InvalidRequest => formatter.write_str("OCR request is invalid"),
             OcrErrorKind::WorkerUnavailable => formatter.write_str("OCR worker is unavailable"),
+            OcrErrorKind::LanguageUnavailable => {
+                formatter.write_str("OCR language pack is unavailable")
+            }
             OcrErrorKind::EngineFailed => formatter.write_str("OCR engine failed"),
         }
     }
