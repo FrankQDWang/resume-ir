@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, and S177 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, and S178 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -113,7 +113,12 @@ obsolete preliminary files and checklists are not product scope.
   Soft-dedupe scoring now compares
   same-name profiles with bounded non-contact evidence overlap and surfaces
   redacted suspected-duplicate hints in local CLI and daemon search results
-  without low-confidence candidate folding. A labeled dedupe-quality evaluator
+  without low-confidence candidate folding. A local candidate-review CLI can
+  now list redacted same-name soft-dedupe suggestions, explicitly merge two or
+  more unassigned searchable versions into a manual candidate for default search
+  folding, and split that candidate back into independent searchable versions
+  without printing names, schools, companies, local paths, or resume text. A
+  labeled dedupe-quality evaluator
   and gate now score precision/recall/F1 from JSONL profile pairs without
   emitting names, schools, companies, skills, sample IDs, document IDs, paths,
   or raw resume text. Private business labeled dedupe-quality release evidence
@@ -152,9 +157,8 @@ obsolete preliminary files and checklists are not product scope.
   worker queue metadata auditable during cleanup.
   Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
-  field and dedupe quality datasets/results, candidate merge review
-  workflows, future non-cache PII surface purge coverage, and forensic erase
-  proof.
+  field and dedupe quality datasets/results, multi-contact conflict review,
+  future non-cache PII surface purge coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
   helpers, embedding worker, model/dimension-scoped durable per-version
@@ -517,8 +521,64 @@ obsolete preliminary files and checklists are not product scope.
 | S175 | Product hot-index hybrid private benchmark gate complete locally | A focused benchmark gate test first failed because a private real-corpus benchmark report without `query_mode`, retrieval-layer, hot-index, and hot-path exclusion evidence was accepted as release evidence. After implementation, private real-corpus benchmark reports must now prove `query_mode: hybrid`, `retrieval_layers: fulltext+field+vector+rrf`, `hot_index: true`, and false hot-path OCR/parsing/heavy-model-inference flags, while preserving the existing redacted local aggregate boundary and private corpus/query-set digests. Release blocker docs, runbook guard, and release-readiness blocker detail now name hot-index hybrid evidence explicitly. Focused RED/GREEN benchmark gate tests and CLI private report acceptance passed locally. | This slice tightens release evidence validation only. It does not run 100k or 1M real-corpus benchmarks, prove `<200ms` P95 on representative hardware, provide licensed embedding model distribution, prove semantic/vector quality, clear OCR/model licensing, platform validation, signing, notarization, or stable release readiness. |
 | S176 | Product private business field-quality release gate complete locally | A focused field-quality gate test first failed because `FieldQualityGateConfig` had no `require_private_business_labeled` mode. After implementation, `resume-benchmark field-gate --require-private-business-labeled` rejects ordinary labeled reports, accepts only strict `private-business-labeled` redacted local aggregate reports, requires dataset and annotation manifest digests, false raw-data/path/field-value/sample-ID booleans, the `resume-ir.fields.v1` taxonomy, and production field metrics for email, phone, school, degree, company, title, skill, and date ranges. Release-readiness plus its CI guard now include a `field extraction quality` blocker, and the release blocker runbook documents the private field-quality evidence gate. Focused RED/GREEN field-quality tests, full benchmark-runner tests, release-readiness tests, readiness/runbook guards, fmt, diff check, focused clippy, public repo guard, and full local verification passed locally. | This slice tightens release evidence validation only. It does not create or upload private labels, run real business field-quality evaluation, prove production field F1 on representative resumes, improve extraction rules/models, clear OCR/model licensing, clear platform validation, or clear stable release readiness. |
 | S177 | Product dedupe-quality evaluator and release gate complete locally | A focused dedupe-quality test first failed because `benchmark-runner` had no `run_dedupe_quality_jsonl`, `DedupeQualityGateConfig`, or `evaluate_dedupe_quality_gate_json` API. After implementation, `resume-benchmark dedupe-quality` scores labeled profile pairs through the existing `rank-fusion` soft-dedupe algorithm, emits only aggregate precision/recall/F1 and pair counts, and omits names, schools, companies, skills, sample IDs, document IDs, paths, and raw resume text. `resume-benchmark dedupe-gate --require-private-business-labeled` now rejects ordinary labeled reports and accepts only strict `private-business-labeled` redacted local aggregate reports with dataset and annotation manifest digests, false raw-data/path/profile-value/sample-ID/document-ID booleans, the `resume-ir.dedupe.v1` taxonomy, and aggregate dedupe metrics. Release-readiness plus its CI guard now include a `dedupe quality` blocker, and the release blocker runbook documents the private dedupe-quality evidence gate. Focused RED/GREEN dedupe-quality tests, full benchmark-runner tests, release-readiness tests, readiness/runbook guards, fmt, and focused clippy passed locally. | This slice adds quality evaluation and tightens release evidence validation only. It does not create or upload private labels, run real business dedupe-quality evaluation, prove production dedupe precision/recall on representative resumes, implement candidate merge review workflows, clear OCR/model licensing, clear platform validation, or clear stable release readiness. |
+| S178 | Product local candidate-review workflow complete locally | A focused CLI test first failed because `resume-cli` did not recognize `candidate-review`. After implementation, `resume-cli candidate-review list` computes bounded same-name soft-dedupe suggestions from persisted metadata and prints only redacted version IDs, counts, confidence, and `paths: <redacted>`; `candidate-review merge` creates a manual local candidate for two or more unassigned searchable versions and default search folds them; `candidate-review split` clears those assignments and restores independent default search results. `MetaStore::unassign_candidate_versions` clears assignments transactionally and refreshes candidate version counts. Focused RED/GREEN CLI, full candidate-folding CLI, import candidate assignment, full meta-store, rank-fusion, fmt/diff/runbook/public guards, focused clippy, and full local verification passed locally. | This slice adds local manual review/merge/split workflow only. It does not prove dedupe precision/recall, create private business labels, resolve conflicting multi-contact candidates, add a UI, prove million-corpus review-list latency, clear dedupe-quality evidence, clear OCR/model licensing, clear platform validation, or clear stable release readiness. |
 
 ## Command Log
+
+### S178
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding candidate_review_merge_and_split_control_default_search_folding_without_value_leak -- --exact
+```
+
+Output summary:
+
+- The first run failed to compile because the new test was missing its local
+  `searchable_versions` helper; after fixing the test harness, the same focused
+  test failed correctly because `resume-cli` did not recognize
+  `candidate-review`.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding candidate_review_merge_and_split_control_default_search_folding_without_value_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store unassign_candidate_versions_clears_assignments_and_refreshes_count -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s21_import_candidate_assignment
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p rank-fusion -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The focused RED/GREEN candidate-review CLI test passed after implementation,
+  proving redacted suggestion listing, explicit merge-driven search folding,
+  split-driven unfolding, and no private value/path leakage in command output.
+- The focused meta-store split test passed and proves candidate assignments are
+  cleared transactionally while version counts are refreshed.
+- Full `meta-store`, full `s18_candidate_folding`, and
+  `s21_import_candidate_assignment` passed.
+- Focused clippy for `meta-store`, `rank-fusion`, and `resume-cli` passed.
+- `cargo fmt --all --check`, `git diff --check`, `rank-fusion`,
+  `check-runbooks.sh`, and `guard-public-repo.sh` passed.
+- Full `verify-local.sh` passed, including workspace tests and doc-tests,
+  license/runbook/workflow/release-readiness guards, release artifact/SBOM
+  checks, macOS package check, Windows package skip on non-Windows, and public
+  repo guard.
+
+Scope note:
+
+- S178 is a local manual review workflow only. It does not certify dedupe
+  quality, create private labels, resolve multi-contact conflicts, add a UI,
+  prove million-corpus review-list latency, or clear stable release blockers.
 
 ### S177
 

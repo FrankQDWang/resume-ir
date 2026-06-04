@@ -1187,6 +1187,23 @@ impl MetaStore {
         Ok(assigned)
     }
 
+    pub fn unassign_candidate_versions(&self, candidate_id: &CandidateId) -> Result<usize> {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        if candidate_by_id_from_connection(&transaction, candidate_id)?.is_none() {
+            return Err(MetaStoreError::invalid_value("candidate.id"));
+        }
+        let updated = transaction
+            .execute(
+                "UPDATE resume_version SET candidate_id = NULL WHERE candidate_id = ?1",
+                params![candidate_id.as_str()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        refresh_candidate_version_count_in_connection(&transaction, candidate_id)?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(updated)
+    }
+
     pub fn assign_candidate_from_hashed_contacts(
         &self,
         version_id: &ResumeVersionId,

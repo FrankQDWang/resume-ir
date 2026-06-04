@@ -623,6 +623,86 @@ fn explicit_candidate_assignment_requires_existing_candidate() {
 }
 
 #[test]
+fn unassign_candidate_versions_clears_assignments_and_refreshes_count() {
+    let store = migrated_store();
+    let first_document = document(
+        "candidate-unassign-first-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let second_document = document(
+        "candidate-unassign-second-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let first_version = resume_version(
+        "candidate-unassign-first-version",
+        first_document.id.clone(),
+    );
+    let second_version = resume_version(
+        "candidate-unassign-second-version",
+        second_document.id.clone(),
+    );
+    let candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["s178", "candidate-unassign"]),
+        primary_name: None,
+        phone_hash: None,
+        email_hash: None,
+        dedupe_key: Some("candidate-review-manual-v1".to_string()),
+        merge_confidence: Some(0.91),
+        version_count: 0,
+    };
+
+    store.upsert_document(&first_document).unwrap();
+    store.upsert_document(&second_document).unwrap();
+    store.upsert_resume_version(&first_version).unwrap();
+    store.upsert_resume_version(&second_version).unwrap();
+    store.upsert_candidate(&candidate).unwrap();
+    store
+        .assign_candidate_to_version(&first_version.id, &candidate.id)
+        .unwrap();
+    store
+        .assign_candidate_to_version(&second_version.id, &candidate.id)
+        .unwrap();
+    assert_eq!(
+        store
+            .candidate_by_id(&candidate.id)
+            .unwrap()
+            .unwrap()
+            .version_count,
+        2
+    );
+
+    let unassigned = store.unassign_candidate_versions(&candidate.id).unwrap();
+
+    assert_eq!(unassigned, 2);
+    assert_eq!(
+        store
+            .candidate_by_id(&candidate.id)
+            .unwrap()
+            .unwrap()
+            .version_count,
+        0
+    );
+    assert_eq!(
+        store
+            .resume_version_by_id(&first_version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        None
+    );
+    assert_eq!(
+        store
+            .resume_version_by_id(&second_version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        None
+    );
+}
+
+#[test]
 fn visible_document_query_excludes_deleted_documents_by_default() {
     let store = migrated_store();
     let visible = document("visible-placeholder", false, DocumentStatus::Discovered);

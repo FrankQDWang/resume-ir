@@ -30,8 +30,8 @@ use index_vector::{
 };
 use meta_store::{
     backup_metadata_encryption_key, restore_metadata_encryption_key,
-    rotate_metadata_encryption_key, Document, DocumentId, DocumentStatus, EntityMention,
-    EntityType, FileExtension, ImportRootKind as StoreImportRootKind,
+    rotate_metadata_encryption_key, Candidate, CandidateId, Document, DocumentId, DocumentStatus,
+    EntityMention, EntityType, FileExtension, ImportRootKind as StoreImportRootKind,
     ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
     ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
     ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
@@ -98,7 +98,7 @@ const WITNESS_FIELD_LABELS: &[&str] = &[
     "years_experience",
     "location",
 ];
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     (
         "signing certificates",
@@ -182,6 +182,7 @@ fn run() -> Result<()> {
         "resume" => task_control_command(&data_dir, &args[1..], false),
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
         "embed-worker" => embed_worker_command(&data_dir, &args[1..]),
+        "candidate-review" => candidate_review_command(&data_dir, &args[1..]),
         "model" => model_command(&args[1..]),
         "ocr" => ocr_command(&args[1..]),
         "privacy" => privacy_command(&data_dir, &args[1..]),
@@ -246,6 +247,381 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
 
 fn release_readiness_usage() -> &'static str {
     "usage: resume-cli release-readiness [--json]"
+}
+
+fn candidate_review_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(candidate_review_usage()));
+    };
+    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
+    store.run_migrations().map_err(CliError::store)?;
+
+    match action {
+        "list" => candidate_review_list_command(&store, &args[1..]),
+        "merge" => candidate_review_merge_command(&store, &args[1..]),
+        "split" => candidate_review_split_command(&store, &args[1..]),
+        _ => Err(CliError::usage(candidate_review_usage())),
+    }
+}
+
+fn candidate_review_list_command(store: &MetaStore, args: &[String]) -> Result<()> {
+    let review_args = parse_candidate_review_list_args(args)?;
+    let suggestions = candidate_review_suggestions(store, review_args.limit)?;
+
+    println!("candidate review suggestions: {}", suggestions.len());
+    for (index, suggestion) in suggestions.iter().enumerate() {
+        println!("suggestion: {}", index + 1);
+        println!("versions: 2");
+        println!(
+            "version_ids: {} {}",
+            suggestion.left_version_id, suggestion.right_version_id
+        );
+        println!("confidence: {:.2}", suggestion.confidence);
+        println!("folded: false");
+        println!("paths: <redacted>");
+    }
+
+    Ok(())
+}
+
+fn candidate_review_merge_command(store: &MetaStore, args: &[String]) -> Result<()> {
+    let review_args = parse_candidate_review_merge_args(args)?;
+    let versions = candidate_review_versions_for_merge(store, &review_args.version_ids)?;
+    let candidate_id = candidate_review_candidate_id(&review_args.version_ids);
+    store
+        .upsert_candidate(&Candidate {
+            id: candidate_id.clone(),
+            primary_name: None,
+            phone_hash: None,
+            email_hash: None,
+            dedupe_key: Some("candidate-review-manual-v1".to_string()),
+            merge_confidence: Some(review_args.confidence),
+            version_count: 0,
+        })
+        .map_err(CliError::store)?;
+
+    for version in &versions {
+        store
+            .assign_candidate_to_version(&version.id, &candidate_id)
+            .map_err(CliError::store)?;
+    }
+
+    println!("candidate review merge: completed");
+    println!("candidate id: {candidate_id}");
+    println!("versions assigned: {}", versions.len());
+    println!("confidence: {:.2}", review_args.confidence);
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn candidate_review_split_command(store: &MetaStore, args: &[String]) -> Result<()> {
+    let candidate_id = parse_candidate_review_split_args(args)?;
+    let unassigned = store
+        .unassign_candidate_versions(&candidate_id)
+        .map_err(CliError::store)?;
+
+    println!("candidate review split: completed");
+    println!("candidate id: {candidate_id}");
+    println!("versions unassigned: {unassigned}");
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CandidateReviewListArgs {
+    limit: usize,
+}
+
+#[derive(Debug, PartialEq)]
+struct CandidateReviewMergeArgs {
+    version_ids: Vec<ResumeVersionId>,
+    confidence: f32,
+}
+
+#[derive(Debug, PartialEq)]
+struct CandidateReviewSuggestion {
+    left_version_id: ResumeVersionId,
+    right_version_id: ResumeVersionId,
+    confidence: f32,
+}
+
+struct CandidateReviewProfile {
+    document_id: DocumentId,
+    version_id: ResumeVersionId,
+    profile: DedupeProfile,
+}
+
+fn parse_candidate_review_list_args(args: &[String]) -> Result<CandidateReviewListArgs> {
+    let mut limit = 20_usize;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--limit" => {
+                limit = parse_candidate_review_positive_usize(take_candidate_review_value(
+                    args, &mut index,
+                )?)?;
+            }
+            _ => return Err(CliError::usage(candidate_review_usage())),
+        }
+    }
+
+    Ok(CandidateReviewListArgs { limit })
+}
+
+fn parse_candidate_review_merge_args(args: &[String]) -> Result<CandidateReviewMergeArgs> {
+    let mut version_ids = Vec::new();
+    let mut confidence = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--version" => {
+                let version_id =
+                    ResumeVersionId::from_str(take_candidate_review_value(args, &mut index)?)
+                        .map_err(|_| CliError::usage(candidate_review_usage()))?;
+                version_ids.push(version_id);
+            }
+            "--confidence" => {
+                if confidence.is_some() {
+                    return Err(CliError::usage(candidate_review_usage()));
+                }
+                confidence = Some(parse_candidate_review_confidence(
+                    take_candidate_review_value(args, &mut index)?,
+                )?);
+            }
+            _ => return Err(CliError::usage(candidate_review_usage())),
+        }
+    }
+
+    if version_ids.len() < 2 {
+        return Err(CliError::usage(candidate_review_usage()));
+    }
+    let unique_ids = version_ids.iter().collect::<BTreeSet<_>>();
+    if unique_ids.len() != version_ids.len() {
+        return Err(CliError::usage(candidate_review_usage()));
+    }
+
+    Ok(CandidateReviewMergeArgs {
+        version_ids,
+        confidence: confidence.ok_or_else(|| CliError::usage(candidate_review_usage()))?,
+    })
+}
+
+fn parse_candidate_review_split_args(args: &[String]) -> Result<CandidateId> {
+    let mut candidate_id = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--candidate" => {
+                if candidate_id.is_some() {
+                    return Err(CliError::usage(candidate_review_usage()));
+                }
+                candidate_id = Some(
+                    CandidateId::from_str(take_candidate_review_value(args, &mut index)?)
+                        .map_err(|_| CliError::usage(candidate_review_usage()))?,
+                );
+            }
+            _ => return Err(CliError::usage(candidate_review_usage())),
+        }
+    }
+
+    candidate_id.ok_or_else(|| CliError::usage(candidate_review_usage()))
+}
+
+fn parse_candidate_review_positive_usize(value: &str) -> Result<usize> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| CliError::usage(candidate_review_usage()))?;
+    if parsed == 0 {
+        return Err(CliError::usage(candidate_review_usage()));
+    }
+    Ok(parsed)
+}
+
+fn parse_candidate_review_confidence(value: &str) -> Result<f32> {
+    let parsed = value
+        .parse::<f32>()
+        .map_err(|_| CliError::usage(candidate_review_usage()))?;
+    if !parsed.is_finite() || !(0.0..=1.0).contains(&parsed) {
+        return Err(CliError::usage(candidate_review_usage()));
+    }
+    Ok(parsed)
+}
+
+fn take_candidate_review_value<'a>(args: &'a [String], index: &mut usize) -> Result<&'a str> {
+    *index += 1;
+    let Some(value) = args.get(*index) else {
+        return Err(CliError::usage(candidate_review_usage()));
+    };
+    *index += 1;
+    Ok(value)
+}
+
+fn candidate_review_suggestions(
+    store: &MetaStore,
+    limit: usize,
+) -> Result<Vec<CandidateReviewSuggestion>> {
+    let mut profiles_by_name = BTreeMap::<String, Vec<CandidateReviewProfile>>::new();
+
+    for document in store.visible_documents().map_err(CliError::store)? {
+        if document.is_deleted
+            || !matches!(
+                document.status,
+                DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+            )
+        {
+            continue;
+        }
+        for version in store
+            .resume_versions_for_document(&document.id)
+            .map_err(CliError::store)?
+        {
+            if version.visibility != ResumeVisibility::Searchable || version.candidate_id.is_some()
+            {
+                continue;
+            }
+            let Some(profile) = dedupe_profile_for_review_version(store, &document.id, &version)?
+            else {
+                continue;
+            };
+            let Some(name) = profile.name().map(str::to_string) else {
+                continue;
+            };
+            profiles_by_name
+                .entry(name)
+                .or_default()
+                .push(CandidateReviewProfile {
+                    document_id: document.id.clone(),
+                    version_id: version.id,
+                    profile,
+                });
+        }
+    }
+
+    let mut suggestions = Vec::new();
+    for profiles in profiles_by_name.values() {
+        for left_index in 0..profiles.len() {
+            for right_index in (left_index + 1)..profiles.len() {
+                let left = &profiles[left_index];
+                let right = &profiles[right_index];
+                if left.document_id == right.document_id {
+                    continue;
+                }
+                let Some(score) = soft_dedupe_score(&left.profile, &right.profile) else {
+                    continue;
+                };
+                let (left_version_id, right_version_id) =
+                    ordered_version_pair(&left.version_id, &right.version_id);
+                suggestions.push(CandidateReviewSuggestion {
+                    left_version_id,
+                    right_version_id,
+                    confidence: score.confidence(),
+                });
+            }
+        }
+    }
+
+    suggestions.sort_by(|left, right| {
+        right
+            .confidence
+            .partial_cmp(&left.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.left_version_id.cmp(&right.left_version_id))
+            .then_with(|| left.right_version_id.cmp(&right.right_version_id))
+    });
+    suggestions.truncate(limit);
+    Ok(suggestions)
+}
+
+fn dedupe_profile_for_review_version(
+    store: &MetaStore,
+    document_id: &DocumentId,
+    version: &ResumeVersion,
+) -> Result<Option<DedupeProfile>> {
+    if &version.document_id != document_id {
+        return Ok(None);
+    }
+    let mentions = store
+        .entity_mentions_for_version(&version.id)
+        .map_err(CliError::store)?;
+    let Some(name) = best_normalized_entity_value(&mentions, EntityType::Name) else {
+        return Ok(None);
+    };
+
+    Ok(Some(
+        DedupeProfile::new(document_id.to_string())
+            .with_name(&name)
+            .with_schools(normalized_entity_values(&mentions, EntityType::School))
+            .with_companies(normalized_entity_values(&mentions, EntityType::Company))
+            .with_skills(normalized_entity_values(&mentions, EntityType::Skill)),
+    ))
+}
+
+fn candidate_review_versions_for_merge(
+    store: &MetaStore,
+    version_ids: &[ResumeVersionId],
+) -> Result<Vec<ResumeVersion>> {
+    let mut versions = Vec::with_capacity(version_ids.len());
+    for version_id in version_ids {
+        let Some(version) = store
+            .resume_version_by_id(version_id)
+            .map_err(CliError::store)?
+        else {
+            return Err(CliError::user("candidate review version is unavailable"));
+        };
+        if version.visibility != ResumeVisibility::Searchable || version.candidate_id.is_some() {
+            return Err(CliError::user(
+                "candidate review merge requires unassigned searchable versions",
+            ));
+        }
+        let Some(document) = store
+            .document_by_id(&version.document_id)
+            .map_err(CliError::store)?
+        else {
+            return Err(CliError::user("candidate review document is unavailable"));
+        };
+        if document.is_deleted
+            || !matches!(
+                document.status,
+                DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+            )
+        {
+            return Err(CliError::user(
+                "candidate review merge requires visible searchable documents",
+            ));
+        }
+        versions.push(version);
+    }
+    Ok(versions)
+}
+
+fn candidate_review_candidate_id(version_ids: &[ResumeVersionId]) -> CandidateId {
+    let mut parts = vec!["candidate-review-manual-v1".to_string()];
+    let mut sorted_ids = version_ids
+        .iter()
+        .map(|version_id| version_id.as_str().to_string())
+        .collect::<Vec<_>>();
+    sorted_ids.sort();
+    parts.extend(sorted_ids);
+    let part_refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
+    CandidateId::from_non_secret_parts(&part_refs)
+}
+
+fn ordered_version_pair(
+    left: &ResumeVersionId,
+    right: &ResumeVersionId,
+) -> (ResumeVersionId, ResumeVersionId) {
+    if left <= right {
+        (left.clone(), right.clone())
+    } else {
+        (right.clone(), left.clone())
+    }
+}
+
+fn candidate_review_usage() -> &'static str {
+    "usage: resume-cli candidate-review <list --limit <count>|merge --version <id> --version <id> [--version <id> ...] --confidence <0..1>|split --candidate <id>>"
 }
 
 fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
