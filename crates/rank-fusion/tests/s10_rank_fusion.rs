@@ -1,5 +1,6 @@
 use rank_fusion::{
-    fold_by_candidate, reciprocal_rank_fusion, DegreeLevel, RankedHit, ResumeProfile, SearchFilters,
+    fold_by_candidate, reciprocal_rank_fusion, soft_dedupe_score, DedupeProfile, DegreeLevel,
+    RankedHit, ResumeProfile, SearchFilters,
 };
 
 #[test]
@@ -51,6 +52,35 @@ fn candidate_fold_keeps_best_ranked_version_per_candidate() {
         folded.iter().map(|hit| hit.doc_id()).collect::<Vec<_>>(),
         vec!["doc_old", "doc_other"]
     );
+}
+
+#[test]
+fn soft_dedupe_scores_same_name_with_correlated_non_contact_evidence() {
+    let first = DedupeProfile::new("doc_first")
+        .with_name("Synthetic Candidate")
+        .with_schools(["Synthetic University"])
+        .with_companies(["Example Labs"])
+        .with_skills(["Java", "Payments"]);
+    let second = DedupeProfile::new("doc_second")
+        .with_name(" synthetic candidate ")
+        .with_schools(["synthetic university"])
+        .with_skills(["Java", "Search"]);
+    let different_name = DedupeProfile::new("doc_other")
+        .with_name("Different Candidate")
+        .with_schools(["Synthetic University"])
+        .with_companies(["Example Labs"])
+        .with_skills(["Java", "Payments"]);
+
+    let score = soft_dedupe_score(&first, &second).expect("same name plus school/skill evidence");
+
+    assert!(score.confidence() > 0.70);
+    assert_eq!(score.left_doc_id(), "doc_first");
+    assert_eq!(score.right_doc_id(), "doc_second");
+    assert_eq!(score.shared_school_count(), 1);
+    assert_eq!(score.shared_skill_count(), 1);
+    assert!(soft_dedupe_score(&first, &different_name).is_none());
+    assert!(!format!("{score:?}").contains("Synthetic Candidate"));
+    assert!(!format!("{first:?}").contains("Synthetic University"));
 }
 
 #[test]

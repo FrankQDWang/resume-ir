@@ -43,7 +43,8 @@ use ocr_client::{
 };
 use privacy::inspect_contact_hash_key;
 use rank_fusion::{
-    fuse_hybrid_rrf, DegreeLevel, HybridRecall, RankedHit, ResumeProfile, SearchFilters,
+    fuse_hybrid_rrf, soft_dedupe_score, DedupeProfile, DegreeLevel, HybridRecall, RankedHit,
+    ResumeProfile, SearchFilters,
 };
 use search_planner::plan_search;
 use sectionizer::Sectionizer;
@@ -3570,11 +3571,15 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
             };
             let store = open_store(data_dir)?;
             let fulltext_hits = run_fulltext_search(&index, &store, &search_args, candidate_limit)?;
-            fulltext_hits.into_iter().take(search_args.top_k).collect()
+            attach_soft_dedupe_hints(
+                &store,
+                fulltext_hits.into_iter().take(search_args.top_k).collect(),
+            )?
         }
         SearchMode::Semantic => {
             let store = open_store(data_dir)?;
-            run_semantic_search(data_dir, &store, &search_args, candidate_limit)?
+            let hits = run_semantic_search(data_dir, &store, &search_args, candidate_limit)?;
+            attach_soft_dedupe_hints(&store, hits)?
         }
         SearchMode::Hybrid => {
             let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
@@ -3587,7 +3592,8 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
             let store = open_store(data_dir)?;
             let fulltext_hits = run_fulltext_search(&index, &store, &search_args, candidate_limit)?;
             let vector_hits = run_semantic_search(data_dir, &store, &search_args, candidate_limit)?;
-            fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k)
+            let hits = fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k);
+            attach_soft_dedupe_hints(&store, hits)?
         }
     };
 
@@ -3703,6 +3709,22 @@ fn render_search_ipc_result(body: &serde_json::Value) -> Result<()> {
         println!("version_id: {version_id}");
         println!("file_name: {}", redact_contact_values(file_name));
         println!("snippet: {}", redact_contact_values(snippet));
+        if let Some(hint) = result.get("soft_dedupe") {
+            let suspected_versions = hint
+                .get("suspected_versions")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default();
+            let max_confidence = hint
+                .get("max_confidence")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or_default();
+            if suspected_versions > 0 {
+                println!(
+                    "soft_dedupe: suspected_versions={} max_confidence={:.2} folded=false",
+                    suspected_versions, max_confidence
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -3816,6 +3838,12 @@ fn print_search_hits(hits: Vec<SearchOutputHit>) {
         println!("version_id: {}", hit.version_id);
         println!("file_name: {}", hit.file_name);
         println!("snippet: {}", hit.snippet);
+        if let Some(hint) = hit.soft_dedupe_hint {
+            println!(
+                "soft_dedupe: suspected_versions={} max_confidence={:.2} folded=false",
+                hint.suspected_versions, hint.max_confidence
+            );
+        }
     }
 }
 
@@ -6126,6 +6154,7 @@ fn vector_output_hits(
             file_name: redact_contact_values(&document.file_name),
             snippet: "semantic match".to_string(),
             candidate_key,
+            soft_dedupe_hint: None,
         });
         if visible.len() == top_k {
             break;
@@ -6244,6 +6273,156 @@ fn rerank_output_hits(mut hits: Vec<SearchOutputHit>) -> Vec<SearchOutputHit> {
         hit.rank = index + 1;
     }
     hits
+}
+
+fn attach_soft_dedupe_hints(
+    store: &MetaStore,
+    mut hits: Vec<SearchOutputHit>,
+) -> Result<Vec<SearchOutputHit>> {
+    let hints = hits
+        .iter()
+        .map(|hit| soft_dedupe_hint_for_hit(store, hit))
+        .collect::<Result<Vec<_>>>()?;
+    for (hit, hint) in hits.iter_mut().zip(hints) {
+        hit.soft_dedupe_hint = hint;
+    }
+    Ok(hits)
+}
+
+fn soft_dedupe_hint_for_hit(
+    store: &MetaStore,
+    hit: &SearchOutputHit,
+) -> Result<Option<SoftDedupeHint>> {
+    if hit.candidate_key.starts_with("candidate:") {
+        return Ok(None);
+    }
+    let Some(profile) = dedupe_profile_for_hit(store, hit)? else {
+        return Ok(None);
+    };
+    let Some(name) = profile.name() else {
+        return Ok(None);
+    };
+    let candidate_doc_ids = store
+        .searchable_document_ids_with_entity_values(
+            EntityType::Name,
+            &[name.to_string()],
+            FIELD_FILTER_CONFIDENCE_THRESHOLD,
+            true,
+        )
+        .map_err(CliError::store)?;
+    let mut suspected_versions = 0_usize;
+    let mut max_confidence = 0.0_f32;
+
+    for candidate_doc_id in candidate_doc_ids.into_iter().take(64) {
+        if candidate_doc_id.as_str() == hit.doc_id {
+            continue;
+        }
+        let versions = store
+            .resume_versions_for_document(&candidate_doc_id)
+            .map_err(CliError::store)?;
+        for version in versions {
+            if version.id.as_str() == hit.version_id
+                || version.visibility != ResumeVisibility::Searchable
+                || version.candidate_id.is_some()
+            {
+                continue;
+            }
+            let other_hit = SearchOutputHit {
+                rank: 0,
+                score: 0.0,
+                doc_id: version.document_id.to_string(),
+                version_id: version.id.to_string(),
+                file_name: String::new(),
+                snippet: String::new(),
+                candidate_key: candidate_fold_key(&version),
+                soft_dedupe_hint: None,
+            };
+            let Some(other_profile) = dedupe_profile_for_hit(store, &other_hit)? else {
+                continue;
+            };
+            if let Some(score) = soft_dedupe_score(&profile, &other_profile) {
+                suspected_versions += 1;
+                max_confidence = max_confidence.max(score.confidence());
+            }
+        }
+    }
+
+    Ok((suspected_versions > 0).then_some(SoftDedupeHint {
+        suspected_versions,
+        max_confidence,
+    }))
+}
+
+fn dedupe_profile_for_hit(
+    store: &MetaStore,
+    hit: &SearchOutputHit,
+) -> Result<Option<DedupeProfile>> {
+    let Ok(version_id) = ResumeVersionId::from_str(&hit.version_id) else {
+        return Ok(None);
+    };
+    let Some(version) = store
+        .resume_version_by_id(&version_id)
+        .map_err(CliError::store)?
+    else {
+        return Ok(None);
+    };
+    if version.document_id.as_str() != hit.doc_id || version.candidate_id.is_some() {
+        return Ok(None);
+    }
+    let mentions = store
+        .entity_mentions_for_version(&version.id)
+        .map_err(CliError::store)?;
+    let Some(name) = best_normalized_entity_value(&mentions, EntityType::Name) else {
+        return Ok(None);
+    };
+    let profile = DedupeProfile::new(hit.doc_id.clone())
+        .with_name(&name)
+        .with_schools(normalized_entity_values(&mentions, EntityType::School))
+        .with_companies(normalized_entity_values(&mentions, EntityType::Company))
+        .with_skills(normalized_entity_values(&mentions, EntityType::Skill));
+
+    Ok(Some(profile))
+}
+
+fn best_normalized_entity_value(
+    mentions: &[EntityMention],
+    entity_type: EntityType,
+) -> Option<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type
+                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| {
+            Some((
+                mention.normalized_value.as_deref()?.to_string(),
+                mention.confidence,
+                mention.span_start.unwrap_or(usize::MAX),
+            ))
+        })
+        .max_by(|left, right| {
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.2.cmp(&left.2))
+                .then_with(|| right.0.cmp(&left.0))
+        })
+        .map(|candidate| candidate.0)
+}
+
+fn normalized_entity_values(mentions: &[EntityMention], entity_type: EntityType) -> Vec<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type
+                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| mention.normalized_value.as_deref())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn candidate_fold_key(version: &ResumeVersion) -> String {
@@ -6368,6 +6547,7 @@ struct SearchOutputHit {
     file_name: String,
     snippet: String,
     candidate_key: String,
+    soft_dedupe_hint: Option<SoftDedupeHint>,
 }
 
 impl SearchOutputHit {
@@ -6380,8 +6560,15 @@ impl SearchOutputHit {
             file_name: hit.file_name,
             snippet: hit.snippet,
             candidate_key,
+            soft_dedupe_hint: None,
         }
     }
+}
+
+#[derive(Clone)]
+struct SoftDedupeHint {
+    suspected_versions: usize,
+    max_confidence: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

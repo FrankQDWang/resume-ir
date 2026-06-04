@@ -201,6 +201,157 @@ impl fmt::Debug for SearchFilters {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct DedupeProfile {
+    doc_id: String,
+    name: Option<String>,
+    schools: BTreeSet<String>,
+    companies: BTreeSet<String>,
+    skills: BTreeSet<String>,
+}
+
+impl DedupeProfile {
+    pub fn new(doc_id: impl Into<String>) -> Self {
+        Self {
+            doc_id: doc_id.into(),
+            name: None,
+            schools: BTreeSet::new(),
+            companies: BTreeSet::new(),
+            skills: BTreeSet::new(),
+        }
+    }
+
+    pub fn with_name(mut self, name: &str) -> Self {
+        let name = normalize_dedupe_value(name);
+        if !name.is_empty() {
+            self.name = Some(name);
+        }
+        self
+    }
+
+    pub fn with_schools<I, S>(mut self, schools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.schools = normalize_dedupe_values(schools);
+        self
+    }
+
+    pub fn with_companies<I, S>(mut self, companies: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.companies = normalize_dedupe_values(companies);
+        self
+    }
+
+    pub fn with_skills<I, S>(mut self, skills: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.skills = normalize_dedupe_values(skills);
+        self
+    }
+
+    pub fn doc_id(&self) -> &str {
+        &self.doc_id
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+}
+
+impl fmt::Debug for DedupeProfile {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DedupeProfile")
+            .field("doc_id", &self.doc_id)
+            .field("has_name", &self.name.is_some())
+            .field("school_count", &self.schools.len())
+            .field("company_count", &self.companies.len())
+            .field("skill_count", &self.skills.len())
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct SoftDedupeScore {
+    left_doc_id: String,
+    right_doc_id: String,
+    confidence: f32,
+    shared_school_count: usize,
+    shared_company_count: usize,
+    shared_skill_count: usize,
+}
+
+impl SoftDedupeScore {
+    pub fn left_doc_id(&self) -> &str {
+        &self.left_doc_id
+    }
+
+    pub fn right_doc_id(&self) -> &str {
+        &self.right_doc_id
+    }
+
+    pub fn confidence(&self) -> f32 {
+        self.confidence
+    }
+
+    pub fn shared_school_count(&self) -> usize {
+        self.shared_school_count
+    }
+
+    pub fn shared_skill_count(&self) -> usize {
+        self.shared_skill_count
+    }
+}
+
+impl fmt::Debug for SoftDedupeScore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SoftDedupeScore")
+            .field("left_doc_id", &self.left_doc_id)
+            .field("right_doc_id", &self.right_doc_id)
+            .field("confidence", &self.confidence)
+            .field("shared_school_count", &self.shared_school_count)
+            .field("shared_company_count", &self.shared_company_count)
+            .field("shared_skill_count", &self.shared_skill_count)
+            .finish()
+    }
+}
+
+pub fn soft_dedupe_score(left: &DedupeProfile, right: &DedupeProfile) -> Option<SoftDedupeScore> {
+    if left.doc_id == right.doc_id {
+        return None;
+    }
+    if left.name.as_deref()? != right.name.as_deref()? {
+        return None;
+    }
+
+    let shared_school_count = intersection_count(&left.schools, &right.schools);
+    let shared_company_count = intersection_count(&left.companies, &right.companies);
+    let shared_skill_count = intersection_count(&left.skills, &right.skills);
+    let skill_score = shared_skill_count.min(3) as f32 / 3.0;
+    let confidence = (0.45
+        + (shared_school_count > 0) as u8 as f32 * 0.25
+        + (shared_company_count > 0) as u8 as f32 * 0.20
+        + skill_score * 0.10)
+        .min(0.95);
+
+    (confidence > 0.70).then(|| SoftDedupeScore {
+        left_doc_id: left.doc_id.clone(),
+        right_doc_id: right.doc_id.clone(),
+        confidence,
+        shared_school_count,
+        shared_company_count,
+        shared_skill_count,
+    })
+}
+
+#[derive(Clone, PartialEq)]
 pub struct RankedHit {
     doc_id: String,
     rank: usize,
@@ -420,9 +571,29 @@ pub fn fuse_hybrid_rrf(recall: HybridRecall, k: f32, limit: usize) -> Vec<Ranked
 }
 
 fn normalize_skill(skill: &str) -> String {
-    skill
+    normalize_dedupe_value(skill)
+}
+
+fn normalize_dedupe_values<I, S>(values: I) -> BTreeSet<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    values
+        .into_iter()
+        .map(|value| normalize_dedupe_value(value.as_ref()))
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn normalize_dedupe_value(value: &str) -> String {
+    value
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .to_ascii_lowercase()
+}
+
+fn intersection_count(left: &BTreeSet<String>, right: &BTreeSet<String>) -> usize {
+    left.intersection(right).count()
 }

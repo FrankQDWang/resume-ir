@@ -128,6 +128,120 @@ fn daemon_search_ipc_authenticates_filters_and_redacts_results() {
 }
 
 #[test]
+fn daemon_search_ipc_includes_redacted_soft_dedupe_hints() {
+    let data_dir = temp_dir("search-ipc-soft-dedupe-data");
+    let first_doc = DocumentId::from_non_secret_parts(&["s48", "soft-first"]);
+    let first_version = ResumeVersionId::from_non_secret_parts(&["s48", "soft-first-version"]);
+    let second_doc = DocumentId::from_non_secret_parts(&["s48", "soft-second"]);
+    let second_version = ResumeVersionId::from_non_secret_parts(&["s48", "soft-second-version"]);
+    seed_soft_dedupe_resume(
+        &data_dir,
+        &first_doc,
+        &first_version,
+        "synthetic-soft-ipc-a.pdf",
+        "Java backend payments",
+        "Synthetic Candidate",
+        "synthetic candidate",
+        "Synthetic University",
+        "synthetic university",
+        "Java",
+        "java",
+    );
+    seed_soft_dedupe_resume(
+        &data_dir,
+        &second_doc,
+        &second_version,
+        "synthetic-soft-ipc-b.pdf",
+        "Java backend search",
+        "Synthetic Candidate",
+        "synthetic candidate",
+        "Synthetic University",
+        "synthetic university",
+        "Java",
+        "java",
+    );
+    seed_fulltext_index(
+        &data_dir,
+        [
+            IndexDocument {
+                doc_id: first_doc.to_string(),
+                version_id: first_version.to_string(),
+                file_name: "synthetic-soft-ipc-a.pdf".to_string(),
+                clean_text: "Java backend payments".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: "Java payments".to_string(),
+                }],
+                is_deleted: false,
+            },
+            IndexDocument {
+                doc_id: second_doc.to_string(),
+                version_id: second_version.to_string(),
+                file_name: "synthetic-soft-ipc-b.pdf".to_string(),
+                clean_text: "Java backend search".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: "Java search".to_string(),
+                }],
+                is_deleted: false,
+            },
+        ],
+    );
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "Java",
+            "mode": "fulltext",
+            "top_k": 5
+        }),
+    );
+
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    assert!(!response.contains("Synthetic Candidate"));
+    assert!(!response.contains("Synthetic University"));
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or_default();
+    let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+    let results = payload["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["soft_dedupe"]["suspected_versions"], 1);
+    assert!(
+        results[0]["soft_dedupe"]["max_confidence"]
+            .as_f64()
+            .unwrap()
+            > 0.70
+    );
+    assert_eq!(results[0]["soft_dedupe"]["folded"], false);
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn daemon_search_ipc_requires_bearer_token_without_leaking_query() {
     let data_dir = temp_dir("search-ipc-auth-data");
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
@@ -386,6 +500,88 @@ fn seed_searchable_resume(seed: SeedResume<'_>) {
         .unwrap();
 }
 
+#[allow(clippy::too_many_arguments)]
+fn seed_soft_dedupe_resume(
+    data_dir: &Path,
+    document_id: &DocumentId,
+    version_id: &ResumeVersionId,
+    file_name: &str,
+    clean_text: &str,
+    raw_name: &str,
+    normalized_name: &str,
+    raw_school: &str,
+    normalized_school: &str,
+    raw_skill: &str,
+    normalized_skill: &str,
+) {
+    let now = UnixTimestamp::from_unix_seconds(1_800_048_000);
+    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .upsert_document(&Document {
+            id: document_id.clone(),
+            source_uri: format!("synthetic://{file_name}"),
+            normalized_path: format!("synthetic/{file_name}"),
+            file_name: file_name.to_string(),
+            extension: FileExtension::Pdf,
+            byte_size: 128,
+            mtime: now,
+            content_hash: Some(format!("{file_name}-hash")),
+            text_hash: None,
+            is_deleted: false,
+            created_at: now,
+            updated_at: now,
+            status: DocumentStatus::Searchable,
+        })
+        .unwrap();
+    store
+        .upsert_resume_version(&ResumeVersion {
+            id: version_id.clone(),
+            document_id: document_id.clone(),
+            candidate_id: None,
+            parse_version: "parser-v1".to_string(),
+            schema_version: "schema-v1".to_string(),
+            language_set: vec!["en".to_string()],
+            page_count: Some(1),
+            raw_text: Some(clean_text.to_string()),
+            clean_text: Some(clean_text.to_string()),
+            quality_score: Some(0.9),
+            visibility: ResumeVisibility::Searchable,
+        })
+        .unwrap();
+    store
+        .replace_entity_mentions(
+            version_id,
+            &[
+                entity_mention_with_raw(
+                    version_id,
+                    "name",
+                    EntityType::Name,
+                    raw_name,
+                    normalized_name,
+                    0.95,
+                ),
+                entity_mention_with_raw(
+                    version_id,
+                    "school",
+                    EntityType::School,
+                    raw_school,
+                    normalized_school,
+                    0.95,
+                ),
+                entity_mention_with_raw(
+                    version_id,
+                    "skill",
+                    EntityType::Skill,
+                    raw_skill,
+                    normalized_skill,
+                    0.95,
+                ),
+            ],
+        )
+        .unwrap();
+}
+
 fn entity_mention(
     version_id: &ResumeVersionId,
     label: &str,
@@ -402,6 +598,28 @@ fn entity_mention(
         normalized_value: Some(normalized_value.to_string()),
         span_start: Some(0),
         span_end: Some(normalized_value.len()),
+        confidence,
+        extractor: "s48-test".to_string(),
+    }
+}
+
+fn entity_mention_with_raw(
+    version_id: &ResumeVersionId,
+    label: &str,
+    entity_type: EntityType,
+    raw_value: &str,
+    normalized_value: &str,
+    confidence: f32,
+) -> EntityMention {
+    EntityMention {
+        id: EntityMentionId::from_non_secret_parts(&["s48", version_id.as_str(), label]),
+        resume_version_id: version_id.clone(),
+        section_id: None,
+        entity_type,
+        raw_value: raw_value.to_string(),
+        normalized_value: Some(normalized_value.to_string()),
+        span_start: Some(0),
+        span_end: Some(raw_value.len()),
         confidence,
         extractor: "s48-test".to_string(),
     }

@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, and S102 used synthetic fixtures only. S97,
-  S99, and S100 also used private local-only witnesses against anonymized temporary copies from a
+- Data policy: S0-S96, S98, S101, S102, and S103 used synthetic fixtures only.
+  S97, S99, and S100 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
@@ -69,10 +69,14 @@ obsolete preliminary files and checklists are not product scope.
   full-text staging directories, vector records, current ingest jobs, and
   current OCR page-cache records exist. A labeled field-quality evaluator and
   gate now score precision/recall/F1 from JSONL samples without emitting raw
-  text, sample IDs, paths, or field values. Missing production work includes
-  broader dictionaries, stronger normalization, soft-dedupe scoring, real
-  business labeled F1 datasets/results, encrypted local storage, future
-  bbox/PII surface purge coverage, and forensic erase proof.
+  text, sample IDs, paths, or field values. Soft-dedupe scoring now compares
+  same-name profiles with bounded non-contact evidence overlap and surfaces
+  redacted suspected-duplicate hints in local CLI and daemon search results
+  without low-confidence candidate folding. Missing production work includes
+  broader dictionaries, stronger normalization, real business labeled F1
+  datasets/results, dedupe quality metrics, candidate merge review workflows,
+  encrypted local storage, future bbox/PII surface purge coverage, and
+  forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, linear KNN, RRF helpers, embedding worker, model/dimension-scoped
   durable per-version embedding jobs, model-scoped vector query isolation,
@@ -243,8 +247,80 @@ obsolete preliminary files and checklists are not product scope.
 | S100 | Product local OCR witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_executes_local_command_without_output_or_path_leak --locked -- --exact` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_without_command_reports_blocked_without_persisting_private_data --locked -- --exact` first failed because `resume-cli witness` did not accept OCR options; after implementation, focused witness OCR tests, full import-search and OCR suites, fmt, focused clippy, guard checks, `./scripts/ci/verify-local.sh`, and bounded private local-only OCR witnesses passed. | None for this isolated local OCR witness option slice; it is not a full-library OCR proof, does not package OCR runtimes, does not prove non-English OCR quality, does not prove Windows/Linux behavior, and does not complete large-corpus OCR throughput validation. |
 | S101 | Product import watcher slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_watcher_requeues_completed_root_after_file_change_without_path_leak --locked -- --exact` first failed because daemon did not accept `--watch-import-roots`; after implementation, focused watcher exact, full daemon import scheduler suite, daemon clippy, license guard, fmt, guard checks, and `./scripts/ci/verify-local.sh` passed. | None for this local OS watcher requeue slice; it does not prove Windows watcher behavior, long-running watcher soak stability, large-corpus event storms, or incremental index-update-only writes. |
 | S102 | Product field-quality gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality --locked` first failed because the field-quality APIs did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_quality_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` did not accept `field-quality`; after implementation, focused field-quality tests, full benchmark-runner tests, focused clippy, license guard, fmt, guard checks, and `./scripts/ci/verify-local.sh` passed. | None for this labeled field-quality evaluator/gate slice; it does not supply real business labeled datasets, prove production field F1, improve dictionaries, or complete soft-dedupe scoring. |
+| S103 | Product soft-dedupe hint slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion soft_dedupe --locked` first failed because soft-dedupe APIs did not exist; `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding search_marks_soft_duplicate_hints_without_low_confidence_folding --locked -- --exact` first failed because local search did not print soft-dedupe hints; and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_includes_redacted_soft_dedupe_hints --locked -- --exact` first failed because daemon search JSON omitted `soft_dedupe`. After implementation, focused rank-fusion, CLI, daemon IPC tests, related suites, focused clippy, fmt, diff, runbook, public guard, and `./scripts/ci/verify-local.sh` passed. | None for this bounded redacted soft-dedupe hint slice; it does not prove real dedupe precision/recall, does not implement manual merge review, does not add large-name-bucket indexing beyond existing mention indexes and bounded candidate scans, and does not prove million-corpus latency impact. |
 
 ## Command Log
+
+### S103
+
+Design target:
+
+- Add a non-contact soft-dedupe scorer for same-name profiles using school,
+  company, and skill overlap as bounded evidence.
+- Surface low-confidence suspected-duplicate hints in local CLI and daemon
+  full-text search results without assigning `candidate_id` or folding those
+  versions.
+- Output only aggregate hint data: suspected version count, maximum confidence,
+  and `folded=false`; do not output raw names, schools, companies, contacts,
+  paths, or dedupe keys.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion soft_dedupe --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding search_marks_soft_duplicate_hints_without_low_confidence_folding --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_includes_redacted_soft_dedupe_hints --locked -- --exact
+```
+
+Output summary:
+
+- The rank-fusion test failed because `DedupeProfile` and
+  `soft_dedupe_score` did not exist.
+- The local CLI test failed because search output had no
+  `soft_dedupe: suspected_versions=...` hint line.
+- The daemon IPC test failed because search result JSON had no `soft_dedupe`
+  object.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion soft_dedupe --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding search_marks_soft_duplicate_hints_without_low_confidence_folding --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_includes_redacted_soft_dedupe_hints --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p rank-fusion -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused rank-fusion RED/GREEN: exit 0 after implementation.
+- Focused local CLI soft-dedupe RED/GREEN: exit 0 after implementation.
+- Focused daemon IPC soft-dedupe RED/GREEN: exit 0 after implementation.
+- `rank-fusion`: exit 0; 7 tests passed plus doc-tests.
+- CLI candidate-folding suite: exit 0; 2 tests passed.
+- Daemon search IPC suite: exit 0; 5 tests passed.
+- Focused clippy: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- Runbook guard: exit 0.
+- Public repository guard: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, and public repo guard.
+
+Scope note:
+
+- S103 adds bounded soft-dedupe scoring and redacted search hints. It does not
+  strong-fold low-confidence matches, does not persist manual merge decisions,
+  does not prove real dedupe precision/recall, and does not prove million-corpus
+  latency.
+- Full product is still not complete.
 
 ### S102
 

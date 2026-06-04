@@ -44,7 +44,7 @@ use ocr_client::{
     LocalPdfRenderCommandSpec, OcrClient, OcrOptions, OcrPageRequest, OcrWorkerBudget,
     PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage, TesseractOcrClient, TesseractOcrSpec,
 };
-use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
+use rank_fusion::{soft_dedupe_score, DedupeProfile, DegreeLevel, ResumeProfile, SearchFilters};
 use search_planner::plan_search;
 use sectionizer::Sectionizer;
 
@@ -70,6 +70,7 @@ const OCR_PAGE_BUDGET_REMEDIATION: &str =
 const DEFAULT_EMBEDDING_MAX_DOCS: usize = 64;
 const DEFAULT_EMBEDDING_MAX_TEXT_BYTES: usize = 1_000_000;
 const DEFAULT_EMBEDDING_TIMEOUT_MS: u64 = 30_000;
+const FIELD_CONFIDENCE_THRESHOLD: f32 = 0.75;
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -2388,13 +2389,21 @@ fn execute_search_command(
     let results = hits
         .iter()
         .map(|hit| {
-            serde_json::json!({
+            let mut result = serde_json::json!({
                 "rank": hit.rank,
                 "doc_id": hit.doc_id,
                 "version_id": hit.version_id,
                 "file_name": hit.file_name,
                 "snippet": hit.snippet,
-            })
+            });
+            if let Some(hint) = &hit.soft_dedupe_hint {
+                result["soft_dedupe"] = serde_json::json!({
+                    "suspected_versions": hint.suspected_versions,
+                    "max_confidence": format_confidence(hint.max_confidence),
+                    "folded": false,
+                });
+            }
+            result
         })
         .collect::<Vec<_>>();
     let body = serde_json::json!({
@@ -2533,7 +2542,7 @@ fn daemon_visible_hits(
             continue;
         }
         let candidate_key = daemon_candidate_fold_key(&version);
-        if !seen_candidate_keys.insert(candidate_key) {
+        if !seen_candidate_keys.insert(candidate_key.clone()) {
             continue;
         }
 
@@ -2543,13 +2552,178 @@ fn daemon_visible_hits(
             version_id: hit.version_id,
             file_name: redact_contact_values(&hit.file_name),
             snippet: redact_contact_values(&hit.snippet),
+            candidate_key,
+            soft_dedupe_hint: None,
         });
         if visible.len() == top_k {
             break;
         }
     }
 
-    Ok(visible)
+    daemon_attach_soft_dedupe_hints(store, visible)
+}
+
+fn daemon_attach_soft_dedupe_hints(
+    store: &MetaStore,
+    mut hits: Vec<DaemonSearchHit>,
+) -> std::result::Result<Vec<DaemonSearchHit>, IpcCommandError> {
+    let hints = hits
+        .iter()
+        .map(|hit| daemon_soft_dedupe_hint_for_hit(store, hit))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for (hit, hint) in hits.iter_mut().zip(hints) {
+        hit.soft_dedupe_hint = hint;
+    }
+    Ok(hits)
+}
+
+fn daemon_soft_dedupe_hint_for_hit(
+    store: &MetaStore,
+    hit: &DaemonSearchHit,
+) -> std::result::Result<Option<DaemonSoftDedupeHint>, IpcCommandError> {
+    if hit.candidate_key.starts_with("candidate:") {
+        return Ok(None);
+    }
+    let Some(profile) = daemon_dedupe_profile_for_hit(store, hit)? else {
+        return Ok(None);
+    };
+    let Some(name) = profile.name() else {
+        return Ok(None);
+    };
+    let candidate_doc_ids = store
+        .searchable_document_ids_with_entity_values(
+            EntityType::Name,
+            &[name.to_string()],
+            FIELD_CONFIDENCE_THRESHOLD,
+            true,
+        )
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?;
+    let mut suspected_versions = 0_usize;
+    let mut max_confidence = 0.0_f32;
+
+    for candidate_doc_id in candidate_doc_ids.into_iter().take(64) {
+        if candidate_doc_id.as_str() == hit.doc_id {
+            continue;
+        }
+        let versions = store
+            .resume_versions_for_document(&candidate_doc_id)
+            .map_err(DaemonError::store)
+            .map_err(IpcCommandError::Internal)?;
+        for version in versions {
+            if version.id.as_str() == hit.version_id
+                || version.visibility != ResumeVisibility::Searchable
+                || version.candidate_id.is_some()
+            {
+                continue;
+            }
+            let other_hit = DaemonSearchHit {
+                rank: 0,
+                doc_id: version.document_id.to_string(),
+                version_id: version.id.to_string(),
+                file_name: String::new(),
+                snippet: String::new(),
+                candidate_key: daemon_candidate_fold_key(&version),
+                soft_dedupe_hint: None,
+            };
+            let Some(other_profile) = daemon_dedupe_profile_for_hit(store, &other_hit)? else {
+                continue;
+            };
+            if let Some(score) = soft_dedupe_score(&profile, &other_profile) {
+                suspected_versions += 1;
+                max_confidence = max_confidence.max(score.confidence());
+            }
+        }
+    }
+
+    Ok((suspected_versions > 0).then_some(DaemonSoftDedupeHint {
+        suspected_versions,
+        max_confidence,
+    }))
+}
+
+fn daemon_dedupe_profile_for_hit(
+    store: &MetaStore,
+    hit: &DaemonSearchHit,
+) -> std::result::Result<Option<DedupeProfile>, IpcCommandError> {
+    let Ok(version_id) = ResumeVersionId::from_str(&hit.version_id) else {
+        return Ok(None);
+    };
+    let Some(version) = store
+        .resume_version_by_id(&version_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Ok(None);
+    };
+    if version.document_id.as_str() != hit.doc_id || version.candidate_id.is_some() {
+        return Ok(None);
+    }
+    let mentions = store
+        .entity_mentions_for_version(&version.id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?;
+    let Some(name) = daemon_best_normalized_entity_value(&mentions, EntityType::Name) else {
+        return Ok(None);
+    };
+    let profile = DedupeProfile::new(hit.doc_id.clone())
+        .with_name(&name)
+        .with_schools(daemon_normalized_entity_values(
+            &mentions,
+            EntityType::School,
+        ))
+        .with_companies(daemon_normalized_entity_values(
+            &mentions,
+            EntityType::Company,
+        ))
+        .with_skills(daemon_normalized_entity_values(
+            &mentions,
+            EntityType::Skill,
+        ));
+
+    Ok(Some(profile))
+}
+
+fn daemon_best_normalized_entity_value(
+    mentions: &[EntityMention],
+    entity_type: EntityType,
+) -> Option<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type && mention.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| {
+            Some((
+                mention.normalized_value.as_deref()?.to_string(),
+                mention.confidence,
+                mention.span_start.unwrap_or(usize::MAX),
+            ))
+        })
+        .max_by(|left, right| {
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.2.cmp(&left.2))
+                .then_with(|| right.0.cmp(&left.0))
+        })
+        .map(|candidate| candidate.0)
+}
+
+fn daemon_normalized_entity_values(
+    mentions: &[EntityMention],
+    entity_type: EntityType,
+) -> Vec<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type && mention.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| mention.normalized_value.as_deref())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn daemon_hydrate_visible_version(
@@ -2603,18 +2777,24 @@ fn daemon_persisted_profile(
         .map_err(IpcCommandError::Internal)?;
     let degree = fields
         .iter()
-        .filter(|field| field.entity_type == EntityType::Degree && field.confidence >= 0.75)
+        .filter(|field| {
+            field.entity_type == EntityType::Degree
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
         .filter_map(|field| DegreeLevel::parse(field.normalized_value.as_deref()?))
         .max();
     let skills = fields
         .iter()
-        .filter(|field| field.entity_type == EntityType::Skill && field.confidence >= 0.75)
+        .filter(|field| {
+            field.entity_type == EntityType::Skill && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
     let years_experience = fields
         .iter()
         .filter(|field| {
-            field.entity_type == EntityType::YearsExperience && field.confidence >= 0.75
+            field.entity_type == EntityType::YearsExperience
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
         })
         .filter_map(|field| field.normalized_value.as_deref()?.parse::<f32>().ok())
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
@@ -2823,6 +3003,10 @@ fn daemon_candidate_fold_key(version: &ResumeVersion) -> String {
         .as_ref()
         .map(|candidate_id| format!("candidate:{}", candidate_id.as_str()))
         .unwrap_or_else(|| format!("doc:{}", version.document_id.as_str()))
+}
+
+fn format_confidence(value: f32) -> f64 {
+    f64::from((value.clamp(0.0, 1.0) * 100.0).round() / 100.0)
 }
 
 fn enqueue_import_command(
@@ -3247,6 +3431,13 @@ struct DaemonSearchHit {
     version_id: String,
     file_name: String,
     snippet: String,
+    candidate_key: String,
+    soft_dedupe_hint: Option<DaemonSoftDedupeHint>,
+}
+
+struct DaemonSoftDedupeHint {
+    suspected_versions: usize,
+    max_confidence: f32,
 }
 
 struct DaemonDetailArgs {
