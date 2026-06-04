@@ -25,6 +25,10 @@ fn doctor_reports_no_index_without_path_or_fake_benchmark() {
     assert!(stdout.contains("vector index: unavailable"));
     assert!(stdout.contains("query smoke: skipped (no full-text index)"));
     assert!(stdout.contains("contact hash key: missing"));
+    assert!(stdout.contains("metadata encryption: plaintext"));
+    assert!(stdout.contains(
+        "metadata encryption remediation: enable SQLCipher metadata encryption before production release"
+    ));
     assert!(stdout.contains("fault simulations: available"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!data_dir
@@ -81,6 +85,10 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
     assert!(stdout.contains("\"search_index_state\": \"unavailable\""));
     assert!(stdout.contains("\"vector_index_state\": \"unavailable\""));
     assert!(stdout.contains("\"contact_hash_key\": \"missing\""));
+    assert!(stdout.contains("\"metadata_encryption\": \"plaintext\""));
+    assert!(stdout.contains(
+        "\"metadata_encryption_remediation\": \"enable SQLCipher metadata encryption before production release\""
+    ));
     assert!(stdout.contains("\"daemon_restart\""));
     assert!(stdout.contains("\"daemon_kill\""));
     assert!(stdout.contains("\"disk_space_low\""));

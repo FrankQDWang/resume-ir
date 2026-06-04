@@ -33,9 +33,9 @@ use meta_store::{
     ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
     ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanProfile as StoreImportScanProfile,
     ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus,
-    IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry,
-    OcrPageCacheKey, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
-    WorkerTaskKind,
+    IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState,
+    OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion, ResumeVersionId, ResumeVisibility,
+    UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -71,6 +71,8 @@ const OCR_PAGE_BUDGET_REMEDIATION: &str =
     "raise OCR max pages per document or skip oversized scanned PDFs";
 const OCR_LANGUAGE_REMEDIATION: &str =
     "install requested OCR language packs or choose an installed OCR language";
+const METADATA_ENCRYPTION_REMEDIATION: &str =
+    "enable SQLCipher metadata encryption before production release";
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
 const WITNESS_DEFAULT_MAX_FILES: usize = 10_000;
@@ -5984,9 +5986,15 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
     let resource_telemetry = collect_resource_telemetry(data_dir);
     let ocr_runtime = inspect_ocr_runtime(&diagnostic_args.ocr_lang);
+    let metadata_encryption = store.metadata_encryption_state();
 
     println!("resume-ir doctor");
     println!("metadata: ok");
+    println!("metadata encryption: {}", metadata_encryption.label());
+    println!(
+        "metadata encryption remediation: {}",
+        metadata_encryption_remediation(metadata_encryption)
+    );
     println!("indexed documents: {}", summary.indexed_documents);
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr queue: {}", summary.ocr_queue_depth);
@@ -6076,6 +6084,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
     let resource_telemetry = collect_resource_telemetry(data_dir);
     let ocr_runtime = inspect_ocr_runtime(&diagnostic_args.ocr_lang);
+    let metadata_encryption = store.metadata_encryption_state();
 
     println!("{{");
     println!("  \"schema_version\": \"diagnostics.v1\",");
@@ -6090,6 +6099,14 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
         summary.searchable_documents
     );
     println!("    \"ocr_queue_depth\": {},", summary.ocr_queue_depth);
+    println!(
+        "    \"metadata_encryption\": \"{}\",",
+        metadata_encryption.label()
+    );
+    println!(
+        "    \"metadata_encryption_remediation\": \"{}\",",
+        metadata_encryption_remediation(metadata_encryption)
+    );
     println!("    \"ocr_jobs_queued\": {},", summary.ocr_jobs_queued);
     println!(
         "    \"ocr_page_budget_blocked\": {},",
@@ -7663,6 +7680,12 @@ fn index_health_label(status: IndexStateStatus) -> &'static str {
         IndexStateStatus::Building => "building",
         IndexStateStatus::Ready => "ready",
         IndexStateStatus::Stale => "stale",
+    }
+}
+
+fn metadata_encryption_remediation(state: MetadataEncryptionState) -> &'static str {
+    match state {
+        MetadataEncryptionState::Plaintext => METADATA_ENCRYPTION_REMEDIATION,
     }
 }
 

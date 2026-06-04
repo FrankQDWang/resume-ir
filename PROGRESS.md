@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, and S139 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, and S140 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -92,7 +92,11 @@ obsolete preliminary files and checklists are not product scope.
   run a redacted field-extraction probe that
   verifies persisted field mentions by aggregate field type only, without
   selecting, printing, or committing raw/normalized field values, filenames,
-  paths, private queries, raw text, or diagnostics. Missing production work
+  paths, private queries, raw text, or diagnostics. Doctor and redacted
+  diagnostics now explicitly report metadata storage encryption as `plaintext`
+  with SQLCipher remediation, so current local SQLite metadata persistence is
+  visible as a privacy blocker rather than silently implied to be encrypted.
+  Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
   F1 datasets/results, dedupe quality metrics, candidate merge review
   workflows, encrypted local storage, future bbox/PII surface purge coverage,
@@ -377,8 +381,67 @@ obsolete preliminary files and checklists are not product scope.
 | S137 | Product combined OCR language diagnostics slice complete locally | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_combined_ocr_languages_without_language_dump --locked -- --exact` first failed because OCR diagnostics treated `eng+chi_sim` as one language pack name. After implementation, diagnostics split Tesseract combined language requests, require every requested language pack to be installed, reject empty or invalid language components, and keep redacted output from dumping unrelated installed languages. The focused exact test, full diagnostics suite, fmt, focused CLI clippy, local `eng+chi_sim` doctor check, and local Apache-2.0 `tesseract-lang` install verification passed. | None for this local OCR language diagnostics slice; it does not distribute language packs in installers, prove non-English OCR quality, complete full-library OCR, validate Windows/macOS installed OCR runtime behavior, or clear the broader OCR quality and packaging blockers. |
 | S138 | Product OCR missing-language worker preflight slice complete locally | Focused CLI and daemon OCR worker tests first failed because a Tesseract runtime missing one requested combined language pack could reach the OCR engine path and record a generic engine failure. After implementation, CLI and daemon OCR workers preflight requested Tesseract language packs after cache miss and before renderer/OCR invocation, persist retryable page-cache failures with `LanguageUnavailable`, keep document jobs retryable, and redact blocked-path output. Focused exact tests, full CLI OCR handoff tests, full daemon OCR worker tests, `ocr-client` tests, fmt, and focused clippy passed. | None for this missing-language preflight slice; it does not distribute language packs in installers, prove non-English OCR quality, complete full-library OCR, validate Windows/macOS installed OCR runtime behavior, or clear broader OCR quality and packaging blockers. |
 | S139 | Product OCR missing-language remediation visibility slice complete locally | A focused CLI OCR worker test first failed because status, doctor, and redacted diagnostics did not surface the `LanguageUnavailable` blocker created by S138. After implementation, `status_summary` counts retryable OCR jobs with a linked `LanguageUnavailable` OCR page-cache failure; local status, doctor, export-diagnostics, daemon status IPC, and CLI status-over-IPC print redacted aggregate blocker/remediation fields without leaking requested language names, runtime paths, or OCR stderr. Focused exact tests, full CLI OCR handoff, CLI status IPC, daemon status IPC, meta-store tests, fmt, focused clippy, and diff checks passed. | None for this remediation-visibility slice; it does not distribute language packs in installers, prove non-English OCR quality, complete full-library OCR, validate Windows/macOS installed OCR runtime behavior, or clear broader OCR quality and packaging blockers. |
+| S140 | Product metadata encryption diagnostic slice complete locally | Focused diagnostics tests first failed because doctor and redacted export did not surface the plaintext metadata-storage state. After implementation, `meta-store` exposes `MetadataEncryptionState::Plaintext`; doctor prints `metadata encryption: plaintext` plus SQLCipher remediation, and `export-diagnostics --redact` includes redacted `metadata_encryption` plus remediation fields without paths or secrets. Focused doctor/export tests, focused meta-store encryption-state test, full diagnostics, full meta-store tests, fmt, focused clippy, diff checks, public repo guard, and full local verification passed. | None for this diagnostic visibility slice; it does not implement SQLCipher, encrypt SQLite, rotate keys, prove forensic erase, or complete the encrypted local storage blocker. |
 
 ## Command Log
+
+### S140
+
+Design target:
+
+- Make the current plaintext metadata-storage state visible in doctor and
+  redacted diagnostics.
+- Avoid implying that the local SQLite metadata/task store is encrypted before
+  SQLCipher or equivalent application-level encryption is implemented.
+- Keep the diagnostic redacted: no local data directory paths, keys, raw resume
+  text, or private diagnostics.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_reports_no_index_without_path_or_fake_benchmark --locked -- --exact
+```
+
+Output summary:
+
+- The focused doctor test failed because output did not contain
+  `metadata encryption: plaintext`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_reports_no_index_without_path_or_fake_benchmark --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store metadata_encryption_state_reports_plaintext_until_sqlcipher_is_enabled --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused doctor metadata-encryption diagnostic test: exit 0; 1 test passed.
+- Focused redacted export metadata-encryption diagnostic test: exit 0; 1 test
+  passed.
+- Focused meta-store encryption-state test: exit 0; 1 test passed.
+- Full `meta-store` tests: exit 0; 44 tests passed.
+- Full diagnostics suite: exit 0; 13 tests passed.
+- `cargo fmt --check`, focused clippy, and `git diff --check`: exit 0.
+- Public repo guard: exit 0; `public repo guard passed`.
+- Full local verification: exit 0; workspace tests, doc-tests, license check,
+  runbook check, workflow check, release artifact check, release SBOM check,
+  macOS package check, and public repo guard passed.
+
+Scope note:
+
+- S140 completes diagnostic visibility for the current plaintext metadata-store
+  state only. It does not implement SQLCipher, encrypt SQLite, rotate or back
+  up encryption keys, prove forensic erasure, or clear the encrypted local
+  storage blocker.
 
 ### S139
 

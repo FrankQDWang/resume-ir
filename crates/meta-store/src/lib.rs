@@ -175,6 +175,10 @@ impl MetaStore {
             .map_err(|_| MetaStoreError::invalid_value("schema_migrations.version"))
     }
 
+    pub fn metadata_encryption_state(&self) -> MetadataEncryptionState {
+        MetadataEncryptionState::Plaintext
+    }
+
     pub fn schema_table_exists(&self, table_name: &str) -> Result<bool> {
         let connection = self.connection.borrow();
         let exists = connection
@@ -3236,6 +3240,19 @@ pub struct StoreStatusSummary {
     pub entity_mentions: u64,
     pub index_health: IndexStateStatus,
     pub last_snapshot_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetadataEncryptionState {
+    Plaintext,
+}
+
+impl MetadataEncryptionState {
+    pub fn label(self) -> &'static str {
+        match self {
+            MetadataEncryptionState::Plaintext => "plaintext",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

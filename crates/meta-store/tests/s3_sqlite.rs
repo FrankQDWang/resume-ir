@@ -9,8 +9,9 @@ use meta_store::{
     ImportScanBudgetKind, ImportScanError, ImportScanErrorKind, ImportScanErrorOperation,
     ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
     IndexStateStatus, IngestJob, IngestJobFailureKind, IngestJobId, IngestJobKind, IngestJobStatus,
-    MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ResumeVersion,
-    ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
+    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus,
+    OcrWordBox, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskControl,
+    WorkerTaskKind,
 };
 use rusqlite::{params, Connection};
 
@@ -48,6 +49,17 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
     assert_eq!(store.schema_version().unwrap(), 16);
+}
+
+#[test]
+fn metadata_encryption_state_reports_plaintext_until_sqlcipher_is_enabled() {
+    let store = migrated_store();
+
+    assert_eq!(
+        store.metadata_encryption_state(),
+        MetadataEncryptionState::Plaintext
+    );
+    assert_eq!(store.metadata_encryption_state().label(), "plaintext");
 }
 
 #[test]
