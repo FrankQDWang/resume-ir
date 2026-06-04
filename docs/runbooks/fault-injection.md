@@ -26,6 +26,8 @@ Canonical probe forms:
 - `resume-cli fault-simulate --case model-checksum`
 - `resume-cli fault-simulate --case daemon-kill`
 - `resume-cli fault-simulate --case ocr-crash`
+- `resume-cli fault-simulate --case battery-mode`
+- `resume-cli fault-simulate --case external-drive-disconnect`
 
 Add `--data-dir <local-data-dir>` and `--scratch-dir <scratch-dir>` for an
 isolated local run.
@@ -85,9 +87,29 @@ resume-cli --data-dir "$data_dir" fault-simulate \
   --ocr-command ./tests/fixtures/bin/crashing-ocr
 ```
 
+Run battery-mode degradation simulation:
+
+```bash
+resume-cli --data-dir "$data_dir" fault-simulate \
+  --case battery-mode \
+  --scratch-dir "$scratch" \
+  --battery-state battery
+```
+
+Run external-drive disconnect recovery simulation:
+
+```bash
+resume-cli --data-dir "$data_dir" fault-simulate \
+  --case external-drive-disconnect \
+  --scratch-dir "$scratch" \
+  --drive-state disconnected
+```
+
 Expected safe output includes `paths: <redacted>` and does not include the
 scratch path, data path, command path, model bytes, OCR stdout, OCR stderr, or
-probe bytes. Checksum output is limited to short digest prefixes.
+probe bytes. Checksum output is limited to short digest prefixes. Battery and
+external-drive probes are safe state simulations only; their output must say
+`real hardware drill: blocked`.
 
 ## Unsafe Faults
 
@@ -95,8 +117,8 @@ The following remain not complete or BLOCKED for public release readiness:
 
 - actual ENOSPC by filling a real filesystem
 - service-manager kill of a user-installed daemon
-- battery-mode transition validation
-- external-drive disconnect validation
+- real battery-mode transition validation
+- real external-drive disconnect validation
 - licensed model selection, download, and distribution validation
 - Windows and macOS service-manager fault evidence
 

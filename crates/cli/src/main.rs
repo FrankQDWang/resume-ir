@@ -131,6 +131,10 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
         "cross-platform release validation",
         "Windows and macOS release validation evidence is not complete",
     ),
+    (
+        "hardware fault drills",
+        "real battery-mode and external-drive disconnect drills are not proven on release platforms",
+    ),
 ];
 
 fn main() {
@@ -1526,6 +1530,52 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
             println!("paths: <redacted>");
             Ok(())
         }
+        FaultSimulationCase::BatteryMode => {
+            let battery_state = fault_args
+                .battery_state
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            println!("fault: battery_mode");
+            match battery_state {
+                FaultBatteryState::Battery => {
+                    println!("status: reproduced");
+                    println!("power source: battery");
+                    println!("degradation: pause or lower OCR/vector worker budgets");
+                }
+                FaultBatteryState::Ac => {
+                    println!("status: not reproduced");
+                    println!("power source: ac");
+                    println!("degradation: not required");
+                }
+            }
+            println!("real hardware drill: blocked");
+            println!("paths: <redacted>");
+            Ok(())
+        }
+        FaultSimulationCase::ExternalDriveDisconnect => {
+            let drive_state = fault_args
+                .drive_state
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            println!("fault: external_drive_disconnect");
+            match drive_state {
+                FaultDriveState::Disconnected => {
+                    println!("status: reproduced");
+                    println!("mount state: disconnected");
+                    println!("import roots: unavailable");
+                    println!("recovery: reconnect drive or reselect root before retry");
+                }
+                FaultDriveState::Mounted => {
+                    println!("status: not reproduced");
+                    println!("mount state: mounted");
+                    println!("import roots: available");
+                    println!("recovery: not required");
+                }
+            }
+            println!("real hardware drill: blocked");
+            println!("paths: <redacted>");
+            Ok(())
+        }
     }
 }
 
@@ -1538,6 +1588,20 @@ enum FaultSimulationCase {
     ModelChecksum,
     DaemonKill,
     OcrCrash,
+    BatteryMode,
+    ExternalDriveDisconnect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FaultBatteryState {
+    Battery,
+    Ac,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FaultDriveState {
+    Disconnected,
+    Mounted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1550,6 +1614,8 @@ struct FaultSimulationArgs {
     ocr_command: Option<PathBuf>,
     model_file: Option<PathBuf>,
     expected_sha256: Option<String>,
+    battery_state: Option<FaultBatteryState>,
+    drive_state: Option<FaultDriveState>,
 }
 
 fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
@@ -1561,6 +1627,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
     let mut ocr_command = None;
     let mut model_file = None;
     let mut expected_sha256 = None;
+    let mut battery_state = None;
+    let mut drive_state = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -1614,6 +1682,22 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 }
                 expected_sha256 = Some(take_fault_sha256(args, &mut index)?);
             }
+            "--battery-state" => {
+                if battery_state.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                battery_state = Some(parse_fault_battery_state(take_fault_value(
+                    args, &mut index,
+                )?)?);
+            }
+            "--drive-state" => {
+                if drive_state.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                drive_state = Some(parse_fault_drive_state(take_fault_value(
+                    args, &mut index,
+                )?)?);
+            }
             _ => return Err(CliError::usage(fault_simulate_usage())),
         }
     }
@@ -1628,6 +1712,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 || ocr_command.is_some()
                 || model_file.is_some()
                 || expected_sha256.is_some()
+                || battery_state.is_some()
+                || drive_state.is_some()
             {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
@@ -1641,6 +1727,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 || ocr_command.is_some()
                 || model_file.is_some()
                 || expected_sha256.is_some()
+                || battery_state.is_some()
+                || drive_state.is_some()
             {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
@@ -1652,6 +1740,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 || ocr_command.is_some()
                 || model_file.is_none()
                 || expected_sha256.is_none()
+                || battery_state.is_some()
+                || drive_state.is_some()
             {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
@@ -1663,6 +1753,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 || ocr_command.is_some()
                 || model_file.is_some()
                 || expected_sha256.is_some()
+                || battery_state.is_some()
+                || drive_state.is_some()
             {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
@@ -1674,6 +1766,34 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 || ocr_command.is_none()
                 || model_file.is_some()
                 || expected_sha256.is_some()
+                || battery_state.is_some()
+                || drive_state.is_some()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::BatteryMode => {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_some()
+                || ocr_command.is_some()
+                || model_file.is_some()
+                || expected_sha256.is_some()
+                || battery_state.is_none()
+                || drive_state.is_some()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::ExternalDriveDisconnect => {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_some()
+                || ocr_command.is_some()
+                || model_file.is_some()
+                || expected_sha256.is_some()
+                || battery_state.is_some()
+                || drive_state.is_none()
             {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
@@ -1689,6 +1809,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
         ocr_command,
         model_file,
         expected_sha256,
+        battery_state,
+        drive_state,
     })
 }
 
@@ -1701,6 +1823,26 @@ fn parse_fault_case(value: &str) -> Result<FaultSimulationCase> {
         "model-checksum" => Ok(FaultSimulationCase::ModelChecksum),
         "daemon-kill" => Ok(FaultSimulationCase::DaemonKill),
         "ocr-crash" => Ok(FaultSimulationCase::OcrCrash),
+        "battery-mode" | "battery_mode" => Ok(FaultSimulationCase::BatteryMode),
+        "external-drive-disconnect" | "external_drive_disconnect" => {
+            Ok(FaultSimulationCase::ExternalDriveDisconnect)
+        }
+        _ => Err(CliError::usage(fault_simulate_usage())),
+    }
+}
+
+fn parse_fault_battery_state(value: &str) -> Result<FaultBatteryState> {
+    match value {
+        "battery" => Ok(FaultBatteryState::Battery),
+        "ac" => Ok(FaultBatteryState::Ac),
+        _ => Err(CliError::usage(fault_simulate_usage())),
+    }
+}
+
+fn parse_fault_drive_state(value: &str) -> Result<FaultDriveState> {
+    match value {
+        "disconnected" => Ok(FaultDriveState::Disconnected),
+        "mounted" => Ok(FaultDriveState::Mounted),
         _ => Err(CliError::usage(fault_simulate_usage())),
     }
 }
@@ -2049,7 +2191,7 @@ fn simulate_ocr_crash_probe(scratch_dir: &Path, ocr_command: &Path) -> Result<Oc
 }
 
 fn fault_simulate_usage() -> &'static str {
-    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>]"
+    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case battery-mode --battery-state <battery|ac> [--scratch-dir <path>] OR resume-cli fault-simulate --case external-drive-disconnect --drive-state <disconnected|mounted> [--scratch-dir <path>]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -6374,7 +6516,7 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
     println!("fault simulations: available");
     println!(
-        "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock,metadata_migration,model_checksum,ocr_crash"
+        "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock,metadata_migration,model_checksum,ocr_crash,battery_mode,external_drive_disconnect"
     );
     println!("diagnostics redaction: available");
 
@@ -6571,7 +6713,9 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("    \"file_lock\",");
     println!("    \"metadata_migration\",");
     println!("    \"model_checksum\",");
-    println!("    \"ocr_crash\"");
+    println!("    \"ocr_crash\",");
+    println!("    \"battery_mode\",");
+    println!("    \"external_drive_disconnect\"");
     println!("  ],");
     println!("  \"scope\": \"redacted skeleton; no raw resume text, paths, or queries included\"");
     println!("}}");

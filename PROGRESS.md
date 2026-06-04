@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, and S168 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, and S169 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -273,7 +273,10 @@ obsolete preliminary files and checklists are not product scope.
   now records bounded redacted aggregate samples for successful CLI and daemon
   searches, and reports query latency P50/P95/P99 plus last result count through
   local status, daemon status IPC, doctor, and redacted diagnostics without
-  storing or printing raw query text.
+  storing or printing raw query text. Safe local fault simulations now also
+  cover battery-mode degradation and external-drive disconnect recovery
+  messaging, and doctor/redacted diagnostics advertise those fault hooks while
+  the release-readiness gate keeps real hardware drills blocked.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, labeled vector-quality, and private real-corpus release-evidence
   benchmark gates; query, OCR, and vector smoke gates are wired into PR and
@@ -285,9 +288,9 @@ obsolete preliminary files and checklists are not product scope.
   Missing or BLOCKED work includes actual 100k/1M real-corpus benchmark runs,
   real-corpus nightly/release performance evidence, licensed model selection/
   distribution, real semantic/vector quality datasets/results, destructive
-  service-level kill/actual ENOSPC fault injection, battery/external-drive
-  fault drills, Windows/macOS validation, and cross-platform performance
-  evidence.
+  service-level kill/actual ENOSPC fault injection, actual battery/external-
+  drive hardware fault drills, Windows/macOS validation, and cross-platform
+  performance evidence.
 
 ## Slice Status
 
@@ -460,8 +463,65 @@ obsolete preliminary files and checklists are not product scope.
 | S166 | Product hosted Windows full-text corruption-test stability complete locally | The pushed S165 run passed dependency, license, runbook, public guard, Rust Workspace, and macOS Platform CI, but hosted Windows Platform CI failed in `s8_fulltext::active_snapshot_corruption_falls_back_to_last_good_snapshot`: the test attempted to overwrite the freshly published active encrypted snapshot with `fs::write` and hit Windows `os error 33` because another process still held a region lock. Root cause was the test's corruption setup bypassing the existing transient snapshot filesystem retry policy. After implementation, the corruption write uses a bounded test helper that retries the same Windows file-lock diagnostics before asserting fallback behavior. The hosted-failing exact test, full `index-fulltext`, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers hosted Windows full-text test harness stability only. It does not change production full-text fallback behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear large-corpus, model, installer, signing, notarization, or release blockers. |
 | S167 | Product incremental full-text snapshot update path complete locally | A focused full-text test first failed because `publish_incremental_snapshot` did not exist. After implementation, index-fulltext can synthesize a next snapshot from the active published snapshot by retaining unchanged documents, replacing same-doc_id delta documents, excluding deleted doc_ids, and publishing through the existing encrypted snapshot path. Import, OCR text indexing, and soft-delete now use this incremental snapshot document synthesis before falling back to metadata rebuild if the active snapshot is unreadable. A CLI regression corrupts the active encrypted snapshot and proves reimport rebuilds from metadata without leaking paths. Focused RED/GREEN, full index-fulltext, import-pipeline, S9 import/search, S14 delete/search, S15 OCR handoff, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice reduces full-text update work and preserves corrupt-active fallback behavior for synthetic local paths only. It does not prove million-scale incremental latency, real-corpus performance, cross-platform watcher soak, platform installer/service validation, signing, notarization, OCR/model licensing, or release readiness. |
 | S168 | Product query telemetry observability complete locally | A focused meta-store test first failed because `record_query_observation` and `StoreStatusSummary.query_latency` did not exist. After implementation, metadata schema V17 adds a bounded `query_observation` table that stores mode, duration, result count, and timestamp only, never query text. Successful local CLI searches and daemon full-text IPC searches record best-effort samples. Local status, daemon status IPC, doctor, and `export-diagnostics --redact` report aggregate query telemetry sample count plus P50/P95/P99 and last result count without raw queries or paths. Focused RED/GREEN, full meta-store, S4 status, S9 import/search, S13 diagnostics, daemon S20 status IPC, daemon S48 search IPC, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice adds runtime observability only. It does not prove the `<200ms` hybrid P95 target, real 100k/1M corpus latency, real semantic/vector quality, cross-platform performance evidence, installer/service validation, signing, notarization, OCR/model licensing, or stable release readiness. |
+| S169 | Product hardware fault-drill simulation coverage complete locally | A focused CLI fault test first failed because `fault-simulate` did not accept `battery-mode`. After implementation, the safe local fault-simulation CLI accepts `battery-mode --battery-state <battery|ac>` and `external-drive-disconnect --drive-state <disconnected|mounted>`, prints redacted degradation/recovery guidance, does not touch private paths, and explicitly marks the real hardware drill as blocked. Doctor and `export-diagnostics --redact` advertise the two new hooks, `release-readiness` plus its CI guard include a `hardware fault drills` blocker, and the fault-injection runbook/guard document the safe probes so safe simulation cannot be mistaken for release evidence. Focused RED/GREEN, full fault-injection tests, diagnostics tests, release-readiness tests, release-readiness guard, runbook guard, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers safe local synthetic drill surfaces only. It does not perform real battery-mode switching, physically disconnect external drives, prove platform-specific power/storage behavior, clear destructive ENOSPC/service-level fault drills, or clear Windows/macOS validation, signing, notarization, installer lifecycle, real benchmark, OCR/model licensing, or stable release readiness blockers. |
 
 ## Command Log
+
+### S169
+
+Design target:
+
+- Close part of the P6 fault-injection coverage gap from the acceptance docs:
+  battery-mode and external-drive disconnect should have local drill surfaces.
+- Preserve privacy and safety: do not switch host power state, unmount drives,
+  fill disks, print local paths, or claim real hardware evidence.
+- Keep the release gate fail-closed: real battery/external-drive hardware drills
+  remain blocked until platform-specific evidence exists.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s71_fault_injection fault_simulate_battery_mode_reproduces_degradation_without_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- The focused fault-injection test failed before implementation because
+  `fault-simulate` rejected `--case battery-mode` and printed the old usage.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s71_fault_injection fault_simulate_battery_mode_reproduces_degradation_without_path_leak --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s71_fault_injection fault_simulate_external_drive_disconnect_reproduces_without_path_leak --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s71_fault_injection --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s13_diagnostics --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- The battery-mode and external-drive-disconnect focused tests passed after
+  safe redacted simulation cases were added.
+- The diagnostics, release-readiness, and runbook checks passed, proving the new
+  hooks are advertised while real hardware drills remain blocked in the
+  stable-release gate and documented as safe local probes only.
+- Full fault-injection, diagnostics, fmt, focused clippy, full local
+  verification, and public repo guard passed.
+
+Scope note:
+
+- S169 is safe synthetic fault-drill coverage only. It does not prove actual
+  battery-mode transition behavior, real external-drive disconnect recovery,
+  platform hardware behavior, destructive ENOSPC, service-level chaos drills,
+  real-corpus performance, or stable release readiness.
 
 ### S168
 

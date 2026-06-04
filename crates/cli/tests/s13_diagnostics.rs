@@ -124,6 +124,8 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
     assert!(stdout.contains("\"metadata_migration\""));
     assert!(stdout.contains("\"ocr_crash\""));
     assert!(stdout.contains("\"model_checksum\""));
+    assert!(stdout.contains("\"battery_mode\""));
+    assert!(stdout.contains("\"external_drive_disconnect\""));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!data_dir
         .join("secrets")

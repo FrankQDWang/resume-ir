@@ -171,6 +171,85 @@ fn fault_simulate_file_lock_reproduces_contention_without_path_leak() {
     remove_dir(&scratch_dir);
 }
 
+#[test]
+fn fault_simulate_battery_mode_reproduces_degradation_without_path_leak() {
+    let data_dir = temp_path("fault-battery-private-data");
+    let scratch_dir = temp_path("fault-battery-private-scratch");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--case",
+            "battery-mode",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+            "--battery-state",
+            "battery",
+        ])
+        .output()
+        .expect("run battery-mode fault simulation");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("fault: battery_mode"));
+    assert!(stdout.contains("status: reproduced"));
+    assert!(stdout.contains("power source: battery"));
+    assert!(stdout.contains("degradation: pause or lower OCR/vector worker budgets"));
+    assert!(stdout.contains("real hardware drill: blocked"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(!scratch_dir.exists());
+}
+
+#[test]
+fn fault_simulate_external_drive_disconnect_reproduces_without_path_leak() {
+    let data_dir = temp_path("fault-drive-private-data");
+    let scratch_dir = temp_path("fault-drive-private-scratch");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--case",
+            "external-drive-disconnect",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+            "--drive-state",
+            "disconnected",
+        ])
+        .output()
+        .expect("run external-drive-disconnect fault simulation");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("fault: external_drive_disconnect"));
+    assert!(stdout.contains("status: reproduced"));
+    assert!(stdout.contains("mount state: disconnected"));
+    assert!(stdout.contains("import roots: unavailable"));
+    assert!(stdout.contains("recovery: reconnect drive or reselect root before retry"));
+    assert!(stdout.contains("real hardware drill: blocked"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(!scratch_dir.exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn fault_simulate_daemon_kill_restarts_configured_daemon_without_path_leak() {
