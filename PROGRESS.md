@@ -16,6 +16,10 @@ production-ready scope source.
   copies from the user-authorized local resume sample directory; no real resume
   data, filenames, paths, counts, raw text, or diagnostics were committed or
   uploaded.
+  S171 also used private local-only PDF/Word witnesses against the
+  user-authorized local resume sample directory through temporary witness
+  copies; no real resume data, filenames, paths, counts, raw text, or
+  diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -72,7 +76,7 @@ obsolete preliminary files and checklists are not product scope.
   redacted output, can run a redacted internal full-text search probe without
   printing the private query or matched files, can run a redacted field-extraction
   aggregate probe without printing field values, filenames, or paths, and
-  removes private witness data. S127 and S136 reran the explicit-root private
+  removes private witness data. S127, S136, and S171 reran the explicit-root private
   PDF/Word witness against the user-authorized local sample directory for import/
   search/field probes plus bounded OCR witnesses using local `tesseract` and
   `pdftoppm`; these runs removed private temporary data and no private evidence
@@ -470,8 +474,43 @@ obsolete preliminary files and checklists are not product scope.
 | S168 | Product query telemetry observability complete locally | A focused meta-store test first failed because `record_query_observation` and `StoreStatusSummary.query_latency` did not exist. After implementation, metadata schema V17 adds a bounded `query_observation` table that stores mode, duration, result count, and timestamp only, never query text. Successful local CLI searches and daemon full-text IPC searches record best-effort samples. Local status, daemon status IPC, doctor, and `export-diagnostics --redact` report aggregate query telemetry sample count plus P50/P95/P99 and last result count without raw queries or paths. Focused RED/GREEN, full meta-store, S4 status, S9 import/search, S13 diagnostics, daemon S20 status IPC, daemon S48 search IPC, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice adds runtime observability only. It does not prove the `<200ms` hybrid P95 target, real 100k/1M corpus latency, real semantic/vector quality, cross-platform performance evidence, installer/service validation, signing, notarization, OCR/model licensing, or stable release readiness. |
 | S169 | Product hardware fault-drill simulation coverage complete locally | A focused CLI fault test first failed because `fault-simulate` did not accept `battery-mode`. After implementation, the safe local fault-simulation CLI accepts `battery-mode --battery-state <battery|ac>` and `external-drive-disconnect --drive-state <disconnected|mounted>`, prints redacted degradation/recovery guidance, does not touch private paths, and explicitly marks the real hardware drill as blocked. Doctor and `export-diagnostics --redact` advertise the two new hooks, `release-readiness` plus its CI guard include a `hardware fault drills` blocker, and the fault-injection runbook/guard document the safe probes so safe simulation cannot be mistaken for release evidence. Focused RED/GREEN, full fault-injection tests, diagnostics tests, release-readiness tests, release-readiness guard, runbook guard, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers safe local synthetic drill surfaces only. It does not perform real battery-mode switching, physically disconnect external drives, prove platform-specific power/storage behavior, clear destructive ENOSPC/service-level fault drills, or clear Windows/macOS validation, signing, notarization, installer lifecycle, real benchmark, OCR/model licensing, or stable release readiness blockers. |
 | S170 | Product active import daemon kill/restart recovery complete locally | A focused daemon scheduler test first failed because restart drills could not lower stale-running recovery or retry-backoff thresholds, so a freshly killed running import task could not be recovered and reprocessed deterministically. After implementation, `resume-daemon run --work-imports` accepts `--stale-import-task-seconds <n>` and `--import-retry-backoff-seconds <n>` with production defaults unchanged at 15 minutes and 60 seconds. The regression starts a foreground import over 1,024 synthetic files, waits until the task is `Running`, kills the daemon, restarts with zero-second drill thresholds, proves one stale task recovered, one import processed, 1,024 searchable documents indexed, full-text search succeeds, and stdout/stderr omit data paths. Focused RED/GREEN, full S4 daemon scheduler tests, fmt, full local verification, and public repo guard passed locally. | This slice covers synthetic active-import kill/restart recovery only. It does not prove destructive service-level chaos, real external storage interruption, 100k/1M import recovery latency, cross-platform service lifecycle, installer validation, signing, notarization, OCR/model licensing, or stable release readiness. |
+| S171 | Product private local PDF/Word witness rerun complete locally | The explicit-root witness was rerun against the user-authorized local resume sample directory for PDF/Word import plus redacted search and field probes. A second bounded OCR witness used local `tesseract` and `pdftoppm` with document/page limits. Both runs completed locally, printed only redacted aggregate status, removed private temporary witness data, and did not emit source paths, filenames, raw text, private queries, diagnostics, or committed counts. | This slice is private local witness evidence only. It does not upload evidence, commit sample counts, prove full-library OCR completion, prove real-corpus quality/latency targets, clear platform installer/service validation, signing, notarization, OCR/model licensing, or stable release readiness. |
 
 ## Command Log
+
+### S171
+
+Design target:
+
+- Rerun the existing explicit-root PDF/Word witness against the
+  user-authorized local resume sample directory.
+- Respect the privacy boundary: do not commit real paths, filenames, sample
+  counts, raw text, private queries, diagnostics, or witness output.
+- Bound OCR work while still proving the local `tesseract` plus `pdftoppm`
+  witness path is usable on this machine.
+
+Private local witness commands:
+
+```bash
+./target/debug/resume-cli witness --root <user-authorized-local-resume-root> --probe-search --probe-fields
+./target/debug/resume-cli witness --root <user-authorized-local-resume-root> --max-files <bounded> --run-ocr --ocr-tesseract-command <local-tesseract> --ocr-pdftoppm-command <local-pdftoppm> --ocr-max-documents <bounded> --ocr-max-pages-per-document <bounded> --ocr-page-timeout-ms <bounded>
+```
+
+Output summary:
+
+- The import/search/field witness completed locally and removed private witness
+  data. Output was aggregate and redacted.
+- The bounded OCR witness completed locally with local `tesseract` and
+  `pdftoppm`, then removed private witness data.
+- Real paths, filenames, raw resume text, private queries, diagnostics, and
+  sample counts were intentionally not recorded in this repository.
+
+Scope note:
+
+- S171 is private local witness evidence only. It does not prove full-library
+  OCR completion, large-corpus performance, semantic/vector quality,
+  cross-platform service lifecycle, installer validation, signing,
+  notarization, OCR/model licensing, or stable release readiness.
 
 ### S170
 
