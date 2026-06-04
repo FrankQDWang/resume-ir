@@ -26,6 +26,7 @@ use index_fulltext::{
 use index_vector::{
     inspect_persistent_vector_snapshot, PersistentVectorIndex, PersistentVectorSnapshotInspection,
     PersistentVectorSnapshotState, QueryVector, VectorDocument, VectorHit, VectorIndex,
+    VectorSearchBackend,
 };
 use meta_store::{
     Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
@@ -5687,6 +5688,10 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
         vector_diagnostic.state_label()
     );
     println!(
+        "  \"vector_index_backend\": \"{}\",",
+        vector_diagnostic.backend_json_label()
+    );
+    println!(
         "  \"vector_index_vectors\": {},",
         vector_diagnostic.vector_count()
     );
@@ -7032,7 +7037,11 @@ impl VectorIndexDiagnostic {
     fn index_label(self) -> &'static str {
         match self.inspection.state() {
             PersistentVectorSnapshotState::Missing => "unavailable",
-            PersistentVectorSnapshotState::Ready => "available (vector snapshot)",
+            PersistentVectorSnapshotState::Ready => match self.search_backend() {
+                Some(VectorSearchBackend::HnswAnn) => "available (hnsw ann vector snapshot)",
+                Some(VectorSearchBackend::LinearScan) => "available (linear vector snapshot)",
+                None => "available (vector snapshot)",
+            },
             PersistentVectorSnapshotState::Corrupt => "corrupt",
             PersistentVectorSnapshotState::Unreadable => "unreadable",
         }
@@ -7059,6 +7068,20 @@ impl VectorIndexDiagnostic {
             .snapshot()
             .map(|snapshot| snapshot.deleted_count())
             .unwrap_or(0)
+    }
+
+    fn backend_json_label(self) -> &'static str {
+        match self.search_backend() {
+            Some(VectorSearchBackend::HnswAnn) => "hnsw_ann",
+            Some(VectorSearchBackend::LinearScan) => "linear_scan",
+            None => "none",
+        }
+    }
+
+    fn search_backend(self) -> Option<VectorSearchBackend> {
+        self.inspection
+            .snapshot()
+            .map(|snapshot| snapshot.search_backend())
     }
 }
 

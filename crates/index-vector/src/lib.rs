@@ -2,6 +2,7 @@ pub fn crate_name() -> &'static str {
     "index-vector"
 }
 
+use hnsw_rs::prelude::{DistCosine, Hnsw};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File};
@@ -13,6 +14,10 @@ const SNAPSHOT_FILE: &str = "vector.snapshot";
 const SNAPSHOT_TMP_FILE: &str = "vector.snapshot.tmp";
 const SNAPSHOT_HEADER_V1: &str = "resume-ir-vector-index-v1";
 const SNAPSHOT_HEADER_V2: &str = "resume-ir-vector-index-v2";
+const HNSW_MAX_CONNECTIONS: usize = 24;
+const HNSW_MAX_LAYERS: usize = 16;
+const HNSW_EF_CONSTRUCTION: usize = 200;
+const HNSW_EF_SEARCH: usize = 64;
 
 pub trait VectorIndex {
     fn upsert(&self, vectors: Vec<VectorDocument>) -> Result<(), VectorIndexError>;
@@ -47,6 +52,7 @@ pub struct PersistentVectorIndex {
     snapshot_path: PathBuf,
     temp_path: PathBuf,
     state: Mutex<IndexState>,
+    ann_backend: Mutex<HnswSearchBackend>,
 }
 
 impl PersistentVectorIndex {
@@ -67,12 +73,14 @@ impl PersistentVectorIndex {
         } else {
             IndexState::default()
         };
+        let ann_backend = HnswSearchBackend::build(&state);
 
         Ok(Self {
             dimension,
             snapshot_path,
             temp_path,
             state: Mutex::new(state),
+            ann_backend: Mutex::new(ann_backend),
         })
     }
 
@@ -100,7 +108,17 @@ impl PersistentVectorIndex {
             state.deleted.remove(&vector_id);
         }
         self.persist_state(&state)?;
+        self.rebuild_ann_backend(&state)?;
         Ok(removed)
+    }
+
+    fn rebuild_ann_backend(&self, state: &IndexState) -> Result<(), VectorIndexError> {
+        let mut ann_backend = self
+            .ann_backend
+            .lock()
+            .map_err(|_| VectorIndexError::Poisoned)?;
+        *ann_backend = HnswSearchBackend::build(state);
+        Ok(())
     }
 }
 
@@ -118,7 +136,11 @@ pub fn inspect_persistent_vector_snapshot(
     match read_snapshot_unchecked_dimension(&snapshot_path) {
         Ok((dimension, state)) => PersistentVectorSnapshotInspection {
             state: PersistentVectorSnapshotState::Ready,
-            snapshot: Some(snapshot_from_state(&state, dimension)),
+            snapshot: Some(snapshot_from_state(
+                &state,
+                dimension,
+                VectorSearchBackend::HnswAnn,
+            )),
         },
         Err(VectorIndexError::Storage) => PersistentVectorSnapshotInspection {
             state: PersistentVectorSnapshotState::Unreadable,
@@ -177,6 +199,7 @@ impl VectorIndex for PersistentVectorIndex {
             state.vectors.insert(vector.vector_id().to_string(), vector);
         }
         self.persist_state(&state)
+            .and_then(|()| self.rebuild_ann_backend(&state))
     }
 
     fn mark_deleted(&self, vector_ids: &[&str]) -> Result<(), VectorIndexError> {
@@ -185,12 +208,16 @@ impl VectorIndex for PersistentVectorIndex {
             state.deleted.insert((*vector_id).to_string());
         }
         self.persist_state(&state)
+            .and_then(|()| self.rebuild_ann_backend(&state))
     }
 
     fn knn(&self, query: QueryVector, k: usize) -> Result<Vec<VectorHit>, VectorIndexError> {
         validate_dimension(self.dimension, query.values())?;
-        let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(knn_from_state(&state, query.values(), k, None))
+        let ann_backend = self
+            .ann_backend
+            .lock()
+            .map_err(|_| VectorIndexError::Poisoned)?;
+        Ok(ann_backend.knn(query.values(), k, None))
     }
 
     fn knn_for_model(
@@ -201,13 +228,20 @@ impl VectorIndex for PersistentVectorIndex {
     ) -> Result<Vec<VectorHit>, VectorIndexError> {
         validate_dimension(self.dimension, query.values())?;
         validate_model_id(model_id)?;
-        let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(knn_from_state(&state, query.values(), k, Some(model_id)))
+        let ann_backend = self
+            .ann_backend
+            .lock()
+            .map_err(|_| VectorIndexError::Poisoned)?;
+        Ok(ann_backend.knn(query.values(), k, Some(model_id)))
     }
 
     fn snapshot(&self) -> Result<VectorSnapshot, VectorIndexError> {
         let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(snapshot_from_state(&state, self.dimension))
+        Ok(snapshot_from_state(
+            &state,
+            self.dimension,
+            VectorSearchBackend::HnswAnn,
+        ))
     }
 }
 
@@ -250,7 +284,11 @@ impl VectorIndex for InMemoryVectorIndex {
 
     fn snapshot(&self) -> Result<VectorSnapshot, VectorIndexError> {
         let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(snapshot_from_state(&state, self.dimension))
+        Ok(snapshot_from_state(
+            &state,
+            self.dimension,
+            VectorSearchBackend::LinearScan,
+        ))
     }
 }
 
@@ -258,6 +296,119 @@ impl VectorIndex for InMemoryVectorIndex {
 struct IndexState {
     vectors: BTreeMap<String, VectorDocument>,
     deleted: BTreeSet<String>,
+}
+
+struct HnswSearchBackend {
+    all: Option<HnswShard>,
+    by_model: BTreeMap<String, HnswShard>,
+}
+
+impl HnswSearchBackend {
+    fn build(state: &IndexState) -> Self {
+        let active_documents = state
+            .vectors
+            .values()
+            .filter(|vector| !state.deleted.contains(vector.vector_id()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut by_model_documents = BTreeMap::<String, Vec<VectorDocument>>::new();
+        for vector in &active_documents {
+            if let Some(model_id) = effective_model_id(vector) {
+                by_model_documents
+                    .entry(model_id.to_string())
+                    .or_default()
+                    .push(vector.clone());
+            }
+        }
+        let by_model = by_model_documents
+            .into_iter()
+            .filter_map(|(model_id, documents)| {
+                HnswShard::build(documents).map(|shard| (model_id, shard))
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        Self {
+            all: HnswShard::build(active_documents),
+            by_model,
+        }
+    }
+
+    fn knn(&self, query: &[f32], k: usize, model_id: Option<&str>) -> Vec<VectorHit> {
+        if k == 0 {
+            return Vec::new();
+        }
+        match model_id {
+            Some(model_id) => self
+                .by_model
+                .get(model_id)
+                .map(|shard| shard.knn(query, k))
+                .unwrap_or_default(),
+            None => self
+                .all
+                .as_ref()
+                .map(|shard| shard.knn(query, k))
+                .unwrap_or_default(),
+        }
+    }
+}
+
+struct HnswShard {
+    index: Hnsw<'static, f32, DistCosine>,
+    documents: Vec<VectorDocument>,
+}
+
+impl HnswShard {
+    fn build(documents: Vec<VectorDocument>) -> Option<Self> {
+        if documents.is_empty() {
+            return None;
+        }
+        let max_layer = HNSW_MAX_LAYERS
+            .min((documents.len() as f32).ln().trunc() as usize)
+            .max(1);
+        let mut index = Hnsw::<f32, DistCosine>::new(
+            HNSW_MAX_CONNECTIONS,
+            documents.len(),
+            max_layer,
+            HNSW_EF_CONSTRUCTION,
+            DistCosine {},
+        );
+        for (external_id, document) in documents.iter().enumerate() {
+            index.insert((document.values(), external_id));
+        }
+        index.set_searching_mode(true);
+
+        Some(Self { index, documents })
+    }
+
+    fn knn(&self, query: &[f32], k: usize) -> Vec<VectorHit> {
+        let candidate_count = k.min(self.documents.len());
+        if candidate_count == 0 {
+            return Vec::new();
+        }
+        let ef_search = HNSW_EF_SEARCH.max(candidate_count);
+        let mut hits = self
+            .index
+            .search(query, candidate_count, ef_search)
+            .into_iter()
+            .filter_map(|neighbour| self.documents.get(neighbour.d_id))
+            .map(|vector| {
+                VectorHit::new(
+                    vector.vector_id().to_string(),
+                    vector.doc_id().to_string(),
+                    cosine_similarity(query, vector.values()),
+                )
+            })
+            .collect::<Vec<_>>();
+        hits.sort_by(|left, right| {
+            right
+                .score()
+                .partial_cmp(&left.score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.doc_id().cmp(right.doc_id()))
+        });
+        hits.truncate(k);
+        hits
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -407,6 +558,7 @@ pub struct VectorSnapshot {
     vector_count: usize,
     deleted_count: usize,
     dimension: usize,
+    search_backend: VectorSearchBackend,
 }
 
 impl VectorSnapshot {
@@ -421,6 +573,16 @@ impl VectorSnapshot {
     pub fn dimension(self) -> usize {
         self.dimension
     }
+
+    pub fn search_backend(self) -> VectorSearchBackend {
+        self.search_backend
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VectorSearchBackend {
+    LinearScan,
+    HnswAnn,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -507,10 +669,13 @@ fn knn_from_state(
 }
 
 fn vector_matches_model(vector: &VectorDocument, model_id: &str) -> bool {
-    match vector.model_id() {
-        Some(vector_model_id) => vector_model_id == model_id,
-        None => legacy_vector_model_id(vector.vector_id()) == Some(model_id),
-    }
+    effective_model_id(vector) == Some(model_id)
+}
+
+fn effective_model_id(vector: &VectorDocument) -> Option<&str> {
+    vector
+        .model_id()
+        .or_else(|| legacy_vector_model_id(vector.vector_id()))
 }
 
 fn legacy_vector_model_id(vector_id: &str) -> Option<&str> {
@@ -520,11 +685,16 @@ fn legacy_vector_model_id(vector_id: &str) -> Option<&str> {
         .filter(|model_id| !model_id.is_empty())
 }
 
-fn snapshot_from_state(state: &IndexState, dimension: usize) -> VectorSnapshot {
+fn snapshot_from_state(
+    state: &IndexState,
+    dimension: usize,
+    search_backend: VectorSearchBackend,
+) -> VectorSnapshot {
     VectorSnapshot {
         vector_count: state.vectors.len(),
         deleted_count: state.deleted.len(),
         dimension,
+        search_backend,
     }
 }
 

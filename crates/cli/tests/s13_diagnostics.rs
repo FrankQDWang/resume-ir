@@ -252,7 +252,7 @@ fn doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_valu
     assert!(doctor.status.success());
     assert!(doctor.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&doctor.stdout);
-    assert!(stdout.contains("vector index: available (vector snapshot)"));
+    assert!(stdout.contains("vector index: available (hnsw ann vector snapshot)"));
     assert!(stdout.contains("vector index vectors: 2"));
     assert!(stdout.contains("vector index tombstones: 1"));
     assert!(!stdout.contains(path_str(&data_dir)));
@@ -271,6 +271,7 @@ fn doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_valu
     assert!(export.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&export.stdout);
     assert!(stdout.contains("\"vector_index_state\": \"available\""));
+    assert!(stdout.contains("\"vector_index_backend\": \"hnsw_ann\""));
     assert!(stdout.contains("\"vector_index_vectors\": 2"));
     assert!(stdout.contains("\"vector_index_tombstones\": 1"));
     assert!(!stdout.contains(path_str(&data_dir)));

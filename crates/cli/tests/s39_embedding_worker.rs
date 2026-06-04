@@ -281,7 +281,7 @@ printf 'metadata=synthetic-fixture\n'
     assert!(stdout.contains("documents embedded: 2"));
     assert!(stdout.contains("vector inputs: "));
     assert!(stdout_value(&stdout, "vector inputs: ") > 2);
-    assert!(stdout.contains("vector index: available (vector snapshot)"));
+    assert!(stdout.contains("vector index: available (hnsw ann vector snapshot)"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
 
@@ -293,7 +293,7 @@ printf 'metadata=synthetic-fixture\n'
     assert!(status.stderr.is_empty());
     let status_stdout = String::from_utf8_lossy(&status.stdout);
     assert!(status_stdout.contains("searchable documents: 2"));
-    assert!(status_stdout.contains("vector index: available (vector snapshot)"));
+    assert!(status_stdout.contains("vector index: available (hnsw ann vector snapshot)"));
     assert!(stdout_value(&status_stdout, "vector index vectors: ") > 2);
     assert!(!status_stdout.contains(path_str(&data_dir)));
     assert!(!status_stdout.contains(path_str(&fixture_root)));

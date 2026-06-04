@@ -5,6 +5,9 @@ version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[dependencies]
+hnsw_rs = "0.3.4"
+
 [dev-dependencies]
 embedder = { path = "../embedder" }
 

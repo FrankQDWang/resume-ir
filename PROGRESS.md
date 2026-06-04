@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, and S112 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, and S114 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, and S110 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -82,22 +82,27 @@ obsolete preliminary files and checklists are not product scope.
   encrypted local storage, future bbox/PII surface purge coverage, and
   forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
-  snapshot, linear KNN, RRF helpers, embedding worker, model/dimension-scoped
-  durable per-version embedding jobs, model-scoped vector query isolation,
-  section-level vector inputs, CLI semantic/hybrid query execution, and local
-  model-pack manifest validation with checksum plus license-reviewed gates now
-  exist. The daemon can now execute a configured local embedding command in
-  one-shot or long-running worker mode, persist a vector snapshot while serving
-  status IPC, skip already completed version jobs across daemon restarts,
-  re-embed completed versions when the configured model id or dimension
-  changes, and write document plus section vectors inside one version job.
+  snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
+  helpers, embedding worker, model/dimension-scoped durable per-version
+  embedding jobs, model-scoped vector query isolation, section-level vector
+  inputs, CLI semantic/hybrid query execution, and local model-pack manifest
+  validation with checksum plus license-reviewed gates now exist. The daemon
+  can now execute a configured local embedding command in one-shot or
+  long-running worker mode, persist a vector snapshot while serving status IPC,
+  skip already completed version jobs across daemon restarts, re-embed
+  completed versions when the configured model id or dimension changes, and
+  write document plus section vectors inside one version job. Persistent vector
+  search now rebuilds a process-local HNSW ANN graph from the durable vector
+  snapshot, preserves model-scoped graph isolation, and reports the ANN backend
+  through redacted CLI status, doctor, and diagnostics output without emitting
+  vectors or local paths.
   A labeled vector-quality evaluator and gate now score recall@k, MRR, NDCG@k,
   and zero-recall queries from JSONL samples using the local embedding command
   protocol without emitting raw queries, candidate text, sample IDs, candidate
   IDs, vectors, command paths, or resume paths.
   Missing or BLOCKED work includes licensed model selection/download/
-  distribution, ONNX/HNSW/FAISS or equivalent ANN, real business semantic
-  quality datasets/results, and real performance proof.
+  distribution, real business semantic quality datasets/results, real ANN
+  recall/latency proof at large corpus scale, and real performance proof.
 - P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
   cache schema, local OCR command client, local PDF page-render command
   protocol, local Poppler `pdftoppm` PDF renderer adapter, local Tesseract OCR
@@ -276,8 +281,76 @@ obsolete preliminary files and checklists are not product scope.
 | S111 | Product vector workflow-gate slice complete | `./scripts/ci/check-workflows.sh` first failed because PR/nightly workflows did not include `vector-quality`; after implementation, workflow guard, strict local vector smoke/gate reproduction with redaction scan, shell syntax, workflow YAML parse, diff, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this vector-quality workflow wiring slice; it uses a synthetic labeled smoke dataset and temporary fixture embedding command, so it does not prove real semantic quality, licensed production model selection, ANN latency, 100k/1M corpus performance, or Windows/Linux behavior. |
 | S112 | Product platform PR validation slice complete | `./scripts/ci/check-workflows.sh` first failed because `.github/workflows/ci-platform.yml` did not include a PR trigger; after implementation, workflow guard, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` passed. Hosted Platform CI then exposed two test-portability gaps, a hosted macOS test wait budget issue, a real Windows path-normalization bug in missing-file deletion propagation, Windows full-text snapshot publish instability during CLI imports, and Windows witness temp cleanup semantics. Local fixes now keep OCR/embedding command tests enabled on Windows with `.cmd` fixtures, extend daemon test waiting without changing product tick limits, compare deletion candidates using normalized paths, publish full-text snapshots before validation and retry transient publish locks, release witness metadata handles before cleanup, and retry witness cleanup. The final hosted PR checks passed: macOS Platform CI, Windows Platform CI, Rust workspace, dependency tree, license policy, runbook policy, and public repository guard. | None for this PR-triggered hosted build/test validation slice; it still does not prove installer packaging, signing, notarization, Windows service/MSI install/upgrade/uninstall/rollback, macOS pkg/dmg install/upgrade/uninstall/rollback, platform-specific service lifecycle behavior, real whole-machine scans, or complete release readiness. |
 | S113 | Product local PDF/Word witness validation slice complete | Two authorized local-only witness runs over the private sample root passed without uploading or committing real resume data. The import-only run selected 8720 PDF/Word files, skipped 49 unsupported entries, had 0 filesystem scan errors, completed import, produced 146 directly searchable documents, queued 8554 OCR-required documents, reported 20 failed documents, and removed private witness data. The bounded OCR run used local `tesseract` and `pdftoppm`, processed 5 OCR documents, had 0 OCR failures, wrote 7 OCR cache entries, exhausted the OCR document budget as expected, and removed private witness data. | None for this local-only private sample witness; it does not prove full-library OCR completion, OCR quality, non-English OCR quality, large-corpus latency/throughput, packaging/signing/installers, Windows/Linux real sample behavior, or production model/ANN readiness. |
+| S114 | Product persistent vector ANN slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_uses_hnsw_ann_backend_after_reopen_and_keeps_model_scope --locked -- --exact` first failed because `VectorSearchBackend` and `VectorSnapshot::search_backend()` did not exist. The CLI diagnostics exact tests first failed because vector status still reported `available (vector snapshot)`. After implementation, focused index-vector and CLI diagnostics tests, fmt, diff, focused clippy, license policy, and `./scripts/ci/verify-local.sh` passed. | None for this HNSW ANN backend slice; it does not choose/license/package a production embedding model, prove real semantic quality, prove ANN recall/latency on 100k/1M corpora, add durable serialized HNSW graph artifacts separate from the existing vector snapshot, or validate hosted Windows/macOS for the new dependency. |
 
 ## Command Log
+
+### S114
+
+Design target:
+
+- Move the persistent vector query path beyond linear scan by adding a
+  permissive-license HNSW ANN backend inside `index-vector`.
+- Preserve the existing durable vector snapshot format and model-scoped query
+  isolation; rebuild the in-process ANN graph from persisted vectors on open,
+  upsert, deletion, and purge.
+- Report the ANN backend through local status, doctor, and redacted diagnostics
+  without emitting vector values, local paths, model command paths, or resume
+  text.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_uses_hnsw_ann_backend_after_reopen_and_keeps_model_scope --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_values --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker embed_worker_runs_local_command_and_persists_vector_snapshot_without_hiding_search_results --locked -- --exact
+```
+
+Output summary:
+
+- The index-vector test failed before implementation because
+  `VectorSearchBackend` and `VectorSnapshot::search_backend()` were unresolved.
+- The CLI diagnostics and embed-worker exact tests failed before diagnostics
+  implementation because vector status still reported
+  `available (vector snapshot)` instead of the ANN backend.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_values --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker embed_worker_runs_local_command_and_persists_vector_snapshot_without_hiding_search_results --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-licenses.sh
+/Users/frankqdwang/.cargo/bin/cargo clippy -p index-vector -p resume-cli --all-targets --locked -- -D warnings
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo test -p index-vector --locked`: exit 0; 8 vector index tests passed,
+  including persistent HNSW ANN backend reporting after reopen, model-scoped
+  ANN search, and HNSW rebuild after upsert/tombstone so stale nodes are not
+  returned.
+- Focused CLI diagnostics and embed-worker tests: exit 0; status, doctor, and
+  redacted diagnostics now report `hnsw_ann`/`available (hnsw ann vector
+  snapshot)` without local paths or vector values.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/check-licenses.sh`: exit 0; license check passed for the new
+  `hnsw_rs` dependency set.
+- Focused clippy: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, and public
+  repository guard passed.
+
+Scope note:
+
+- S114 adds an HNSW ANN query backend for the persisted vector index but does
+  not prove a production embedding model, real semantic quality, large-corpus
+  ANN recall/latency, cross-platform hosted execution for the new dependency,
+  or signed/release packaging.
 
 ### S113
 

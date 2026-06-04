@@ -1,7 +1,7 @@
 use embedder::{DeterministicTestEmbedder, Embedder, EmbeddingBudget, EmbeddingInput};
 use index_vector::{
     inspect_persistent_vector_snapshot, InMemoryVectorIndex, PersistentVectorIndex,
-    PersistentVectorSnapshotState, QueryVector, VectorDocument, VectorIndex,
+    PersistentVectorSnapshotState, QueryVector, VectorDocument, VectorIndex, VectorSearchBackend,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -163,6 +163,97 @@ fn persistent_vector_index_filters_knn_by_model_scope_after_reopen() {
         assert_eq!(scoped[0].doc_id(), "doc_current_model");
         assert_eq!(scoped[0].vector_id(), "model-b:vec_current");
     }
+
+    remove_dir(&private_dir);
+}
+
+#[test]
+fn persistent_vector_index_uses_hnsw_ann_backend_after_reopen_and_keeps_model_scope() {
+    let private_dir = temp_dir("private-hnsw-vector-index");
+
+    {
+        let index = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+        let mut documents = (0..48)
+            .map(|number| {
+                VectorDocument::new_for_model(
+                    "model-a",
+                    format!("model-a:vec_irrelevant_{number:03}"),
+                    format!("doc_irrelevant_{number:03}"),
+                    vec![1.0, 0.0, 0.0, 0.0],
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        documents.push(
+            VectorDocument::new_for_model(
+                "model-b",
+                "model-b:vec_target",
+                "doc_target_model_b",
+                vec![0.0, 1.0, 0.0, 0.0],
+            )
+            .unwrap(),
+        );
+        index.upsert(documents).unwrap();
+    }
+
+    {
+        let reopened = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+        assert_eq!(
+            reopened.snapshot().unwrap().search_backend(),
+            VectorSearchBackend::HnswAnn
+        );
+
+        let scoped = reopened
+            .knn_for_model(
+                QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
+                1,
+                "model-b",
+            )
+            .unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].doc_id(), "doc_target_model_b");
+        assert_eq!(scoped[0].vector_id(), "model-b:vec_target");
+    }
+
+    remove_dir(&private_dir);
+}
+
+#[test]
+fn persistent_vector_index_rebuilds_hnsw_after_upsert_and_tombstone() {
+    let private_dir = temp_dir("private-hnsw-stale-node-vector-index");
+    let index = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    index
+        .upsert(vec![
+            VectorDocument::new("vec_moving", "doc_moving", vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
+            VectorDocument::new("vec_stable", "doc_stable", vec![0.0, 1.0, 0.0, 0.0]).unwrap(),
+        ])
+        .unwrap();
+
+    let first_hits = index
+        .knn(QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(), 1)
+        .unwrap();
+    assert_eq!(first_hits[0].doc_id(), "doc_moving");
+    assert!(first_hits[0].score() > 0.99);
+
+    index
+        .upsert(vec![VectorDocument::new(
+            "vec_moving",
+            "doc_moving",
+            vec![0.0, 1.0, 0.0, 0.0],
+        )
+        .unwrap()])
+        .unwrap();
+    let after_update = index
+        .knn(QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(), 2)
+        .unwrap();
+    assert!(after_update.iter().all(|hit| hit.score() < 0.01));
+
+    index.mark_deleted(&["vec_moving"]).unwrap();
+    let after_delete = index
+        .knn(QueryVector::new(vec![0.0, 1.0, 0.0, 0.0]).unwrap(), 2)
+        .unwrap();
+    assert_eq!(after_delete.len(), 1);
+    assert_eq!(after_delete[0].doc_id(), "doc_stable");
 
     remove_dir(&private_dir);
 }
