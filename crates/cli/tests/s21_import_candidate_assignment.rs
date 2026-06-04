@@ -50,7 +50,8 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
     let key_material = fs::read_to_string(&key_path).expect("read contact hash key");
     assert_eq!(key_material.trim().len(), 64);
     assert!(!key_material.contains("Shared.Candidate"));
-    assert!(!key_material.contains("415"));
+    assert!(!key_material.contains("415-555-0132"));
+    assert!(!key_material.contains("+14155550132"));
     #[cfg(unix)]
     assert_eq!(key_mode(&key_path) & 0o777, 0o600);
 
