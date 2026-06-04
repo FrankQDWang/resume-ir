@@ -204,7 +204,9 @@ fn status_watch_import_ipc_auto_streams_redacted_progress_without_local_store() 
 #[test]
 fn status_ipc_connect_failure_does_not_fallback_to_sqlite() {
     let data_dir = temp_dir_path("connect-failure");
-    let status_url = unused_loopback_status_url();
+    let _port_reservation =
+        TcpListener::bind("127.0.0.1:0").expect("reserve loopback port for connect failure");
+    let status_url = reserved_unbound_loopback_status_url(&_port_reservation);
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
@@ -344,11 +346,9 @@ fn write_ipc_endpoint_file_with_token(data_dir: &Path, addr: SocketAddr, token: 
     fs::write(data_dir.join("ipc.auth"), format!("{token}\n")).unwrap();
 }
 
-fn unused_loopback_status_url() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind unused loopback port");
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    format!("http://{addr}/status")
+fn reserved_unbound_loopback_status_url(reservation: &TcpListener) -> String {
+    let port = reservation.local_addr().unwrap().port();
+    format!("http://127.0.0.2:{port}/status")
 }
 
 fn temp_dir_path(label: &str) -> PathBuf {

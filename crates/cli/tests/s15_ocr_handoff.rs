@@ -302,6 +302,11 @@ printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME
     assert_eq!(cache_entry.engine_profile(), Some("fixture-engine"));
     assert!(cache_entry.text().unwrap().contains("OCRS31UniqueToken"));
 
+    let metadata_bytes = std::fs::read(data_dir.join("metadata.sqlite3")).unwrap();
+    assert!(!metadata_bytes.starts_with(b"SQLite format 3"));
+    assert!(!bytes_contain(&metadata_bytes, b"OCRS31UniqueToken"));
+    assert!(!bytes_contain(&metadata_bytes, b"fixture-engine"));
+
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
@@ -1367,6 +1372,12 @@ fn path_str(path: &Path) -> &str {
 
 fn remove_dir(path: &Path) {
     let _ = std::fs::remove_dir_all(path);
+}
+
+fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 #[cfg(unix)]

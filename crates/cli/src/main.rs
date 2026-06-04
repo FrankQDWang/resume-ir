@@ -6107,6 +6107,7 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("resume-ir doctor");
     println!("metadata: ok");
     println!("metadata encryption: {}", metadata_encryption.label());
+    println!("ocr cache encryption: {}", metadata_encryption.label());
     println!(
         "metadata encryption remediation: {}",
         metadata_encryption_remediation(metadata_encryption)
@@ -6217,6 +6218,10 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("    \"ocr_queue_depth\": {},", summary.ocr_queue_depth);
     println!(
         "    \"metadata_encryption\": \"{}\",",
+        metadata_encryption.label()
+    );
+    println!(
+        "    \"ocr_cache_encryption\": \"{}\",",
         metadata_encryption.label()
     );
     println!(

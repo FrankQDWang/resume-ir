@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, and S150 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, and S151 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -112,19 +112,22 @@ obsolete preliminary files and checklists are not product scope.
   SQLCipher key under `metadata-secrets/`, opens `metadata.sqlite3` through
   SQLCipher, migrates an existing plaintext `metadata.sqlite3` in the default
   data-dir path to SQLCipher while preserving synthetic rows and removing the
-  plaintext file from the default path, reports `sqlcipher` in doctor/redacted
-  diagnostics, and keeps contact-key permission failures isolated from
-  metadata-key availability. Published full-text snapshots are now written as
+  plaintext file from the default path, reports metadata and OCR cache
+  `sqlcipher` in doctor/redacted diagnostics, and keeps contact-key permission
+  failures isolated from metadata-key availability. Published full-text
+  snapshots are now written as
   local encrypted XChaCha20-Poly1305 envelopes with an owner-only local snapshot
   key; the `snapshots/<name>` artifact no longer contains plaintext Tantivy
   files or stored resume text, while active open, fallback recovery, CLI search,
   daemon full-text search, and diagnostics continue to work through a private
-  temporary decrypt-and-open path.
+  temporary decrypt-and-open path. OCR page-cache records stay inside the
+  default SQLCipher metadata store; doctor/export report that boundary, and a
+  synthetic OCR worker test proves raw default `metadata.sqlite3` lacks the
+  SQLite header, OCR text token, and engine-profile marker after a cache write.
   Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
   F1 datasets/results, dedupe quality metrics, candidate merge review
-  workflows, OCR-cache artifact encryption proof, future bbox/PII surface purge
-  coverage, and forensic erase proof.
+  workflows, future bbox/PII surface purge coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
   helpers, embedding worker, model/dimension-scoped durable per-version
@@ -420,8 +423,79 @@ obsolete preliminary files and checklists are not product scope.
 | S148 | Product plaintext metadata migration-to-SQLCipher slice complete locally | A focused meta-store test first failed because `MetaStore::open_data_dir` could not open an existing plaintext default metadata DB after creating the SQLCipher key. After implementation, the default data-dir open path detects a plaintext SQLite header, exports the plaintext DB to a SQLCipher temp DB with the local metadata key, atomically replaces the default DB, removes the plaintext file from the default path, preserves synthetic document/version rows, and proves plaintext open fails afterward while SQLCipher reopen succeeds. Full local verification then exposed a daemon IPC status-loop regression under SQLCipher WAL; the daemon now keeps a persistent IPC metadata connection, and the late-queued-task test seeds task/scope atomically. Focused migration test, full meta-store tests, full CLI tests, full daemon IPC tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this plaintext metadata migration slice; it does not encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, prove crash recovery for every mid-migration failure window, run migration on real user stores, or clear non-metadata privacy blockers. |
 | S149 | Product vector snapshot encryption slice complete locally | A focused `index-vector` test first failed because `vector.snapshot` was plaintext TSV with vector IDs, document IDs, model IDs, and float values. After implementation, persistent vector snapshots are written as XChaCha20-Poly1305 encrypted local envelopes with an owner-only local key file; raw snapshot files expose only an encrypted header, nonce, and ciphertext while reopen, inspection, HNSW ANN search, model-scoped semantic search, daemon embedding workers, and diagnostics continue to work without path/vector leaks. Focused RED/GREEN test, full `index-vector` tests, CLI embedding tests, daemon embedding worker/job tests, diagnostics test, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this vector snapshot artifact-encryption slice; it does not encrypt full-text snapshots or OCR-cache artifacts, select/license/distribute a real embedding model, prove large-corpus ANN latency/recall, or clear platform/signing blockers. |
 | S150 | Product full-text snapshot encryption slice complete locally | A focused `index-fulltext` test first failed because published full-text snapshots were plaintext Tantivy directories and no `fulltext.snapshot.enc` envelope existed. After implementation, `publish_snapshot` validates the plaintext staging index, archives it, writes an XChaCha20-Poly1305 encrypted local envelope with an owner-only local snapshot key, removes plaintext staging before publication, and opens active/fallback published snapshots through a private temporary decrypt-and-open path. Raw `snapshots/<name>` artifacts expose only the encrypted envelope while CLI search, daemon search, diagnostics, active snapshot fallback, delete/purge, and import/search flows continue to work. Focused RED/GREEN test, full `index-fulltext` tests, related CLI/daemon full-text suites, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this full-text published-snapshot artifact-encryption slice; it does not prove OCR-cache encryption beyond the default SQLCipher metadata path, encrypt transient runtime decrypt directories while a search process is actively using Tantivy, prove large-corpus full-text latency with encrypted snapshot open, or clear platform/signing blockers. |
+| S151 | Product OCR cache encryption proof slice complete locally | A focused diagnostics test first failed because doctor/export did not report OCR cache encryption even though the cache table lives inside the metadata store. After implementation, doctor and redacted diagnostics report `ocr cache encryption: sqlcipher` / `ocr_cache_encryption: "sqlcipher"` from the active metadata-store encryption state, and the OCR worker cache-write test proves raw default `metadata.sqlite3` lacks the SQLite header, synthetic OCR token, and engine-profile marker after a cache write. Full local verification also exposed an unrelated `s20_status_ipc` closed-port race, so that test now reserves a `127.0.0.1` port and connects to the same port on `127.0.0.2` to keep the loopback connect-failure path deterministic under concurrent fake daemons. Focused RED/GREEN test, full diagnostics, OCR handoff, and status IPC suites, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this OCR cache encryption proof and verification-stability slice; it does not add a separate OCR cache artifact format, encrypt active process memory, prove future bbox purge coverage, prove forensic erase, distribute OCR engines/language packs, or clear OCR quality, model, benchmark, installer, signing, notarization, or real cross-platform validation blockers. |
 
 ## Command Log
+
+### S151
+
+Design target:
+
+- Make the OCR page-cache privacy boundary explicit in doctor and redacted
+  diagnostics.
+- Prove the default OCR cache path stores OCR cache text in the SQLCipher
+  metadata artifact rather than exposing cached OCR payload as plaintext in
+  `metadata.sqlite3`.
+- Keep this scoped to default local storage; do not claim OCR quality,
+  distribution, full-library OCR, future bbox purge, or forensic erase.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_uses_sqlcipher_metadata_by_default_without_key_or_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- The focused test failed because doctor output did not contain
+  `ocr cache encryption: sqlcipher`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_uses_sqlcipher_metadata_by_default_without_key_or_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_executes_local_command_persists_cache_and_indexes_searchable_text --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder local_command_embedder_terminates_descendants_that_keep_output_pipes_open --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p embedder --test s11_embedder --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc status_ipc_connect_failure_does_not_fallback_to_sqlite --locked -- --exact --nocapture
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused diagnostics GREEN test: exit 0 after implementation; 1 test passed.
+- Focused OCR worker cache-write proof: exit 0; 1 test passed and proved raw
+  default `metadata.sqlite3` did not expose the synthetic OCR token or
+  engine-profile marker.
+- Full `s13_diagnostics` suite: exit 0; 14 tests passed.
+- Full `s15_ocr_handoff` suite: exit 0; 13 tests passed.
+- An initial full local verification run exposed a timing-sensitive
+  `embedder` descendant-cleanup failure; exact and full `s11_embedder` reruns
+  both passed, so no production change was made there.
+- A later full local verification run exposed a real `s20_status_ipc`
+  closed-port race under concurrent fake daemons; after the test helper was
+  made deterministic, exact status-IPC connect-failure and full status-IPC
+  suites passed.
+- `cargo fmt --check`, focused clippy, `git diff --check`, public repo guard,
+  and full local verification passed.
+
+Scope note:
+
+- S151 proves the current default OCR page cache inherits SQLCipher-at-rest
+  protection from `MetaStore::open_data_dir` and exposes that state in redacted
+  diagnostics, and it hardens a status-IPC closed-port regression test found
+  during verification. It does not introduce a separate OCR cache artifact,
+  prove forensic erasure of old disk pages, complete future bbox/PII purge
+  coverage, distribute OCR engines or language packs, or clear remaining
+  quality, large-corpus, model, packaging, signing, notarization, or real
+  cross-platform blockers.
 
 ### S150
 
