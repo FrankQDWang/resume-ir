@@ -55,6 +55,9 @@ require_text "$release_runbook" "field-gate"
 require_text "$release_runbook" "--require-private-business-labeled"
 require_text "$release_runbook" 'target_claim: "field_quality_target_met"'
 require_text "$release_runbook" 'field_taxonomy:'
+require_text "$release_runbook" "dedupe-gate"
+require_text "$release_runbook" 'target_claim: "dedupe_quality_target_met"'
+require_text "$release_runbook" 'dedupe_taxonomy:'
 require_text "$release_runbook" 'query_mode: "hybrid"'
 require_text "$release_runbook" 'retrieval_layers:'
 require_text "$release_runbook" "hot_index: true"

@@ -14,6 +14,7 @@ use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
     OcrPageRequest, OcrWorkerBudget, RenderedPage, TesseractOcrClient, TesseractOcrSpec,
 };
+use rank_fusion::{soft_dedupe_score, DedupeProfile};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 
 pub fn crate_name() -> &'static str {
@@ -1083,6 +1084,67 @@ impl FieldQualityGateEvaluation {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DedupeQualityGateConfig {
+    min_precision: f64,
+    min_recall: f64,
+    min_f1: f64,
+    min_pairs: usize,
+    min_positive_pairs: usize,
+    require_private_business_labeled: bool,
+}
+
+impl DedupeQualityGateConfig {
+    pub fn new(min_precision: f64, min_recall: f64, min_f1: f64) -> Self {
+        Self {
+            min_precision,
+            min_recall,
+            min_f1,
+            min_pairs: 1,
+            min_positive_pairs: 1,
+            require_private_business_labeled: false,
+        }
+    }
+
+    pub fn with_min_pairs(mut self, min_pairs: usize) -> Self {
+        self.min_pairs = min_pairs;
+        self
+    }
+
+    pub fn with_min_positive_pairs(mut self, min_positive_pairs: usize) -> Self {
+        self.min_positive_pairs = min_positive_pairs;
+        self
+    }
+
+    pub fn require_private_business_labeled(mut self) -> Self {
+        self.require_private_business_labeled = true;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DedupeQualityGateEvaluation {
+    dataset_kind: String,
+    pair_count: usize,
+    precision: f64,
+    recall: f64,
+    f1: f64,
+}
+
+impl DedupeQualityGateEvaluation {
+    pub fn dataset_kind(&self) -> &str {
+        &self.dataset_kind
+    }
+
+    pub fn pair_count(&self) -> usize {
+        self.pair_count
+    }
+
+    pub fn f1(&self) -> f64 {
+        self.f1
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VectorQualityGateConfig {
     min_samples: usize,
     min_recall_at_k: f64,
@@ -1291,6 +1353,139 @@ impl FieldQualityReport {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct DedupeQualityCounts {
+    true_positive: usize,
+    false_positive: usize,
+    false_negative: usize,
+    true_negative: usize,
+}
+
+impl DedupeQualityCounts {
+    fn record(&mut self, expected_duplicate: bool, predicted_duplicate: bool) {
+        match (expected_duplicate, predicted_duplicate) {
+            (true, true) => self.true_positive += 1,
+            (false, true) => self.false_positive += 1,
+            (true, false) => self.false_negative += 1,
+            (false, false) => self.true_negative += 1,
+        }
+    }
+
+    fn pair_count(self) -> usize {
+        self.true_positive + self.false_positive + self.false_negative + self.true_negative
+    }
+
+    fn positive_pair_count(self) -> usize {
+        self.true_positive + self.false_negative
+    }
+
+    fn predicted_duplicate_pairs(self) -> usize {
+        self.true_positive + self.false_positive
+    }
+
+    fn precision(self) -> f64 {
+        let denominator = self.true_positive + self.false_positive;
+        if denominator == 0 {
+            0.0
+        } else {
+            self.true_positive as f64 / denominator as f64
+        }
+    }
+
+    fn recall(self) -> f64 {
+        let denominator = self.true_positive + self.false_negative;
+        if denominator == 0 {
+            0.0
+        } else {
+            self.true_positive as f64 / denominator as f64
+        }
+    }
+
+    fn f1(self) -> f64 {
+        let precision = self.precision();
+        let recall = self.recall();
+        if precision + recall == 0.0 {
+            0.0
+        } else {
+            2.0 * precision * recall / (precision + recall)
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DedupeQualityReport {
+    run_id: String,
+    platform: String,
+    dataset_kind: &'static str,
+    counts: DedupeQualityCounts,
+    target_claim: &'static str,
+}
+
+impl DedupeQualityReport {
+    pub fn dataset_kind(&self) -> &'static str {
+        self.dataset_kind
+    }
+
+    pub fn pair_count(&self) -> usize {
+        self.counts.pair_count()
+    }
+
+    pub fn positive_pair_count(&self) -> usize {
+        self.counts.positive_pair_count()
+    }
+
+    pub fn precision(&self) -> f64 {
+        self.counts.precision()
+    }
+
+    pub fn recall(&self) -> f64 {
+        self.counts.recall()
+    }
+
+    pub fn f1(&self) -> f64 {
+        self.counts.f1()
+    }
+
+    pub fn to_redacted_json(&self) -> String {
+        format!(
+            concat!(
+                "{{",
+                "\"schema_version\":\"dedupe-quality.v1\",",
+                "\"run_id\":\"{}\",",
+                "\"platform\":\"{}\",",
+                "\"dataset_kind\":\"{}\",",
+                "\"pair_count\":{},",
+                "\"positive_pair_count\":{},",
+                "\"predicted_duplicate_pairs\":{},",
+                "\"true_positive\":{},",
+                "\"false_positive\":{},",
+                "\"false_negative\":{},",
+                "\"true_negative\":{},",
+                "\"precision\":{},",
+                "\"recall\":{},",
+                "\"f1\":{},",
+                "\"target_claim\":\"{}\",",
+                "\"scope\":\"labeled dedupe quality; no names, schools, companies, skills, sample ids, document ids, paths, or raw resume text included\"",
+                "}}"
+            ),
+            self.run_id,
+            self.platform,
+            self.dataset_kind,
+            self.counts.pair_count(),
+            self.counts.positive_pair_count(),
+            self.counts.predicted_duplicate_pairs(),
+            self.counts.true_positive,
+            self.counts.false_positive,
+            self.counts.false_negative,
+            self.counts.true_negative,
+            format_ms(self.counts.precision()),
+            format_ms(self.counts.recall()),
+            format_ms(self.counts.f1()),
+            self.target_claim,
+        )
+    }
+}
+
 pub fn run_field_quality_jsonl(dataset_jsonl: &str) -> Result<FieldQualityReport> {
     let mut sample_count = 0_usize;
     let mut expected_mentions = 0_usize;
@@ -1336,6 +1531,41 @@ pub fn run_field_quality_jsonl(dataset_jsonl: &str) -> Result<FieldQualityReport
     })
 }
 
+pub fn run_dedupe_quality_jsonl(dataset_jsonl: &str) -> Result<DedupeQualityReport> {
+    let mut counts = DedupeQualityCounts::default();
+
+    for line in dataset_jsonl
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let sample = parse_dedupe_quality_sample(line)?;
+        let predicted_duplicate =
+            soft_dedupe_score(&sample.left, &sample.right).is_some_and(|score| {
+                score.confidence() >= DEDUPE_QUALITY_DUPLICATE_CONFIDENCE_THRESHOLD
+            });
+        counts.record(sample.duplicate, predicted_duplicate);
+    }
+
+    if counts.pair_count() == 0 {
+        return Err(BenchmarkError::invalid_config("dedupe_quality_pairs"));
+    }
+    if counts.positive_pair_count() == 0 {
+        return Err(BenchmarkError::invalid_config(
+            "dedupe_quality.positive_pairs",
+        ));
+    }
+
+    Ok(DedupeQualityReport {
+        run_id: generate_run_id(),
+        platform: platform_label(),
+        dataset_kind: "labeled",
+        counts,
+        target_claim: "not_evaluated",
+    })
+}
+
+const DEDUPE_QUALITY_DUPLICATE_CONFIDENCE_THRESHOLD: f32 = 0.70;
 const PRIVATE_BUSINESS_FIELD_QUALITY_SCOPE: &str =
     "private business field-quality benchmark; aggregate redacted report only";
 const PRIVATE_BUSINESS_FIELD_QUALITY_TARGET_CLAIM: &str = "field_quality_target_met";
@@ -1636,6 +1866,244 @@ fn private_business_field_metric_error() -> BenchmarkGateError {
     BenchmarkGateError::failed("private business field quality requires production field metrics")
 }
 
+const PRIVATE_BUSINESS_DEDUPE_QUALITY_SCOPE: &str =
+    "private business dedupe-quality benchmark; aggregate redacted report only";
+const PRIVATE_BUSINESS_DEDUPE_QUALITY_TARGET_CLAIM: &str = "dedupe_quality_target_met";
+
+pub fn evaluate_dedupe_quality_gate_json(
+    report_json: &str,
+    config: DedupeQualityGateConfig,
+) -> std::result::Result<DedupeQualityGateEvaluation, BenchmarkGateError> {
+    reject_duplicate_json_object_keys(report_json)?;
+    let report: serde_json::Value =
+        serde_json::from_str(report_json).map_err(|_| BenchmarkGateError::invalid_json())?;
+
+    let schema_version = required_str(&report, "schema_version")?;
+    if schema_version != "dedupe-quality.v1" {
+        return Err(BenchmarkGateError::failed(
+            "unsupported dedupe quality schema",
+        ));
+    }
+    let dataset_kind = required_str(&report, "dataset_kind")?;
+    match dataset_kind {
+        "labeled" | "private-business-labeled" => {}
+        _ => {
+            return Err(BenchmarkGateError::failed(
+                "dedupe quality requires labeled dataset",
+            ));
+        }
+    }
+    if config.require_private_business_labeled && dataset_kind != "private-business-labeled" {
+        return Err(BenchmarkGateError::failed(
+            "private business dedupe-quality benchmark required",
+        ));
+    }
+
+    let pair_count = required_usize(&report, "pair_count")?;
+    let positive_pair_count = required_usize(&report, "positive_pair_count")?;
+    let precision = required_f64(&report, "precision")?;
+    let recall = required_f64(&report, "recall")?;
+    let f1 = required_f64(&report, "f1")?;
+    let target_claim = required_str(&report, "target_claim")?;
+
+    if dataset_kind == "private-business-labeled" {
+        validate_private_business_dedupe_quality_boundary(&report, target_claim)?;
+    }
+    if pair_count < config.min_pairs {
+        return Err(BenchmarkGateError::failed(
+            "dedupe pair count below gate minimum",
+        ));
+    }
+    if positive_pair_count < config.min_positive_pairs {
+        return Err(BenchmarkGateError::failed(
+            "dedupe positive pair count below gate minimum",
+        ));
+    }
+    if precision < config.min_precision {
+        return Err(BenchmarkGateError::failed(
+            "dedupe precision below threshold",
+        ));
+    }
+    if recall < config.min_recall {
+        return Err(BenchmarkGateError::failed("dedupe recall below threshold"));
+    }
+    if f1 < config.min_f1 {
+        return Err(BenchmarkGateError::failed("dedupe f1 below threshold"));
+    }
+    if dataset_kind == "labeled" && target_claim != "not_evaluated" {
+        return Err(BenchmarkGateError::failed(
+            "dedupe target claim is not proven",
+        ));
+    }
+
+    Ok(DedupeQualityGateEvaluation {
+        dataset_kind: dataset_kind.to_string(),
+        pair_count,
+        precision,
+        recall,
+        f1,
+    })
+}
+
+fn validate_private_business_dedupe_quality_boundary(
+    report: &serde_json::Value,
+    target_claim: &str,
+) -> std::result::Result<(), BenchmarkGateError> {
+    validate_private_business_dedupe_quality_shape(report)?;
+    if private_dedupe_quality_str(report, "corpus_origin")? != "private_local"
+        || private_dedupe_quality_str(report, "privacy_boundary")? != "redacted_local_aggregate"
+        || private_dedupe_quality_bool(report, "contains_raw_resume_text")?
+        || private_dedupe_quality_bool(report, "contains_resume_paths")?
+        || private_dedupe_quality_bool(report, "contains_profile_values")?
+        || private_dedupe_quality_bool(report, "contains_sample_ids")?
+        || private_dedupe_quality_bool(report, "contains_document_ids")?
+        || !is_sha256_hex(private_dedupe_quality_str(
+            report,
+            "dataset_manifest_sha256",
+        )?)
+        || !is_sha256_hex(private_dedupe_quality_str(
+            report,
+            "annotation_manifest_sha256",
+        )?)
+        || private_dedupe_quality_str(report, "dedupe_taxonomy")? != "resume-ir.dedupe.v1"
+        || private_dedupe_quality_str(report, "scope")? != PRIVATE_BUSINESS_DEDUPE_QUALITY_SCOPE
+    {
+        return Err(private_dedupe_quality_boundary_error());
+    }
+    if target_claim != PRIVATE_BUSINESS_DEDUPE_QUALITY_TARGET_CLAIM {
+        return Err(BenchmarkGateError::failed(
+            "private business dedupe quality requires target claim",
+        ));
+    }
+    if !is_safe_benchmark_token(private_dedupe_quality_str(report, "run_id")?) {
+        return Err(private_dedupe_quality_boundary_error());
+    }
+    if !is_safe_platform_label(private_dedupe_quality_str(report, "platform")?) {
+        return Err(private_dedupe_quality_boundary_error());
+    }
+    Ok(())
+}
+
+fn validate_private_business_dedupe_quality_shape(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = report.as_object() else {
+        return Err(private_dedupe_quality_boundary_error());
+    };
+    for key in object.keys() {
+        if !is_allowed_private_business_dedupe_quality_key(key) {
+            return Err(BenchmarkGateError::failed(
+                "unsupported private business dedupe quality field",
+            ));
+        }
+    }
+    private_dedupe_quality_str(report, "schema_version")?;
+    private_dedupe_quality_str(report, "run_id")?;
+    private_dedupe_quality_str(report, "platform")?;
+    private_dedupe_quality_str(report, "dataset_kind")?;
+    private_dedupe_quality_usize(report, "pair_count")?;
+    private_dedupe_quality_usize(report, "positive_pair_count")?;
+    private_dedupe_quality_usize(report, "predicted_duplicate_pairs")?;
+    private_dedupe_quality_usize(report, "true_positive")?;
+    private_dedupe_quality_usize(report, "false_positive")?;
+    private_dedupe_quality_usize(report, "false_negative")?;
+    private_dedupe_quality_usize(report, "true_negative")?;
+    private_dedupe_quality_number(report, "precision")?;
+    private_dedupe_quality_number(report, "recall")?;
+    private_dedupe_quality_number(report, "f1")?;
+    private_dedupe_quality_str(report, "target_claim")?;
+    private_dedupe_quality_str(report, "corpus_origin")?;
+    private_dedupe_quality_str(report, "privacy_boundary")?;
+    private_dedupe_quality_bool(report, "contains_raw_resume_text")?;
+    private_dedupe_quality_bool(report, "contains_resume_paths")?;
+    private_dedupe_quality_bool(report, "contains_profile_values")?;
+    private_dedupe_quality_bool(report, "contains_sample_ids")?;
+    private_dedupe_quality_bool(report, "contains_document_ids")?;
+    private_dedupe_quality_str(report, "dataset_manifest_sha256")?;
+    private_dedupe_quality_str(report, "annotation_manifest_sha256")?;
+    private_dedupe_quality_str(report, "dedupe_taxonomy")?;
+    private_dedupe_quality_str(report, "scope")?;
+    Ok(())
+}
+
+fn is_allowed_private_business_dedupe_quality_key(key: &str) -> bool {
+    matches!(
+        key,
+        "schema_version"
+            | "run_id"
+            | "platform"
+            | "dataset_kind"
+            | "pair_count"
+            | "positive_pair_count"
+            | "predicted_duplicate_pairs"
+            | "true_positive"
+            | "false_positive"
+            | "false_negative"
+            | "true_negative"
+            | "precision"
+            | "recall"
+            | "f1"
+            | "target_claim"
+            | "corpus_origin"
+            | "privacy_boundary"
+            | "contains_raw_resume_text"
+            | "contains_resume_paths"
+            | "contains_profile_values"
+            | "contains_sample_ids"
+            | "contains_document_ids"
+            | "dataset_manifest_sha256"
+            | "annotation_manifest_sha256"
+            | "dedupe_taxonomy"
+            | "scope"
+    )
+}
+
+fn private_dedupe_quality_str<'a>(
+    value: &'a serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<&'a str, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(private_dedupe_quality_boundary_error)
+}
+
+fn private_dedupe_quality_bool(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<bool, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(private_dedupe_quality_boundary_error)
+}
+
+fn private_dedupe_quality_usize(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<usize, BenchmarkGateError> {
+    let number = value
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(private_dedupe_quality_boundary_error)?;
+    usize::try_from(number).map_err(|_| private_dedupe_quality_boundary_error())
+}
+
+fn private_dedupe_quality_number(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<f64, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|number| number.is_finite() && (0.0..=1.0).contains(number))
+        .ok_or_else(private_dedupe_quality_boundary_error)
+}
+
+fn private_dedupe_quality_boundary_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private business dedupe quality requires redacted local boundary")
+}
+
 pub fn evaluate_vector_quality_gate_json(
     report_json: &str,
     config: VectorQualityGateConfig,
@@ -1702,6 +2170,13 @@ struct FieldQualitySample {
     expected: Vec<FieldQualityMention>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct DedupeQualitySample {
+    left: DedupeProfile,
+    right: DedupeProfile,
+    duplicate: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct VectorQualitySample {
     query: String,
@@ -1763,6 +2238,84 @@ fn parse_field_quality_sample(line: &str) -> Result<FieldQualitySample> {
     }
 
     Ok(FieldQualitySample { text, expected })
+}
+
+fn parse_dedupe_quality_sample(line: &str) -> Result<DedupeQualitySample> {
+    let value = serde_json::from_str::<serde_json::Value>(line)
+        .map_err(|_| BenchmarkError::invalid_config("dedupe_quality_jsonl"))?;
+    let left = value
+        .get("left")
+        .ok_or_else(|| BenchmarkError::invalid_config("dedupe_quality.left"))
+        .and_then(parse_dedupe_quality_profile)?;
+    let right = value
+        .get("right")
+        .ok_or_else(|| BenchmarkError::invalid_config("dedupe_quality.right"))
+        .and_then(parse_dedupe_quality_profile)?;
+    let duplicate = value
+        .get("duplicate")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| BenchmarkError::invalid_config("dedupe_quality.duplicate"))?;
+
+    Ok(DedupeQualitySample {
+        left,
+        right,
+        duplicate,
+    })
+}
+
+fn parse_dedupe_quality_profile(value: &serde_json::Value) -> Result<DedupeProfile> {
+    let id = value
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| BenchmarkError::invalid_config("dedupe_quality.profile.id"))?;
+    let name = value
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| BenchmarkError::invalid_config("dedupe_quality.profile.name"))?;
+    Ok(DedupeProfile::new(id)
+        .with_name(name)
+        .with_schools(parse_optional_string_array(
+            value,
+            "schools",
+            "dedupe_quality.profile.schools",
+        )?)
+        .with_companies(parse_optional_string_array(
+            value,
+            "companies",
+            "dedupe_quality.profile.companies",
+        )?)
+        .with_skills(parse_optional_string_array(
+            value,
+            "skills",
+            "dedupe_quality.profile.skills",
+        )?))
+}
+
+fn parse_optional_string_array(
+    value: &serde_json::Value,
+    field: &'static str,
+    error_field: &'static str,
+) -> Result<Vec<String>> {
+    let Some(items) = value.get(field) else {
+        return Ok(Vec::new());
+    };
+    let items = items
+        .as_array()
+        .ok_or_else(|| BenchmarkError::invalid_config(error_field))?;
+    let mut parsed = Vec::with_capacity(items.len());
+    for item in items {
+        let text = item
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .ok_or_else(|| BenchmarkError::invalid_config(error_field))?;
+        parsed.push(text.to_string());
+    }
+    Ok(parsed)
 }
 
 fn parse_vector_quality_sample(line: &str) -> Result<VectorQualitySample> {

@@ -405,6 +405,131 @@ fn resume_benchmark_field_gate_accepts_private_business_labeled_report() {
 }
 
 #[test]
+fn resume_benchmark_dedupe_quality_outputs_redacted_report_and_gate() {
+    let dataset_dir = temp_dir("dedupe-quality-cli-dataset");
+    let dataset_path = dataset_dir.join("dedupe-quality.jsonl");
+    let report_path = dataset_dir.join("dedupe-report.json");
+    fs::write(
+        &dataset_path,
+        concat!(
+            "{\"sample_id\":\"private-dedupe-a\",",
+            "\"left\":{\"id\":\"private-left-a\",\"name\":\"Synthetic Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Example Labs\"],\"skills\":[\"Java\",\"Payments\"]},",
+            "\"right\":{\"id\":\"private-right-a\",\"name\":\"synthetic candidate\",\"schools\":[\"synthetic university\"],\"companies\":[\"Example Labs\"],\"skills\":[\"Java\",\"Search\"]},",
+            "\"duplicate\":true}\n",
+            "{\"sample_id\":\"private-dedupe-b\",",
+            "\"left\":{\"id\":\"private-left-b\",\"name\":\"Synthetic Candidate\",\"schools\":[\"Synthetic University\"],\"skills\":[\"Java\"]},",
+            "\"right\":{\"id\":\"private-right-b\",\"name\":\"Different Candidate\",\"schools\":[\"Synthetic University\"],\"skills\":[\"Java\"]},",
+            "\"duplicate\":false}\n",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "dedupe-quality",
+            "--dataset",
+            path_str(&dataset_path),
+            "--json",
+        ])
+        .output()
+        .expect("run dedupe quality benchmark");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\":\"dedupe-quality.v1\""));
+    assert!(stdout.contains("\"dataset_kind\":\"labeled\""));
+    assert!(stdout.contains("\"pair_count\":2"));
+    assert!(stdout.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!stdout.contains(path_str(&dataset_path)));
+    assert!(!stdout.contains("private-dedupe-a"));
+    assert!(!stdout.contains("private-left-a"));
+    assert!(!stdout.contains("Synthetic Candidate"));
+    assert!(!stdout.contains("Synthetic University"));
+    assert!(!stdout.contains("Example Labs"));
+    fs::write(&report_path, &output.stdout).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "dedupe-gate",
+            "--report",
+            path_str(&report_path),
+            "--min-pairs",
+            "2",
+            "--min-positive-pairs",
+            "1",
+            "--min-precision",
+            "0.99",
+            "--min-recall",
+            "0.99",
+            "--min-f1",
+            "0.99",
+        ])
+        .output()
+        .expect("run dedupe quality gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "dedupe quality gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(&dataset_dir);
+}
+
+#[test]
+fn resume_benchmark_dedupe_gate_accepts_private_business_labeled_report() {
+    let dataset_dir = temp_dir("dedupe-quality-private-business-accept");
+    let report_path = dataset_dir.join("dedupe-report.json");
+    fs::write(&report_path, minimal_private_business_dedupe_quality_json()).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "dedupe-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-business-labeled",
+            "--min-pairs",
+            "1000",
+            "--min-positive-pairs",
+            "100",
+            "--min-precision",
+            "0.90",
+            "--min-recall",
+            "0.90",
+            "--min-f1",
+            "0.90",
+        ])
+        .output()
+        .expect("run private business dedupe quality gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "dedupe quality gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(&dataset_dir);
+}
+
+#[test]
 fn resume_benchmark_ocr_throughput_outputs_redacted_report_and_gate() {
     let command = ocr_fixture_script("ocr-throughput-cli-private-command");
     let report_dir = temp_dir("ocr-throughput-cli-report");
@@ -814,6 +939,40 @@ fn minimal_private_business_field_quality_json() -> String {
         "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
         "\"field_taxonomy\":\"resume-ir.fields.v1\",",
         "\"scope\":\"private business field-quality benchmark; aggregate redacted report only\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn minimal_private_business_dedupe_quality_json() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"dedupe-quality.v1\",",
+        "\"run_id\":\"dedupeq_test\",",
+        "\"platform\":\"test/test\",",
+        "\"dataset_kind\":\"private-business-labeled\",",
+        "\"pair_count\":1000,",
+        "\"positive_pair_count\":100,",
+        "\"predicted_duplicate_pairs\":100,",
+        "\"true_positive\":100,",
+        "\"false_positive\":0,",
+        "\"false_negative\":0,",
+        "\"true_negative\":900,",
+        "\"precision\":1.0,",
+        "\"recall\":1.0,",
+        "\"f1\":1.0,",
+        "\"target_claim\":\"dedupe_quality_target_met\",",
+        "\"corpus_origin\":\"private_local\",",
+        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"contains_raw_resume_text\":false,",
+        "\"contains_resume_paths\":false,",
+        "\"contains_profile_values\":false,",
+        "\"contains_sample_ids\":false,",
+        "\"contains_document_ids\":false,",
+        "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+        "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"dedupe_taxonomy\":\"resume-ir.dedupe.v1\",",
+        "\"scope\":\"private business dedupe-quality benchmark; aggregate redacted report only\"",
         "}"
     )
     .to_string()

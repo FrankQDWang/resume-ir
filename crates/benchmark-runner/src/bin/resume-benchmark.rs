@@ -2,13 +2,14 @@ use std::fs;
 use std::path::PathBuf;
 
 use benchmark_runner::{
-    evaluate_benchmark_gate_json, evaluate_field_quality_gate_json,
-    evaluate_ocr_throughput_gate_json, evaluate_vector_quality_gate_json, run_field_quality_jsonl,
+    evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
+    evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
+    evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
     run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
     run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig, BenchmarkGateError,
-    FieldQualityGateConfig, OcrThroughputGateConfig, SyntheticBenchmarkConfig,
-    SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine, VectorQualityConfig,
-    VectorQualityGateConfig,
+    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine,
+    VectorQualityConfig, VectorQualityGateConfig,
 };
 
 fn main() {
@@ -24,6 +25,8 @@ fn run() -> Result<(), CliError> {
         CliCommand::Gate(args) => run_gate(args),
         CliCommand::FieldQuality(args) => run_field_quality(args),
         CliCommand::FieldGate(args) => run_field_gate(args),
+        CliCommand::DedupeQuality(args) => run_dedupe_quality(args),
+        CliCommand::DedupeGate(args) => run_dedupe_gate(args),
         CliCommand::OcrThroughput(args) => run_ocr_throughput(args),
         CliCommand::OcrGate(args) => run_ocr_gate(args),
         CliCommand::VectorQuality(args) => run_vector_quality(args),
@@ -94,6 +97,28 @@ fn run_field_gate(args: FieldGateArgs) -> Result<(), CliError> {
     }
     evaluate_field_quality_gate_json(&report_json, config).map_err(CliError::gate)?;
     println!("field quality gate passed");
+    Ok(())
+}
+
+fn run_dedupe_quality(args: DedupeQualityArgs) -> Result<(), CliError> {
+    let dataset_jsonl = fs::read_to_string(&args.dataset)
+        .map_err(|_| CliError::user("unable to read dedupe quality dataset"))?;
+    let report = run_dedupe_quality_jsonl(&dataset_jsonl).map_err(CliError::benchmark)?;
+    println!("{}", report.to_redacted_json());
+    Ok(())
+}
+
+fn run_dedupe_gate(args: DedupeGateArgs) -> Result<(), CliError> {
+    let report_json = fs::read_to_string(&args.report)
+        .map_err(|_| CliError::user("unable to read dedupe quality report"))?;
+    let mut config = DedupeQualityGateConfig::new(args.min_precision, args.min_recall, args.min_f1)
+        .with_min_pairs(args.min_pairs)
+        .with_min_positive_pairs(args.min_positive_pairs);
+    if args.require_private_business_labeled {
+        config = config.require_private_business_labeled();
+    }
+    evaluate_dedupe_quality_gate_json(&report_json, config).map_err(CliError::gate)?;
+    println!("dedupe quality gate passed");
     Ok(())
 }
 
@@ -168,6 +193,10 @@ where
     match args.first().map(String::as_str) {
         Some("field-quality") => parse_field_quality_args(&args[1..]).map(CliCommand::FieldQuality),
         Some("field-gate") => parse_field_gate_args(&args[1..]).map(CliCommand::FieldGate),
+        Some("dedupe-quality") => {
+            parse_dedupe_quality_args(&args[1..]).map(CliCommand::DedupeQuality)
+        }
+        Some("dedupe-gate") => parse_dedupe_gate_args(&args[1..]).map(CliCommand::DedupeGate),
         Some("ocr-throughput") => {
             parse_ocr_throughput_args(&args[1..]).map(CliCommand::OcrThroughput)
         }
@@ -381,6 +410,95 @@ fn parse_field_gate_args(args: &[String]) -> Result<FieldGateArgs, CliError> {
         report: report.ok_or_else(CliError::usage)?,
         require_private_business_labeled,
         min_samples,
+        min_precision,
+        min_recall,
+        min_f1,
+    })
+}
+
+fn parse_dedupe_quality_args(args: &[String]) -> Result<DedupeQualityArgs, CliError> {
+    let mut dataset = None;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--dataset" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                dataset = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--json" => {
+                index += 1;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    Ok(DedupeQualityArgs {
+        dataset: dataset.ok_or_else(CliError::usage)?,
+    })
+}
+
+fn parse_dedupe_gate_args(args: &[String]) -> Result<DedupeGateArgs, CliError> {
+    let mut report = None;
+    let mut require_private_business_labeled = false;
+    let mut min_pairs = 1_usize;
+    let mut min_positive_pairs = 1_usize;
+    let mut min_precision = 0.90_f64;
+    let mut min_recall = 0.90_f64;
+    let mut min_f1 = 0.90_f64;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--report" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                report = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--require-private-business-labeled" => {
+                require_private_business_labeled = true;
+                index += 1;
+            }
+            "--min-pairs" => {
+                min_pairs = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-positive-pairs" => {
+                min_positive_pairs = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-precision" => {
+                min_precision = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-recall" => {
+                min_recall = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-f1" => {
+                min_f1 = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    Ok(DedupeGateArgs {
+        report: report.ok_or_else(CliError::usage)?,
+        require_private_business_labeled,
+        min_pairs,
+        min_positive_pairs,
         min_precision,
         min_recall,
         min_f1,
@@ -661,7 +779,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -670,6 +788,8 @@ enum CliCommand {
     Gate(GateArgs),
     FieldQuality(FieldQualityArgs),
     FieldGate(FieldGateArgs),
+    DedupeQuality(DedupeQualityArgs),
+    DedupeGate(DedupeGateArgs),
     OcrThroughput(OcrThroughputArgs),
     OcrGate(OcrGateArgs),
     VectorQuality(VectorQualityArgs),
@@ -708,6 +828,22 @@ struct FieldGateArgs {
     report: PathBuf,
     require_private_business_labeled: bool,
     min_samples: usize,
+    min_precision: f64,
+    min_recall: f64,
+    min_f1: f64,
+}
+
+#[derive(Clone, Debug)]
+struct DedupeQualityArgs {
+    dataset: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct DedupeGateArgs {
+    report: PathBuf,
+    require_private_business_labeled: bool,
+    min_pairs: usize,
+    min_positive_pairs: usize,
     min_precision: f64,
     min_recall: f64,
     min_f1: f64,

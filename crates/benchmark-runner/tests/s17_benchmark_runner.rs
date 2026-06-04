@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use benchmark_runner::{
-    evaluate_benchmark_gate_json, evaluate_field_quality_gate_json,
-    evaluate_ocr_throughput_gate_json, evaluate_vector_quality_gate_json, run_field_quality_jsonl,
+    evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
+    evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
+    evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
     run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
-    run_vector_quality_jsonl, BenchmarkGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
-    SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine,
-    VectorQualityConfig, VectorQualityGateConfig,
+    run_vector_quality_jsonl, BenchmarkGateConfig, DedupeQualityGateConfig, FieldQualityGateConfig,
+    OcrThroughputGateConfig, SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig,
+    SyntheticOcrBenchmarkEngine, VectorQualityConfig, VectorQualityGateConfig,
 };
 
 #[test]
@@ -398,6 +399,138 @@ fn field_quality_gate_rejects_private_business_report_with_extra_payload_field()
 }
 
 #[test]
+fn dedupe_quality_report_scores_labeled_pairs_without_profile_leakage() {
+    let dataset = concat!(
+        "{\"sample_id\":\"private-dedupe-a\",",
+        "\"left\":{\"id\":\"private-left-a\",\"name\":\"Synthetic Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Example Labs\"],\"skills\":[\"Java\",\"Payments\"]},",
+        "\"right\":{\"id\":\"private-right-a\",\"name\":\"synthetic candidate\",\"schools\":[\"synthetic university\"],\"companies\":[\"Example Labs\"],\"skills\":[\"Java\",\"Search\"]},",
+        "\"duplicate\":true}\n",
+        "{\"sample_id\":\"private-dedupe-b\",",
+        "\"left\":{\"id\":\"private-left-b\",\"name\":\"Synthetic Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Example Labs\"],\"skills\":[\"Java\"]},",
+        "\"right\":{\"id\":\"private-right-b\",\"name\":\"Different Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Example Labs\"],\"skills\":[\"Java\"]},",
+        "\"duplicate\":false}\n",
+    );
+
+    let report = run_dedupe_quality_jsonl(dataset).unwrap();
+
+    assert_eq!(report.dataset_kind(), "labeled");
+    assert_eq!(report.pair_count(), 2);
+    assert_eq!(report.positive_pair_count(), 1);
+    assert!(report.precision() >= 0.99);
+    assert!(report.recall() >= 0.99);
+    assert!(report.f1() >= 0.99);
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"schema_version\":\"dedupe-quality.v1\""));
+    assert!(json.contains("\"dataset_kind\":\"labeled\""));
+    assert!(json.contains("\"pair_count\":2"));
+    assert!(json.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!json.contains("private-dedupe-a"));
+    assert!(!json.contains("private-left-a"));
+    assert!(!json.contains("Synthetic Candidate"));
+    assert!(!json.contains("Synthetic University"));
+    assert!(!json.contains("Example Labs"));
+    assert!(!json.contains("Payments"));
+}
+
+#[test]
+fn dedupe_quality_gate_rejects_low_recall_reports() {
+    let report = concat!(
+        "{\"schema_version\":\"dedupe-quality.v1\",",
+        "\"dataset_kind\":\"labeled\",",
+        "\"pair_count\":10,",
+        "\"positive_pair_count\":5,",
+        "\"predicted_duplicate_pairs\":1,",
+        "\"true_positive\":1,",
+        "\"false_positive\":0,",
+        "\"false_negative\":4,",
+        "\"true_negative\":5,",
+        "\"precision\":1.0,",
+        "\"recall\":0.2,",
+        "\"f1\":0.333,",
+        "\"target_claim\":\"not_evaluated\"}"
+    );
+    let config = DedupeQualityGateConfig::new(0.90, 0.90, 0.90)
+        .with_min_pairs(10)
+        .with_min_positive_pairs(5);
+
+    let error = evaluate_dedupe_quality_gate_json(report, config).unwrap_err();
+
+    assert!(error.to_string().contains("dedupe recall below threshold"));
+}
+
+#[test]
+fn dedupe_quality_gate_accepts_labeled_report_without_target_claim() {
+    let dataset = concat!(
+        "{\"left\":{\"id\":\"left-a\",\"name\":\"Synthetic Candidate\",\"schools\":[\"Synthetic University\"],\"skills\":[\"Java\"]},",
+        "\"right\":{\"id\":\"right-a\",\"name\":\"synthetic candidate\",\"schools\":[\"synthetic university\"],\"skills\":[\"Java\"]},",
+        "\"duplicate\":true}\n",
+    );
+    let report = run_dedupe_quality_jsonl(dataset).unwrap();
+    let config = DedupeQualityGateConfig::new(0.99, 0.99, 0.99)
+        .with_min_pairs(1)
+        .with_min_positive_pairs(1);
+
+    let evaluation = evaluate_dedupe_quality_gate_json(&report.to_redacted_json(), config).unwrap();
+
+    assert_eq!(evaluation.dataset_kind(), "labeled");
+    assert_eq!(evaluation.pair_count(), 1);
+    assert!(evaluation.f1() >= 0.99);
+}
+
+#[test]
+fn dedupe_quality_gate_rejects_release_evidence_without_private_business_boundary() {
+    let dataset = concat!(
+        "{\"left\":{\"id\":\"left-a\",\"name\":\"Synthetic Candidate\",\"schools\":[\"Synthetic University\"],\"skills\":[\"Java\"]},",
+        "\"right\":{\"id\":\"right-a\",\"name\":\"synthetic candidate\",\"schools\":[\"synthetic university\"],\"skills\":[\"Java\"]},",
+        "\"duplicate\":true}\n",
+    );
+    let report = run_dedupe_quality_jsonl(dataset).unwrap();
+    let config = DedupeQualityGateConfig::new(0.90, 0.90, 0.90)
+        .with_min_pairs(1)
+        .with_min_positive_pairs(1)
+        .require_private_business_labeled();
+
+    let error = evaluate_dedupe_quality_gate_json(&report.to_redacted_json(), config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business dedupe-quality benchmark required"));
+}
+
+#[test]
+fn dedupe_quality_gate_accepts_private_business_labeled_release_evidence() {
+    let report = minimal_private_business_dedupe_quality_json();
+    let config = DedupeQualityGateConfig::new(0.90, 0.90, 0.90)
+        .with_min_pairs(1_000)
+        .with_min_positive_pairs(100)
+        .require_private_business_labeled();
+
+    let evaluation = evaluate_dedupe_quality_gate_json(&report, config).unwrap();
+
+    assert_eq!(evaluation.dataset_kind(), "private-business-labeled");
+    assert_eq!(evaluation.pair_count(), 1_000);
+    assert!(evaluation.f1() >= 0.99);
+}
+
+#[test]
+fn dedupe_quality_gate_rejects_private_business_report_with_extra_payload_field() {
+    let mut report = minimal_private_business_dedupe_quality_json();
+    report.pop();
+    report.push_str(",\"notes\":\"private local path /Users/frankqdwang/resume.pdf\"");
+    report.push('}');
+    let config = DedupeQualityGateConfig::new(0.90, 0.90, 0.90)
+        .with_min_pairs(1_000)
+        .with_min_positive_pairs(100)
+        .require_private_business_labeled();
+
+    let error = evaluate_dedupe_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("unsupported private business dedupe quality field"));
+}
+
+#[test]
 fn synthetic_ocr_throughput_reports_page_latency_without_payload_or_path_leakage() {
     let command = ocr_fixture_script("ocr-throughput-private-command");
     let config = SyntheticOcrBenchmarkConfig::new(3, 5_000).unwrap();
@@ -679,6 +812,40 @@ fn minimal_private_business_field_quality_json() -> String {
         "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
         "\"field_taxonomy\":\"resume-ir.fields.v1\",",
         "\"scope\":\"private business field-quality benchmark; aggregate redacted report only\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn minimal_private_business_dedupe_quality_json() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"dedupe-quality.v1\",",
+        "\"run_id\":\"dedupeq_test\",",
+        "\"platform\":\"test/test\",",
+        "\"dataset_kind\":\"private-business-labeled\",",
+        "\"pair_count\":1000,",
+        "\"positive_pair_count\":100,",
+        "\"predicted_duplicate_pairs\":100,",
+        "\"true_positive\":100,",
+        "\"false_positive\":0,",
+        "\"false_negative\":0,",
+        "\"true_negative\":900,",
+        "\"precision\":1.0,",
+        "\"recall\":1.0,",
+        "\"f1\":1.0,",
+        "\"target_claim\":\"dedupe_quality_target_met\",",
+        "\"corpus_origin\":\"private_local\",",
+        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"contains_raw_resume_text\":false,",
+        "\"contains_resume_paths\":false,",
+        "\"contains_profile_values\":false,",
+        "\"contains_sample_ids\":false,",
+        "\"contains_document_ids\":false,",
+        "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+        "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"dedupe_taxonomy\":\"resume-ir.dedupe.v1\",",
+        "\"scope\":\"private business dedupe-quality benchmark; aggregate redacted report only\"",
         "}"
     )
     .to_string()

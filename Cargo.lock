@@ -201,6 +201,7 @@ dependencies = [
  "extractor-rules",
  "index-fulltext",
  "ocr-client",
+ "rank-fusion",
  "serde",
  "serde_json",
 ]

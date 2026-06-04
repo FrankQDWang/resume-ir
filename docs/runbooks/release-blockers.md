@@ -19,6 +19,7 @@ unresolved.
 - macOS signed pkg/dmg install, upgrade, uninstall, and rollback are not proven
 - 100k and 1M hot-index hybrid real-corpus benchmarks are not available
 - private business labeled field-quality evidence is not available
+- private business labeled dedupe-quality evidence is not available
 - a reviewed licensed OCR engine is not selected or distributed
 - a reviewed licensed embedding model is not selected or distributed
 - Windows and macOS cross-platform validation are not complete
@@ -111,6 +112,28 @@ This gate is a release evidence validator. It does not create, upload, label,
 or sanitize private field-quality reports and cannot clear the field extraction
 quality blocker until representative local business labels and aggregate field
 metrics exist.
+
+Run private business dedupe-quality gates only against local redacted aggregate
+reports. The report must use `dataset_kind: "private-business-labeled"`,
+`target_claim: "dedupe_quality_target_met"`, `corpus_origin: "private_local"`,
+`privacy_boundary: "redacted_local_aggregate"`, `dedupe_taxonomy:
+"resume-ir.dedupe.v1"`, false raw-data/path/profile-value/sample-ID/document-ID
+booleans, and sha256 digests for both the dataset and annotation manifests. Do
+not upload reports if they contain names, schools, companies, skills, document
+IDs, sample IDs, filenames, local paths, raw resume text, or notes.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  dedupe-gate --report private-dedupe-quality.json \
+  --require-private-business-labeled \
+  --min-pairs 1000 --min-positive-pairs 100 \
+  --min-precision 0.90 --min-recall 0.90 --min-f1 0.90
+```
+
+This gate is a release evidence validator. It does not create, upload, label,
+or sanitize private dedupe-quality reports and cannot clear the dedupe quality
+blocker until representative local business labels and aggregate dedupe metrics
+exist.
 
 Generate a local release dry-run manifest only after release binaries have been
 built:
