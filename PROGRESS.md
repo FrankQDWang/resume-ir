@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, and S142 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, and S143 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -84,9 +84,10 @@ obsolete preliminary files and checklists are not product scope.
   purge of tombstoned documents across metadata, obsolete full-text snapshots,
   full-text staging directories, vector records, current ingest jobs, and
   current OCR page-cache records exist. Contact hash key backup/restore now
-  exists through local privacy CLI/API with redacted outputs, owner-only key
-  file creation where supported, and restore refusal when a target key already
-  exists; key rotation and encrypted metadata remain absent. A labeled
+  exists through local privacy CLI/API with passphrase-protected local backup
+  files, redacted outputs, owner-only key file creation where supported, and
+  restore refusal when a target key already exists; key rotation and encrypted
+  metadata remain absent. A labeled
   field-quality evaluator and gate now score precision/recall/F1 from JSONL
   samples without emitting raw text, sample IDs, paths, or field values.
   Soft-dedupe scoring now compares
@@ -388,8 +389,66 @@ obsolete preliminary files and checklists are not product scope.
 | S140 | Product metadata encryption diagnostic slice complete locally | Focused diagnostics tests first failed because doctor and redacted export did not surface the plaintext metadata-storage state. After implementation, `meta-store` exposes `MetadataEncryptionState::Plaintext`; doctor prints `metadata encryption: plaintext` plus SQLCipher remediation, and `export-diagnostics --redact` includes redacted `metadata_encryption` plus remediation fields without paths or secrets. Focused doctor/export tests, focused meta-store encryption-state test, full diagnostics, full meta-store tests, fmt, focused clippy, diff checks, public repo guard, and full local verification passed. | None for this diagnostic visibility slice; it does not implement SQLCipher, encrypt SQLite, rotate keys, prove forensic erase, or complete the encrypted local storage blocker. |
 | S141 | Product OCR command process cleanup flake fix complete locally | GitHub PR #9 `rust workspace` failed on Ubuntu with `local_pdf_render_command_returns_page_bytes_without_payload_debug_leaks` returning `EngineFailed`; a Linux Rust container reproduced the same test-file flake as timeout tests returning `EngineFailed` under parallel execution. Root cause: successful OCR command paths signaled an exited child process group before first letting stdout/stderr readers drain, creating a stale PGID reuse window in parallel Linux tests. The fix defers process-group cleanup until output readers fail to drain within a grace window. Focused macOS `ocr-client` tests, focused clippy, rustfmt, diff check, public repo guard, a Linux container 10-run `s12_ocr_client` loop, and full local verification passed; hosted PR #9 checks also passed after push. | None for this CI/process cleanup slice; it does not change OCR quality, language-pack packaging, renderer selection, or metadata encryption. |
 | S142 | Product contact hash key backup/restore slice complete locally | Privacy crate and CLI tests first failed because contact hash key backup/restore APIs and privacy subcommands did not exist. After implementation, contact hash key backup writes a local envelope file with owner-only permissions where supported, restore refuses to overwrite an existing key, Debug/CLI output stays redacted, and restored keys reproduce stable contact HMACs. Focused privacy/CLI tests, full privacy tests, fmt, diff checks, focused clippy, public repo guard, and full local verification passed. | None for this contact hash key backup/recovery slice; it does not rotate keys, encrypt SQLite metadata, protect backup files with passphrases, prove forensic erase, or clear SQLCipher/encrypted storage blockers. |
+| S143 | Product passphrase-protected contact key backup slice complete locally | Privacy crate and CLI tests first failed because backup/restore still used the S142 unencrypted backup API and CLI syntax. After implementation, contact key backups require passphrase bytes or a local `--passphrase-file`, use Argon2id plus XChaCha20-Poly1305 to encrypt the key material, reject wrong passphrases without creating a target key, and keep backup files plus command/Debug/error output free of key material, passphrases, contacts, and paths. Focused privacy/CLI tests, full privacy tests, fmt, focused clippy, diff checks, public repo guard, and full local verification passed. | None for this backup-file protection slice; it does not rotate keys, encrypt SQLite metadata, prove forensic erase, or clear SQLCipher/encrypted storage blockers. |
 
 ## Command Log
+
+### S143
+
+Design target:
+
+- Replace the S142 plaintext contact-key backup envelope before shipment with a
+  passphrase-protected local backup file.
+- Require backup and restore callers to provide passphrase bytes; CLI callers
+  must use a local `--passphrase-file` instead of passing the passphrase as a
+  command-line argument.
+- Keep backup files, stdout/stderr, and Debug output free of key material,
+  passphrase material, contacts, local data paths, and backup/passphrase file
+  paths.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p privacy contact_hash_key_backup_and_restore_round_trip_without_leaking_key_or_contacts --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s142_privacy_key_cli --locked
+```
+
+Output summary:
+
+- The focused privacy test failed first because `backup_contact_hash_key` and
+  `restore_contact_hash_key` accepted only data/backup paths, not passphrase
+  bytes.
+- The focused CLI test failed first because `resume-cli privacy
+  backup-contact-key` rejected `--passphrase-file`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p privacy contact_hash_key_backup_and_restore_round_trip_without_leaking_key_or_contacts -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p privacy contact_hash_key_restore_with_wrong_passphrase_refuses_without_creating_key --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s142_privacy_key_cli --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p privacy --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p privacy -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused encrypted backup/restore round-trip test: exit 0; 1 test passed.
+- Focused wrong-passphrase restore test: exit 0; 1 test passed.
+- Focused privacy CLI test: exit 0; 1 test passed.
+- Full `privacy` tests: exit 0; 7 integration tests and doc-tests passed.
+- `cargo fmt --check`, focused clippy, `git diff --check`, public repo guard,
+  and full local verification passed.
+
+Scope note:
+
+- S143 protects contact hash key backup files only. It does not rotate contact
+  keys, encrypt SQLite metadata, prove forensic erasure, or clear the
+  SQLCipher/encrypted local storage blocker.
 
 ### S142
 

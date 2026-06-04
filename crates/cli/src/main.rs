@@ -175,14 +175,18 @@ fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     match action {
         "backup-contact-key" => {
-            let output_path = parse_privacy_path_arg(&args[1..], "--output")?;
-            backup_contact_hash_key(data_dir, &output_path).map_err(CliError::privacy)?;
+            let key_args = parse_privacy_key_file_args(&args[1..], "--output")?;
+            let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
+            backup_contact_hash_key(data_dir, &key_args.key_path, &passphrase)
+                .map_err(CliError::privacy)?;
             println!("contact hash key backup: written");
             Ok(())
         }
         "restore-contact-key" => {
-            let input_path = parse_privacy_path_arg(&args[1..], "--input")?;
-            restore_contact_hash_key(data_dir, &input_path).map_err(CliError::privacy)?;
+            let key_args = parse_privacy_key_file_args(&args[1..], "--input")?;
+            let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
+            restore_contact_hash_key(data_dir, &key_args.key_path, &passphrase)
+                .map_err(CliError::privacy)?;
             println!("contact hash key restore: restored");
             Ok(())
         }
@@ -190,16 +194,68 @@ fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
     }
 }
 
-fn parse_privacy_path_arg(args: &[String], flag: &'static str) -> Result<PathBuf> {
-    if args.len() != 2 || args[0] != flag || args[1].is_empty() {
-        return Err(CliError::usage(privacy_usage()));
+struct PrivacyKeyFileArgs {
+    key_path: PathBuf,
+    passphrase_path: PathBuf,
+}
+
+fn parse_privacy_key_file_args(
+    args: &[String],
+    key_flag: &'static str,
+) -> Result<PrivacyKeyFileArgs> {
+    let mut key_path = None;
+    let mut passphrase_path = None;
+    let mut index = 0;
+    while index < args.len() {
+        if index + 1 >= args.len() || args[index + 1].is_empty() {
+            return Err(CliError::usage(privacy_usage()));
+        }
+
+        match args[index].as_str() {
+            flag if flag == key_flag => {
+                if key_path.replace(PathBuf::from(&args[index + 1])).is_some() {
+                    return Err(CliError::usage(privacy_usage()));
+                }
+            }
+            "--passphrase-file" => {
+                if passphrase_path
+                    .replace(PathBuf::from(&args[index + 1]))
+                    .is_some()
+                {
+                    return Err(CliError::usage(privacy_usage()));
+                }
+            }
+            _ => return Err(CliError::usage(privacy_usage())),
+        }
+
+        index += 2;
     }
 
-    Ok(PathBuf::from(&args[1]))
+    let Some(key_path) = key_path else {
+        return Err(CliError::usage(privacy_usage()));
+    };
+    let Some(passphrase_path) = passphrase_path else {
+        return Err(CliError::usage(privacy_usage()));
+    };
+
+    Ok(PrivacyKeyFileArgs {
+        key_path,
+        passphrase_path,
+    })
+}
+
+fn read_privacy_passphrase_file(path: &Path) -> Result<Vec<u8>> {
+    let mut passphrase =
+        fs::read(path).map_err(|_| CliError::user("privacy passphrase file could not be read"))?;
+    while matches!(passphrase.last(), Some(b'\n' | b'\r')) {
+        passphrase.pop();
+    }
+
+    Ok(passphrase)
 }
 
 fn privacy_usage() -> &'static str {
-    "usage: resume-cli privacy backup-contact-key --output <path> | resume-cli privacy restore-contact-key --input <path>"
+    "usage: resume-cli privacy backup-contact-key --output <path> --passphrase-file <path> | resume-cli privacy restore-contact-key --input <path> --passphrase-file <path>"
 }
 
 fn model_validate_manifest_command(args: &[String]) -> Result<()> {

@@ -9,9 +9,13 @@ use privacy::{ContactHasher, ContactKind};
 fn privacy_cli_backs_up_and_restores_contact_hash_key_without_output_leaks() {
     let source_dir = temp_dir("privacy-cli-source");
     let restore_dir = temp_dir("privacy-cli-target");
+    let wrong_restore_dir = temp_dir("privacy-cli-wrong-passphrase-target");
     let backup_dir = temp_dir("privacy-cli-backup");
     let backup_path = backup_dir.join("contact-key.backup");
+    let passphrase_path = backup_dir.join("contact-key.passphrase");
+    let wrong_passphrase_path = backup_dir.join("contact-key-wrong.passphrase");
     let private_email = "shared.candidate@example.test";
+    let backup_passphrase = "synthetic local backup passphrase";
 
     let source = ContactHasher::load_or_create(&source_dir).unwrap();
     let source_hash = source
@@ -19,6 +23,12 @@ fn privacy_cli_backs_up_and_restores_contact_hash_key_without_output_leaks() {
         .unwrap();
     let key_material =
         fs::read_to_string(source_dir.join("secrets").join("contact-hash-key-v1")).unwrap();
+    fs::write(&passphrase_path, format!("{backup_passphrase}\n")).unwrap();
+    fs::write(
+        &wrong_passphrase_path,
+        "synthetic wrong backup passphrase\n",
+    )
+    .unwrap();
 
     let backup = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -28,6 +38,8 @@ fn privacy_cli_backs_up_and_restores_contact_hash_key_without_output_leaks() {
             "backup-contact-key",
             "--output",
             path_str(&backup_path),
+            "--passphrase-file",
+            path_str(&passphrase_path),
         ])
         .output()
         .expect("run contact key backup");
@@ -37,9 +49,17 @@ fn privacy_cli_backs_up_and_restores_contact_hash_key_without_output_leaks() {
     assert!(stdout.contains("contact hash key backup: written"));
     assert!(!stdout.contains(path_str(&source_dir)));
     assert!(!stdout.contains(path_str(&backup_path)));
+    assert!(!stdout.contains(path_str(&passphrase_path)));
     assert!(!stdout.contains(private_email));
+    assert!(!stdout.contains(backup_passphrase));
     assert!(!stdout.contains(key_material.trim()));
     assert!(backup_path.exists());
+    let backup_material = fs::read_to_string(&backup_path).unwrap();
+    assert!(backup_material.contains("resume-ir-contact-hash-key-backup-v2"));
+    assert!(!backup_material.contains("resume-ir-contact-hash-key-v1"));
+    assert!(!backup_material.contains(private_email));
+    assert!(!backup_material.contains(backup_passphrase));
+    assert!(!backup_material.contains(key_material.trim()));
 
     let restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -49,6 +69,8 @@ fn privacy_cli_backs_up_and_restores_contact_hash_key_without_output_leaks() {
             "restore-contact-key",
             "--input",
             path_str(&backup_path),
+            "--passphrase-file",
+            path_str(&passphrase_path),
         ])
         .output()
         .expect("run contact key restore");
@@ -58,7 +80,9 @@ fn privacy_cli_backs_up_and_restores_contact_hash_key_without_output_leaks() {
     assert!(stdout.contains("contact hash key restore: restored"));
     assert!(!stdout.contains(path_str(&restore_dir)));
     assert!(!stdout.contains(path_str(&backup_path)));
+    assert!(!stdout.contains(path_str(&passphrase_path)));
     assert!(!stdout.contains(private_email));
+    assert!(!stdout.contains(backup_passphrase));
     assert!(!stdout.contains(key_material.trim()));
 
     let restored = ContactHasher::load_or_create(&restore_dir).unwrap();
@@ -69,6 +93,34 @@ fn privacy_cli_backs_up_and_restores_contact_hash_key_without_output_leaks() {
             .unwrap()
     );
 
+    let wrong_passphrase_restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&wrong_restore_dir),
+            "privacy",
+            "restore-contact-key",
+            "--input",
+            path_str(&backup_path),
+            "--passphrase-file",
+            path_str(&wrong_passphrase_path),
+        ])
+        .output()
+        .expect("run wrong-passphrase contact key restore");
+    assert!(!wrong_passphrase_restore.status.success());
+    assert!(wrong_passphrase_restore.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&wrong_passphrase_restore.stderr);
+    assert!(stderr.contains("privacy key backup is invalid or cannot be decrypted"));
+    assert!(!stderr.contains(path_str(&wrong_restore_dir)));
+    assert!(!stderr.contains(path_str(&backup_path)));
+    assert!(!stderr.contains(path_str(&wrong_passphrase_path)));
+    assert!(!stderr.contains(private_email));
+    assert!(!stderr.contains("synthetic wrong backup passphrase"));
+    assert!(!stderr.contains(key_material.trim()));
+    assert!(!wrong_restore_dir
+        .join("secrets")
+        .join("contact-hash-key-v1")
+        .exists());
+
     let duplicate_restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
@@ -77,6 +129,8 @@ fn privacy_cli_backs_up_and_restores_contact_hash_key_without_output_leaks() {
             "restore-contact-key",
             "--input",
             path_str(&backup_path),
+            "--passphrase-file",
+            path_str(&passphrase_path),
         ])
         .output()
         .expect("run duplicate contact key restore");
@@ -86,11 +140,14 @@ fn privacy_cli_backs_up_and_restores_contact_hash_key_without_output_leaks() {
     assert!(stderr.contains("privacy key already exists"));
     assert!(!stderr.contains(path_str(&restore_dir)));
     assert!(!stderr.contains(path_str(&backup_path)));
+    assert!(!stderr.contains(path_str(&passphrase_path)));
     assert!(!stderr.contains(private_email));
+    assert!(!stderr.contains(backup_passphrase));
     assert!(!stderr.contains(key_material.trim()));
 
     remove_dir(&source_dir);
     remove_dir(&restore_dir);
+    remove_dir(&wrong_restore_dir);
     remove_dir(&backup_dir);
 }
 
