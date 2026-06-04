@@ -13,6 +13,7 @@ use embedder::{
     LocalEmbeddingCommandSpec,
 };
 use fs4::fs_std::FileExt;
+use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions};
 use import_pipeline::{
     detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
     ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary,
@@ -2463,8 +2464,8 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
 fn witness_command(args: &[String]) -> Result<()> {
     let witness_args = parse_witness_args(args)?;
-    let source_root = canonical_witness_root(&witness_args.root)?;
-    let selection = collect_witness_inputs(&source_root, witness_args.max_files)?;
+    let (source_roots, scan_profile) = expand_witness_root_selection(&witness_args.root_selection)?;
+    let selection = collect_witness_inputs(&source_roots, witness_args.max_files, scan_profile)?;
     let temp_dirs = WitnessTempDirs::create()?;
     copy_witness_inputs(&selection.selected, &temp_dirs.input_root)?;
 
@@ -2487,7 +2488,7 @@ fn witness_command(args: &[String]) -> Result<()> {
         &temp_dirs.input_root,
         now,
         ImportOptions {
-            scan_profile: ScanProfile::Explicit,
+            scan_profile,
             max_files: None,
         },
     )
@@ -2507,6 +2508,11 @@ fn witness_command(args: &[String]) -> Result<()> {
 
     println!("resume-ir local witness");
     println!("source root: <redacted>");
+    println!(
+        "root preset: {}",
+        witness_args.root_selection.preset_label().unwrap_or("none")
+    );
+    println!("scan profile: {}", scan_profile.label());
     println!("formats: pdf,docx,doc");
     println!("files selected: {}", selection.selected.len());
     println!(
@@ -2544,6 +2550,7 @@ fn witness_command(args: &[String]) -> Result<()> {
 
 fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
     let mut root = None;
+    let mut root_preset = None;
     let mut max_files = WITNESS_DEFAULT_MAX_FILES;
     let mut run_ocr = false;
     let mut seen_ocr_option = false;
@@ -2554,10 +2561,26 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
     while index < args.len() {
         match args[index].as_str() {
             "--root" => {
+                if root_preset.is_some() {
+                    return Err(witness_usage());
+                }
                 let Some(value) = args.get(index + 1) else {
                     return Err(witness_usage());
                 };
+                if root.is_some() {
+                    return Err(witness_usage());
+                }
                 root = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--root-preset" => {
+                if root.is_some() || root_preset.is_some() {
+                    return Err(witness_usage());
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                root_preset = Some(parse_root_preset(value)?);
                 index += 2;
             }
             "--max-files" => {
@@ -2719,9 +2742,16 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
         return Err(witness_usage());
     }
 
-    let root = root.ok_or_else(witness_usage)?;
+    let root_selection = if let Some(root) = root {
+        WitnessRootSelection::Explicit(root)
+    } else if let Some(root_preset) = root_preset {
+        WitnessRootSelection::Preset(root_preset)
+    } else {
+        return Err(witness_usage());
+    };
+
     Ok(WitnessArgs {
-        root,
+        root_selection,
         max_files,
         run_ocr,
         ocr_max_documents,
@@ -2731,7 +2761,7 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
 
 fn witness_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli witness --root <path> [--max-files <count>] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]",
+        "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]",
     )
 }
 
@@ -2873,52 +2903,61 @@ fn canonical_witness_root(root: &Path) -> Result<PathBuf> {
     fs::canonicalize(root).map_err(|_| CliError::user("witness root must exist and be a directory"))
 }
 
-fn collect_witness_inputs(root: &Path, max_files: usize) -> Result<WitnessSelection> {
+fn expand_witness_root_selection(
+    root_selection: &WitnessRootSelection,
+) -> Result<(Vec<PathBuf>, ScanProfile)> {
+    match root_selection {
+        WitnessRootSelection::Explicit(root) => {
+            Ok((vec![canonical_witness_root(root)?], ScanProfile::Explicit))
+        }
+        WitnessRootSelection::Preset(RootPreset::LocalDiscovery) => {
+            Ok((local_discovery_roots()?, ScanProfile::Discovery))
+        }
+    }
+}
+
+fn collect_witness_inputs(
+    roots: &[PathBuf],
+    max_files: usize,
+    scan_profile: ScanProfile,
+) -> Result<WitnessSelection> {
     let mut selection = WitnessSelection::default();
-    let mut stack = vec![root.to_path_buf()];
 
-    while let Some(directory) = stack.pop() {
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(_) => {
-                selection.scan_errors += 1;
-                continue;
-            }
-        };
+    for (root_index, root) in roots.iter().enumerate() {
+        if selection.selected.len() >= max_files {
+            selection.budget_exhausted = true;
+            return Ok(selection);
+        }
+        let remaining_files = max_files - selection.selected.len();
+        let report = crawl_directory_with_options(
+            root,
+            CrawlerScanOptions {
+                profile: scan_profile,
+                max_files: Some(remaining_files),
+            },
+        )
+        .map_err(|_| CliError::user("unable to scan private witness root"))?;
+        let root_budget_exhausted = report.budget_exhausted.is_some();
+        selection.scan_errors += report.errors.len();
+        selection.unsupported_entries += report.ignored_count;
 
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(_) => {
-                    selection.scan_errors += 1;
-                    continue;
-                }
-            };
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
-                Err(_) => {
-                    selection.scan_errors += 1;
-                    continue;
-                }
-            };
-
-            if file_type.is_dir() {
-                stack.push(entry.path());
-                continue;
-            }
-            if !file_type.is_file() {
-                continue;
-            }
-
-            if witness_supported_extension(&entry.path()).is_some() {
+        for file in report.files {
+            let source_path = PathBuf::from(file.normalized_path.as_str());
+            if witness_supported_extension(&source_path).is_some() {
+                selection.selected.push(source_path);
                 if selection.selected.len() >= max_files {
-                    selection.budget_exhausted = true;
+                    selection.budget_exhausted =
+                        root_budget_exhausted || root_index + 1 < roots.len();
                     return Ok(selection);
                 }
-                selection.selected.push(entry.path());
             } else {
                 selection.unsupported_entries += 1;
             }
+        }
+
+        if root_budget_exhausted {
+            selection.budget_exhausted = true;
+            return Ok(selection);
         }
     }
 
@@ -2963,11 +3002,26 @@ fn yes_no(value: bool) -> &'static str {
 }
 
 struct WitnessArgs {
-    root: PathBuf,
+    root_selection: WitnessRootSelection,
     max_files: usize,
     run_ocr: bool,
     ocr_max_documents: Option<usize>,
     ocr_worker_args: OcrWorkerArgs,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WitnessRootSelection {
+    Explicit(PathBuf),
+    Preset(RootPreset),
+}
+
+impl WitnessRootSelection {
+    fn preset_label(&self) -> Option<&'static str> {
+        match self {
+            Self::Explicit(_) => None,
+            Self::Preset(RootPreset::LocalDiscovery) => Some("local-discovery"),
+        }
+    }
 }
 
 #[derive(Default)]

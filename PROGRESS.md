@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, and S105 used synthetic fixtures only.
-  S97, S99, S100, and S105 also used private local-only witnesses against anonymized temporary copies from a
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S105, and S106 used synthetic fixtures only.
+  S97, S99, S100, S105, and S106 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
@@ -55,7 +55,8 @@ obsolete preliminary files and checklists are not product scope.
   integration that requeues completed roots through the existing durable import
   task path on local file changes, full-text snapshot publish/recover, delete
   rebuild, redacted snippets, and an isolated local PDF/Word witness command
-  that anonymizes selected inputs, runs the real import path in a temporary data
+  that can use either an explicit root or the local-discovery root preset,
+  anonymizes selected inputs, runs the real import path in a temporary data
   directory, can optionally run OCR jobs through the existing local OCR worker
   path, prints only aggregate redacted output, and removes private witness data
   exist. Missing production work includes production-grade PDF coverage, full
@@ -252,8 +253,74 @@ obsolete preliminary files and checklists are not product scope.
 | S103 | Product soft-dedupe hint slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion soft_dedupe --locked` first failed because soft-dedupe APIs did not exist; `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding search_marks_soft_duplicate_hints_without_low_confidence_folding --locked -- --exact` first failed because local search did not print soft-dedupe hints; and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_includes_redacted_soft_dedupe_hints --locked -- --exact` first failed because daemon search JSON omitted `soft_dedupe`. After implementation, focused rank-fusion, CLI, daemon IPC tests, related suites, focused clippy, fmt, diff, runbook, public guard, and `./scripts/ci/verify-local.sh` passed. | None for this bounded redacted soft-dedupe hint slice; it does not prove real dedupe precision/recall, does not implement manual merge review, does not add large-name-bucket indexing beyond existing mention indexes and bounded candidate scans, and does not prove million-corpus latency impact. |
 | S104 | Product metadata migration fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_metadata_migration_failure_reproduces_without_path_or_schema_leak --locked -- --exact` first failed because `migration-failure` was unsupported; `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths --locked -- --exact` first failed because diagnostics did not list `metadata_migration`. After implementation, focused fault/diagnostics tests, related suites, focused clippy, fmt, diff, runbook, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this safe synthetic migration-failure probe; it does not perform destructive migration rollback drills against real user metadata, backup/restore workflow proof, cross-platform filesystem fault proof, or upgrade rehearsal. |
 | S105 | Product local OCR witness-budget slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_can_budget_documents_after_full_private_scan_without_path_leak --locked -- --exact` first failed because `witness` rejected `--ocr-max-documents`; after implementation, focused witness exact, full import-search witness suite, OCR handoff suite, focused clippy, fmt, diff, runbook, public guard, marker scans, `./scripts/ci/verify-local.sh`, and a private local-only full-directory witness with a bounded OCR document budget passed. | None for this redacted local OCR witness-budget control; it does not prove full-library OCR completion, OCR throughput, OCR quality, non-English OCR behavior, packaged OCR runtime distribution, Windows/Linux behavior, or large-corpus performance. |
+| S106 | Product local-discovery witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_local_discovery_preset_uses_discovery_profile_without_path_leak --locked -- --exact` first failed because `witness` rejected `--root-preset local-discovery`; after implementation, focused local-discovery witness exact, full import-search witness suite, fs-crawler suite, focused clippy, fmt, diff, runbook, public guard, marker scans, `./scripts/ci/verify-local.sh`, and a private local-only local-discovery witness using the user-authorized sample directory override passed. | None for this redacted local-discovery witness path; it does not prove default whole-machine scans from `/`, Windows drive scanning, full-library OCR completion, large-corpus performance, or cross-platform watcher behavior. |
 
 ## Command Log
+
+### S106
+
+Design target:
+
+- Add `resume-cli witness --root-preset local-discovery` so the local witness
+  command can exercise the same root-preset discovery path users need when they
+  do not know where resumes are stored.
+- Use the existing discovery profile skip rules for system/cache/dependency
+  directories and keep output redacted.
+- Continue anonymizing selected PDF/Word inputs into a temporary witness data
+  directory and remove private witness data before returning.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_local_discovery_preset_uses_discovery_profile_without_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- The test failed because `resume-cli witness` rejected
+  `--root-preset local-discovery` as unsupported usage.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_local_discovery_preset_uses_discovery_profile_without_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p fs-crawler --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n --hidden --glob '!target/**' --glob '!.git/**' '[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension|[p]rivate-sample-path-marker' .; then exit 1; else echo "no private witness markers"; fi
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused local-discovery witness exact: exit 0.
+- `s9_import_search`: exit 0; 22 tests passed.
+- `fs-crawler`: exit 0; 11 tests passed plus doc-tests.
+- Focused CLI clippy: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- Runbook guard: exit 0.
+- Public repository guard: exit 0.
+- Private witness marker scan: exit 0.
+- Obsolete reference marker guard: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, and public repo guard.
+- A private local-only local-discovery witness using the user-authorized sample
+  directory override passed with redacted aggregate output and temporary
+  private data removal. No real resume path, filename, raw text, or diagnostic
+  payload was committed or uploaded.
+
+Scope note:
+
+- S106 makes local-discovery witnessing possible without pretending to prove a
+  full default whole-machine scan, Windows drive behavior, full-library OCR,
+  OCR quality, or large-corpus performance.
+- Full product is still not complete.
 
 ### S105
 

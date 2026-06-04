@@ -174,6 +174,68 @@ fn witness_imports_only_pdf_and_word_samples_without_persisting_private_data() {
     remove_dir(&private_root);
 }
 
+#[test]
+fn witness_local_discovery_preset_uses_discovery_profile_without_path_leak() {
+    let data_dir = temp_dir("witness-local-discovery-unused-data-dir");
+    let private_root = temp_dir("witness-local-discovery-private-root");
+    fs::create_dir_all(private_root.join("Documents")).unwrap();
+    fs::create_dir_all(private_root.join("node_modules")).unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        private_root
+            .join("Documents")
+            .join("real-person-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-engineer.docx"),
+        private_root
+            .join("node_modules")
+            .join("real-person-engineer.docx"),
+    )
+    .unwrap();
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+
+    let root_override = std::env::join_paths([&private_root]).unwrap();
+    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env(LOCAL_DISCOVERY_ROOTS_ENV, root_override)
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "witness",
+            "--root-preset",
+            "local-discovery",
+            "--max-files",
+            "10",
+        ])
+        .output()
+        .expect("run resume-cli local discovery witness");
+
+    assert!(
+        witness.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&witness.stdout),
+        String::from_utf8_lossy(&witness.stderr)
+    );
+    assert!(witness.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&witness.stdout);
+    assert!(stdout.contains("resume-ir local witness"));
+    assert!(stdout.contains("root preset: local-discovery"));
+    assert!(stdout.contains("scan profile: discovery"));
+    assert!(stdout.contains("files selected: 1"));
+    assert!(stdout.contains("witness import status: completed"));
+    assert!(stdout.contains("private witness data: removed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&canonical_private_root)));
+    assert!(!stdout.contains("real-person"));
+    assert!(!stdout.contains("node_modules"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
 #[cfg(unix)]
 #[test]
 fn witness_run_ocr_executes_local_command_without_output_or_path_leak() {
