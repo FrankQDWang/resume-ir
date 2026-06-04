@@ -2415,6 +2415,16 @@ fn witness_command(args: &[String]) -> Result<()> {
         },
     )
     .map_err(CliError::import)?;
+    let witness_ocr = if witness_args.run_ocr {
+        run_witness_ocr_jobs(
+            &temp_dirs.data_dir,
+            &store,
+            &witness_args.ocr_worker_args,
+            now,
+        )?
+    } else {
+        WitnessOcrStatus::NotRequested
+    };
     let private_data_removed = temp_dirs.cleanup();
 
     println!("resume-ir local witness");
@@ -2435,6 +2445,7 @@ fn witness_command(args: &[String]) -> Result<()> {
     println!("ocr required documents: {}", summary.ocr_required_documents);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("failed documents: {}", summary.failed_documents);
+    print_witness_ocr_status(&witness_ocr);
     println!(
         "private witness data: {}",
         if private_data_removed {
@@ -2456,6 +2467,9 @@ fn witness_command(args: &[String]) -> Result<()> {
 fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
     let mut root = None;
     let mut max_files = WITNESS_DEFAULT_MAX_FILES;
+    let mut run_ocr = false;
+    let mut seen_ocr_option = false;
+    let mut ocr_worker_args = default_ocr_worker_args();
     let mut index = 0_usize;
 
     while index < args.len() {
@@ -2478,16 +2492,253 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
                     .ok_or_else(witness_usage)?;
                 index += 2;
             }
+            "--run-ocr" => {
+                run_ocr = true;
+                index += 1;
+            }
+            "--ocr-command" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if ocr_worker_args.command.is_some() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-tesseract-command" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if ocr_worker_args.tesseract_command.is_some() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.tesseract_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-render-command" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if ocr_worker_args.render_command.is_some() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.render_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-pdftoppm-command" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if ocr_worker_args.pdftoppm_command.is_some() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.pdftoppm_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-engine-profile" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if value.trim().is_empty() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.engine_profile = value.clone();
+                index += 2;
+            }
+            "--ocr-lang" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if value.trim().is_empty() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.lang = value.clone();
+                index += 2;
+            }
+            "--ocr-profile" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if value.trim().is_empty() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.profile = value.clone();
+                index += 2;
+            }
+            "--ocr-render-dpi" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                ocr_worker_args.render_dpi = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            "--ocr-page-timeout-ms" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                ocr_worker_args.page_timeout_ms = value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            "--ocr-max-pages-per-document" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                ocr_worker_args.max_pages_per_document = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
             _ => return Err(witness_usage()),
         }
     }
 
+    if seen_ocr_option && !run_ocr {
+        return Err(witness_usage());
+    }
+    if ocr_worker_args.command.is_some() && ocr_worker_args.tesseract_command.is_some() {
+        return Err(witness_usage());
+    }
+    if ocr_worker_args.render_command.is_some() && ocr_worker_args.pdftoppm_command.is_some() {
+        return Err(witness_usage());
+    }
+
     let root = root.ok_or_else(witness_usage)?;
-    Ok(WitnessArgs { root, max_files })
+    Ok(WitnessArgs {
+        root,
+        max_files,
+        run_ocr,
+        ocr_worker_args,
+    })
 }
 
 fn witness_usage() -> CliError {
-    CliError::usage("usage: resume-cli witness --root <path> [--max-files <count>]")
+    CliError::usage(
+        "usage: resume-cli witness --root <path> [--max-files <count>] [--run-ocr [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]",
+    )
+}
+
+fn default_ocr_worker_args() -> OcrWorkerArgs {
+    OcrWorkerArgs {
+        command: None,
+        tesseract_command: None,
+        render_command: None,
+        pdftoppm_command: None,
+        engine_profile: "local-command".to_string(),
+        lang: "eng".to_string(),
+        profile: "balanced".to_string(),
+        render_dpi: 300,
+        page_timeout_ms: 30_000,
+        max_pages_per_document: DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT,
+    }
+}
+
+fn run_witness_ocr_jobs(
+    data_dir: &Path,
+    store: &MetaStore,
+    worker_args: &OcrWorkerArgs,
+    now: UnixTimestamp,
+) -> Result<WitnessOcrStatus> {
+    if worker_args.command.is_none() && worker_args.tesseract_command.is_none() {
+        return Ok(WitnessOcrStatus::Blocked {
+            reason: "local OCR command not configured",
+            documents_processed: 0,
+            cache_writes: 0,
+            cache_hits: 0,
+        });
+    }
+
+    let mut documents_processed = 0_usize;
+    let mut cache_writes = 0_usize;
+    let mut cache_hits = 0_usize;
+
+    loop {
+        let Some(job) = store
+            .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
+            .map_err(CliError::store)?
+        else {
+            return Ok(WitnessOcrStatus::Completed {
+                documents_processed,
+                cache_writes,
+                cache_hits,
+            });
+        };
+
+        match run_claimed_ocr_job(data_dir, store, &job, worker_args, now) {
+            Ok(summary) => {
+                documents_processed += summary.documents_processed;
+                cache_writes += summary.cache_writes;
+                cache_hits += summary.cache_hits;
+            }
+            Err(_) => {
+                if let Ok(Some(current_job)) = store.ingest_job_by_id(&job.id) {
+                    if current_job.status == IngestJobStatus::Running {
+                        let _ =
+                            store.update_job_status(&job.id, IngestJobStatus::FailedRetryable, now);
+                    }
+                }
+                return Ok(WitnessOcrStatus::Blocked {
+                    reason: "local OCR command failed or unavailable",
+                    documents_processed,
+                    cache_writes,
+                    cache_hits,
+                });
+            }
+        }
+    }
+}
+
+fn print_witness_ocr_status(status: &WitnessOcrStatus) {
+    match status {
+        WitnessOcrStatus::NotRequested => {
+            println!("witness ocr status: not_requested");
+            println!("ocr documents processed: 0");
+            println!("ocr cache writes: 0");
+            println!("ocr cache hits: 0");
+        }
+        WitnessOcrStatus::Completed {
+            documents_processed,
+            cache_writes,
+            cache_hits,
+        } => {
+            println!("witness ocr status: completed");
+            println!("ocr documents processed: {documents_processed}");
+            println!("ocr cache writes: {cache_writes}");
+            println!("ocr cache hits: {cache_hits}");
+        }
+        WitnessOcrStatus::Blocked {
+            reason,
+            documents_processed,
+            cache_writes,
+            cache_hits,
+        } => {
+            println!("witness ocr status: blocked");
+            println!("ocr block reason: {reason}");
+            println!("ocr documents processed: {documents_processed}");
+            println!("ocr cache writes: {cache_writes}");
+            println!("ocr cache hits: {cache_hits}");
+        }
+    }
 }
 
 fn canonical_witness_root(root: &Path) -> Result<PathBuf> {
@@ -2591,6 +2842,8 @@ fn yes_no(value: bool) -> &'static str {
 struct WitnessArgs {
     root: PathBuf,
     max_files: usize,
+    run_ocr: bool,
+    ocr_worker_args: OcrWorkerArgs,
 }
 
 #[derive(Default)]
@@ -2599,6 +2852,21 @@ struct WitnessSelection {
     unsupported_entries: usize,
     scan_errors: usize,
     budget_exhausted: bool,
+}
+
+enum WitnessOcrStatus {
+    NotRequested,
+    Completed {
+        documents_processed: usize,
+        cache_writes: usize,
+        cache_hits: usize,
+    },
+    Blocked {
+        reason: &'static str,
+        documents_processed: usize,
+        cache_writes: usize,
+        cache_hits: usize,
+    },
 }
 
 struct WitnessTempDirs {

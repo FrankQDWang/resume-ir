@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96 and S98 used synthetic fixtures only. S97 and S99 also used
-  private local-only witnesses against anonymized temporary copies from the
+- Data policy: S0-S96 and S98 used synthetic fixtures only. S97, S99, and S100
+  also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
@@ -54,7 +54,8 @@ obsolete preliminary files and checklists are not product scope.
   polling background rescan for completed import roots, full-text snapshot
   publish/recover, delete rebuild, redacted snippets, and an isolated local
   PDF/Word witness command that anonymizes selected inputs, runs the real import
-  path in a temporary data directory, prints only aggregate redacted output, and
+  path in a temporary data directory, can optionally run OCR jobs through the
+  existing local OCR worker path, prints only aggregate redacted output, and
   removes private witness data exist. Missing production work includes OS
   filesystem watcher integration, production-grade PDF coverage, full legacy
   Word converter distribution and cross-platform proof, large-corpus proof, and
@@ -99,12 +100,15 @@ obsolete preliminary files and checklists are not product scope.
   render valid PDF pages through local `pdftoppm` or a configured renderer,
   execute local OCR commands or local Tesseract on the rendered image, persist
   cache entries for each page, index combined OCR text with page count, honor
-  persistent pause state, and keep serving status IPC while OCR runs.
+  persistent pause state, keep serving status IPC while OCR runs, and exercise
+  OCR from the local PDF/Word witness command with redacted completed or blocked
+  aggregate output.
   Deleted-document purge now removes
   current OCR jobs and current OCR page-cache entries that are no longer shared
   by visible documents. Missing or BLOCKED work includes final OCR/renderer
-  distribution policy, non-English language pack policy, real scanned-resume
-  witness runs, large-corpus OCR throughput proof, and Windows/macOS validation.
+  distribution policy, non-English language pack policy, full-library scanned
+  resume OCR proof, large-corpus OCR throughput proof, and Windows/macOS
+  validation.
 - P5 packaging/platform: not production-ready. A local CLI service lifecycle
   now writes, reports, removes, and dry-run starts/stops a macOS user
   LaunchAgent plist without CLI path disclosure. Installer packaging, signing,
@@ -233,8 +237,81 @@ obsolete preliminary files and checklists are not product scope.
 | S97 | Product import slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p parser-doc --test s6_doc extracts_legacy_doc_text_with_local_converter_without_output_leakage --locked -- --exact` first failed because `DocParser::with_converter` did not exist; after implementation, parser-doc, parser-common, import-pipeline, fmt, focused clippy, and a private local-only PDF/Word witness passed with no path leaks. | None for this legacy Word local-converter slice; converter distribution policy, Windows/Linux converter proof, remaining malformed/encrypted DOC behavior, full OCR completion for scanned PDFs, large-corpus proof, and full real-resume library validation remain not complete or BLOCKED. |
 | S98 | Product import scheduler slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_rescans_completed_root_without_path_leak --locked -- --exact` first failed because daemon did not accept `--rescan-completed-imports`; after implementation, daemon import scheduler, meta-store, fmt, focused clippy, focused tests, `git diff --check`, runbook guard, public-repo guard, private-witness marker scan, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this polling background rescan slice; true OS filesystem watcher integration, large-corpus long-running rescan proof, cross-platform watcher behavior, and incremental index-update-only writes remain not complete or BLOCKED. |
 | S99 | Product local witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_imports_only_pdf_and_word_samples_without_persisting_private_data --locked -- --exact` first failed because `resume-cli witness` was unsupported; after implementation, focused witness, full `s9_import_search`, fmt, focused clippy, guard checks, `./scripts/ci/verify-local.sh`, and a private local-only PDF/Word witness with redacted output passed. | None for this isolated local PDF/Word witness command slice; it is not a production benchmark, does not package converters/OCR/model runtimes, does not prove Windows/Linux behavior, and does not complete full real-library quality/performance validation. |
+| S100 | Product local OCR witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_executes_local_command_without_output_or_path_leak --locked -- --exact` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_without_command_reports_blocked_without_persisting_private_data --locked -- --exact` first failed because `resume-cli witness` did not accept OCR options; after implementation, focused witness OCR tests, full import-search and OCR suites, fmt, focused clippy, guard checks, `./scripts/ci/verify-local.sh`, and bounded private local-only OCR witnesses passed. | None for this isolated local OCR witness option slice; it is not a full-library OCR proof, does not package OCR runtimes, does not prove non-English OCR quality, does not prove Windows/Linux behavior, and does not complete large-corpus OCR throughput validation. |
 
 ## Command Log
+
+### S100
+
+Design target:
+
+- Add optional `resume-cli witness --run-ocr` support that reuses the existing
+  OCR worker path inside the isolated witness data directory.
+- Accept local OCR command/Tesseract and renderer/pdftoppm options without
+  printing command paths, rendered bytes, OCR text, source paths, filenames, or
+  diagnostics.
+- Report `completed` aggregate OCR work when local OCR executes, or explicit
+  `blocked` aggregate output when OCR is requested but no local OCR command is
+  configured. Always remove private witness input/data directories.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_executes_local_command_without_output_or_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_without_command_reports_blocked_without_persisting_private_data --locked -- --exact
+```
+
+Output summary:
+
+- Both tests failed because `resume-cli witness` rejected `--run-ocr` and OCR
+  options as unsupported usage.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_executes_local_command_without_output_or_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_without_command_reports_blocked_without_persisting_private_data --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n --hidden --glob '!target/**' --glob '!.git/**' '[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension|[p]rivate-sample-path-marker' .; then exit 1; else echo "no private witness markers"; fi
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused witness OCR completed exact: exit 0.
+- Focused witness OCR blocked exact: exit 0.
+- `s9_import_search`: exit 0; 20 tests passed.
+- `s15_ocr_handoff`: exit 0; 12 tests passed.
+- `cargo fmt --check`: exit 0.
+- Focused CLI clippy: exit 0.
+- `git diff --check`: exit 0.
+- Runbook guard: exit 0.
+- Public repository guard: exit 0.
+- Private witness marker scan: exit 0.
+- Obsolete reference marker guard: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, and public repo guard.
+- Private bounded local-only OCR witness using the user-authorized sample
+  directory without an OCR command: exit 0 with explicit redacted `blocked`
+  output and no metadata persisted in the external data directory.
+- Private bounded local-only OCR witness using local OCR runtime commands:
+  exit 0 with redacted `completed` output and no metadata persisted in the
+  external data directory. This run used a file budget and did not prove
+  full-library OCR coverage or throughput.
+
+Scope note:
+
+- S100 adds witness-level OCR execution/blocked reporting. It does not package
+  OCR runtimes, prove non-English OCR, prove full-library OCR, prove
+  large-corpus OCR throughput, or validate Windows/Linux.
+- Full product is still not complete.
 
 ### S99
 
@@ -270,7 +347,7 @@ Implementation checks:
 git diff --check
 ./scripts/ci/check-runbooks.sh
 ./scripts/ci/guard-public-repo.sh
-if rg -n --hidden --glob '!target/**' --glob '!.git/**' '/Users/frankqdwang/MLE/[简]历|MLE/[简]历|[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension' .; then exit 1; else echo "no private witness markers"; fi
+if rg -n --hidden --glob '!target/**' --glob '!.git/**' '[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension|[p]rivate-sample-path-marker' .; then exit 1; else echo "no private witness markers"; fi
 if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
 ./scripts/ci/verify-local.sh
 ```

@@ -174,6 +174,109 @@ fn witness_imports_only_pdf_and_word_samples_without_persisting_private_data() {
     remove_dir(&private_root);
 }
 
+#[cfg(unix)]
+#[test]
+fn witness_run_ocr_executes_local_command_without_output_or_path_leak() {
+    let data_dir = temp_dir("witness-ocr-unused-data-dir");
+    let private_root = temp_dir("witness-ocr-private-root");
+    fs::copy(
+        fixture_root().join("synthetic-scanned-resume.pdf"),
+        private_root.join("real-person-scanned.pdf"),
+    )
+    .unwrap();
+    let command = write_fixture_executable(
+        "fixture-witness-ocr",
+        r#"#!/bin/sh
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.77\n'
+printf 'text:\n'
+printf 'WitnessOCRSecretToken local OCR text\n'
+"#,
+    );
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+
+    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "witness",
+            "--root",
+            path_str(&private_root),
+            "--run-ocr",
+            "--ocr-command",
+            path_str(&command),
+        ])
+        .output()
+        .expect("run resume-cli local witness with OCR");
+
+    assert!(
+        witness.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&witness.stdout),
+        String::from_utf8_lossy(&witness.stderr)
+    );
+    assert!(witness.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&witness.stdout);
+    assert!(stdout.contains("witness ocr status: completed"));
+    assert!(stdout.contains("ocr documents processed: 1"));
+    assert!(stdout.contains("ocr cache writes: 1"));
+    assert!(!stdout.contains("WitnessOCRSecretToken"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&canonical_private_root)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains("real-person"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn witness_run_ocr_without_command_reports_blocked_without_persisting_private_data() {
+    let data_dir = temp_dir("witness-ocr-blocked-unused-data-dir");
+    let private_root = temp_dir("witness-ocr-blocked-private-root");
+    fs::copy(
+        fixture_root().join("synthetic-scanned-resume.pdf"),
+        private_root.join("real-person-scanned.pdf"),
+    )
+    .unwrap();
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+
+    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "witness",
+            "--root",
+            path_str(&private_root),
+            "--run-ocr",
+        ])
+        .output()
+        .expect("run resume-cli local witness with OCR blocked");
+
+    assert!(
+        witness.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&witness.stdout),
+        String::from_utf8_lossy(&witness.stderr)
+    );
+    assert!(witness.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&witness.stdout);
+    assert!(stdout.contains("witness ocr status: blocked"));
+    assert!(stdout.contains("ocr block reason: local OCR command not configured"));
+    assert!(stdout.contains("private witness data: removed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&canonical_private_root)));
+    assert!(!stdout.contains("real-person"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
 #[test]
 fn import_txt_resume_builds_searchable_index_without_path_leakage() {
     let data_dir = temp_dir("txt-import-data");
@@ -1170,4 +1273,17 @@ fn stdout_value<'a>(output: &'a str, prefix: &str) -> &'a str {
 
 fn remove_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
+}
+
+#[cfg(unix)]
+fn write_fixture_executable(name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = temp_dir("witness-ocr-command-bin");
+    let path = directory.join(name);
+    fs::write(&path, body).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
 }
