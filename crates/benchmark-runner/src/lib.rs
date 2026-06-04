@@ -4,6 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use embedder::{
+    Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
+    LocalEmbeddingCommandSpec,
+};
 use extractor_rules::{extract_strong_fields, FieldType};
 use index_fulltext::{FullTextIndex, IndexDocument, IndexSection, SearchQuery};
 use ocr_client::{
@@ -18,6 +22,8 @@ pub fn crate_name() -> &'static str {
 const DEFAULT_TOP_K: usize = 10;
 const MAX_TOP_K: usize = 100;
 const DEFAULT_SYNTHETIC_OCR_RENDER_DPI: u32 = 150;
+const DEFAULT_VECTOR_QUALITY_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_VECTOR_QUALITY_TEXT_BYTES: usize = 128 * 1024;
 
 pub type Result<T> = std::result::Result<T, BenchmarkError>;
 
@@ -165,6 +171,84 @@ impl fmt::Debug for SyntheticOcrBenchmarkEngine {
             .debug_struct("SyntheticOcrBenchmarkEngine")
             .field("engine_kind", &self.engine_kind())
             .field("command", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct VectorQualityConfig {
+    command: PathBuf,
+    model_id: String,
+    dimension: usize,
+    top_k: usize,
+    timeout_ms: u64,
+    max_text_bytes: usize,
+}
+
+impl VectorQualityConfig {
+    pub fn new(
+        command: impl AsRef<Path>,
+        model_id: impl Into<String>,
+        dimension: usize,
+    ) -> Result<Self> {
+        let command = command.as_ref().to_path_buf();
+        let model_id = model_id.into();
+        if command.as_os_str().is_empty() {
+            return Err(BenchmarkError::invalid_config("vector_command"));
+        }
+        if model_id.trim().is_empty() {
+            return Err(BenchmarkError::invalid_config("vector_model_id"));
+        }
+        if dimension == 0 {
+            return Err(BenchmarkError::invalid_config("vector_dimension"));
+        }
+
+        Ok(Self {
+            command,
+            model_id,
+            dimension,
+            top_k: DEFAULT_TOP_K,
+            timeout_ms: DEFAULT_VECTOR_QUALITY_TIMEOUT_MS,
+            max_text_bytes: DEFAULT_VECTOR_QUALITY_TEXT_BYTES,
+        })
+    }
+
+    pub fn with_top_k(mut self, top_k: usize) -> Self {
+        self.top_k = top_k.clamp(1, MAX_TOP_K);
+        self
+    }
+
+    pub fn with_timeout_ms(mut self, timeout_ms: u64) -> Result<Self> {
+        if timeout_ms == 0 {
+            return Err(BenchmarkError::invalid_config("vector_timeout_ms"));
+        }
+        self.timeout_ms = timeout_ms;
+        Ok(self)
+    }
+
+    pub fn with_max_text_bytes(mut self, max_text_bytes: usize) -> Result<Self> {
+        if max_text_bytes == 0 {
+            return Err(BenchmarkError::invalid_config("vector_max_text_bytes"));
+        }
+        self.max_text_bytes = max_text_bytes;
+        Ok(self)
+    }
+
+    pub fn top_k(&self) -> usize {
+        self.top_k
+    }
+}
+
+impl fmt::Debug for VectorQualityConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VectorQualityConfig")
+            .field("command", &"<redacted>")
+            .field("model_id", &self.model_id)
+            .field("dimension", &self.dimension)
+            .field("top_k", &self.top_k)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("max_text_bytes", &self.max_text_bytes)
             .finish()
     }
 }
@@ -427,6 +511,119 @@ impl fmt::Debug for OcrThroughputReport {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub struct VectorQualityReport {
+    run_id: String,
+    platform: String,
+    dataset_kind: &'static str,
+    sample_count: usize,
+    candidate_count: usize,
+    relevant_count: usize,
+    top_k: usize,
+    recall_at_k: f64,
+    mrr: f64,
+    ndcg_at_k: f64,
+    zero_recall_queries: usize,
+    model_id: String,
+    dimension: usize,
+    target_claim: &'static str,
+}
+
+impl VectorQualityReport {
+    pub fn dataset_kind(&self) -> &'static str {
+        self.dataset_kind
+    }
+
+    pub fn sample_count(&self) -> usize {
+        self.sample_count
+    }
+
+    pub fn candidate_count(&self) -> usize {
+        self.candidate_count
+    }
+
+    pub fn top_k(&self) -> usize {
+        self.top_k
+    }
+
+    pub fn recall_at_k(&self) -> f64 {
+        self.recall_at_k
+    }
+
+    pub fn mrr(&self) -> f64 {
+        self.mrr
+    }
+
+    pub fn ndcg_at_k(&self) -> f64 {
+        self.ndcg_at_k
+    }
+
+    pub fn zero_recall_queries(&self) -> usize {
+        self.zero_recall_queries
+    }
+
+    pub fn to_redacted_json(&self) -> String {
+        format!(
+            concat!(
+                "{{",
+                "\"schema_version\":\"vector-quality.v1\",",
+                "\"run_id\":\"{}\",",
+                "\"platform\":\"{}\",",
+                "\"dataset_kind\":\"{}\",",
+                "\"sample_count\":{},",
+                "\"candidate_count\":{},",
+                "\"relevant_count\":{},",
+                "\"top_k\":{},",
+                "\"recall_at_k\":{},",
+                "\"mrr\":{},",
+                "\"ndcg_at_k\":{},",
+                "\"zero_recall_queries\":{},",
+                "\"model_id\":\"{}\",",
+                "\"dimension\":{},",
+                "\"target_claim\":\"{}\",",
+                "\"scope\":\"labeled vector retrieval quality; no raw queries, candidate text, sample ids, candidate ids, vectors, command paths, or resume paths included\"",
+                "}}"
+            ),
+            self.run_id,
+            self.platform,
+            self.dataset_kind,
+            self.sample_count,
+            self.candidate_count,
+            self.relevant_count,
+            self.top_k,
+            format_ms(self.recall_at_k),
+            format_ms(self.mrr),
+            format_ms(self.ndcg_at_k),
+            self.zero_recall_queries,
+            escape_json_string(&self.model_id),
+            self.dimension,
+            self.target_claim,
+        )
+    }
+}
+
+impl fmt::Debug for VectorQualityReport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VectorQualityReport")
+            .field("run_id", &self.run_id)
+            .field("platform", &self.platform)
+            .field("dataset_kind", &self.dataset_kind)
+            .field("sample_count", &self.sample_count)
+            .field("candidate_count", &self.candidate_count)
+            .field("relevant_count", &self.relevant_count)
+            .field("top_k", &self.top_k)
+            .field("recall_at_k", &self.recall_at_k)
+            .field("mrr", &self.mrr)
+            .field("ndcg_at_k", &self.ndcg_at_k)
+            .field("zero_recall_queries", &self.zero_recall_queries)
+            .field("model_id", &self.model_id)
+            .field("dimension", &self.dimension)
+            .field("target_claim", &self.target_claim)
+            .finish()
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub struct LatencySummary {
     samples: usize,
@@ -576,6 +773,135 @@ pub fn run_synthetic_ocr_throughput_benchmark(
         total_text_bytes,
         mean_confidence: confidence_sum / config.page_count as f32,
         latency: LatencySummary::from_samples(latencies)?,
+        target_claim: "not_evaluated",
+    })
+}
+
+pub fn run_vector_quality_jsonl(
+    dataset_jsonl: &str,
+    config: VectorQualityConfig,
+) -> Result<VectorQualityReport> {
+    let samples = dataset_jsonl
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(parse_vector_quality_sample)
+        .collect::<Result<Vec<_>>>()?;
+    if samples.is_empty() {
+        return Err(BenchmarkError::invalid_config("vector_quality_samples"));
+    }
+
+    let mut inputs = Vec::<EmbeddingInput>::new();
+    let mut query_input_ids = Vec::<String>::new();
+    let mut candidate_input_ids = Vec::<Vec<String>>::new();
+    let mut candidate_count = 0_usize;
+    let mut relevant_count = 0_usize;
+
+    for (sample_index, sample) in samples.iter().enumerate() {
+        let query_id = format!("query-{sample_index:06}");
+        inputs.push(EmbeddingInput::new(
+            query_id.as_str(),
+            sample.query.as_str(),
+        ));
+        query_input_ids.push(query_id);
+
+        let mut sample_candidate_ids = Vec::with_capacity(sample.candidates.len());
+        for (candidate_index, candidate) in sample.candidates.iter().enumerate() {
+            let candidate_id = format!("candidate-{sample_index:06}-{candidate_index:06}");
+            inputs.push(EmbeddingInput::new(
+                candidate_id.as_str(),
+                candidate.text.as_str(),
+            ));
+            sample_candidate_ids.push(candidate_id);
+            candidate_count += 1;
+            if candidate.relevant {
+                relevant_count += 1;
+            }
+        }
+        candidate_input_ids.push(sample_candidate_ids);
+    }
+
+    let spec = LocalEmbeddingCommandSpec::new(
+        config.command.clone(),
+        Vec::<String>::new(),
+        config.model_id.as_str(),
+        config.dimension,
+    )
+    .and_then(|spec| spec.with_timeout_ms(config.timeout_ms))
+    .map_err(BenchmarkError::embedding)?;
+    let embedder = LocalEmbeddingCommandEmbedder::new(spec);
+    let vectors = embedder
+        .embed_batch(
+            &inputs,
+            EmbeddingBudget::new(inputs.len(), config.max_text_bytes),
+        )
+        .map_err(BenchmarkError::embedding)?;
+    let vector_by_id = vectors
+        .into_iter()
+        .map(|vector| (vector.id().to_string(), vector.values().to_vec()))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut recall_sum = 0.0_f64;
+    let mut reciprocal_rank_sum = 0.0_f64;
+    let mut ndcg_sum = 0.0_f64;
+    let mut zero_recall_queries = 0_usize;
+
+    for (sample_index, sample) in samples.iter().enumerate() {
+        let query_vector = vector_by_id
+            .get(&query_input_ids[sample_index])
+            .ok_or_else(|| BenchmarkError::invalid_config("vector_quality.query_embedding"))?;
+        let mut ranked = candidate_input_ids[sample_index]
+            .iter()
+            .enumerate()
+            .map(|(candidate_index, candidate_id)| {
+                let candidate_vector = vector_by_id.get(candidate_id).ok_or_else(|| {
+                    BenchmarkError::invalid_config("vector_quality.candidate_embedding")
+                })?;
+                Ok(VectorQualityRankedCandidate {
+                    candidate_index,
+                    relevant: sample.candidates[candidate_index].relevant,
+                    score: cosine_similarity(query_vector, candidate_vector),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        ranked.sort_by(|left, right| {
+            right
+                .score
+                .partial_cmp(&left.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.candidate_index.cmp(&right.candidate_index))
+        });
+
+        let top_k = ranked.iter().take(config.top_k).collect::<Vec<_>>();
+        let sample_relevant = sample
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.relevant)
+            .count();
+        let relevant_in_top_k = top_k.iter().filter(|candidate| candidate.relevant).count();
+        if relevant_in_top_k == 0 {
+            zero_recall_queries += 1;
+        }
+        recall_sum += relevant_in_top_k as f64 / sample_relevant as f64;
+        reciprocal_rank_sum += first_relevant_reciprocal_rank(&ranked);
+        ndcg_sum += binary_ndcg_at_k(&ranked, config.top_k, sample_relevant);
+    }
+
+    let sample_count = samples.len();
+    Ok(VectorQualityReport {
+        run_id: generate_run_id(),
+        platform: platform_label(),
+        dataset_kind: "labeled",
+        sample_count,
+        candidate_count,
+        relevant_count,
+        top_k: config.top_k,
+        recall_at_k: recall_sum / sample_count as f64,
+        mrr: reciprocal_rank_sum / sample_count as f64,
+        ndcg_at_k: ndcg_sum / sample_count as f64,
+        zero_recall_queries,
+        model_id: config.model_id,
+        dimension: config.dimension,
         target_claim: "not_evaluated",
     })
 }
@@ -731,6 +1057,63 @@ impl FieldQualityGateEvaluation {
 
     pub fn f1(&self) -> f64 {
         self.f1
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VectorQualityGateConfig {
+    min_samples: usize,
+    min_recall_at_k: f64,
+    min_mrr: f64,
+    min_ndcg_at_k: f64,
+    max_zero_recall_queries: usize,
+}
+
+impl VectorQualityGateConfig {
+    pub fn new(min_samples: usize, min_recall_at_k: f64, min_mrr: f64, min_ndcg_at_k: f64) -> Self {
+        Self {
+            min_samples,
+            min_recall_at_k,
+            min_mrr,
+            min_ndcg_at_k,
+            max_zero_recall_queries: 0,
+        }
+    }
+
+    pub fn with_max_zero_recall_queries(mut self, max_zero_recall_queries: usize) -> Self {
+        self.max_zero_recall_queries = max_zero_recall_queries;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VectorQualityGateEvaluation {
+    dataset_kind: String,
+    sample_count: usize,
+    recall_at_k: f64,
+    mrr: f64,
+    ndcg_at_k: f64,
+}
+
+impl VectorQualityGateEvaluation {
+    pub fn dataset_kind(&self) -> &str {
+        &self.dataset_kind
+    }
+
+    pub fn sample_count(&self) -> usize {
+        self.sample_count
+    }
+
+    pub fn recall_at_k(&self) -> f64 {
+        self.recall_at_k
+    }
+
+    pub fn mrr(&self) -> f64 {
+        self.mrr
+    }
+
+    pub fn ndcg_at_k(&self) -> f64 {
+        self.ndcg_at_k
     }
 }
 
@@ -990,10 +1373,89 @@ pub fn evaluate_field_quality_gate_json(
     })
 }
 
+pub fn evaluate_vector_quality_gate_json(
+    report_json: &str,
+    config: VectorQualityGateConfig,
+) -> std::result::Result<VectorQualityGateEvaluation, BenchmarkGateError> {
+    let report: serde_json::Value =
+        serde_json::from_str(report_json).map_err(|_| BenchmarkGateError::invalid_json())?;
+
+    let schema_version = required_str(&report, "schema_version")?;
+    if schema_version != "vector-quality.v1" {
+        return Err(BenchmarkGateError::failed(
+            "unsupported vector quality schema",
+        ));
+    }
+    let dataset_kind = required_str(&report, "dataset_kind")?;
+    if dataset_kind != "labeled" {
+        return Err(BenchmarkGateError::failed(
+            "vector quality requires labeled dataset",
+        ));
+    }
+    let sample_count = required_usize(&report, "sample_count")?;
+    let recall_at_k = required_f64(&report, "recall_at_k")?;
+    let mrr = required_f64(&report, "mrr")?;
+    let ndcg_at_k = required_f64(&report, "ndcg_at_k")?;
+    let zero_recall_queries = required_usize(&report, "zero_recall_queries")?;
+    let target_claim = required_str(&report, "target_claim")?;
+
+    if sample_count < config.min_samples {
+        return Err(BenchmarkGateError::failed(
+            "vector sample count below gate minimum",
+        ));
+    }
+    if recall_at_k < config.min_recall_at_k {
+        return Err(BenchmarkGateError::failed("vector recall below threshold"));
+    }
+    if mrr < config.min_mrr {
+        return Err(BenchmarkGateError::failed("vector mrr below threshold"));
+    }
+    if ndcg_at_k < config.min_ndcg_at_k {
+        return Err(BenchmarkGateError::failed("vector ndcg below threshold"));
+    }
+    if zero_recall_queries > config.max_zero_recall_queries {
+        return Err(BenchmarkGateError::failed(
+            "vector zero-recall query count exceeded threshold",
+        ));
+    }
+    if target_claim != "not_evaluated" {
+        return Err(BenchmarkGateError::failed(
+            "vector target claim is not proven",
+        ));
+    }
+
+    Ok(VectorQualityGateEvaluation {
+        dataset_kind: dataset_kind.to_string(),
+        sample_count,
+        recall_at_k,
+        mrr,
+        ndcg_at_k,
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FieldQualitySample {
     text: String,
     expected: Vec<FieldQualityMention>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VectorQualitySample {
+    query: String,
+    candidates: Vec<VectorQualityCandidate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VectorQualityCandidate {
+    text: String,
+    relevant: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct VectorQualityRankedCandidate {
+    candidate_index: usize,
+    relevant: bool,
+    score: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1038,6 +1500,104 @@ fn parse_field_quality_sample(line: &str) -> Result<FieldQualitySample> {
     }
 
     Ok(FieldQualitySample { text, expected })
+}
+
+fn parse_vector_quality_sample(line: &str) -> Result<VectorQualitySample> {
+    let value = serde_json::from_str::<serde_json::Value>(line)
+        .map_err(|_| BenchmarkError::invalid_config("vector_quality_jsonl"))?;
+    let query = value
+        .get("query")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|query| !query.is_empty())
+        .ok_or_else(|| BenchmarkError::invalid_config("vector_quality.query"))?
+        .to_string();
+    let candidate_values = value
+        .get("candidates")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| BenchmarkError::invalid_config("vector_quality.candidates"))?;
+    if candidate_values.is_empty() {
+        return Err(BenchmarkError::invalid_config("vector_quality.candidates"));
+    }
+
+    let mut candidates = Vec::with_capacity(candidate_values.len());
+    for candidate_value in candidate_values {
+        let _id = candidate_value
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| BenchmarkError::invalid_config("vector_quality.candidate.id"))?;
+        let text = candidate_value
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .ok_or_else(|| BenchmarkError::invalid_config("vector_quality.candidate.text"))?
+            .to_string();
+        let relevant = candidate_value
+            .get("relevant")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| BenchmarkError::invalid_config("vector_quality.candidate.relevant"))?;
+        candidates.push(VectorQualityCandidate { text, relevant });
+    }
+
+    if !candidates.iter().any(|candidate| candidate.relevant) {
+        return Err(BenchmarkError::invalid_config(
+            "vector_quality.candidates.relevant",
+        ));
+    }
+
+    Ok(VectorQualitySample { query, candidates })
+}
+
+fn first_relevant_reciprocal_rank(ranked: &[VectorQualityRankedCandidate]) -> f64 {
+    ranked
+        .iter()
+        .position(|candidate| candidate.relevant)
+        .map(|index| 1.0 / (index + 1) as f64)
+        .unwrap_or(0.0)
+}
+
+fn binary_ndcg_at_k(
+    ranked: &[VectorQualityRankedCandidate],
+    top_k: usize,
+    relevant_count: usize,
+) -> f64 {
+    let dcg = ranked
+        .iter()
+        .take(top_k)
+        .enumerate()
+        .filter(|(_, candidate)| candidate.relevant)
+        .map(|(index, _)| 1.0 / ((index + 2) as f64).log2())
+        .sum::<f64>();
+    let ideal_hits = relevant_count.min(top_k);
+    let idcg = (0..ideal_hits)
+        .map(|index| 1.0 / ((index + 2) as f64).log2())
+        .sum::<f64>();
+
+    if idcg == 0.0 {
+        0.0
+    } else {
+        dcg / idcg
+    }
+}
+
+fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
+    let mut dot = 0.0_f32;
+    let mut left_norm = 0.0_f32;
+    let mut right_norm = 0.0_f32;
+    for (left_value, right_value) in left.iter().zip(right.iter()) {
+        dot += left_value * right_value;
+        left_norm += left_value * left_value;
+        right_norm += right_value * right_value;
+    }
+
+    if left_norm == 0.0 || right_norm == 0.0 {
+        0.0
+    } else {
+        dot / (left_norm.sqrt() * right_norm.sqrt())
+    }
 }
 
 fn field_quality_predictions(text: &str) -> Vec<FieldQualityMention> {
@@ -1454,6 +2014,13 @@ fn format_ms(value: f64) -> String {
     format!("{value:.3}")
 }
 
+fn escape_json_string(value: &str) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_else(|_| "\"<redacted>\"".to_string())
+        .trim_matches('"')
+        .to_string()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BenchmarkError {
     kind: BenchmarkErrorKind,
@@ -1483,6 +2050,12 @@ impl BenchmarkError {
             kind: BenchmarkErrorKind::Ocr,
         }
     }
+
+    fn embedding(_error: embedder::EmbeddingError) -> Self {
+        Self {
+            kind: BenchmarkErrorKind::Embedding,
+        }
+    }
 }
 
 impl fmt::Display for BenchmarkError {
@@ -1494,6 +2067,9 @@ impl fmt::Display for BenchmarkError {
             BenchmarkErrorKind::FullText => formatter.write_str("benchmark full-text index failed"),
             BenchmarkErrorKind::Io => formatter.write_str("benchmark filesystem operation failed"),
             BenchmarkErrorKind::Ocr => formatter.write_str("benchmark OCR operation failed"),
+            BenchmarkErrorKind::Embedding => {
+                formatter.write_str("benchmark embedding operation failed")
+            }
         }
     }
 }
@@ -1506,6 +2082,7 @@ enum BenchmarkErrorKind {
     FullText,
     Io,
     Ocr,
+    Embedding,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1543,6 +2120,15 @@ impl fmt::Display for BenchmarkGateError {
             | "p95"
             | "pages_per_second"
             | "zero_result_queries"
+            | "sample_count"
+            | "candidate_count"
+            | "top_k"
+            | "recall_at_k"
+            | "mrr"
+            | "ndcg_at_k"
+            | "zero_recall_queries"
+            | "model_id"
+            | "dimension"
             | "million_scale_verified"
             | "target_claim" => {
                 write!(

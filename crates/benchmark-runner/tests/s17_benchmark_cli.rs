@@ -343,11 +343,188 @@ fn resume_benchmark_ocr_gate_rejects_synthetic_without_explicit_allowance() {
     remove_dir(&report_dir);
 }
 
+#[test]
+fn resume_benchmark_vector_quality_outputs_redacted_report_and_gate() {
+    let command = embedding_fixture_script("vector-quality-cli-private-command");
+    let dataset_dir = temp_dir("vector-quality-cli-dataset");
+    let dataset_path = dataset_dir.join("vector-quality.jsonl");
+    let report_path = dataset_dir.join("vector-report.json");
+    fs::write(
+        &dataset_path,
+        concat!(
+            "{\"sample_id\":\"private-vector-case-a\",\"query\":\"Backend Java payment search\",",
+            "\"candidates\":[",
+            "{\"id\":\"private-java-doc\",\"text\":\"Java payment backend search engineer\",\"relevant\":true},",
+            "{\"id\":\"private-sales-doc\",\"text\":\"Sales operations recruiter\",\"relevant\":false}",
+            "]}\n",
+            "{\"sample_id\":\"private-vector-case-b\",\"query\":\"Rust indexing platform\",",
+            "\"candidates\":[",
+            "{\"id\":\"private-rust-doc\",\"text\":\"Rust indexing platform engineer\",\"relevant\":true},",
+            "{\"id\":\"private-hr-doc\",\"text\":\"HR business partner\",\"relevant\":false}",
+            "]}\n",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "vector-quality",
+            "--dataset",
+            path_str(&dataset_path),
+            "--command",
+            path_str(&command),
+            "--model-id",
+            "fixture-local-model",
+            "--dimension",
+            "3",
+            "--top-k",
+            "1",
+            "--json",
+        ])
+        .output()
+        .expect("run vector quality benchmark");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\":\"vector-quality.v1\""));
+    assert!(stdout.contains("\"dataset_kind\":\"labeled\""));
+    assert!(stdout.contains("\"sample_count\":2"));
+    assert!(stdout.contains("\"candidate_count\":4"));
+    assert!(stdout.contains("\"top_k\":1"));
+    assert!(stdout.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!stdout.contains(path_str(&dataset_path)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains("private-vector-case-a"));
+    assert!(!stdout.contains("private-java-doc"));
+    assert!(!stdout.contains("Backend Java payment search"));
+    assert!(!stdout.contains("Java payment backend"));
+    fs::write(&report_path, &output.stdout).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "vector-gate",
+            "--report",
+            path_str(&report_path),
+            "--min-samples",
+            "2",
+            "--min-recall-at-k",
+            "0.99",
+            "--min-mrr",
+            "0.99",
+            "--min-ndcg-at-k",
+            "0.99",
+            "--max-zero-recall-queries",
+            "0",
+        ])
+        .output()
+        .expect("run vector quality gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "vector quality gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(command.parent().unwrap());
+    remove_dir(&dataset_dir);
+}
+
+#[test]
+fn resume_benchmark_vector_gate_rejects_unproven_target_claim() {
+    let report_dir = temp_dir("vector-quality-cli-gate-reject");
+    let report_path = report_dir.join("vector-report.json");
+    fs::write(
+        &report_path,
+        concat!(
+            "{\"schema_version\":\"vector-quality.v1\",",
+            "\"dataset_kind\":\"labeled\",",
+            "\"sample_count\":10,",
+            "\"candidate_count\":20,",
+            "\"top_k\":5,",
+            "\"recall_at_k\":1.0,",
+            "\"mrr\":1.0,",
+            "\"ndcg_at_k\":1.0,",
+            "\"zero_recall_queries\":0,",
+            "\"target_claim\":\"production_semantic_quality_met\"}"
+        ),
+    )
+    .unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "vector-gate",
+            "--report",
+            path_str(&report_path),
+            "--min-samples",
+            "10",
+            "--min-recall-at-k",
+            "0.99",
+            "--min-mrr",
+            "0.99",
+            "--min-ndcg-at-k",
+            "0.99",
+        ])
+        .output()
+        .expect("run vector quality gate");
+
+    assert!(!gate.status.success());
+    assert!(String::from_utf8_lossy(&gate.stderr).contains("vector target claim is not proven"));
+
+    remove_dir(&report_dir);
+}
+
 fn ocr_fixture_script(label: &str) -> PathBuf {
     let path = temp_dir(label).join("ocr-fixture.sh");
     fs::write(
         &path,
         "#!/bin/sh\nprintf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s PRIVATE OCR PAYLOAD\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn embedding_fixture_script(label: &str) -> PathBuf {
+    let path = temp_dir(label).join("embedding-fixture.sh");
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=%s\n' "$RESUME_IR_EMBEDDING_MODEL_ID"
+printf 'dimension=%s\n' "$RESUME_IR_EMBEDDING_DIMENSION"
+awk '
+  /^input=/ {
+    split(substr($0, 7), parts, "\t");
+    id = parts[1];
+    if (id ~ /^query-000000/ || id ~ /^candidate-000000-000000/) {
+      vector = "1.0,0.0,0.0";
+    } else if (id ~ /^query-000001/ || id ~ /^candidate-000001-000000/) {
+      vector = "0.0,1.0,0.0";
+    } else {
+      vector = "0.0,0.0,1.0";
+    }
+    printf "vector=%s\t%s\n", id, vector;
+  }
+' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
     )
     .unwrap();
     #[cfg(unix)]

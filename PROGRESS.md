@@ -9,7 +9,7 @@ production-ready scope source.
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
 - Data policy: S0-S96, S98, S101, S102, S103, S104, S107, and S108 used synthetic fixtures only.
-  S97, S99, S100, S105, S106, and S109 also used private local-only witnesses against anonymized temporary copies from a
+  S97, S99, S100, S105, S106, S109, and S110 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
@@ -90,9 +90,13 @@ obsolete preliminary files and checklists are not product scope.
   status IPC, skip already completed version jobs across daemon restarts,
   re-embed completed versions when the configured model id or dimension
   changes, and write document plus section vectors inside one version job.
+  A labeled vector-quality evaluator and gate now score recall@k, MRR, NDCG@k,
+  and zero-recall queries from JSONL samples using the local embedding command
+  protocol without emitting raw queries, candidate text, sample IDs, candidate
+  IDs, vectors, command paths, or resume paths.
   Missing or BLOCKED work includes licensed model selection/download/
-  distribution, ONNX/HNSW/FAISS or equivalent ANN, semantic quality metrics,
-  and real performance proof.
+  distribution, ONNX/HNSW/FAISS or equivalent ANN, real business semantic
+  quality datasets/results, and real performance proof.
 - P4 OCR: OCR_REQUIRED routing, durable OCR jobs, pause/resume control, page
   cache schema, local OCR command client, local PDF page-render command
   protocol, local Poppler `pdftoppm` PDF renderer adapter, local Tesseract OCR
@@ -141,14 +145,16 @@ obsolete preliminary files and checklists are not product scope.
   local model artifacts, local model-pack manifest validation, targeted fault
   tests, local-only production runbooks, a runbook CI policy guard, a workflow
   policy guard, and a synthetic OCR throughput benchmark/gate exist.
-  The benchmark runner now has explicit synthetic query and OCR benchmark gates
-  wired into PR and nightly smoke workflows; synthetic runs must opt in with
+  The benchmark runner now has explicit synthetic query, synthetic OCR
+  throughput, and labeled vector-quality benchmark gates; query and OCR smoke
+  gates are wired into PR and nightly workflows. Synthetic runs must opt in with
   `--allow-synthetic` and cannot prove 100k/1M production performance.
   Missing or BLOCKED work includes 100k/1M real-corpus benchmarks,
   real-corpus nightly/release performance gates, licensed model selection/
-  distribution, semantic/vector quality gates, destructive service-level kill/
-  actual ENOSPC fault injection, battery/external-drive fault drills, Windows/
-  macOS validation, and cross-platform performance evidence.
+  distribution, real semantic/vector quality datasets/results, destructive
+  service-level kill/actual ENOSPC fault injection, battery/external-drive
+  fault drills, Windows/macOS validation, and cross-platform performance
+  evidence.
 
 ## Slice Status
 
@@ -262,8 +268,70 @@ obsolete preliminary files and checklists are not product scope.
 | S107 | Product synthetic OCR throughput gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner synthetic_ocr_throughput_reports_page_latency_without_payload_or_path_leakage --locked -- --exact` first failed because the OCR throughput API did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_throughput_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` rejected `ocr-throughput`; after implementation, focused OCR throughput tests, full benchmark-runner tests, focused clippy, fmt, diff, runbook, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this synthetic OCR throughput benchmark/gate; it does not prove real scanned-resume OCR quality, full-library OCR completion, non-English OCR behavior, packaged OCR runtime distribution, 100k/1M corpus performance, or Windows/Linux behavior. |
 | S108 | Product workflow-gate slice complete | `sh scripts/ci/check-workflows.sh` first failed because PR/nightly workflows did not include `ocr-throughput`; after implementation, workflow guard, synthetic local OCR benchmark smoke plus redaction scan, shell syntax checks, fmt, diff, and `./scripts/ci/verify-local.sh` passed. | None for this OCR benchmark workflow wiring slice; it does not prove real scanned-resume OCR quality, full-library OCR completion, non-English OCR behavior, packaged OCR runtime distribution, 100k/1M corpus performance, or Windows/Linux behavior. |
 | S109 | Product local OCR witness resilience slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_budget_reports_failed_documents_without_stopping_or_leaking_paths --locked -- --exact` first failed because a budgeted witness stopped as `blocked` on the first per-document OCR failure; after implementation, the focused exact, full `s9_import_search`, focused CLI clippy, fmt, diff, guard checks, marker scans, `./scripts/ci/verify-local.sh`, and private local-only PDF/Word witness runs passed with redacted aggregate output and temporary private data removal. | None for this bounded local witness resilience slice; it does not prove OCR quality, full-library OCR completion, non-English OCR behavior, packaged runtime distribution, 100k/1M corpus performance, or Windows/Linux behavior. |
+| S110 | Product vector-quality gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_report_scores_labeled_samples_without_text_id_path_or_vector_leakage --locked -- --exact` first failed because vector-quality APIs did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_quality_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` rejected `vector-quality`; after implementation, focused vector-quality tests, full benchmark-runner tests, focused benchmark-runner clippy, fmt, diff, guard checks, `./scripts/ci/verify-local.sh`, and private local-only bounded PDF/Word witness runs passed with redacted aggregate output and temporary private data removal. | None for this labeled vector-quality evaluator/gate slice; it does not supply real business labeled semantic datasets, choose/license/package a production embedding model, add ANN production indexing, prove large-corpus semantic latency, or validate Windows/Linux behavior. |
 
 ## Command Log
+
+### S110
+
+Design target:
+
+- Add a redacted labeled vector-quality evaluator and gate that use the existing
+  local embedding command protocol.
+- Score recall@k, MRR, NDCG@k, and zero-recall query count from JSONL samples.
+- Keep reports free of raw queries, candidate text, sample IDs, candidate IDs,
+  vectors, command paths, resume paths, and real filenames.
+- Keep private PDF/Word witness validation local-only and bounded.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_report_scores_labeled_samples_without_text_id_path_or_vector_leakage --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_quality_outputs_redacted_report_and_gate --locked -- --exact
+```
+
+Output summary:
+
+- The runner exact failed because `VectorQualityConfig`,
+  `VectorQualityGateConfig`, `run_vector_quality_jsonl`, and
+  `evaluate_vector_quality_gate_json` did not exist.
+- The CLI exact failed because `resume-benchmark` rejected the
+  `vector-quality` command.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_report_scores_labeled_samples_without_text_id_path_or_vector_leakage --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_quality_outputs_redacted_report_and_gate --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+```
+
+Output summary:
+
+- Focused vector-quality runner exact: exit 0.
+- Focused vector-quality CLI exact: exit 0.
+- `benchmark-runner`: exit 0; full crate tests passed, including vector gate
+  acceptance/rejection and redaction coverage.
+- Focused benchmark-runner clippy: exit 0.
+- A private local-only bounded PDF/Word witness against the user-authorized
+  sample directory completed with redacted aggregate output and temporary
+  private data removal.
+- A private local-only bounded OCR witness completed with redacted processed and
+  failed document counters, explicit OCR budget exhaustion reporting, and
+  temporary private data removal.
+- A private local-only Word-only witness completed with redacted aggregate
+  output and temporary private data removal.
+- No real resume path, filename, raw text, OCR text, command path, count, or
+  diagnostic payload was committed or uploaded.
+
+Scope note:
+
+- S110 adds a quality gate surface and redaction boundary for labeled vector
+  retrieval evaluation. It does not choose a licensed embedding model, ship a
+  model pack, provide real business relevance labels, add ANN indexing, prove
+  production semantic latency, or complete product readiness.
+- Full product is still not complete.
 
 ### S109
 

@@ -4,10 +4,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_field_quality_gate_json,
-    evaluate_ocr_throughput_gate_json, run_field_quality_jsonl,
-    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark, BenchmarkGateConfig,
-    FieldQualityGateConfig, OcrThroughputGateConfig, SyntheticBenchmarkConfig,
-    SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine,
+    evaluate_ocr_throughput_gate_json, evaluate_vector_quality_gate_json, run_field_quality_jsonl,
+    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
+    run_vector_quality_jsonl, BenchmarkGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine,
+    VectorQualityConfig, VectorQualityGateConfig,
 };
 
 #[test]
@@ -236,6 +237,101 @@ fn ocr_throughput_gate_accepts_explicit_synthetic_smoke_without_scale_claim() {
     assert_eq!(evaluation.pages_per_second(), 8.5);
 }
 
+#[test]
+fn vector_quality_report_scores_labeled_samples_without_text_id_path_or_vector_leakage() {
+    let command = embedding_fixture_script("vector-quality-private-command");
+    let dataset = concat!(
+        "{\"sample_id\":\"private-vector-case-a\",\"query\":\"Backend Java payment search\",",
+        "\"candidates\":[",
+        "{\"id\":\"private-java-doc\",\"text\":\"Java payment backend search engineer\",\"relevant\":true},",
+        "{\"id\":\"private-sales-doc\",\"text\":\"Sales operations recruiter\",\"relevant\":false}",
+        "]}\n",
+        "{\"sample_id\":\"private-vector-case-b\",\"query\":\"Rust indexing platform\",",
+        "\"candidates\":[",
+        "{\"id\":\"private-rust-doc\",\"text\":\"Rust indexing platform engineer\",\"relevant\":true},",
+        "{\"id\":\"private-hr-doc\",\"text\":\"HR business partner\",\"relevant\":false}",
+        "]}\n",
+    );
+    let config = VectorQualityConfig::new(&command, "fixture-local-model", 3)
+        .unwrap()
+        .with_top_k(1);
+
+    let report = run_vector_quality_jsonl(dataset, config).unwrap();
+
+    assert_eq!(report.dataset_kind(), "labeled");
+    assert_eq!(report.sample_count(), 2);
+    assert_eq!(report.candidate_count(), 4);
+    assert_eq!(report.top_k(), 1);
+    assert!(report.recall_at_k() >= 0.99);
+    assert!(report.mrr() >= 0.99);
+    assert!(report.ndcg_at_k() >= 0.99);
+    assert_eq!(report.zero_recall_queries(), 0);
+
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"schema_version\":\"vector-quality.v1\""));
+    assert!(json.contains("\"dataset_kind\":\"labeled\""));
+    assert!(json.contains("\"sample_count\":2"));
+    assert!(json.contains("\"candidate_count\":4"));
+    assert!(json.contains("\"top_k\":1"));
+    assert!(json.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("private-vector-case-a"));
+    assert!(!json.contains("private-java-doc"));
+    assert!(!json.contains("Backend Java payment search"));
+    assert!(!json.contains("Java payment backend"));
+    assert!(!json.contains("1.0,0.0,0.0"));
+
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn vector_quality_gate_rejects_low_recall_reports() {
+    let report = concat!(
+        "{\"schema_version\":\"vector-quality.v1\",",
+        "\"dataset_kind\":\"labeled\",",
+        "\"sample_count\":2,",
+        "\"candidate_count\":4,",
+        "\"top_k\":1,",
+        "\"recall_at_k\":0.5,",
+        "\"mrr\":0.5,",
+        "\"ndcg_at_k\":0.5,",
+        "\"zero_recall_queries\":1,",
+        "\"target_claim\":\"not_evaluated\"}"
+    );
+    let config = VectorQualityGateConfig::new(2, 0.95, 0.95, 0.95).with_max_zero_recall_queries(0);
+
+    let error = evaluate_vector_quality_gate_json(report, config).unwrap_err();
+
+    assert!(error.to_string().contains("vector recall below threshold"));
+}
+
+#[test]
+fn vector_quality_gate_accepts_labeled_report_without_target_claim() {
+    let command = embedding_fixture_script("vector-quality-gate-private-command");
+    let dataset = concat!(
+        "{\"query\":\"Backend Java payment search\",",
+        "\"candidates\":[",
+        "{\"id\":\"private-java-doc\",\"text\":\"Java payment backend search engineer\",\"relevant\":true},",
+        "{\"id\":\"private-sales-doc\",\"text\":\"Sales operations recruiter\",\"relevant\":false}",
+        "]}\n",
+    );
+    let config = VectorQualityConfig::new(&command, "fixture-local-model", 3)
+        .unwrap()
+        .with_top_k(1);
+    let report = run_vector_quality_jsonl(dataset, config).unwrap();
+    let gate_config =
+        VectorQualityGateConfig::new(1, 0.99, 0.99, 0.99).with_max_zero_recall_queries(0);
+
+    let evaluation =
+        evaluate_vector_quality_gate_json(&report.to_redacted_json(), gate_config).unwrap();
+
+    assert_eq!(evaluation.dataset_kind(), "labeled");
+    assert_eq!(evaluation.sample_count(), 1);
+    assert!(evaluation.recall_at_k() >= 0.99);
+
+    remove_dir(command.parent().unwrap());
+}
+
 fn minimal_benchmark_json(
     dataset_kind: &str,
     document_count: usize,
@@ -337,6 +433,41 @@ fn ocr_fixture_script(label: &str) -> PathBuf {
     fs::write(
         &path,
         "#!/bin/sh\nprintf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s PRIVATE OCR PAYLOAD\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn embedding_fixture_script(label: &str) -> PathBuf {
+    let path = temp_dir(label).join("embedding-fixture.sh");
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=%s\n' "$RESUME_IR_EMBEDDING_MODEL_ID"
+printf 'dimension=%s\n' "$RESUME_IR_EMBEDDING_DIMENSION"
+awk '
+  /^input=/ {
+    split(substr($0, 7), parts, "\t");
+    id = parts[1];
+    if (id ~ /^query-000000/ || id ~ /^candidate-000000-000000/) {
+      vector = "1.0,0.0,0.0";
+    } else if (id ~ /^query-000001/ || id ~ /^candidate-000001-000000/) {
+      vector = "0.0,1.0,0.0";
+    } else {
+      vector = "0.0,0.0,1.0";
+    }
+    printf "vector=%s\t%s\n", id, vector;
+  }
+' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
     )
     .unwrap();
     #[cfg(unix)]

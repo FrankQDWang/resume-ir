@@ -3,10 +3,12 @@ use std::path::PathBuf;
 
 use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_field_quality_gate_json,
-    evaluate_ocr_throughput_gate_json, run_field_quality_jsonl,
-    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark, BenchmarkError,
-    BenchmarkGateConfig, BenchmarkGateError, FieldQualityGateConfig, OcrThroughputGateConfig,
-    SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine,
+    evaluate_ocr_throughput_gate_json, evaluate_vector_quality_gate_json, run_field_quality_jsonl,
+    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
+    run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig, BenchmarkGateError,
+    FieldQualityGateConfig, OcrThroughputGateConfig, SyntheticBenchmarkConfig,
+    SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine, VectorQualityConfig,
+    VectorQualityGateConfig,
 };
 
 fn main() {
@@ -24,6 +26,8 @@ fn run() -> Result<(), CliError> {
         CliCommand::FieldGate(args) => run_field_gate(args),
         CliCommand::OcrThroughput(args) => run_ocr_throughput(args),
         CliCommand::OcrGate(args) => run_ocr_gate(args),
+        CliCommand::VectorQuality(args) => run_vector_quality(args),
+        CliCommand::VectorGate(args) => run_vector_gate(args),
     }
 }
 
@@ -117,6 +121,36 @@ fn run_ocr_gate(args: OcrGateArgs) -> Result<(), CliError> {
     Ok(())
 }
 
+fn run_vector_quality(args: VectorQualityArgs) -> Result<(), CliError> {
+    let dataset_jsonl = fs::read_to_string(&args.dataset)
+        .map_err(|_| CliError::user("unable to read vector quality dataset"))?;
+    let config = VectorQualityConfig::new(&args.command, args.model_id, args.dimension)
+        .map_err(CliError::benchmark)?
+        .with_top_k(args.top_k)
+        .with_timeout_ms(args.timeout_ms)
+        .map_err(CliError::benchmark)?
+        .with_max_text_bytes(args.max_text_bytes)
+        .map_err(CliError::benchmark)?;
+    let report = run_vector_quality_jsonl(&dataset_jsonl, config).map_err(CliError::benchmark)?;
+    println!("{}", report.to_redacted_json());
+    Ok(())
+}
+
+fn run_vector_gate(args: VectorGateArgs) -> Result<(), CliError> {
+    let report_json = fs::read_to_string(&args.report)
+        .map_err(|_| CliError::user("unable to read vector quality report"))?;
+    let config = VectorQualityGateConfig::new(
+        args.min_samples,
+        args.min_recall_at_k,
+        args.min_mrr,
+        args.min_ndcg_at_k,
+    )
+    .with_max_zero_recall_queries(args.max_zero_recall_queries);
+    evaluate_vector_quality_gate_json(&report_json, config).map_err(CliError::gate)?;
+    println!("vector quality gate passed");
+    Ok(())
+}
+
 fn parse_command<I>(args: I) -> Result<CliCommand, CliError>
 where
     I: IntoIterator<Item = String>,
@@ -129,6 +163,10 @@ where
             parse_ocr_throughput_args(&args[1..]).map(CliCommand::OcrThroughput)
         }
         Some("ocr-gate") => parse_ocr_gate_args(&args[1..]).map(CliCommand::OcrGate),
+        Some("vector-quality") => {
+            parse_vector_quality_args(&args[1..]).map(CliCommand::VectorQuality)
+        }
+        Some("vector-gate") => parse_vector_gate_args(&args[1..]).map(CliCommand::VectorGate),
         Some("gate") => parse_gate_args(&args[1..]).map(CliCommand::Gate),
         _ => parse_synthetic_query_args(&args).map(CliCommand::SyntheticQuery),
     }
@@ -436,6 +474,131 @@ fn parse_ocr_gate_args(args: &[String]) -> Result<OcrGateArgs, CliError> {
     })
 }
 
+fn parse_vector_quality_args(args: &[String]) -> Result<VectorQualityArgs, CliError> {
+    let mut dataset = None;
+    let mut command = None;
+    let mut model_id = None;
+    let mut dimension = None;
+    let mut top_k = 10_usize;
+    let mut timeout_ms = 30_000_u64;
+    let mut max_text_bytes = 128 * 1024_usize;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--dataset" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                dataset = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--model-id" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                model_id = Some(value.clone());
+                index += 2;
+            }
+            "--dimension" => {
+                dimension = Some(parse_positive_usize(args.get(index + 1))?);
+                index += 2;
+            }
+            "--top-k" => {
+                top_k = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--timeout-ms" => {
+                timeout_ms = parse_positive_u64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--max-text-bytes" => {
+                max_text_bytes = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--json" => {
+                index += 1;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    Ok(VectorQualityArgs {
+        dataset: dataset.ok_or_else(CliError::usage)?,
+        command: command.ok_or_else(CliError::usage)?,
+        model_id: model_id.ok_or_else(CliError::usage)?,
+        dimension: dimension.ok_or_else(CliError::usage)?,
+        top_k,
+        timeout_ms,
+        max_text_bytes,
+    })
+}
+
+fn parse_vector_gate_args(args: &[String]) -> Result<VectorGateArgs, CliError> {
+    let mut report = None;
+    let mut min_samples = 100_usize;
+    let mut min_recall_at_k = 0.80_f64;
+    let mut min_mrr = 0.70_f64;
+    let mut min_ndcg_at_k = 0.80_f64;
+    let mut max_zero_recall_queries = 0_usize;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--report" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                report = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--min-samples" => {
+                min_samples = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-recall-at-k" => {
+                min_recall_at_k = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-mrr" => {
+                min_mrr = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-ndcg-at-k" => {
+                min_ndcg_at_k = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--max-zero-recall-queries" => {
+                max_zero_recall_queries = parse_nonnegative_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    Ok(VectorGateArgs {
+        report: report.ok_or_else(CliError::usage)?,
+        min_samples,
+        min_recall_at_k,
+        min_mrr,
+        min_ndcg_at_k,
+        max_zero_recall_queries,
+    })
+}
+
 fn parse_positive_usize(value: Option<&String>) -> Result<usize, CliError> {
     value
         .and_then(|value| value.parse::<usize>().ok())
@@ -471,7 +634,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -482,6 +645,8 @@ enum CliCommand {
     FieldGate(FieldGateArgs),
     OcrThroughput(OcrThroughputArgs),
     OcrGate(OcrGateArgs),
+    VectorQuality(VectorQualityArgs),
+    VectorGate(VectorGateArgs),
 }
 
 #[derive(Clone, Debug)]
@@ -534,6 +699,27 @@ struct OcrGateArgs {
     min_pages: usize,
     max_p95_ms: f64,
     min_pages_per_second: f64,
+}
+
+#[derive(Clone, Debug)]
+struct VectorQualityArgs {
+    dataset: PathBuf,
+    command: PathBuf,
+    model_id: String,
+    dimension: usize,
+    top_k: usize,
+    timeout_ms: u64,
+    max_text_bytes: usize,
+}
+
+#[derive(Clone, Debug)]
+struct VectorGateArgs {
+    report: PathBuf,
+    min_samples: usize,
+    min_recall_at_k: f64,
+    min_mrr: f64,
+    min_ndcg_at_k: f64,
+    max_zero_recall_queries: usize,
 }
 
 #[derive(Clone, Debug)]
