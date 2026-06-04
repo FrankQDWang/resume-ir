@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+fs4 = "0.13.1"
 hnsw_rs = "0.3.4"
 
 [dev-dependencies]

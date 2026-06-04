@@ -876,6 +876,7 @@ name = "index-vector"
 version = "0.1.0"
 dependencies = [
  "embedder",
+ "fs4",
  "hnsw_rs",
 ]
 

@@ -259,6 +259,88 @@ fn persistent_vector_index_rebuilds_hnsw_after_upsert_and_tombstone() {
 }
 
 #[test]
+fn persistent_vector_index_merges_writes_from_stale_concurrent_openers() {
+    let private_dir = temp_dir("private-vector-concurrent-writers");
+    let first = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    let second = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+
+    first
+        .upsert(vec![VectorDocument::new(
+            "vec_first",
+            "doc_first",
+            vec![1.0, 0.0, 0.0, 0.0],
+        )
+        .unwrap()])
+        .unwrap();
+    second
+        .upsert(vec![VectorDocument::new(
+            "vec_second",
+            "doc_second",
+            vec![0.0, 1.0, 0.0, 0.0],
+        )
+        .unwrap()])
+        .unwrap();
+
+    let reopened = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    let snapshot = reopened.snapshot().unwrap();
+    assert_eq!(snapshot.vector_count(), 2);
+
+    let first_hits = reopened
+        .knn(QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(), 1)
+        .unwrap();
+    assert_eq!(first_hits[0].doc_id(), "doc_first");
+    let second_hits = reopened
+        .knn(QueryVector::new(vec![0.0, 1.0, 0.0, 0.0]).unwrap(), 1)
+        .unwrap();
+    assert_eq!(second_hits[0].doc_id(), "doc_second");
+    let second_local_hits = second
+        .knn(QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(), 1)
+        .unwrap();
+    assert_eq!(second_local_hits[0].doc_id(), "doc_first");
+
+    remove_dir(&private_dir);
+}
+
+#[test]
+fn persistent_vector_index_preserves_tombstones_from_stale_concurrent_openers() {
+    let private_dir = temp_dir("private-vector-concurrent-tombstones");
+    let seed = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    seed.upsert(vec![
+        VectorDocument::new("vec_deleted", "doc_deleted", vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
+        VectorDocument::new("vec_keep", "doc_keep", vec![0.0, 1.0, 0.0, 0.0]).unwrap(),
+    ])
+    .unwrap();
+
+    let first = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    let second = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    first.mark_deleted(&["vec_deleted"]).unwrap();
+    second
+        .upsert(vec![VectorDocument::new(
+            "vec_new",
+            "doc_new",
+            vec![0.0, 0.0, 1.0, 0.0],
+        )
+        .unwrap()])
+        .unwrap();
+
+    let reopened = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    let snapshot = reopened.snapshot().unwrap();
+    assert_eq!(snapshot.vector_count(), 3);
+    assert_eq!(snapshot.deleted_count(), 1);
+
+    let deleted_hits = reopened
+        .knn(QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(), 3)
+        .unwrap();
+    assert!(deleted_hits.iter().all(|hit| hit.doc_id() != "doc_deleted"));
+    let new_hits = reopened
+        .knn(QueryVector::new(vec![0.0, 0.0, 1.0, 0.0]).unwrap(), 1)
+        .unwrap();
+    assert_eq!(new_hits[0].doc_id(), "doc_new");
+
+    remove_dir(&private_dir);
+}
+
+#[test]
 fn persistent_vector_index_filters_legacy_v1_snapshot_by_vector_id_model_prefix() {
     let private_dir = temp_dir("private-legacy-model-scoped-vector-index");
     fs::write(

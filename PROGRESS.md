@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, and S114 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, and S115 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, and S110 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -95,7 +95,11 @@ obsolete preliminary files and checklists are not product scope.
   search now rebuilds a process-local HNSW ANN graph from the durable vector
   snapshot, preserves model-scoped graph isolation, and reports the ANN backend
   through redacted CLI status, doctor, and diagnostics output without emitting
-  vectors or local paths.
+  vectors or local paths. Persistent vector mutations now use a stable
+  sidecar file lock, reload the latest snapshot while holding that lock, merge
+  the current mutation, and refresh local HNSW state before returning, preventing
+  stale CLI/daemon writers from overwriting each other's vector updates or
+  tombstones.
   A labeled vector-quality evaluator and gate now score recall@k, MRR, NDCG@k,
   and zero-recall queries from JSONL samples using the local embedding command
   protocol without emitting raw queries, candidate text, sample IDs, candidate
@@ -151,8 +155,10 @@ obsolete preliminary files and checklists are not product scope.
   scratch databases, daemon-kill/restart probes against configured daemon
   binaries, OCR command crash probes, model-checksum probes against controlled
   local model artifacts, local model-pack manifest validation, targeted fault
-  tests, local-only production runbooks, a runbook CI policy guard, a workflow
-  policy guard, and a synthetic OCR throughput benchmark/gate exist.
+  tests, persistent vector snapshot writer-lock protection against stale
+  concurrent writers, local-only production runbooks, a runbook CI policy
+  guard, a workflow policy guard, and a synthetic OCR throughput benchmark/gate
+  exist.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, and labeled vector-quality benchmark gates; query, OCR, and
   vector smoke gates are wired into PR and nightly workflows. Synthetic runs
@@ -282,8 +288,72 @@ obsolete preliminary files and checklists are not product scope.
 | S112 | Product platform PR validation slice complete | `./scripts/ci/check-workflows.sh` first failed because `.github/workflows/ci-platform.yml` did not include a PR trigger; after implementation, workflow guard, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` passed. Hosted Platform CI then exposed two test-portability gaps, a hosted macOS test wait budget issue, a real Windows path-normalization bug in missing-file deletion propagation, Windows full-text snapshot publish instability during CLI imports, and Windows witness temp cleanup semantics. Local fixes now keep OCR/embedding command tests enabled on Windows with `.cmd` fixtures, extend daemon test waiting without changing product tick limits, compare deletion candidates using normalized paths, publish full-text snapshots before validation and retry transient publish locks, release witness metadata handles before cleanup, and retry witness cleanup. The final hosted PR checks passed: macOS Platform CI, Windows Platform CI, Rust workspace, dependency tree, license policy, runbook policy, and public repository guard. | None for this PR-triggered hosted build/test validation slice; it still does not prove installer packaging, signing, notarization, Windows service/MSI install/upgrade/uninstall/rollback, macOS pkg/dmg install/upgrade/uninstall/rollback, platform-specific service lifecycle behavior, real whole-machine scans, or complete release readiness. |
 | S113 | Product local PDF/Word witness validation slice complete | Two authorized local-only witness runs over the private sample root passed without uploading or committing real resume data. The import-only run selected 8720 PDF/Word files, skipped 49 unsupported entries, had 0 filesystem scan errors, completed import, produced 146 directly searchable documents, queued 8554 OCR-required documents, reported 20 failed documents, and removed private witness data. The bounded OCR run used local `tesseract` and `pdftoppm`, processed 5 OCR documents, had 0 OCR failures, wrote 7 OCR cache entries, exhausted the OCR document budget as expected, and removed private witness data. | None for this local-only private sample witness; it does not prove full-library OCR completion, OCR quality, non-English OCR quality, large-corpus latency/throughput, packaging/signing/installers, Windows/Linux real sample behavior, or production model/ANN readiness. |
 | S114 | Product persistent vector ANN slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_uses_hnsw_ann_backend_after_reopen_and_keeps_model_scope --locked -- --exact` first failed because `VectorSearchBackend` and `VectorSnapshot::search_backend()` did not exist. The CLI diagnostics exact tests first failed because vector status still reported `available (vector snapshot)`. After implementation, focused index-vector and CLI diagnostics tests, fmt, diff, focused clippy, license policy, and `./scripts/ci/verify-local.sh` passed. | None for this HNSW ANN backend slice; it does not choose/license/package a production embedding model, prove real semantic quality, prove ANN recall/latency on 100k/1M corpora, add durable serialized HNSW graph artifacts separate from the existing vector snapshot, or validate hosted Windows/macOS for the new dependency. |
+| S115 | Product persistent vector writer-lock slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_merges_writes_from_stale_concurrent_openers --locked -- --exact` first failed because a second stale `PersistentVectorIndex` opener rewrote the snapshot from old in-memory state and dropped the first opener's vector. After implementation, `cargo test -p index-vector --locked`, focused clippy, fmt, diff, license policy, and `./scripts/ci/verify-local.sh` passed. | None for this vector writer-lock slice; it uses cooperative local file locking and does not prove network filesystem locking semantics, durable serialized ANN graph artifacts, real large-corpus vector performance, production embedding model selection, or hosted Windows/macOS validation for this specific change. |
 
 ## Command Log
+
+### S115
+
+Design target:
+
+- Prevent stale CLI/daemon vector-index writers from losing each other's
+  updates when multiple `PersistentVectorIndex` instances open the same local
+  `vector-index` root.
+- Use a stable sidecar lock file rather than locking the replaceable snapshot
+  file, so Windows snapshot rename semantics stay isolated from locking.
+- While holding the writer lock, reload the latest durable vector snapshot,
+  apply the current mutation, atomically rewrite the snapshot, and refresh the
+  current instance's HNSW ANN state before returning.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_merges_writes_from_stale_concurrent_openers --locked -- --exact
+```
+
+Output summary:
+
+- The test failed before implementation with final `vector_count` equal to 1
+  instead of 2, proving that a stale second opener overwrote the first opener's
+  vector update.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-vector --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p index-vector --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-licenses.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo test -p index-vector --locked`: exit 0; 10 vector index tests passed,
+  including stale concurrent opener merge, stale opener tombstone preservation,
+  local ANN refresh after merge, model-scoped ANN search, and stale-node
+  prevention after upsert/tombstone.
+- Focused clippy: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/check-licenses.sh`: exit 0; license check passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, and public
+  repository guard passed.
+
+Sub-agent orchestration:
+
+- Subagent guidance was used under the Codex host-approved sub-agent tool as a
+  read-only sidecar audit. The sub-agent confirmed the lost-update scenario,
+  recommended a stable sidecar lock plus lock-held reload/merge/write, and did
+  not edit files.
+
+Scope note:
+
+- S115 covers cooperative local file locking for vector snapshot mutations. It
+  does not prove behavior on network filesystems, serialized HNSW graph
+  persistence, production model quality, or real large-corpus vector latency.
 
 ### S114
 

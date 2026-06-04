@@ -2,16 +2,18 @@ pub fn crate_name() -> &'static str {
     "index-vector"
 }
 
+use fs4::fs_std::FileExt;
 use hnsw_rs::prelude::{DistCosine, Hnsw};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 const SNAPSHOT_FILE: &str = "vector.snapshot";
 const SNAPSHOT_TMP_FILE: &str = "vector.snapshot.tmp";
+const SNAPSHOT_LOCK_FILE: &str = "vector.lock";
 const SNAPSHOT_HEADER_V1: &str = "resume-ir-vector-index-v1";
 const SNAPSHOT_HEADER_V2: &str = "resume-ir-vector-index-v2";
 const HNSW_MAX_CONNECTIONS: usize = 24;
@@ -51,6 +53,7 @@ pub struct PersistentVectorIndex {
     dimension: usize,
     snapshot_path: PathBuf,
     temp_path: PathBuf,
+    lock_path: PathBuf,
     state: Mutex<IndexState>,
     ann_backend: Mutex<HnswSearchBackend>,
 }
@@ -68,6 +71,7 @@ impl PersistentVectorIndex {
         fs::create_dir_all(root).map_err(|_| VectorIndexError::Storage)?;
         let snapshot_path = root.join(SNAPSHOT_FILE);
         let temp_path = root.join(SNAPSHOT_TMP_FILE);
+        let lock_path = root.join(SNAPSHOT_LOCK_FILE);
         let state = if snapshot_path.exists() {
             read_snapshot(&snapshot_path, dimension)?
         } else {
@@ -79,6 +83,7 @@ impl PersistentVectorIndex {
             dimension,
             snapshot_path,
             temp_path,
+            lock_path,
             state: Mutex::new(state),
             ann_backend: Mutex::new(ann_backend),
         })
@@ -95,21 +100,62 @@ impl PersistentVectorIndex {
             return Ok(0);
         }
 
-        let mut state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        let vector_ids = state
-            .vectors
-            .values()
-            .filter(|vector| doc_ids.contains(vector.doc_id()))
-            .map(|vector| vector.vector_id().to_string())
-            .collect::<Vec<_>>();
-        let removed = vector_ids.len();
-        for vector_id in vector_ids {
-            state.vectors.remove(&vector_id);
-            state.deleted.remove(&vector_id);
+        self.mutate_latest_state(|state| {
+            let vector_ids = state
+                .vectors
+                .values()
+                .filter(|vector| doc_ids.contains(vector.doc_id()))
+                .map(|vector| vector.vector_id().to_string())
+                .collect::<Vec<_>>();
+            let removed = vector_ids.len();
+            for vector_id in vector_ids {
+                state.vectors.remove(&vector_id);
+                state.deleted.remove(&vector_id);
+            }
+            Ok(removed)
+        })
+    }
+
+    fn mutate_latest_state<T>(
+        &self,
+        mutate: impl FnOnce(&mut IndexState) -> Result<T, VectorIndexError>,
+    ) -> Result<T, VectorIndexError> {
+        let lock_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&self.lock_path)
+            .map_err(|_| VectorIndexError::Storage)?;
+        lock_file
+            .lock_exclusive()
+            .map_err(|_| VectorIndexError::Storage)?;
+        let result = self.mutate_latest_state_locked(mutate);
+        lock_file.unlock().map_err(|_| VectorIndexError::Storage)?;
+        result
+    }
+
+    fn mutate_latest_state_locked<T>(
+        &self,
+        mutate: impl FnOnce(&mut IndexState) -> Result<T, VectorIndexError>,
+    ) -> Result<T, VectorIndexError> {
+        let mut latest = self.read_latest_state()?;
+        let output = mutate(&mut latest)?;
+        self.persist_state(&latest)?;
+        {
+            let mut state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
+            *state = latest;
+            self.rebuild_ann_backend(&state)?;
         }
-        self.persist_state(&state)?;
-        self.rebuild_ann_backend(&state)?;
-        Ok(removed)
+        Ok(output)
+    }
+
+    fn read_latest_state(&self) -> Result<IndexState, VectorIndexError> {
+        if self.snapshot_path.exists() {
+            read_snapshot(&self.snapshot_path, self.dimension)
+        } else {
+            Ok(IndexState::default())
+        }
     }
 
     fn rebuild_ann_backend(&self, state: &IndexState) -> Result<(), VectorIndexError> {
@@ -193,22 +239,22 @@ impl VectorIndex for PersistentVectorIndex {
             validate_dimension(self.dimension, vector.values())?;
         }
 
-        let mut state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        for vector in vectors {
-            state.deleted.remove(vector.vector_id());
-            state.vectors.insert(vector.vector_id().to_string(), vector);
-        }
-        self.persist_state(&state)
-            .and_then(|()| self.rebuild_ann_backend(&state))
+        self.mutate_latest_state(|state| {
+            for vector in vectors {
+                state.deleted.remove(vector.vector_id());
+                state.vectors.insert(vector.vector_id().to_string(), vector);
+            }
+            Ok(())
+        })
     }
 
     fn mark_deleted(&self, vector_ids: &[&str]) -> Result<(), VectorIndexError> {
-        let mut state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        for vector_id in vector_ids {
-            state.deleted.insert((*vector_id).to_string());
-        }
-        self.persist_state(&state)
-            .and_then(|()| self.rebuild_ann_backend(&state))
+        self.mutate_latest_state(|state| {
+            for vector_id in vector_ids {
+                state.deleted.insert((*vector_id).to_string());
+            }
+            Ok(())
+        })
     }
 
     fn knn(&self, query: QueryVector, k: usize) -> Result<Vec<VectorHit>, VectorIndexError> {
