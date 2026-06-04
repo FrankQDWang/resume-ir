@@ -46,6 +46,7 @@ use rank_fusion::{
     fuse_hybrid_rrf, soft_dedupe_score, DedupeProfile, DegreeLevel, HybridRecall, RankedHit,
     ResumeProfile, SearchFilters,
 };
+use rusqlite::Connection;
 use search_planner::plan_search;
 use sectionizer::Sectionizer;
 use sha2::{Digest, Sha256};
@@ -1124,6 +1125,21 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
             println!("paths: <redacted>");
             Ok(())
         }
+        FaultSimulationCase::MetadataMigration => {
+            println!("fault: metadata_migration");
+            let result = simulate_metadata_migration_failure_probe(&scratch_dir)
+                .map_err(|_| CliError::user("fault simulation probe failed"))?;
+            if result.reproduced {
+                println!("status: reproduced");
+                println!("migration check: failed");
+            } else {
+                println!("status: not reproduced");
+                println!("migration check: passed");
+            }
+            println!("recovery: restore metadata backup before retrying migration");
+            println!("paths: <redacted>");
+            Ok(())
+        }
         FaultSimulationCase::ModelChecksum => {
             let model_file = fault_args
                 .model_file
@@ -1210,6 +1226,7 @@ enum FaultSimulationCase {
     DiskSpaceLow,
     PermissionDenied,
     FileLock,
+    MetadataMigration,
     ModelChecksum,
     DaemonKill,
     OcrCrash,
@@ -1307,7 +1324,9 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 return Err(CliError::usage(fault_simulate_usage()));
             }
         }
-        FaultSimulationCase::PermissionDenied | FaultSimulationCase::FileLock => {
+        FaultSimulationCase::PermissionDenied
+        | FaultSimulationCase::FileLock
+        | FaultSimulationCase::MetadataMigration => {
             if required_bytes.is_some()
                 || available_bytes.is_some()
                 || daemon_binary.is_some()
@@ -1370,6 +1389,7 @@ fn parse_fault_case(value: &str) -> Result<FaultSimulationCase> {
         "disk-space-low" => Ok(FaultSimulationCase::DiskSpaceLow),
         "permission-denied" => Ok(FaultSimulationCase::PermissionDenied),
         "file-lock" => Ok(FaultSimulationCase::FileLock),
+        "migration-failure" | "metadata-migration" => Ok(FaultSimulationCase::MetadataMigration),
         "model-checksum" => Ok(FaultSimulationCase::ModelChecksum),
         "daemon-kill" => Ok(FaultSimulationCase::DaemonKill),
         "ocr-crash" => Ok(FaultSimulationCase::OcrCrash),
@@ -1502,6 +1522,62 @@ fn contend_file_lock_probe_file(path: &Path) -> std::io::Result<FileLockProbeRes
 
     holder.unlock()?;
     result
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MetadataMigrationProbeResult {
+    reproduced: bool,
+}
+
+fn simulate_metadata_migration_failure_probe(
+    scratch_dir: &Path,
+) -> std::io::Result<MetadataMigrationProbeResult> {
+    fs::create_dir_all(scratch_dir)?;
+    let probe_dir = scratch_dir.join(format!(
+        ".resume-ir-migration-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&probe_dir)?;
+
+    let result = simulate_metadata_migration_failure_probe_dir(&probe_dir);
+    let _ = fs::remove_dir_all(&probe_dir);
+    result
+}
+
+fn simulate_metadata_migration_failure_probe_dir(
+    probe_dir: &Path,
+) -> std::io::Result<MetadataMigrationProbeResult> {
+    let db_path = probe_dir.join("metadata.sqlite3");
+    let connection = Connection::open(&db_path).map_err(sqlite_probe_error)?;
+    connection
+        .execute_batch(
+            "\
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at_seconds INTEGER NOT NULL
+            );
+            INSERT INTO schema_migrations (version, applied_at_seconds)
+            VALUES (1, 0);",
+        )
+        .map_err(sqlite_probe_error)?;
+    drop(connection);
+
+    let store = MetaStore::open(&db_path).map_err(|_| metadata_migration_probe_error())?;
+    Ok(MetadataMigrationProbeResult {
+        reproduced: store.run_migrations().is_err(),
+    })
+}
+
+fn sqlite_probe_error(_: rusqlite::Error) -> std::io::Error {
+    metadata_migration_probe_error()
+}
+
+fn metadata_migration_probe_error() -> std::io::Error {
+    std::io::Error::other("metadata migration probe failed")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1665,7 +1741,7 @@ fn simulate_ocr_crash_probe(scratch_dir: &Path, ocr_command: &Path) -> Result<Oc
 }
 
 fn fault_simulate_usage() -> &'static str {
-    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>]"
+    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -5404,7 +5480,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("ocr language eng: {}", ocr_runtime.tesseract_eng.label());
     println!("fault simulations: available");
     println!(
-        "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock,model_checksum,ocr_crash"
+        "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock,metadata_migration,model_checksum,ocr_crash"
     );
     println!("diagnostics redaction: available");
 
@@ -5547,6 +5623,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("    \"disk_space_low\",");
     println!("    \"permission_denied\",");
     println!("    \"file_lock\",");
+    println!("    \"metadata_migration\",");
     println!("    \"model_checksum\",");
     println!("    \"ocr_crash\"");
     println!("  ],");

@@ -356,6 +356,48 @@ fn fault_simulate_model_checksum_reports_match_without_path_leak() {
 }
 
 #[test]
+fn fault_simulate_metadata_migration_failure_reproduces_without_path_or_schema_leak() {
+    let data_dir = temp_path("fault-migration-private-data");
+    let scratch_dir = temp_path("fault-migration-private-scratch");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--case",
+            "migration-failure",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+        ])
+        .output()
+        .expect("run migration-failure fault simulation");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("fault: metadata_migration"));
+    assert!(stdout.contains("status: reproduced"));
+    assert!(stdout.contains("migration check: failed"));
+    assert!(stdout.contains("recovery: restore metadata backup before retrying migration"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(!stdout.contains("schema_migrations"));
+    assert!(!stdout.contains("CREATE TABLE"));
+    assert!(!data_dir.exists());
+    assert!(scratch_dir.exists());
+    assert!(fs::read_dir(&scratch_dir).unwrap().next().is_none());
+
+    remove_dir(&scratch_dir);
+}
+
+#[test]
 fn fault_simulate_usage_errors_do_not_leak_private_paths() {
     let data_dir = temp_path("fault-usage-private-data");
     let scratch_dir = temp_path("fault-usage-private-scratch");

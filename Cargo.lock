@@ -1222,6 +1222,7 @@ dependencies = [
  "ocr-client",
  "privacy",
  "rank-fusion",
+ "rusqlite",
  "search-planner",
  "sectionizer",
  "serde_json",
