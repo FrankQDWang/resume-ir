@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, and S125 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, and S126 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, and S123 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -159,11 +159,13 @@ obsolete preliminary files and checklists are not product scope.
   metadata without recording local paths or runtime data. The tracked GitHub
   Actions workflows now use the current Node 24-compatible major versions for
   checkout and artifact upload actions, with the workflow policy guard rejecting
-  the deprecated Node 20 action majors.
+  the deprecated Node 20 action majors. The updated hosted release dry-run has
+  executed successfully on the feature branch and produced the redacted
+  `release-dry-run` artifact.
   Installer packaging, signing, notarization, Windows service/MSI, real upgrade/
-  uninstall runs, hosted release workflow execution, and platform installer/
-  service validation remain absent, not complete, or externally blocked by
-  platform credentials/runners.
+  uninstall runs, GitHub Release upload, and platform installer/service
+  validation remain absent, not complete, or externally blocked by platform
+  credentials/runners.
 - P6 performance/stability: synthetic benchmark runner, status/doctor/export
   diagnostics, redacted resource telemetry for the data-disk volume, current
   process memory, CPU cores, OCR page-budget remediation, and OCR runtime
@@ -179,7 +181,8 @@ obsolete preliminary files and checklists are not product scope.
   local-only macOS LaunchAgent start/stop witness evidence, local-only
   production runbooks, a runbook CI policy guard, a workflow policy guard, and
   release artifact manifest plus SBOM policy guards, GitHub Actions runtime
-  compatibility guards, and a synthetic OCR throughput benchmark/gate exist.
+  compatibility guards, hosted release dry-run execution evidence, and a
+  synthetic OCR throughput benchmark/gate exist.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, and labeled vector-quality benchmark gates; query, OCR, and
   vector smoke gates are wired into PR and nightly workflows. Synthetic runs
@@ -320,8 +323,76 @@ obsolete preliminary files and checklists are not product scope.
 | S123 | Product local witness field-probe slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_fields_reports_aggregate_counts_without_values_or_paths --locked -- --exact` first failed because `witness` rejected `--probe-fields`. After implementation, the focused exact test, full `s9_import_search` suite, focused CLI clippy, fmt, diff, marker scan, public guard, `./scripts/ci/verify-local.sh`, private local-only field witness, and private local-only bounded OCR/field witness passed with metadata-only field-type aggregation, redacted aggregate output, and temporary private data removal. | None for this redacted witness field-probe slice; it does not prove field extraction quality, real labeled field F1, full-library OCR completion, real search/ranking quality, large-corpus latency/throughput, Windows/Linux real sample behavior, or installer/release readiness. |
 | S124 | Product release SBOM dry-run slice complete | `./scripts/ci/check-release-sbom.sh` first failed because the release SBOM guard did not exist. After implementation, the release SBOM guard, release artifact guard, workflow guard, runbook guard, shell syntax checks, diff check, public guard, `./scripts/ci/verify-local.sh`, and hosted PR checks passed. | None for this release SBOM dry-run slice; it does not build MSI/pkg/dmg installers, sign, notarize, create a GitHub Release, upload release binaries, validate installer lifecycle behavior, or prove release readiness. |
 | S125 | Product workflow runtime compatibility slice complete | Hosted release dry-run run `26939532282` passed but emitted a GitHub annotation warning that Node.js 20 actions are deprecated for the tracked checkout and artifact upload actions. Official GitHub action release listings showed `actions/checkout` latest `v6.0.3` and `actions/upload-artifact` latest `v7.0.1`. After implementation, workflow YAML parsing, workflow guard, release artifact guard, release SBOM guard, `cargo fmt --check`, `git diff --check`, public repository guard, and `./scripts/ci/verify-local.sh` passed. | None for this workflow runtime compatibility slice; it does not build MSI/pkg/dmg installers, sign, notarize, create a GitHub Release, validate installer lifecycle behavior, prove release readiness, or prove the updated hosted release workflow until the branch is pushed and rerun. |
+| S126 | Product hosted release dry-run evidence slice complete | Updated Release workflow run `26940230718` executed on commit `ea043fc`, passed in hosted GitHub Actions, produced a non-expired `release-dry-run` artifact, and its job log no longer contained the Node.js 20 action warning or v4 checkout/upload-artifact references. PR #9 hosted checks for the same commit also passed: Rust workspace, macOS Platform CI, Windows Platform CI, dependency tree, license policy, runbook policy, and public repository guard. | None for this hosted release dry-run evidence slice; it does not build MSI/pkg/dmg installers, sign, notarize, create/upload a GitHub Release, validate installer lifecycle behavior, prove release readiness, or clear the separate `Swatinem/rust-cache@v2`/Node `punycode` warning observed in the cache step logs. |
 
 ## Command Log
+
+### S126
+
+Design target:
+
+- Re-run the hosted Release workflow after S125 was pushed so the updated
+  checkout/artifact action versions are actually exercised remotely.
+- Verify the dry-run release artifact exists without downloading it.
+- Verify the release job log no longer contains the Node.js 20 action
+  deprecation warning or v4 checkout/artifact upload references.
+- Wait for PR #9 hosted checks for the pushed commit.
+
+Hosted release checks:
+
+```bash
+gh workflow run Release --ref codex/fault-injection-diagnostics -f version=v0.0.0
+gh run watch 26940230718 --exit-status
+gh run view 26940230718
+gh api repos/FrankQDWang/resume-ir/actions/runs/26940230718/artifacts --jq '.artifacts[] | {name, expired}'
+gh run view 26940230718 --json conclusion,status,workflowName,event,headBranch,headSha,url,jobs
+if gh run view 26940230718 --job 79479637142 --log | rg -n 'Node\.js 20 actions are deprecated|actions/checkout@v4|actions/upload-artifact@v4'; then
+  printf '%s\n' 'node20 action warning found'
+  exit 1
+else
+  printf '%s\n' 'no Node.js 20 action warning or v4 action reference found in release dry-run job log'
+fi
+```
+
+Output summary:
+
+- Release workflow run `26940230718`: conclusion `success`, event
+  `workflow_dispatch`, branch `codex/fault-injection-diagnostics`, head SHA
+  `ea043fcd9b9cbb1edc89b50333bcd577c6a3910f`.
+- Release job `79479637142`: exit 0; completed in 1m31s; checkout, workspace
+  verify, release binary build, artifact manifest generation, SBOM generation,
+  public artifact boundary check, dry-run artifact upload, and release gate all
+  passed.
+- Artifact metadata: `release-dry-run`, `expired: false`; artifact was not
+  downloaded.
+- Specific log scan: exit 0; no `Node.js 20 actions are deprecated`,
+  `actions/checkout@v4`, or `actions/upload-artifact@v4` text was found in the
+  release dry-run job log.
+- Broader warning scan observed a separate Node `[DEP0040]` `punycode`
+  deprecation warning in the `Cache Rust` and `Post Cache Rust` steps from
+  `Swatinem/rust-cache@v2`; this is not the Node 20 action-major warning fixed
+  in S125 and remains a separate follow-up risk.
+
+Hosted PR checks:
+
+```bash
+gh pr checks 9 --watch
+```
+
+Output summary:
+
+- PR #9 hosted checks for commit `ea043fc` passed: dependency tree, license
+  policy, runbook policy, macOS Platform CI, Rust workspace, public repository
+  guard, and Windows Platform CI.
+- Sourcery review reported `skipping`.
+
+Scope note:
+
+- S126 proves only the hosted release dry-run path and current PR checks for
+  the pushed workflow compatibility commit. It does not build installers, sign
+  or notarize artifacts, create/upload a GitHub Release, validate installer
+  lifecycle behavior, prove release readiness, or resolve the separate cache
+  action `punycode` warning.
 
 ### S125
 
