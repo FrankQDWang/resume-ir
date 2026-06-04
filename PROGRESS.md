@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, and S165 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, and S166 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -450,8 +450,67 @@ obsolete preliminary files and checklists are not product scope.
 | S163 | Product hosted Ubuntu embedder process-test stability complete locally | The pushed S162 run passed Security, macOS Platform CI, and Windows Platform CI, but hosted Ubuntu `rust workspace` failed in `local_command_embedder_times_out_and_keeps_input_file_private`: the slow synthetic local embedding command returned `EngineFailed` instead of `Timeout`. The failure matched the existing local process-test concurrency class previously seen in OCR command tests. After implementation, Unix local embedding command tests take a local process-test mutex so missing-binary, normal command, timeout, descendant-cleanup, and in-test parallel command scenarios do not run concurrently with each other in the same test binary. The hosted-failing exact test, full `s11_embedder`, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers hosted Ubuntu embedder command test harness stability only. It does not change production embedding runtime behavior, prove hosted Rust Workspace CI has passed until the pushed branch check completes, or clear licensed model, large-corpus, installer, signing, notarization, or release blockers. |
 | S164 | Product release-readiness CI guard complete locally | A focused shell check first failed because `scripts/ci/check-release-readiness.sh` did not exist. After implementation, `verify-local` runs a local CI guard that executes `resume-cli release-readiness --json` against a private-looking synthetic data-dir, requires the command to exit nonzero, validates the `release-readiness.v1` blocked schema and all eight release blockers, checks stderr blocker messaging, and fails on local path or private marker leaks. Focused release-readiness guard, workflow guard, runbook guard, shell syntax, diff check, full local verification, and public repo guard passed. | This slice wires the blocked release-readiness gate into local CI only. It does not clear signing/notarization, real 100k/1M private benchmark, licensed OCR/model distribution, platform installer/service lifecycle, or cross-platform release validation blockers. |
 | S165 | Product release workflow readiness gate complete locally | Focused guard checks first failed because `.github/workflows/release.yml` did not explicitly run `./scripts/ci/check-release-readiness.sh`; the release workflow only reached it indirectly through `verify-local`. After implementation, the Release dry-run job has a named stable-release blocked confirmation step after workspace verification, and both workflow policy plus release-readiness guard require that explicit release workflow wiring. Focused release-readiness guard, workflow guard, shell syntax, workflow YAML parse, diff check, full local verification, and public repo guard passed locally. | This slice strengthens hosted Release dry-run fail-closed behavior only. It does not clear signing, notarization, GitHub Release upload approval, real 100k/1M private benchmark evidence, licensed OCR/model distribution, installer/service lifecycle validation, or cross-platform release blockers. |
+| S166 | Product hosted Windows full-text corruption-test stability complete locally | The pushed S165 run passed dependency, license, runbook, public guard, Rust Workspace, and macOS Platform CI, but hosted Windows Platform CI failed in `s8_fulltext::active_snapshot_corruption_falls_back_to_last_good_snapshot`: the test attempted to overwrite the freshly published active encrypted snapshot with `fs::write` and hit Windows `os error 33` because another process still held a region lock. Root cause was the test's corruption setup bypassing the existing transient snapshot filesystem retry policy. After implementation, the corruption write uses a bounded test helper that retries the same Windows file-lock diagnostics before asserting fallback behavior. The hosted-failing exact test, full `index-fulltext`, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers hosted Windows full-text test harness stability only. It does not change production full-text fallback behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear large-corpus, model, installer, signing, notarization, or release blockers. |
 
 ## Command Log
+
+### S166
+
+Debug target:
+
+- Fix the S165 pushed PR #9 hosted Windows Platform CI failure without changing
+  production full-text fallback behavior.
+- Identify whether the failure came from the S165 release workflow guard, a
+  production full-text regression, or a hosted Windows test harness gap.
+- Keep the fix synthetic-only and avoid committing paths, private data,
+  diagnostics, model caches, or resume text.
+
+Observed RED:
+
+```bash
+gh run view 26976094592 --repo FrankQDWang/resume-ir --job 79603359755 --log-failed
+```
+
+Output summary:
+
+- Hosted Windows Platform CI failed in
+  `s8_fulltext::active_snapshot_corruption_falls_back_to_last_good_snapshot`.
+- The failing line directly overwrote `fulltext.snapshot.enc` to simulate
+  active snapshot corruption and received Windows `os error 33`: another process
+  had locked a portion of the file.
+- The same run had already built the workspace; dependency, license, runbook,
+  public guard, Rust Workspace, and macOS Platform CI were green.
+
+Root cause:
+
+- The test's corruption setup used bare `fs::write` immediately after
+  `publish_snapshot`, bypassing the transient snapshot filesystem retry logic
+  that production snapshot publication already uses for Windows file locks.
+- The fallback behavior under test was not the failure point; the failure was
+  the test's synthetic corruption write racing Windows file lock release.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext --test s8_fulltext active_snapshot_corruption_falls_back_to_last_good_snapshot --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p index-fulltext --test s8_fulltext --locked -- -D warnings
+```
+
+Output summary:
+
+- The hosted-failing exact test passed locally.
+- Full `index-fulltext` passed, including 8 unit tests, 13 integration tests,
+  and doc-tests.
+- Focused clippy and fmt passed.
+
+Scope note:
+
+- S166 adds a bounded retry only to the synthetic test corruption write. It does
+  not change production full-text snapshot fallback behavior, prove the hosted
+  Windows rerun until the branch is pushed, or clear any product release
+  blockers.
 
 ### S165
 

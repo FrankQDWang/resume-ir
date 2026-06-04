@@ -1,6 +1,8 @@
 use std::fs;
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{
     inspect_snapshot_root, publish_snapshot, redact_contact_values, FullTextIndex, IndexDocument,
@@ -10,6 +12,9 @@ use tantivy::collector::TopDocs;
 use tantivy::query::AllQuery;
 use tantivy::schema::{TantivyDocument, Value};
 use tantivy::Index;
+
+const SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS: usize = 100;
+const SNAPSHOT_TEST_WRITE_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 #[test]
 fn exposes_index_fulltext_crate_identity() {
@@ -418,8 +423,8 @@ fn active_snapshot_corruption_falls_back_to_last_good_snapshot() {
         }],
     )
     .unwrap();
-    fs::write(
-        index_root
+    write_snapshot_test_file_with_retry(
+        &index_root
             .join("snapshots")
             .join("fulltext-1800002000-1-0-0")
             .join("fulltext.snapshot.enc"),
@@ -488,6 +493,47 @@ fn temp_dir(label: &str) -> PathBuf {
 
 fn remove_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
+}
+
+fn write_snapshot_test_file_with_retry(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    for attempt in 0..SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS {
+        match fs::write(path, bytes) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt + 1 < SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS
+                    && is_transient_snapshot_test_write_error(&error) =>
+            {
+                thread::sleep(SNAPSHOT_TEST_WRITE_RETRY_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(io::Error::other("snapshot test write retry exhausted"))
+}
+
+fn is_transient_snapshot_test_write_error(error: &io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        ErrorKind::Interrupted | ErrorKind::PermissionDenied | ErrorKind::WouldBlock
+    ) {
+        return true;
+    }
+
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(), Some(32 | 33 | 145)) {
+        return true;
+    }
+
+    let diagnostic = error.to_string().to_ascii_lowercase();
+    diagnostic.contains("os error 5")
+        || diagnostic.contains("os error 32")
+        || diagnostic.contains("os error 33")
+        || diagnostic.contains("os error 145")
+        || diagnostic.contains("access is denied")
+        || diagnostic.contains("permission denied")
+        || diagnostic.contains("being used by another process")
+        || diagnostic.contains("locked a portion of the file")
 }
 
 fn stored_text_dump(index_dir: &Path) -> String {
