@@ -10,6 +10,7 @@ use sha2::Sha256;
 const CONTACT_HASH_KEY_LEN: usize = 32;
 const CONTACT_HASH_KEY_HEX_LEN: usize = CONTACT_HASH_KEY_LEN * 2;
 const CONTACT_HASH_KEY_PATH: &[&str] = &["secrets", "contact-hash-key-v1"];
+const CONTACT_HASH_KEY_BACKUP_SCHEMA_VERSION: &str = "resume-ir-contact-hash-key-v1";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -135,6 +136,43 @@ pub fn inspect_contact_hash_key(data_dir: &Path) -> Result<ContactHashKeyInspect
     })
 }
 
+pub fn backup_contact_hash_key(
+    data_dir: &Path,
+    backup_path: &Path,
+) -> Result<ContactHashKeyBackup> {
+    let key = read_ready_contact_hash_key(data_dir)?;
+    create_private_file_parent(backup_path)?;
+
+    let backup = format!(
+        "{CONTACT_HASH_KEY_BACKUP_SCHEMA_VERSION}\nkey={}\n",
+        encode_hex(&key)
+    );
+    write_new_key_file(backup_path, backup.as_bytes())?;
+    restrict_key_permissions(backup_path)?;
+
+    Ok(ContactHashKeyBackup { _private: () })
+}
+
+pub fn restore_contact_hash_key(
+    data_dir: &Path,
+    backup_path: &Path,
+) -> Result<ContactHashKeyRestore> {
+    let key_path = contact_hash_key_path(data_dir);
+    if key_path.try_exists().map_err(PrivacyError::storage)? {
+        return Err(PrivacyError::already_exists());
+    }
+
+    let key = read_backup_contact_hash_key(backup_path)?;
+    let parent = key_path
+        .parent()
+        .ok_or_else(|| PrivacyError::invalid_key("contact hash key path"))?;
+    fs::create_dir_all(parent).map_err(PrivacyError::storage)?;
+    write_new_key_file(&key_path, encode_hex(&key).as_bytes())?;
+    restrict_key_permissions(&key_path)?;
+
+    Ok(ContactHashKeyRestore { _private: () })
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct ContactHashKeyInspection {
     state: ContactHashKeyState,
@@ -162,6 +200,69 @@ pub enum ContactHashKeyState {
     Invalid,
     WeakPermissions,
     Unreadable,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContactHashKeyBackup {
+    _private: (),
+}
+
+impl fmt::Debug for ContactHashKeyBackup {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ContactHashKeyBackup")
+            .field("key", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContactHashKeyRestore {
+    _private: (),
+}
+
+impl fmt::Debug for ContactHashKeyRestore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ContactHashKeyRestore")
+            .field("key", &"<redacted>")
+            .finish()
+    }
+}
+
+fn read_ready_contact_hash_key(data_dir: &Path) -> Result<[u8; CONTACT_HASH_KEY_LEN]> {
+    let inspection = inspect_contact_hash_key(data_dir)?;
+    if inspection.state() != ContactHashKeyState::Ready {
+        return Err(PrivacyError::invalid_key("contact hash key state"));
+    }
+
+    let key_path = contact_hash_key_path(data_dir);
+    let key_hex = fs::read_to_string(&key_path).map_err(PrivacyError::storage)?;
+    decode_key_hex(key_hex.trim())
+}
+
+fn read_backup_contact_hash_key(backup_path: &Path) -> Result<[u8; CONTACT_HASH_KEY_LEN]> {
+    let backup = fs::read_to_string(backup_path).map_err(PrivacyError::storage)?;
+    let mut lines = backup.lines();
+    if lines.next() != Some(CONTACT_HASH_KEY_BACKUP_SCHEMA_VERSION) {
+        return Err(PrivacyError::invalid_key("contact hash key backup schema"));
+    }
+    let Some(key_hex) = lines.next().and_then(|line| line.strip_prefix("key=")) else {
+        return Err(PrivacyError::invalid_key("contact hash key backup payload"));
+    };
+
+    decode_key_hex(key_hex)
+}
+
+fn create_private_file_parent(path: &Path) -> Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+
+    fs::create_dir_all(parent).map_err(PrivacyError::storage)
 }
 
 impl ContactHashKeyState {
@@ -284,6 +385,12 @@ impl PrivacyError {
             kind: PrivacyErrorKind::InvalidKey,
         }
     }
+
+    fn already_exists() -> Self {
+        Self {
+            kind: PrivacyErrorKind::AlreadyExists,
+        }
+    }
 }
 
 impl fmt::Debug for PrivacyError {
@@ -301,6 +408,7 @@ impl fmt::Display for PrivacyError {
             PrivacyErrorKind::Storage => formatter.write_str("privacy storage operation failed"),
             PrivacyErrorKind::Random => formatter.write_str("privacy key generation failed"),
             PrivacyErrorKind::InvalidKey => formatter.write_str("privacy key material is invalid"),
+            PrivacyErrorKind::AlreadyExists => formatter.write_str("privacy key already exists"),
         }
     }
 }
@@ -312,4 +420,5 @@ enum PrivacyErrorKind {
     Storage,
     Random,
     InvalidKey,
+    AlreadyExists,
 }

@@ -44,7 +44,7 @@ use ocr_client::{
     PdftoppmRenderSpec, RenderedPage, TesseractLanguageAvailability, TesseractOcrClient,
     TesseractOcrSpec,
 };
-use privacy::inspect_contact_hash_key;
+use privacy::{backup_contact_hash_key, inspect_contact_hash_key, restore_contact_hash_key};
 use rank_fusion::{
     fuse_hybrid_rrf, soft_dedupe_score, DedupeProfile, DegreeLevel, HybridRecall, RankedHit,
     ResumeProfile, SearchFilters,
@@ -96,7 +96,7 @@ const WITNESS_FIELD_LABELS: &[&str] = &[
     "years_experience",
     "location",
 ];
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, witness, doctor, or export-diagnostics";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, privacy, service, fault-simulate, witness, doctor, or export-diagnostics";
 
 fn main() {
     if let Err(error) = run() {
@@ -131,6 +131,7 @@ fn run() -> Result<()> {
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
         "embed-worker" => embed_worker_command(&data_dir, &args[1..]),
         "model" => model_command(&args[1..]),
+        "privacy" => privacy_command(&data_dir, &args[1..]),
         "service" => service_command(&data_dir, &args[1..]),
         "fault-simulate" => fault_simulate_command(&data_dir, &args[1..]),
         "witness" => witness_command(&args[1..]),
@@ -165,6 +166,40 @@ fn model_command(args: &[String]) -> Result<()> {
         "validate-manifest" => model_validate_manifest_command(&args[1..]),
         _ => Err(CliError::usage(model_usage())),
     }
+}
+
+fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(privacy_usage()));
+    };
+
+    match action {
+        "backup-contact-key" => {
+            let output_path = parse_privacy_path_arg(&args[1..], "--output")?;
+            backup_contact_hash_key(data_dir, &output_path).map_err(CliError::privacy)?;
+            println!("contact hash key backup: written");
+            Ok(())
+        }
+        "restore-contact-key" => {
+            let input_path = parse_privacy_path_arg(&args[1..], "--input")?;
+            restore_contact_hash_key(data_dir, &input_path).map_err(CliError::privacy)?;
+            println!("contact hash key restore: restored");
+            Ok(())
+        }
+        _ => Err(CliError::usage(privacy_usage())),
+    }
+}
+
+fn parse_privacy_path_arg(args: &[String], flag: &'static str) -> Result<PathBuf> {
+    if args.len() != 2 || args[0] != flag || args[1].is_empty() {
+        return Err(CliError::usage(privacy_usage()));
+    }
+
+    Ok(PathBuf::from(&args[1]))
+}
+
+fn privacy_usage() -> &'static str {
+    "usage: resume-cli privacy backup-contact-key --output <path> | resume-cli privacy restore-contact-key --input <path>"
 }
 
 fn model_validate_manifest_command(args: &[String]) -> Result<()> {
