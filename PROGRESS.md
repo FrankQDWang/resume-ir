@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, and S133 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, and S134 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -178,8 +178,13 @@ obsolete preliminary files and checklists are not product scope.
   local non-Windows guard, release runbook wiring, and Release workflow hosted
   Windows package job are now present. The hosted Windows MSI dry-run exposed
   that WiX `7.0.0` requires OSMF EULA acceptance on GitHub-hosted runners, so
-  the dry-run tool pin was moved to WiX `6.0.2`; the hosted Windows MSI dry-run
-  still must rerun after push before it can be counted as hosted evidence.
+  the dry-run tool pin was moved to WiX `6.0.2`; a later hosted Release run
+  proved the Windows MSI dry-run and artifact upload path. The same later run
+  exposed a transient hosted macOS `hdiutil verify` resource-unavailable race
+  immediately after DMG creation, so the macOS DMG verification path now uses a
+  bounded retry helper; the full hosted Release workflow still must rerun after
+  push before the combined macOS/Windows/manifest dry-run can be counted as
+  final hosted evidence for this branch tip.
   Signing, notarization, Windows service validation, real upgrade/uninstall runs,
   GitHub Release upload, and platform installer/service
   validation remain absent, not complete, or externally blocked by platform
@@ -349,8 +354,75 @@ obsolete preliminary files and checklists are not product scope.
 | S131 | Product Windows MSI dry-run wiring slice complete | `./scripts/ci/check-workflows.sh` first failed because `verify-local` and the Release workflow did not include Windows package dry-run wiring. After implementation, `scripts/release/create-windows-package.ps1` can build an unsigned MSI dry-run through the WiX .NET tool on Windows, writes a redacted `windows-package.json`, rejects invalid versions and missing binaries, and keeps signing/release upload/service lifecycle gated. The Release workflow includes a hosted `windows-latest` job that installs WiX `7.0.0`, builds release binaries, runs the Windows package script, checks artifact boundaries, and uploads `windows-package-dry-run`. Focused workflow, Windows package, runbook, workflow YAML, diff, public guard checks, and `./scripts/ci/verify-local.sh` passed locally, with the Windows package guard explicitly skipped on this non-Windows host. | None for this wiring/local-guard slice; the updated hosted Release workflow still must run after push to prove MSI creation, and signing, service install/start/stop validation, installer lifecycle validation, GitHub Release upload, and production release readiness remain absent or gated. |
 | S132 | Product hosted Windows daemon IPC wait-budget fix complete locally | Hosted Windows Platform CI for commit `cd26a04` failed in `daemon_serves_status_while_import_worker_processes_late_queued_task` because the late-queued import worker test did not observe `searchable_documents: 2` inside the previous short polling budget. The fix keeps the same daemon behavior and assertions, but raises this test's max request budget to match the adjacent command-IPC import-worker test. Focused local exact, full `s20_ipc`, diff, public guard, and `./scripts/ci/verify-local.sh` passed. | Hosted PR checks still must rerun after push; this is a CI stability/test-budget fix only and does not prove Windows MSI creation, service lifecycle, installer lifecycle, signing, GitHub Release upload, or production release readiness. |
 | S133 | Product WiX package-tool pin slice complete locally | Hosted Release run `26944149485` passed the Ubuntu release dry-run and macOS package dry-run jobs, but the Windows MSI job failed at `Create unsigned Windows MSI dry run` because WiX `7.0.0` required OSMF EULA acceptance. The fix avoids accepting legal/fee terms in CI by pinning the Release workflow and runbook to WiX `6.0.2` and updating the workflow policy guard to reject a missing version pin. Focused workflow, Windows package, runbook, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` checks passed locally. | Hosted Release must rerun after push to prove Windows MSI creation; this does not sign artifacts, create/upload a GitHub Release, validate installer lifecycle, validate Windows service lifecycle, accept WiX v7 terms, or complete production release readiness. |
+| S134 | Product macOS DMG verify retry slice complete locally | Hosted Release run `26944923353` proved the WiX `6.0.2` fix by passing the Windows package dry-run job, including MSI creation, boundary check, artifact upload, and release gate. The same run failed the macOS package dry-run boundary step because `hdiutil verify` immediately after DMG creation reported `Resource temporarily unavailable`. The fix adds a shared bounded `scripts/release/verify-macos-dmg.sh` helper and wires the Release workflow plus local macOS package guard to use it without skipping checksum verification. Focused workflow, macOS package, shell syntax, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` checks passed locally. | Hosted Release must rerun after push to prove the combined release dry-run, macOS package dry-run, and Windows package dry-run all pass on the same branch tip; this does not sign artifacts, create/upload a GitHub Release, validate installer lifecycle, validate Windows service lifecycle, or complete production release readiness. |
 
 ## Command Log
+
+### S134
+
+Design target:
+
+- Preserve `hdiutil verify` DMG checksum validation.
+- Add bounded retry for hosted macOS transient disk-image availability after DMG
+  creation.
+- Reuse the same verification helper in Release workflow and local macOS package
+  guard.
+
+Observed hosted RED:
+
+```bash
+gh run watch 26944923353 --exit-status --interval 10
+gh run view 26944923353 --job 79495400267 --log
+```
+
+Output summary:
+
+- Release run `26944923353` passed `release dry run` in 1m41s.
+- `Windows package dry run` passed in 5m56s after installing WiX `6.0.2`,
+  building release binaries, creating the unsigned MSI dry-run, checking the
+  Windows package boundary, uploading `windows-package-dry-run`, and reporting
+  release gates.
+- `macOS package dry run` failed in 3m18s at `Check macOS package boundary`
+  because `hdiutil verify` reported the generated DMG as temporarily
+  unavailable immediately after creation.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-workflows.sh
+./scripts/ci/check-macos-package.sh
+ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].sort.each { |f| YAML.load_file(f); puts f }'
+sh -n scripts/release/verify-macos-dmg.sh scripts/ci/check-macos-package.sh scripts/ci/check-workflows.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Workflow guard: exit 0; Release workflow now calls
+  `scripts/release/verify-macos-dmg.sh`, and that helper still contains
+  `hdiutil verify`.
+- macOS package guard: exit 0; generated a synthetic unsigned pkg/dmg dry-run,
+  verified the DMG through the retry helper, validated the manifest, and kept
+  invalid-version and missing-binary rejection checks.
+- Workflow YAML parse: exit 0 for all tracked workflow files.
+- Shell syntax checks: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, release
+  artifact check, release SBOM check, macOS package check through the retry
+  helper, Windows package wiring check, and public repository guard passed.
+
+Scope note:
+
+- S134 is a hosted macOS DMG verification retry fix and records that
+  `26944923353` already proved the Windows MSI dry-run path after the WiX pin.
+  It does not prove the combined hosted Release workflow until this fix is
+  pushed and Release is rerun, and it does not sign artifacts, create/upload a
+  GitHub Release, validate install/upgrade/uninstall/rollback behavior, install/
+  register/start/stop a Windows service, or complete release readiness.
 
 ### S133
 

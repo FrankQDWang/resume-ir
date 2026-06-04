@@ -21,13 +21,18 @@ require_text() {
 }
 
 script="scripts/release/create-macos-package.sh"
+verify_dmg_script="scripts/release/verify-macos-dmg.sh"
 verify_script="scripts/ci/verify-local.sh"
 
 require_file "$script"
+require_file "$verify_dmg_script"
 require_file "$verify_script"
 
 if [ ! -x "$script" ]; then
   fail "macOS package script is not executable"
+fi
+if [ ! -x "$verify_dmg_script" ]; then
+  fail "macOS dmg verification script is not executable"
 fi
 
 if [ "$(uname -s)" != "Darwin" ]; then
@@ -79,7 +84,7 @@ fi
 
 expanded="$tmpdir/expanded-pkg"
 pkgutil --expand "$pkg" "$expanded" >/dev/null
-hdiutil verify "$dmg" >/dev/null
+"$verify_dmg_script" "$dmg" >/dev/null
 
 if "$script" --version 0.0.0 --target-dir "$target_dir" --out-dir "$out_dir/invalid" >/dev/null 2>&1; then
   fail "macOS package script accepted an invalid version"
