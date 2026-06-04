@@ -38,6 +38,9 @@ jobs:
       - name: Verify workspace
         run: ./scripts/ci/verify-local.sh
 
+      - name: Confirm stable release remains blocked
+        run: ./scripts/ci/check-release-readiness.sh
+
       - name: Build release binaries
         run: cargo build --workspace --release --locked
 

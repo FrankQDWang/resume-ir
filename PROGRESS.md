@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, and S164 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, and S165 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -449,8 +449,63 @@ obsolete preliminary files and checklists are not product scope.
 | S162 | Product machine-readable release-readiness evidence complete locally | A focused CLI test first failed because `resume-cli release-readiness --json` produced no JSON report. After implementation, `release-readiness --json` prints a stable `release-readiness.v1` JSON schema with `stable_release: "blocked"`, dry-run evidence status, eight blocked release criteria, details for each blocker, and the next gate, then exits nonzero without printing local data-dir paths. The focused release-readiness suite, fmt, focused clippy, diff check, full local verification, and public repo guard passed. | This slice makes the existing fail-closed release-readiness gate automation-readable only. It does not clear signing certificates, notarization, real-corpus benchmark, licensed OCR/model distribution, platform installer/service lifecycle, or cross-platform validation blockers, so the complete production goal remains not complete. |
 | S163 | Product hosted Ubuntu embedder process-test stability complete locally | The pushed S162 run passed Security, macOS Platform CI, and Windows Platform CI, but hosted Ubuntu `rust workspace` failed in `local_command_embedder_times_out_and_keeps_input_file_private`: the slow synthetic local embedding command returned `EngineFailed` instead of `Timeout`. The failure matched the existing local process-test concurrency class previously seen in OCR command tests. After implementation, Unix local embedding command tests take a local process-test mutex so missing-binary, normal command, timeout, descendant-cleanup, and in-test parallel command scenarios do not run concurrently with each other in the same test binary. The hosted-failing exact test, full `s11_embedder`, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers hosted Ubuntu embedder command test harness stability only. It does not change production embedding runtime behavior, prove hosted Rust Workspace CI has passed until the pushed branch check completes, or clear licensed model, large-corpus, installer, signing, notarization, or release blockers. |
 | S164 | Product release-readiness CI guard complete locally | A focused shell check first failed because `scripts/ci/check-release-readiness.sh` did not exist. After implementation, `verify-local` runs a local CI guard that executes `resume-cli release-readiness --json` against a private-looking synthetic data-dir, requires the command to exit nonzero, validates the `release-readiness.v1` blocked schema and all eight release blockers, checks stderr blocker messaging, and fails on local path or private marker leaks. Focused release-readiness guard, workflow guard, runbook guard, shell syntax, diff check, full local verification, and public repo guard passed. | This slice wires the blocked release-readiness gate into local CI only. It does not clear signing/notarization, real 100k/1M private benchmark, licensed OCR/model distribution, platform installer/service lifecycle, or cross-platform release validation blockers. |
+| S165 | Product release workflow readiness gate complete locally | Focused guard checks first failed because `.github/workflows/release.yml` did not explicitly run `./scripts/ci/check-release-readiness.sh`; the release workflow only reached it indirectly through `verify-local`. After implementation, the Release dry-run job has a named stable-release blocked confirmation step after workspace verification, and both workflow policy plus release-readiness guard require that explicit release workflow wiring. Focused release-readiness guard, workflow guard, shell syntax, workflow YAML parse, diff check, full local verification, and public repo guard passed locally. | This slice strengthens hosted Release dry-run fail-closed behavior only. It does not clear signing, notarization, GitHub Release upload approval, real 100k/1M private benchmark evidence, licensed OCR/model distribution, installer/service lifecycle validation, or cross-platform release blockers. |
 
 ## Command Log
+
+### S165
+
+Design target:
+
+- Make the hosted Release dry-run workflow explicitly run the fail-closed
+  release-readiness guard, instead of relying only on indirect `verify-local`
+  coverage.
+- Keep stable release blocked; this is a release-chain safety gate, not release
+  approval.
+- Keep all release-readiness evidence aggregate and redacted, without local
+  data-dir paths, resume text, diagnostics, tokens, model cache paths, or private
+  corpus details.
+
+Observed RED:
+
+```bash
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-workflows.sh
+```
+
+Output summary:
+
+- Both focused guards failed because `.github/workflows/release.yml` did not
+  contain explicit `./scripts/ci/check-release-readiness.sh` wiring.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-workflows.sh
+sh -n scripts/ci/check-release-readiness.sh scripts/ci/check-workflows.sh scripts/ci/verify-local.sh
+git diff --check
+ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); puts "release workflow yaml ok"'
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Release-readiness and workflow guards passed after the Release dry-run job got
+  an explicit `Confirm stable release remains blocked` step that runs
+  `./scripts/ci/check-release-readiness.sh`.
+- Shell syntax, workflow YAML parse, and diff checks passed.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license, runbook, workflow, release-readiness, release artifact, release
+  SBOM, macOS package, Windows package skip-on-non-Windows, and public repo
+  guards all passed.
+
+Scope note:
+
+- S165 strengthens Release workflow gating only. It does not create a stable
+  release, sign or notarize artifacts, upload a GitHub Release, validate
+  installer/service lifecycle, provide licensed OCR/model distribution evidence,
+  or prove private 100k/1M benchmark targets.
 
 ### S164
 

@@ -77,6 +77,7 @@ require_text "$verify_script" "./scripts/ci/check-windows-package.sh"
 
 require_text "$release_workflow" "scripts/release/create-artifact-manifest.sh"
 require_text "$release_workflow" "scripts/release/create-sbom.sh"
+require_text "$release_workflow" "./scripts/ci/check-release-readiness.sh"
 require_text "$release_workflow" "scripts/release/create-macos-package.sh"
 require_text "$release_workflow" "scripts/release/verify-macos-dmg.sh"
 require_text "$release_workflow" "scripts/release/create-windows-package.ps1"
