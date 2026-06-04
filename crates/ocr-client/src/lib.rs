@@ -10,7 +10,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        mpsc, Arc,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -25,6 +25,7 @@ use std::os::unix::{
 const OCR_OUTPUT_MAX_BYTES: usize = 4 * 1024 * 1024;
 const OCR_RENDER_OUTPUT_MAX_BYTES: usize = 32 * 1024 * 1024;
 const OCR_POLL_INTERVAL_MS: u64 = 10;
+const OCR_OUTPUT_DRAIN_GRACE_MS: u64 = 500;
 
 pub trait OcrClient {
     fn recognize_page(
@@ -143,10 +144,8 @@ impl OcrClient for LocalOcrCommandClient {
                 return Err(error);
             }
         };
-        #[cfg(unix)]
-        terminate_process_group(child.id());
-        let stdout = join_output_reader(stdout_reader)?;
-        let _stderr = join_output_reader(stderr_reader)?;
+        let (stdout, _stderr) =
+            collect_child_outputs_after_exit(child.id(), stdout_reader, stderr_reader)?;
         if !status.success() {
             return Err(OcrError::new(OcrErrorKind::EngineFailed));
         }
@@ -245,10 +244,8 @@ impl OcrClient for TesseractOcrClient {
                 return Err(error);
             }
         };
-        #[cfg(unix)]
-        terminate_process_group(child.id());
-        let stdout = join_output_reader(stdout_reader)?;
-        let _stderr = join_output_reader(stderr_reader)?;
+        let (stdout, _stderr) =
+            collect_child_outputs_after_exit(child.id(), stdout_reader, stderr_reader)?;
         if !status.success() {
             return Err(OcrError::new(OcrErrorKind::EngineFailed));
         }
@@ -339,10 +336,8 @@ impl LocalPdfRenderCommandClient {
                 return Err(error);
             }
         };
-        #[cfg(unix)]
-        terminate_process_group(child.id());
-        let page_bytes = join_output_reader(stdout_reader)?;
-        let _stderr = join_output_reader(stderr_reader)?;
+        let (page_bytes, _stderr) =
+            collect_child_outputs_after_exit(child.id(), stdout_reader, stderr_reader)?;
         if !status.success() || page_bytes.is_empty() {
             return Err(OcrError::new(OcrErrorKind::EngineFailed));
         }
@@ -429,10 +424,8 @@ impl PdftoppmPdfRenderer {
                 return Err(error);
             }
         };
-        #[cfg(unix)]
-        terminate_process_group(child.id());
-        let _stdout = join_output_reader(stdout_reader)?;
-        let _stderr = join_output_reader(stderr_reader)?;
+        let (_stdout, _stderr) =
+            collect_child_outputs_after_exit(child.id(), stdout_reader, stderr_reader)?;
         if !status.success() {
             return Err(OcrError::new(OcrErrorKind::EngineFailed));
         }
@@ -1173,11 +1166,20 @@ fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
     }
 }
 
-fn spawn_output_reader<R>(reader: R, max_bytes: usize) -> JoinHandle<io::Result<Vec<u8>>>
+struct OutputReader {
+    receiver: mpsc::Receiver<io::Result<Vec<u8>>>,
+    handle: JoinHandle<()>,
+}
+
+fn spawn_output_reader<R>(reader: R, max_bytes: usize) -> OutputReader
 where
     R: Read + Send + 'static,
 {
-    thread::spawn(move || read_all_limited(reader, max_bytes))
+    let (sender, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let _ = sender.send(read_all_limited(reader, max_bytes));
+    });
+    OutputReader { receiver, handle }
 }
 
 fn read_all_limited<R>(mut reader: R, max_bytes: usize) -> io::Result<Vec<u8>>
@@ -1211,11 +1213,73 @@ where
     }
 }
 
-fn join_output_reader(handle: JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8>, OcrError> {
-    handle
+fn collect_child_outputs_after_exit(
+    process_group_id: u32,
+    stdout_reader: OutputReader,
+    stderr_reader: OutputReader,
+) -> Result<(Vec<u8>, Vec<u8>), OcrError> {
+    #[cfg(unix)]
+    {
+        let mut stdout_reader = Some(stdout_reader);
+        let mut stderr_reader = Some(stderr_reader);
+        let grace = Duration::from_millis(OCR_OUTPUT_DRAIN_GRACE_MS);
+        let stdout = try_join_output_reader(&mut stdout_reader, grace);
+        let stderr = try_join_output_reader(&mut stderr_reader, grace);
+
+        if stdout.is_none() || stderr.is_none() {
+            terminate_process_group(process_group_id);
+        }
+
+        let stdout = match stdout {
+            Some(result) => result?,
+            None => join_output_reader(stdout_reader.take().expect("stdout reader present"))?,
+        };
+        let stderr = match stderr {
+            Some(result) => result?,
+            None => join_output_reader(stderr_reader.take().expect("stderr reader present"))?,
+        };
+
+        Ok((stdout, stderr))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = process_group_id;
+        Ok((
+            join_output_reader(stdout_reader)?,
+            join_output_reader(stderr_reader)?,
+        ))
+    }
+}
+
+fn try_join_output_reader(
+    reader: &mut Option<OutputReader>,
+    timeout: Duration,
+) -> Option<Result<Vec<u8>, OcrError>> {
+    let result = match reader.as_ref()?.receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => return None,
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            return Some(Err(OcrError::new(OcrErrorKind::EngineFailed)));
+        }
+    };
+    let reader = reader.take().expect("output reader present");
+    if reader.handle.join().is_err() {
+        return Some(Err(OcrError::new(OcrErrorKind::EngineFailed)));
+    }
+    Some(result.map_err(|_| OcrError::new(OcrErrorKind::EngineFailed)))
+}
+
+fn join_output_reader(reader: OutputReader) -> Result<Vec<u8>, OcrError> {
+    let result = reader
+        .receiver
+        .recv()
+        .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?;
+    reader
+        .handle
         .join()
-        .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?
-        .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))
+        .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?;
+    result.map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))
 }
 
 fn read_rendered_ppm(path: &Path) -> Result<Vec<u8>, OcrError> {
