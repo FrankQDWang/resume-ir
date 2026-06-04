@@ -1,7 +1,7 @@
 use std::fs;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use meta_store::{
     Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
@@ -24,9 +24,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,]
     );
-    assert_eq!(store.schema_version().unwrap(), 16);
+    assert_eq!(store.schema_version().unwrap(), 17);
 
     for table_name in [
         "candidate",
@@ -42,13 +42,14 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "import_scan_error",
         "embedding_job_spec",
         "import_task_cancellation",
+        "query_observation",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 16);
+    assert_eq!(store.schema_version().unwrap(), 17);
 }
 
 #[test]
@@ -82,7 +83,7 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 16);
+        assert_eq!(store.schema_version().unwrap(), 17);
     }
 
     let encrypted_bytes = fs::read(&db_path).unwrap();
@@ -129,7 +130,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         plaintext.run_migrations().unwrap();
         plaintext.upsert_document(&document).unwrap();
         plaintext.upsert_resume_version(&version).unwrap();
-        assert_eq!(plaintext.schema_version().unwrap(), 16);
+        assert_eq!(plaintext.schema_version().unwrap(), 17);
         assert_eq!(
             plaintext.metadata_encryption_state(),
             MetadataEncryptionState::Plaintext
@@ -144,7 +145,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         migrated.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(migrated.schema_version().unwrap(), 16);
+    assert_eq!(migrated.schema_version().unwrap(), 17);
     assert_eq!(
         migrated.document_by_id(&document.id).unwrap().unwrap().id,
         document.id
@@ -1466,7 +1467,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7, 15]);
-        assert_eq!(reopened.schema_version().unwrap(), 16);
+        assert_eq!(reopened.schema_version().unwrap(), 17);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1775,6 +1776,38 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
 }
 
 #[test]
+fn query_observations_are_aggregated_without_query_text() {
+    let store = migrated_store();
+    let now = UnixTimestamp::from_unix_seconds(1_800_010_000);
+
+    for (offset, duration_ms, result_count) in [(0, 5, 2), (1, 20, 1), (2, 100, 0), (3, 200, 4)] {
+        store
+            .record_query_observation(
+                "fulltext",
+                Duration::from_millis(duration_ms),
+                result_count,
+                UnixTimestamp::from_unix_seconds(now.as_unix_seconds() + offset),
+            )
+            .unwrap();
+    }
+
+    let summary = store.status_summary().unwrap();
+
+    assert_eq!(summary.query_latency.sample_count, 4);
+    assert_eq!(summary.query_latency.p50_ms, Some(20));
+    assert_eq!(summary.query_latency.p95_ms, Some(200));
+    assert_eq!(summary.query_latency.p99_ms, Some(200));
+    assert_eq!(summary.query_latency.last_result_count, Some(4));
+    assert_eq!(
+        summary.query_latency.last_observed_at,
+        Some(UnixTimestamp::from_unix_seconds(1_800_010_003))
+    );
+    assert!(store
+        .record_query_observation("private query text", Duration::from_millis(1), 0, now,)
+        .is_err());
+}
+
+#[test]
 fn ocr_job_failure_kind_persists_reports_and_clears_on_retry_claim() {
     let store = migrated_store();
     let now = UnixTimestamp::from_unix_seconds(1_800_010_000);
@@ -1838,7 +1871,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 16);
+        assert_eq!(reopened.schema_version().unwrap(), 17);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -2286,7 +2319,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             report.applied_versions(),
             &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 16);
+        assert_eq!(reopened.schema_version().unwrap(), 17);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -2318,7 +2351,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 16);
+        assert_eq!(reopened.schema_version().unwrap(), 17);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

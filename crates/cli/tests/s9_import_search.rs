@@ -130,6 +130,56 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
     assert!(search_after_empty_stdout.contains("synthetic-java-platform.pdf"));
     assert!(search_after_empty_stdout.contains("synthetic-java-engineer.docx"));
 
+    let telemetry_status = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "status"])
+        .output()
+        .expect("run resume-cli status after searches");
+    assert!(telemetry_status.status.success());
+    assert!(telemetry_status.stderr.is_empty());
+    let telemetry_status_stdout = String::from_utf8_lossy(&telemetry_status.stdout);
+    assert!(telemetry_status_stdout.contains("query telemetry samples: 3"));
+    assert!(telemetry_status_stdout.contains("query latency p50 ms:"));
+    assert!(telemetry_status_stdout.contains("query latency p95 ms:"));
+    assert!(telemetry_status_stdout.contains("query latency p99 ms:"));
+    assert!(!telemetry_status_stdout.contains("Java"));
+    assert!(!telemetry_status_stdout.contains(path_str(&data_dir)));
+    assert!(!telemetry_status_stdout.contains(path_str(&fixture_root)));
+    assert!(!telemetry_status_stdout.contains(path_str(&canonical_fixture_root)));
+
+    let telemetry_doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor after searches");
+    assert!(telemetry_doctor.status.success());
+    assert!(telemetry_doctor.stderr.is_empty());
+    let telemetry_doctor_stdout = String::from_utf8_lossy(&telemetry_doctor.stdout);
+    assert!(telemetry_doctor_stdout.contains("query telemetry samples: 3"));
+    assert!(telemetry_doctor_stdout.contains("query latency p95 ms:"));
+    assert!(!telemetry_doctor_stdout.contains("Java"));
+    assert!(!telemetry_doctor_stdout.contains(path_str(&data_dir)));
+
+    let telemetry_diagnostics = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics after searches");
+    assert!(telemetry_diagnostics.status.success());
+    assert!(telemetry_diagnostics.stderr.is_empty());
+    let telemetry_diagnostics_stdout = String::from_utf8_lossy(&telemetry_diagnostics.stdout);
+    let telemetry_json: serde_json::Value =
+        serde_json::from_slice(&telemetry_diagnostics.stdout).unwrap();
+    assert_eq!(telemetry_json["query_latency"]["sample_count"], 3);
+    assert!(telemetry_json["query_latency"]["p50_ms"].as_u64().is_some());
+    assert!(telemetry_json["query_latency"]["p95_ms"].as_u64().is_some());
+    assert!(telemetry_json["query_latency"]["p99_ms"].as_u64().is_some());
+    assert_eq!(telemetry_json["raw_queries"], "<redacted>");
+    assert!(!telemetry_diagnostics_stdout.contains("Java"));
+    assert!(!telemetry_diagnostics_stdout.contains(path_str(&data_dir)));
+
     remove_dir(&data_dir);
     remove_dir(&empty_root);
 }

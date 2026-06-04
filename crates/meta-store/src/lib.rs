@@ -36,6 +36,8 @@ const SCHEMA_VERSION_V13: u32 = 13;
 const SCHEMA_VERSION_V14: u32 = 14;
 const SCHEMA_VERSION_V15: u32 = 15;
 const SCHEMA_VERSION_V16: u32 = 16;
+const SCHEMA_VERSION_V17: u32 = 17;
+const QUERY_OBSERVATION_RETENTION_ROWS: i64 = 10_000;
 const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
 const METADATA_ENCRYPTION_KEY_HEX_LEN: usize = METADATA_ENCRYPTION_KEY_LEN * 2;
@@ -772,6 +774,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V14, SCHEMA_V14),
             (SCHEMA_VERSION_V15, SCHEMA_V15),
             (SCHEMA_VERSION_V16, SCHEMA_V16),
+            (SCHEMA_VERSION_V17, SCHEMA_V17),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -3359,9 +3362,55 @@ impl MetaStore {
                 "status.ocr_language_unavailable",
             )?,
             entity_mentions: i64_to_u64(entity_mentions, "status.entity_mentions")?,
+            query_latency: query_latency_summary(&connection)?,
             index_health,
             last_snapshot_id,
         })
+    }
+
+    pub fn record_query_observation(
+        &self,
+        mode: &str,
+        duration: Duration,
+        result_count: usize,
+        observed_at: UnixTimestamp,
+    ) -> Result<()> {
+        let mode = validate_query_observation_mode(mode)?;
+        let duration_ms = u64::try_from(duration.as_millis())
+            .ok()
+            .and_then(|value| u64_to_i64(value, "query_observation.duration_ms").ok())
+            .ok_or_else(|| MetaStoreError::invalid_value("query_observation.duration_ms"))?;
+        let result_count = usize_to_i64(result_count, "query_observation.result_count")?;
+        let connection = self.connection.borrow_mut();
+        connection
+            .execute(
+                "\
+                INSERT INTO query_observation (
+                    observed_at_seconds, mode, duration_ms, result_count
+                )
+                VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    observed_at.as_unix_seconds(),
+                    mode,
+                    duration_ms,
+                    result_count,
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        connection
+            .execute(
+                "\
+                DELETE FROM query_observation
+                WHERE rowid NOT IN (
+                    SELECT rowid
+                    FROM query_observation
+                    ORDER BY observed_at_seconds DESC, rowid DESC
+                    LIMIT ?1
+                )",
+                params![QUERY_OBSERVATION_RETENTION_ROWS],
+            )
+            .map_err(MetaStoreError::storage)?;
+        Ok(())
     }
 
     fn query_jobs<P>(&self, filter_clause: &str, params: P) -> Result<Vec<IngestJob>>
@@ -3974,8 +4023,19 @@ pub struct StoreStatusSummary {
     pub ocr_page_budget_blocked: u64,
     pub ocr_language_unavailable: u64,
     pub entity_mentions: u64,
+    pub query_latency: QueryLatencySummary,
     pub index_health: IndexStateStatus,
     pub last_snapshot_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QueryLatencySummary {
+    pub sample_count: u64,
+    pub p50_ms: Option<u64>,
+    pub p95_ms: Option<u64>,
+    pub p99_ms: Option<u64>,
+    pub last_result_count: Option<u64>,
+    pub last_observed_at: Option<UnixTimestamp>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4633,6 +4693,20 @@ ALTER TABLE ingest_job
     );
 "#;
 
+const SCHEMA_V17: &str = r#"
+CREATE TABLE query_observation (
+    observed_at_seconds INTEGER NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('fulltext', 'semantic', 'hybrid')),
+    duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+    result_count INTEGER NOT NULL CHECK (result_count >= 0)
+);
+
+CREATE INDEX query_observation_observed_idx
+    ON query_observation(observed_at_seconds);
+CREATE INDEX query_observation_duration_idx
+    ON query_observation(duration_ms);
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -5170,6 +5244,70 @@ fn validate_confidence_threshold(confidence: f32, field: &'static str) -> Result
         return Err(MetaStoreError::invalid_value(field));
     }
     Ok(())
+}
+
+fn validate_query_observation_mode(mode: &str) -> Result<&'static str> {
+    match mode {
+        "fulltext" => Ok("fulltext"),
+        "semantic" => Ok("semantic"),
+        "hybrid" => Ok("hybrid"),
+        _ => Err(MetaStoreError::invalid_value("query_observation.mode")),
+    }
+}
+
+fn query_latency_summary(connection: &Connection) -> Result<QueryLatencySummary> {
+    let mut statement = connection
+        .prepare("SELECT duration_ms FROM query_observation ORDER BY duration_ms ASC")
+        .map_err(MetaStoreError::storage)?;
+    let mut rows = statement.query([]).map_err(MetaStoreError::storage)?;
+    let mut durations = Vec::new();
+    while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+        durations.push(i64_to_u64(
+            row.get::<_, i64>(0).map_err(MetaStoreError::storage)?,
+            "query_observation.duration_ms",
+        )?);
+    }
+    drop(rows);
+    drop(statement);
+
+    let last = connection
+        .query_row(
+            "\
+            SELECT result_count, observed_at_seconds
+            FROM query_observation
+            ORDER BY observed_at_seconds DESC, rowid DESC
+            LIMIT 1",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .map_err(MetaStoreError::storage)?;
+    let (last_result_count, last_observed_at) = match last {
+        Some((result_count, observed_at)) => (
+            Some(i64_to_u64(result_count, "query_observation.result_count")?),
+            Some(UnixTimestamp::from_unix_seconds(observed_at)),
+        ),
+        None => (None, None),
+    };
+
+    Ok(QueryLatencySummary {
+        sample_count: u64::try_from(durations.len())
+            .map_err(|_| MetaStoreError::invalid_value("query_observation.sample_count"))?,
+        p50_ms: percentile_nearest_rank(&durations, 50),
+        p95_ms: percentile_nearest_rank(&durations, 95),
+        p99_ms: percentile_nearest_rank(&durations, 99),
+        last_result_count,
+        last_observed_at,
+    })
+}
+
+fn percentile_nearest_rank(sorted_values: &[u64], percentile: usize) -> Option<u64> {
+    if sorted_values.is_empty() {
+        return None;
+    }
+    let rank = sorted_values.len() * percentile;
+    let index = rank.div_ceil(100).saturating_sub(1);
+    sorted_values.get(index).copied()
 }
 
 fn validate_ocr_page_cache_entry(entry: &OcrPageCacheEntry) -> Result<()> {

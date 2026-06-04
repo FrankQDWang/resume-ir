@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, and S167 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, and S168 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -269,7 +269,11 @@ obsolete preliminary files and checklists are not product scope.
   production runbooks, a runbook CI policy guard, a workflow policy guard, and
   release artifact manifest plus SBOM policy guards, GitHub Actions runtime
   compatibility guards, hosted release dry-run execution evidence, and a
-  synthetic OCR throughput benchmark/gate exist.
+  synthetic OCR throughput benchmark/gate exist. Local runtime query telemetry
+  now records bounded redacted aggregate samples for successful CLI and daemon
+  searches, and reports query latency P50/P95/P99 plus last result count through
+  local status, daemon status IPC, doctor, and redacted diagnostics without
+  storing or printing raw query text.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, labeled vector-quality, and private real-corpus release-evidence
   benchmark gates; query, OCR, and vector smoke gates are wired into PR and
@@ -455,8 +459,71 @@ obsolete preliminary files and checklists are not product scope.
 | S165 | Product release workflow readiness gate complete locally | Focused guard checks first failed because `.github/workflows/release.yml` did not explicitly run `./scripts/ci/check-release-readiness.sh`; the release workflow only reached it indirectly through `verify-local`. After implementation, the Release dry-run job has a named stable-release blocked confirmation step after workspace verification, and both workflow policy plus release-readiness guard require that explicit release workflow wiring. Focused release-readiness guard, workflow guard, shell syntax, workflow YAML parse, diff check, full local verification, and public repo guard passed locally. | This slice strengthens hosted Release dry-run fail-closed behavior only. It does not clear signing, notarization, GitHub Release upload approval, real 100k/1M private benchmark evidence, licensed OCR/model distribution, installer/service lifecycle validation, or cross-platform release blockers. |
 | S166 | Product hosted Windows full-text corruption-test stability complete locally | The pushed S165 run passed dependency, license, runbook, public guard, Rust Workspace, and macOS Platform CI, but hosted Windows Platform CI failed in `s8_fulltext::active_snapshot_corruption_falls_back_to_last_good_snapshot`: the test attempted to overwrite the freshly published active encrypted snapshot with `fs::write` and hit Windows `os error 33` because another process still held a region lock. Root cause was the test's corruption setup bypassing the existing transient snapshot filesystem retry policy. After implementation, the corruption write uses a bounded test helper that retries the same Windows file-lock diagnostics before asserting fallback behavior. The hosted-failing exact test, full `index-fulltext`, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers hosted Windows full-text test harness stability only. It does not change production full-text fallback behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear large-corpus, model, installer, signing, notarization, or release blockers. |
 | S167 | Product incremental full-text snapshot update path complete locally | A focused full-text test first failed because `publish_incremental_snapshot` did not exist. After implementation, index-fulltext can synthesize a next snapshot from the active published snapshot by retaining unchanged documents, replacing same-doc_id delta documents, excluding deleted doc_ids, and publishing through the existing encrypted snapshot path. Import, OCR text indexing, and soft-delete now use this incremental snapshot document synthesis before falling back to metadata rebuild if the active snapshot is unreadable. A CLI regression corrupts the active encrypted snapshot and proves reimport rebuilds from metadata without leaking paths. Focused RED/GREEN, full index-fulltext, import-pipeline, S9 import/search, S14 delete/search, S15 OCR handoff, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice reduces full-text update work and preserves corrupt-active fallback behavior for synthetic local paths only. It does not prove million-scale incremental latency, real-corpus performance, cross-platform watcher soak, platform installer/service validation, signing, notarization, OCR/model licensing, or release readiness. |
+| S168 | Product query telemetry observability complete locally | A focused meta-store test first failed because `record_query_observation` and `StoreStatusSummary.query_latency` did not exist. After implementation, metadata schema V17 adds a bounded `query_observation` table that stores mode, duration, result count, and timestamp only, never query text. Successful local CLI searches and daemon full-text IPC searches record best-effort samples. Local status, daemon status IPC, doctor, and `export-diagnostics --redact` report aggregate query telemetry sample count plus P50/P95/P99 and last result count without raw queries or paths. Focused RED/GREEN, full meta-store, S4 status, S9 import/search, S13 diagnostics, daemon S20 status IPC, daemon S48 search IPC, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice adds runtime observability only. It does not prove the `<200ms` hybrid P95 target, real 100k/1M corpus latency, real semantic/vector quality, cross-platform performance evidence, installer/service validation, signing, notarization, OCR/model licensing, or stable release readiness. |
 
 ## Command Log
+
+### S168
+
+Design target:
+
+- Close part of the P6 observability gap from the acceptance docs: local status
+  and diagnostics should expose query P50/P95/P99 rather than relying only on
+  external benchmark reports.
+- Preserve privacy: runtime query telemetry must not store query text, filter
+  values, paths, filenames, snippets, or resume text.
+- Keep the claim bounded: this is local telemetry for successful searches, not
+  proof of the real-corpus `<200ms` hybrid P95 target.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p meta-store --test s3_sqlite query_observations_are_aggregated_without_query_text --locked -- --exact
+```
+
+Output summary:
+
+- The focused meta-store test failed before implementation because
+  `MetaStore::record_query_observation` and
+  `StoreStatusSummary::query_latency` did not exist.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p meta-store --test s3_sqlite query_observations_are_aggregated_without_query_text --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_authenticates_filters_and_redacts_results --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p meta-store --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s4_cli --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s13_diagnostics --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s9_import_search --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-daemon --test s20_ipc --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-daemon --test s48_search_ipc --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p meta-store -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- The meta-store focused test passed after V17 migration and query telemetry
+  aggregation were added.
+- The CLI focused test passed, proving successful local searches update
+  telemetry and status, doctor, and redacted diagnostics report P50/P95/P99
+  without the raw query or local paths.
+- The daemon focused test passed, proving full-text search-over-IPC updates
+  telemetry and daemon status JSON reports redacted aggregate latency.
+- Full meta-store, S4 status, S9 import/search, S13 diagnostics, daemon S20
+  status IPC, daemon S48 search IPC, fmt, focused clippy, full local
+  verification, and public repo guard passed.
+
+Scope note:
+
+- S168 is local synthetic telemetry. It does not prove production query latency,
+  real-corpus benchmark targets, semantic/vector quality, cross-platform
+  performance, installer/service validation, signing, notarization, model/OCR
+  licensing, or stable release readiness.
 
 ### S167
 

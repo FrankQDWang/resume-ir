@@ -11,7 +11,7 @@ use std::sync::{
     Arc,
 };
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use embedder::{
     Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
@@ -2422,6 +2422,7 @@ fn execute_search_command(
         ));
     }
 
+    let query_started = Instant::now();
     let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
         .map_err(DaemonError::fulltext)
         .map_err(IpcCommandError::Internal)?
@@ -2438,6 +2439,7 @@ fn execute_search_command(
     };
     let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
     let hits = daemon_fulltext_search(&index, &store, &args)?;
+    record_daemon_query_observation(&store, query_started.elapsed(), hits.len());
     let results = hits
         .iter()
         .map(|hit| {
@@ -2573,6 +2575,13 @@ fn daemon_fulltext_search(
         .map_err(DaemonError::fulltext)
         .map_err(IpcCommandError::Internal)?;
     daemon_visible_hits(store, hits, &args.filters, args.top_k)
+}
+
+fn record_daemon_query_observation(store: &MetaStore, duration: Duration, result_count: usize) {
+    let Ok(observed_at) = current_timestamp() else {
+        return;
+    };
+    let _ = store.record_query_observation("fulltext", duration, result_count, observed_at);
 }
 
 fn daemon_visible_hits(
@@ -3557,6 +3566,14 @@ fn status_json_once(store: &MetaStore) -> Result<String> {
         "import_tasks_cancelled": summary.import_tasks_cancelled,
         "import_scan_scopes": summary.import_scan_scopes,
         "import_scan_errors": summary.import_scan_errors,
+        "query_latency": {
+            "sample_count": summary.query_latency.sample_count,
+            "p50_ms": summary.query_latency.p50_ms,
+            "p95_ms": summary.query_latency.p95_ms,
+            "p99_ms": summary.query_latency.p99_ms,
+            "last_result_count": summary.query_latency.last_result_count,
+            "raw_queries": "<redacted>",
+        },
         "latest_import_scan": latest_import_scan,
         "active_profile": "balanced",
         "index_health": index_health_label(summary.index_health),

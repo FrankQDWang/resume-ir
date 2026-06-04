@@ -76,7 +76,7 @@ fn daemon_search_ipc_authenticates_filters_and_redacts_results() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "1",
+            "2",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -119,6 +119,19 @@ fn daemon_search_ipc_authenticates_filters_and_redacts_results() {
     assert_eq!(results[0]["rank"], 1);
     assert_eq!(results[0]["doc_id"], first_doc.to_string());
     assert_eq!(results[0]["version_id"], first_version.to_string());
+
+    let status_response = http_get_status(&endpoint, &token);
+    assert!(status_response.contains("HTTP/1.1 200 OK"));
+    assert!(!status_response.contains("Java"));
+    assert!(!status_response.contains(path_str(&data_dir)));
+    assert!(!status_response.contains(&token));
+    let status_body = status_response.split("\r\n\r\n").nth(1).unwrap_or_default();
+    let status_payload: serde_json::Value = serde_json::from_str(status_body).unwrap();
+    assert_eq!(status_payload["schema_version"], "daemon.status.v1");
+    assert_eq!(status_payload["query_latency"]["sample_count"], 1);
+    assert!(status_payload["query_latency"]["p50_ms"].as_u64().is_some());
+    assert!(status_payload["query_latency"]["p95_ms"].as_u64().is_some());
+    assert!(status_payload["query_latency"]["p99_ms"].as_u64().is_some());
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
@@ -656,6 +669,25 @@ fn http_post_search_command(
     stream
         .read_to_string(&mut response)
         .expect("read search response");
+    response
+}
+
+fn http_get_status(endpoint: &str, token: &str) -> String {
+    let rest = endpoint
+        .strip_prefix("http://")
+        .expect("endpoint has http scheme");
+    let (addr, _path) = rest.split_once('/').expect("endpoint has path");
+    let request = format!(
+        "GET /status HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n",
+    );
+    let mut stream = TcpStream::connect(addr).expect("connect daemon ipc");
+    stream
+        .write_all(request.as_bytes())
+        .expect("write status request");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("read status response");
     response
 }
 

@@ -35,8 +35,8 @@ use meta_store::{
     ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
     ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
     ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
-    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion,
-    ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
+    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, QueryLatencySummary,
+    ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -2104,6 +2104,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("import tasks cancelled: {}", summary.import_tasks_cancelled);
     println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("import scan errors: {}", summary.import_scan_errors);
+    print_query_latency_summary(&summary.query_latency);
     if let Some(scope) = latest_import_scan.as_ref() {
         print_import_scan_progress(scope);
     }
@@ -2159,6 +2160,72 @@ fn print_import_scan_progress(scope: &ImportScanScope) {
     println!(
         "latest import scan budget: {}",
         import_scan_budget_progress_label(scope)
+    );
+}
+
+fn print_query_latency_summary(summary: &QueryLatencySummary) {
+    println!("query telemetry samples: {}", summary.sample_count);
+    if summary.sample_count == 0 {
+        return;
+    }
+    println!(
+        "query latency p50 ms: {}",
+        format_optional_u64(summary.p50_ms)
+    );
+    println!(
+        "query latency p95 ms: {}",
+        format_optional_u64(summary.p95_ms)
+    );
+    println!(
+        "query latency p99 ms: {}",
+        format_optional_u64(summary.p99_ms)
+    );
+    println!(
+        "query latest result count: {}",
+        format_optional_u64(summary.last_result_count)
+    );
+}
+
+fn print_query_latency_json_summary(query_latency: &serde_json::Value) {
+    let sample_count = query_latency
+        .get("sample_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    println!("query telemetry samples: {sample_count}");
+    if sample_count == 0 {
+        return;
+    }
+    println!(
+        "query latency p50 ms: {}",
+        format_optional_u64(
+            query_latency
+                .get("p50_ms")
+                .and_then(serde_json::Value::as_u64)
+        )
+    );
+    println!(
+        "query latency p95 ms: {}",
+        format_optional_u64(
+            query_latency
+                .get("p95_ms")
+                .and_then(serde_json::Value::as_u64)
+        )
+    );
+    println!(
+        "query latency p99 ms: {}",
+        format_optional_u64(
+            query_latency
+                .get("p99_ms")
+                .and_then(serde_json::Value::as_u64)
+        )
+    );
+    println!(
+        "query latest result count: {}",
+        format_optional_u64(
+            query_latency
+                .get("last_result_count")
+                .and_then(serde_json::Value::as_u64)
+        )
     );
 }
 
@@ -2437,6 +2504,11 @@ fn render_ipc_status(body: &serde_json::Value) {
         "import scan errors: {}",
         json_u64(body, "import_scan_errors")
     );
+    if let Some(query_latency) = body.get("query_latency") {
+        print_query_latency_json_summary(query_latency);
+    } else {
+        println!("query telemetry samples: 0");
+    }
     if let Some(latest_import) = body.get("latest_import_scan") {
         render_ipc_import_scan_progress(latest_import);
     }
@@ -4364,6 +4436,7 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .saturating_mul(5)
         .clamp(search_args.top_k, 100);
 
+    let query_started = Instant::now();
     let hits = match search_args.mode {
         SearchMode::FullText => {
             let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
@@ -4401,9 +4474,30 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         }
     };
 
+    record_search_query_observation(
+        data_dir,
+        search_args.mode,
+        query_started.elapsed(),
+        hits.len(),
+    );
     print_search_hits(hits);
 
     Ok(())
+}
+
+fn record_search_query_observation(
+    data_dir: &Path,
+    mode: SearchMode,
+    duration: Duration,
+    result_count: usize,
+) {
+    let Ok(observed_at) = current_timestamp() else {
+        return;
+    };
+    let Ok(store) = open_store(data_dir) else {
+        return;
+    };
+    let _ = store.record_query_observation(mode.label(), duration, result_count, observed_at);
 }
 
 fn search_ipc_command(endpoint: &IpcSearchEndpoint, search_args: &SearchArgs) -> Result<()> {
@@ -6228,6 +6322,7 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("entity mentions: {}", summary.entity_mentions);
     println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("import scan errors: {}", summary.import_scan_errors);
+    print_query_latency_summary(&summary.query_latency);
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("index health: {}", index_health_label(summary.index_health));
     println!(
@@ -6410,6 +6505,29 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "  \"query_smoke\": \"{}\",",
         index_diagnostic.query_smoke_json_label()
     );
+    println!("  \"query_latency\": {{");
+    println!(
+        "    \"sample_count\": {},",
+        summary.query_latency.sample_count
+    );
+    println!(
+        "    \"p50_ms\": {},",
+        format_json_optional_u64(summary.query_latency.p50_ms)
+    );
+    println!(
+        "    \"p95_ms\": {},",
+        format_json_optional_u64(summary.query_latency.p95_ms)
+    );
+    println!(
+        "    \"p99_ms\": {},",
+        format_json_optional_u64(summary.query_latency.p99_ms)
+    );
+    println!(
+        "    \"last_result_count\": {},",
+        format_json_optional_u64(summary.query_latency.last_result_count)
+    );
+    println!("    \"raw_queries\": \"<redacted>\"");
+    println!("  }},");
     println!(
         "  \"contact_hash_key\": \"{}\",",
         contact_key.state().label()
