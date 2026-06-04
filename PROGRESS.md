@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, and S155 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, and S156 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -59,8 +59,8 @@ obsolete preliminary files and checklists are not product scope.
   polling background rescan for completed import roots, OS filesystem watcher
   integration that requeues completed roots through the existing durable import
   task path on local file changes, encrypted full-text published snapshot
-  publish/recover with Windows transient read-open and snapshot-publish
-  filesystem retry, delete rebuild,
+  publish/recover with extended Windows transient read-open and snapshot-publish
+  filesystem retries, delete rebuild,
   redacted snippets, and an
   isolated local PDF/Word witness command
   that can use either an explicit root or the local-discovery root preset,
@@ -260,7 +260,8 @@ obsolete preliminary files and checklists are not product scope.
   binaries, OCR command crash probes, model-checksum probes against controlled
   local model artifacts, local model-pack manifest validation, targeted fault
   tests, persistent vector snapshot writer-lock protection against stale
-  concurrent writers, hosted-Windows full-text snapshot read-open retry,
+  concurrent writers, hosted-Windows full-text snapshot read-open/publish retry
+  hardening,
   local-only macOS LaunchAgent start/stop witness evidence, local-only
   production runbooks, a runbook CI policy guard, a workflow policy guard, and
   release artifact manifest plus SBOM policy guards, GitHub Actions runtime
@@ -439,8 +440,67 @@ obsolete preliminary files and checklists are not product scope.
 | S153 | Product embedding job-spec purge audit complete locally | A focused delete/purge test first failed because `purge --deleted` did not report removal of persisted embedding job specs linked to purged ingest jobs for deleted documents. After implementation, the meta-store ingest-job purge API reports both purged ingest jobs and the count of embedding job specs removed, and CLI purge prints `embedding job specs purged` without paths, model command details, or resume text. Focused RED/GREEN test, full delete suite, full meta-store suite, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | This slice covers current embedding job-spec cleanup visibility only. It does not prove forensic erasure of SQLite free pages, choose/license/distribute a real embedding model, prove semantic quality, prove large-corpus ANN performance, or clear model, benchmark, installer, signing, notarization, or real cross-platform validation blockers. |
 | S154 | Product Windows full-text snapshot publish stability complete locally | Hosted Windows PR #9 repeatedly failed on the previous commit with full-text snapshot publish returning `os error 33` during encrypted snapshot publication. A focused regression first failed because transient snapshot FS retry did not treat the Windows file-lock violation as retryable. After implementation, snapshot publish retries transient directory cleanup, encrypted snapshot publish cleanup, active-pointer replacement operations, and Windows file-lock diagnostics without exposing paths or payloads. Focused RED/GREEN tests, full `index-fulltext`, full import/search witness suite, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | This slice covers transient Windows full-text snapshot filesystem locks only. It does not prove all platform installer/service flows, large-corpus performance, full OCR/model quality, signing, notarization, or release readiness. |
 | S155 | Product private real-corpus benchmark release-gate slice complete locally | Focused benchmark gate tests first failed because `resume-benchmark gate` had no `--require-private-real-corpus` / `--require-million-scale` API and later allowed private real-corpus reports without fail-closed boundary validation or strict value typing. After implementation, synthetic smoke still requires `--allow-synthetic`, while any `dataset_kind: "private-real-corpus"` report must use strict aggregate-only JSON with local/redacted boundary fields, sha256 corpus/query digests, fixed target claim, and typed non-raw numeric/string fields; release gates can additionally require 1M scale. Focused RED/GREEN tests, full benchmark-runner tests, fmt, focused clippy, diff check, runbook policy, public repo guard, and full local verification passed. | This slice validates redacted private benchmark evidence format only. It does not create or upload real benchmark reports, run 100k/1M corpora, prove the P95 target on representative hardware, or clear real-corpus performance, model, installer, signing, notarization, or cross-platform blockers. |
+| S156 | Product Windows delete-triggered full-text rebuild stability complete locally | Hosted Windows PR #9 failed after S155 in `delete_soft_tombstones_document_and_removes_it_from_default_search` with `resume-cli delete` returning `search index update failed`, pointing at encrypted full-text snapshot rebuild under transient Windows file locks. Focused regressions first failed because full-text index open did not retry Windows share violations (`os error 32`) and snapshot filesystem retry exhausted before a longer lock-release window. After implementation, full-text read-open and snapshot publish/cleanup retry the Windows 5/32/33 lock diagnostics for a bounded 1-second window. Focused RED/GREEN tests, full `index-fulltext`, the failing delete test, fmt, focused clippy, diff check, and full local verification passed. | This slice covers Windows transient file-lock stability for full-text snapshot rebuilds only. It does not prove hosted Windows CI has passed until the pushed branch check completes, nor does it clear large-corpus, model, installer, signing, notarization, or release blockers. |
 
 ## Command Log
+
+### S156
+
+Design target:
+
+- Stabilize `resume-cli delete` full-text rebuilds on hosted Windows after PR #9
+  failed with `search index update failed` in the delete/search suite.
+- Treat Windows share/lock violations as transient during full-text index open
+  and snapshot publish/cleanup, while keeping retry bounded and local-only.
+- Do not print snapshot paths, resume text, diagnostics, or local data.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext index_open_retries_transient_windows_share_violation --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext transient_snapshot_fs_operation_retries_extended_windows_lock_release --locked
+```
+
+Output summary:
+
+- `index_open_retries_transient_windows_share_violation` failed because the
+  full-text index open retry path did not treat a Windows `os error 32` share
+  violation as transient.
+- `transient_snapshot_fs_operation_retries_extended_windows_lock_release` failed
+  because the existing snapshot filesystem retry exhausted before a longer
+  Windows `os error 33` lock-release sequence.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext index_open_retries_transient_windows_share_violation --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext transient_snapshot_fs_operation_retries_extended_windows_lock_release --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s14_delete_search delete_soft_tombstones_document_and_removes_it_from_default_search --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p index-fulltext -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused RED/GREEN tests passed after implementation.
+- Full `index-fulltext` passed: 7 unit tests, 13 integration tests, and
+  doc-tests.
+- The hosted-failing delete regression passed locally.
+- Fmt, focused clippy, diff check, and full local verification passed. Full
+  local verification included workspace tests/doc-tests, license/runbook/
+  workflow checks, release artifact/SBOM checks, macOS package check, and the
+  public repository guard; Windows package check was skipped on non-Windows by
+  the guard script.
+
+Scope note:
+
+- S156 hardens transient Windows full-text file-lock handling only. It does not
+  prove all hosted Windows jobs pass until PR #9 reruns, and it does not clear
+  large-corpus performance, OCR/model quality, installer/service, signing,
+  notarization, or release blockers.
 
 ### S155
 

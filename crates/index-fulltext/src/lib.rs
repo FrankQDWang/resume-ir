@@ -38,10 +38,10 @@ const SNAPSHOT_HEADER_ENCRYPTED_V1: &str = "resume-ir-fulltext-snapshot-encrypte
 const SNAPSHOT_ARCHIVE_HEADER_V1: &[u8] = b"resume-ir-fulltext-snapshot-archive-v1\n";
 const SNAPSHOT_KEY_LEN: usize = 32;
 const SNAPSHOT_NONCE_LEN: usize = 24;
-const SNAPSHOT_PUBLISH_RETRY_ATTEMPTS: usize = 6;
-const SNAPSHOT_PUBLISH_RETRY_DELAY: Duration = Duration::from_millis(25);
-const INDEX_OPEN_RETRY_ATTEMPTS: usize = 6;
-const INDEX_OPEN_RETRY_DELAY: Duration = Duration::from_millis(25);
+const SNAPSHOT_PUBLISH_RETRY_ATTEMPTS: usize = 20;
+const SNAPSHOT_PUBLISH_RETRY_DELAY: Duration = Duration::from_millis(50);
+const INDEX_OPEN_RETRY_ATTEMPTS: usize = 20;
+const INDEX_OPEN_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct IndexDocument {
@@ -396,9 +396,7 @@ fn retry_transient_index_open<T>(
 fn is_transient_index_open_error(error: &FullTextError) -> bool {
     match error {
         FullTextError::Io { diagnostic } | FullTextError::Tantivy { diagnostic } => {
-            diagnostic.contains("os error 5")
-                || diagnostic.contains("Access is denied")
-                || diagnostic.contains("Permission denied")
+            is_windows_file_lock_diagnostic(diagnostic)
         }
         FullTextError::Internal { .. } => false,
     }
@@ -588,7 +586,17 @@ fn is_transient_snapshot_publish_error(error: &std::io::Error) -> bool {
     }
 
     let diagnostic = error.to_string();
-    diagnostic.contains("being used by another process")
+    is_windows_file_lock_diagnostic(&diagnostic)
+}
+
+fn is_windows_file_lock_diagnostic(diagnostic: &str) -> bool {
+    let diagnostic = diagnostic.to_ascii_lowercase();
+    diagnostic.contains("os error 5")
+        || diagnostic.contains("os error 32")
+        || diagnostic.contains("os error 33")
+        || diagnostic.contains("access is denied")
+        || diagnostic.contains("permission denied")
+        || diagnostic.contains("being used by another process")
         || diagnostic.contains("locked a portion of the file")
 }
 
@@ -1704,6 +1712,33 @@ mod tests {
     }
 
     #[test]
+    fn index_open_retries_transient_windows_share_violation() {
+        let mut attempts = 0_usize;
+
+        let opened = retry_transient_index_open(
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    let diagnostic = concat!(
+                        "An IO error occurred: 'The process cannot access the file because it ",
+                        "is being used by another process. (os error 32)'"
+                    );
+                    return Err(FullTextError::Tantivy {
+                        diagnostic: diagnostic.to_string(),
+                    });
+                }
+                Ok("opened")
+            },
+            4,
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(opened, "opened");
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
     fn transient_snapshot_fs_operation_retries_permission_denied() {
         let mut attempts = 0_usize;
 
@@ -1740,6 +1775,25 @@ mod tests {
 
         assert_eq!(result, "published");
         assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn transient_snapshot_fs_operation_retries_extended_windows_lock_release() {
+        let mut attempts = 0_usize;
+
+        let result = retry_transient_snapshot_fs_operation(std::time::Duration::ZERO, || {
+            attempts += 1;
+            if attempts <= 8 {
+                return Err(std::io::Error::other(
+                    "The process cannot access the file because another process has locked a portion of the file. (os error 33)",
+                ));
+            }
+            Ok("removed")
+        })
+        .unwrap();
+
+        assert_eq!(result, "removed");
+        assert_eq!(attempts, 9);
     }
 
     struct TransientLockPublisher {
