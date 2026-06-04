@@ -70,6 +70,8 @@ const OCR_PAGE_BUDGET_REMEDIATION: &str =
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
 const WITNESS_DEFAULT_MAX_FILES: usize = 10_000;
+const WITNESS_CLEANUP_RETRY_ATTEMPTS: usize = 6;
+const WITNESS_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(25);
 const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, witness, doctor, or export-diagnostics";
 
 fn main() {
@@ -2504,6 +2506,7 @@ fn witness_command(args: &[String]) -> Result<()> {
     } else {
         WitnessOcrStatus::NotRequested
     };
+    drop(store);
     let private_data_removed = temp_dirs.cleanup();
 
     println!("resume-ir local witness");
@@ -3088,15 +3091,29 @@ impl WitnessTempDirs {
     }
 
     fn cleanup(&self) -> bool {
-        let _ = fs::remove_dir_all(&self.root);
-        !self.root.exists()
+        remove_witness_temp_root(&self.root)
     }
 }
 
 impl Drop for WitnessTempDirs {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
+        let _ = remove_witness_temp_root(&self.root);
     }
+}
+
+fn remove_witness_temp_root(root: &Path) -> bool {
+    for attempt in 0..WITNESS_CLEANUP_RETRY_ATTEMPTS {
+        match fs::remove_dir_all(root) {
+            Ok(()) => return true,
+            Err(_) if !root.exists() => return true,
+            Err(_) if attempt + 1 < WITNESS_CLEANUP_RETRY_ATTEMPTS => {
+                std::thread::sleep(WITNESS_CLEANUP_RETRY_DELAY);
+            }
+            Err(_) => return !root.exists(),
+        }
+    }
+
+    !root.exists()
 }
 
 fn unique_witness_temp_root() -> Result<PathBuf> {
