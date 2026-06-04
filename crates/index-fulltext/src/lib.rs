@@ -28,6 +28,8 @@ const SNAPSHOTS_DIR: &str = "snapshots";
 const STAGING_DIR: &str = "staging";
 const SNAPSHOT_PUBLISH_RETRY_ATTEMPTS: usize = 6;
 const SNAPSHOT_PUBLISH_RETRY_DELAY: Duration = Duration::from_millis(25);
+const INDEX_OPEN_RETRY_ATTEMPTS: usize = 6;
+const INDEX_OPEN_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct IndexDocument {
@@ -140,6 +142,14 @@ pub struct FullTextIndex {
 
 impl FullTextIndex {
     pub fn open(index_dir: &Path) -> Result<Self> {
+        retry_transient_index_open(
+            || Self::open_once(index_dir),
+            INDEX_OPEN_RETRY_ATTEMPTS,
+            INDEX_OPEN_RETRY_DELAY,
+        )
+    }
+
+    fn open_once(index_dir: &Path) -> Result<Self> {
         let index = Index::open_in_dir(index_dir).map_err(FullTextError::tantivy)?;
         let schema = index.schema();
         let fields = IndexFields::from_schema(&schema)?;
@@ -340,6 +350,40 @@ impl FullTextIndex {
         }
 
         Ok(hits)
+    }
+}
+
+fn retry_transient_index_open<T>(
+    mut open: impl FnMut() -> Result<T>,
+    attempts: usize,
+    retry_delay: Duration,
+) -> Result<T> {
+    let attempts = attempts.max(1);
+    for attempt in 0..attempts {
+        match open() {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt + 1 < attempts && is_transient_index_open_error(&error) => {
+                if !retry_delay.is_zero() {
+                    thread::sleep(retry_delay);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(FullTextError::internal(
+        "full-text index open retry exhausted",
+    ))
+}
+
+fn is_transient_index_open_error(error: &FullTextError) -> bool {
+    match error {
+        FullTextError::Io { diagnostic } | FullTextError::Tantivy { diagnostic } => {
+            diagnostic.contains("os error 5")
+                || diagnostic.contains("Access is denied")
+                || diagnostic.contains("Permission denied")
+        }
+        FullTextError::Internal { .. } => false,
     }
 }
 
@@ -1083,6 +1127,30 @@ mod tests {
         assert!(matches!(error, FullTextError::Io { .. }));
 
         remove_dir(&index_root);
+    }
+
+    #[test]
+    fn index_open_retries_transient_windows_access_denied() {
+        let mut attempts = 0_usize;
+
+        let opened = retry_transient_index_open(
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    return Err(FullTextError::Tantivy {
+                        diagnostic: "An IO error occurred: 'Access is denied. (os error 5)'"
+                            .to_string(),
+                    });
+                }
+                Ok("opened")
+            },
+            4,
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(opened, "opened");
+        assert_eq!(attempts, 3);
     }
 
     struct TransientLockPublisher {
