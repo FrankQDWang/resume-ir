@@ -38,7 +38,7 @@ const SNAPSHOT_HEADER_ENCRYPTED_V1: &str = "resume-ir-fulltext-snapshot-encrypte
 const SNAPSHOT_ARCHIVE_HEADER_V1: &[u8] = b"resume-ir-fulltext-snapshot-archive-v1\n";
 const SNAPSHOT_KEY_LEN: usize = 32;
 const SNAPSHOT_NONCE_LEN: usize = 24;
-const SNAPSHOT_PUBLISH_RETRY_ATTEMPTS: usize = 20;
+const SNAPSHOT_PUBLISH_RETRY_ATTEMPTS: usize = 100;
 const SNAPSHOT_PUBLISH_RETRY_DELAY: Duration = Duration::from_millis(50);
 const INDEX_OPEN_RETRY_ATTEMPTS: usize = 20;
 const INDEX_OPEN_RETRY_DELAY: Duration = Duration::from_millis(50);
@@ -575,13 +575,16 @@ fn retry_transient_snapshot_fs_operation<T>(
 fn is_transient_snapshot_publish_error(error: &std::io::Error) -> bool {
     if matches!(
         error.kind(),
-        ErrorKind::Interrupted | ErrorKind::PermissionDenied | ErrorKind::WouldBlock
+        ErrorKind::DirectoryNotEmpty
+            | ErrorKind::Interrupted
+            | ErrorKind::PermissionDenied
+            | ErrorKind::WouldBlock
     ) {
         return true;
     }
 
     #[cfg(windows)]
-    if matches!(error.raw_os_error(), Some(32 | 33)) {
+    if matches!(error.raw_os_error(), Some(32 | 33 | 145)) {
         return true;
     }
 
@@ -594,7 +597,9 @@ fn is_windows_file_lock_diagnostic(diagnostic: &str) -> bool {
     diagnostic.contains("os error 5")
         || diagnostic.contains("os error 32")
         || diagnostic.contains("os error 33")
+        || diagnostic.contains("os error 145")
         || diagnostic.contains("access is denied")
+        || diagnostic.contains("directory is not empty")
         || diagnostic.contains("permission denied")
         || diagnostic.contains("being used by another process")
         || diagnostic.contains("locked a portion of the file")
@@ -1774,6 +1779,26 @@ mod tests {
         .unwrap();
 
         assert_eq!(result, "published");
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn transient_snapshot_fs_operation_retries_windows_directory_not_empty() {
+        let mut attempts = 0_usize;
+
+        let result = retry_transient_snapshot_fs_operation(std::time::Duration::ZERO, || {
+            attempts += 1;
+            if attempts < 3 {
+                return Err(std::io::Error::new(
+                    ErrorKind::DirectoryNotEmpty,
+                    "The directory is not empty. (os error 145)",
+                ));
+            }
+            Ok("removed")
+        })
+        .unwrap();
+
+        assert_eq!(result, "removed");
         assert_eq!(attempts, 3);
     }
 
