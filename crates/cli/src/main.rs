@@ -29,7 +29,8 @@ use index_vector::{
     VectorSearchBackend,
 };
 use meta_store::{
-    Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
+    backup_metadata_encryption_key, restore_metadata_encryption_key, Document, DocumentId,
+    DocumentStatus, EntityMention, EntityType, FileExtension,
     ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
     ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanProfile as StoreImportScanProfile,
     ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus,
@@ -190,6 +191,22 @@ fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
             println!("contact hash key restore: restored");
             Ok(())
         }
+        "backup-metadata-key" => {
+            let key_args = parse_privacy_key_file_args(&args[1..], "--output")?;
+            let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
+            backup_metadata_encryption_key(data_dir, &key_args.key_path, &passphrase)
+                .map_err(CliError::store)?;
+            println!("metadata encryption key backup: written");
+            Ok(())
+        }
+        "restore-metadata-key" => {
+            let key_args = parse_privacy_key_file_args(&args[1..], "--input")?;
+            let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
+            restore_metadata_encryption_key(data_dir, &key_args.key_path, &passphrase)
+                .map_err(CliError::store)?;
+            println!("metadata encryption key restore: restored");
+            Ok(())
+        }
         _ => Err(CliError::usage(privacy_usage())),
     }
 }
@@ -255,7 +272,7 @@ fn read_privacy_passphrase_file(path: &Path) -> Result<Vec<u8>> {
 }
 
 fn privacy_usage() -> &'static str {
-    "usage: resume-cli privacy backup-contact-key --output <path> --passphrase-file <path> | resume-cli privacy restore-contact-key --input <path> --passphrase-file <path>"
+    "usage: resume-cli privacy backup-contact-key --output <path> --passphrase-file <path> | resume-cli privacy restore-contact-key --input <path> --passphrase-file <path> | resume-cli privacy backup-metadata-key --output <path> --passphrase-file <path> | resume-cli privacy restore-metadata-key --input <path> --passphrase-file <path>"
 }
 
 fn model_validate_manifest_command(args: &[String]) -> Result<()> {

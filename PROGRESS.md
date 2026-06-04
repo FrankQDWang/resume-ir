@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, and S145 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, and S146 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -86,8 +86,12 @@ obsolete preliminary files and checklists are not product scope.
   current OCR page-cache records exist. Contact hash key backup/restore now
   exists through local privacy CLI/API with passphrase-protected local backup
   files, redacted outputs, owner-only key file creation where supported, and
-  restore refusal when a target key already exists; key rotation, metadata key
-  backup/rotation, and forensic erase proof remain absent. A labeled
+  restore refusal when a target key already exists. Metadata SQLCipher key
+  backup/restore now also exists through local CLI/API with passphrase-protected
+  local backup files, wrong-passphrase restore rejection without key creation,
+  restored-key reopen proof for copied encrypted metadata, redacted outputs, and
+  restore refusal when a target key already exists; key rotation and forensic
+  erase proof remain absent. A labeled
   field-quality evaluator and gate now score precision/recall/F1 from JSONL
   samples without emitting raw text, sample IDs, paths, or field values.
   Soft-dedupe scoring now compares
@@ -107,7 +111,7 @@ obsolete preliminary files and checklists are not product scope.
   Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
   F1 datasets/results, dedupe quality metrics, candidate merge review
-  workflows, metadata key backup/rotation, plaintext-to-encrypted migration
+  workflows, metadata key rotation, plaintext-to-encrypted migration
   proof for pre-release local stores if needed, future bbox/PII surface purge
   coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
@@ -396,8 +400,64 @@ obsolete preliminary files and checklists are not product scope.
 | S143 | Product passphrase-protected contact key backup slice complete locally | Privacy crate and CLI tests first failed because backup/restore still used the S142 unencrypted backup API and CLI syntax. After implementation, contact key backups require passphrase bytes or a local `--passphrase-file`, use Argon2id plus XChaCha20-Poly1305 to encrypt the key material, reject wrong passphrases without creating a target key, and keep backup files plus command/Debug/error output free of key material, passphrases, contacts, and paths. Focused privacy/CLI tests, full privacy tests, fmt, focused clippy, diff checks, public repo guard, and full local verification passed. | None for this backup-file protection slice; it does not rotate keys, encrypt SQLite metadata, prove forensic erase, or clear SQLCipher/encrypted storage blockers. |
 | S144 | Product SQLCipher metadata-store foundation slice complete locally | A focused meta-store test first failed because `MetaStore::open_encrypted` and `MetadataEncryptionState::SqlCipher` did not exist. After implementation, `rusqlite` builds with bundled SQLCipher plus vendored OpenSSL, `MetaStore::open_encrypted` applies a 32-byte raw SQLCipher key before migrations, encrypted stores report `sqlcipher`, wrong-key opens fail with redacted errors, and the encrypted SQLite file lacks the plaintext SQLite header and synthetic document marker. Focused encrypted-store test, full meta-store tests, diagnostics tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this encrypted-store foundation slice; the default CLI/daemon data-dir open path still uses plaintext `MetaStore::open`, metadata key generation/storage/migration is not wired, and forensic erase proof remains incomplete. |
 | S145 | Product default SQLCipher metadata data-dir slice complete locally | A focused diagnostics test first failed because `doctor` still reported plaintext metadata. After implementation, `MetaStore::open_data_dir` creates or reads an owner-only metadata SQLCipher key under `metadata-secrets/`, CLI and daemon default store opens use SQLCipher, daemon import heartbeats reopen encrypted stores correctly, doctor and redacted diagnostics report `sqlcipher` without remediation, raw default `metadata.sqlite3` lacks the plaintext SQLite header, plaintext opens fail, and metadata-key storage is isolated from contact-key permission failures. Focused default-encryption test, full CLI tests, full daemon tests, full meta-store tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this default encrypted metadata path slice; it does not back up or rotate metadata SQLCipher keys, prove plaintext-to-encrypted migration for old pre-release local stores, encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, or clear non-metadata privacy blockers. |
+| S146 | Product metadata SQLCipher key backup/restore slice complete locally | A focused CLI test first failed because `resume-cli privacy` did not expose metadata key backup/restore commands. After implementation, metadata key backup writes a passphrase-protected local envelope with Argon2id plus XChaCha20-Poly1305, restore recreates an owner-only metadata SQLCipher key for a copied encrypted metadata DB, wrong passphrases fail without creating a key, duplicate restores are refused, and backup files plus stdout/stderr stay free of passphrases, key material, local paths, and schema payloads. Focused metadata-key CLI tests, existing contact-key CLI tests, full meta-store tests, full CLI tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this metadata key backup/recovery slice; it does not rotate metadata SQLCipher keys, automatically sync backups, prove plaintext-to-encrypted migration for old pre-release local stores, encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, or clear non-metadata privacy blockers. |
 
 ## Command Log
+
+### S146
+
+Design target:
+
+- Add a local passphrase-protected backup/restore path for the metadata
+  SQLCipher key created by the default data-dir metadata store.
+- Keep the backup file, CLI output, errors, and Debug output free of key
+  material, passphrases, local data paths, backup/passphrase file paths, raw SQL,
+  and metadata payloads.
+- Prove a copied encrypted metadata database can be reopened after restoring the
+  key, while wrong passphrases and duplicate restores fail safely.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s146_metadata_key_cli --locked
+```
+
+Output summary:
+
+- The focused CLI test failed because `resume-cli privacy` did not expose
+  metadata key backup/restore subcommands.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s146_metadata_key_cli
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s146_metadata_key_cli --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s142_privacy_key_cli --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused metadata key CLI test: exit 0; 1 test passed.
+- Focused metadata key CLI test with `--locked`: exit 0; 1 test passed.
+- Existing contact key CLI regression test: exit 0; 1 test passed.
+- Full `meta-store` tests: exit 0; 45 integration tests and doc-tests passed.
+- Full `resume-cli` tests: exit 0; all CLI tests passed.
+- `cargo fmt --check`, focused clippy, `git diff --check`, public repo guard,
+  and full local verification passed.
+
+Scope note:
+
+- S146 backs up and restores only the local metadata SQLCipher key. It does not
+  rotate metadata keys, automatically sync backups, encrypt full-text/vector/
+  OCR-cache artifacts, prove old plaintext-store migration, prove forensic
+  erasure, or complete the full product goal.
 
 ### S145
 

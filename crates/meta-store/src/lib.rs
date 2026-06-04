@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -6,6 +7,11 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
+use argon2::{Algorithm, Argon2, Params, Version};
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    XChaCha20Poly1305, XNonce,
+};
 pub use core_domain::{
     Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
     EntityMentionId, EntityType, FileExtension, ImportTaskId, IndexStateStatus, IngestJobId,
@@ -34,6 +40,14 @@ const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
 const METADATA_ENCRYPTION_KEY_HEX_LEN: usize = METADATA_ENCRYPTION_KEY_LEN * 2;
 const METADATA_ENCRYPTION_KEY_PATH: &[&str] = &["metadata-secrets", "metadata-sqlcipher-key-v1"];
+const METADATA_ENCRYPTION_KEY_BACKUP_SCHEMA_VERSION: &str =
+    "resume-ir-metadata-sqlcipher-key-backup-v1";
+const BACKUP_PASSPHRASE_MIN_BYTES: usize = 12;
+const BACKUP_SALT_LEN: usize = 16;
+const BACKUP_NONCE_LEN: usize = 24;
+const BACKUP_KDF_MEMORY_KIB: u32 = 19 * 1024;
+const BACKUP_KDF_ITERATIONS: u32 = 2;
+const BACKUP_KDF_PARALLELISM: u32 = 1;
 const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
@@ -87,6 +101,67 @@ pub fn metadata_encryption_key_path(data_dir: &Path) -> PathBuf {
         .fold(data_dir.to_path_buf(), |path, component| {
             path.join(component)
         })
+}
+
+pub fn backup_metadata_encryption_key(
+    data_dir: &Path,
+    backup_path: &Path,
+    passphrase: &[u8],
+) -> Result<MetadataEncryptionKeyBackup> {
+    validate_backup_passphrase(passphrase)?;
+    let metadata_key = read_metadata_encryption_key(&metadata_encryption_key_path(data_dir))?;
+    create_private_file_parent(backup_path)?;
+
+    let mut salt = [0_u8; BACKUP_SALT_LEN];
+    getrandom::getrandom(&mut salt).map_err(|_| MetaStoreError::random())?;
+    let mut nonce = [0_u8; BACKUP_NONCE_LEN];
+    getrandom::getrandom(&mut nonce).map_err(|_| MetaStoreError::random())?;
+    let encryption_key = derive_backup_encryption_key(passphrase, &salt)?;
+    let ciphertext = encrypt_metadata_key_backup(&encryption_key, &nonce, &metadata_key)?;
+
+    let backup = format!(
+        "\
+{METADATA_ENCRYPTION_KEY_BACKUP_SCHEMA_VERSION}
+kdf=argon2id
+kdf_memory_kib={BACKUP_KDF_MEMORY_KIB}
+kdf_iterations={BACKUP_KDF_ITERATIONS}
+kdf_parallelism={BACKUP_KDF_PARALLELISM}
+cipher=xchacha20poly1305
+salt={}
+nonce={}
+ciphertext={}
+",
+        encode_hex(&salt),
+        encode_hex(&nonce),
+        encode_hex(&ciphertext)
+    );
+    write_new_private_file(backup_path, backup.as_bytes()).map_err(MetaStoreError::io_storage)?;
+    restrict_private_file_permissions(backup_path)?;
+
+    Ok(MetadataEncryptionKeyBackup { _private: () })
+}
+
+pub fn restore_metadata_encryption_key(
+    data_dir: &Path,
+    backup_path: &Path,
+    passphrase: &[u8],
+) -> Result<MetadataEncryptionKeyRestore> {
+    validate_backup_passphrase(passphrase)?;
+    let key_path = metadata_encryption_key_path(data_dir);
+    if key_path.try_exists().map_err(MetaStoreError::io_storage)? {
+        return Err(MetaStoreError::key_already_exists());
+    }
+
+    let metadata_key = read_backup_metadata_encryption_key(backup_path, passphrase)?;
+    let parent = key_path
+        .parent()
+        .ok_or_else(|| MetaStoreError::invalid_value("metadata.encryption_key_path"))?;
+    fs::create_dir_all(parent).map_err(MetaStoreError::io_storage)?;
+    write_new_private_file(&key_path, encode_hex(&metadata_key).as_bytes())
+        .map_err(MetaStoreError::io_storage)?;
+    restrict_private_file_permissions(&key_path)?;
+
+    Ok(MetadataEncryptionKeyRestore { _private: () })
 }
 
 fn validate_metadata_encryption_key(key: &[u8]) -> Result<()> {
@@ -170,6 +245,186 @@ fn read_metadata_encryption_key(path: &Path) -> Result<[u8; METADATA_ENCRYPTION_
     decode_metadata_key_hex(key_hex.trim())
 }
 
+fn read_backup_metadata_encryption_key(
+    backup_path: &Path,
+    passphrase: &[u8],
+) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
+    let backup = fs::read_to_string(backup_path).map_err(MetaStoreError::io_storage)?;
+    let mut lines = backup.lines();
+    if lines.next() != Some(METADATA_ENCRYPTION_KEY_BACKUP_SCHEMA_VERSION) {
+        return Err(MetaStoreError::invalid_backup());
+    }
+    let fields = parse_backup_fields(lines)?;
+    require_backup_field(&fields, "kdf", "argon2id")?;
+    require_backup_field(
+        &fields,
+        "kdf_memory_kib",
+        &BACKUP_KDF_MEMORY_KIB.to_string(),
+    )?;
+    require_backup_field(
+        &fields,
+        "kdf_iterations",
+        &BACKUP_KDF_ITERATIONS.to_string(),
+    )?;
+    require_backup_field(
+        &fields,
+        "kdf_parallelism",
+        &BACKUP_KDF_PARALLELISM.to_string(),
+    )?;
+    require_backup_field(&fields, "cipher", "xchacha20poly1305")?;
+
+    let salt = decode_fixed_backup_hex::<BACKUP_SALT_LEN>(required_backup_value(&fields, "salt")?)?;
+    let nonce =
+        decode_fixed_backup_hex::<BACKUP_NONCE_LEN>(required_backup_value(&fields, "nonce")?)?;
+    let ciphertext = decode_backup_hex(required_backup_value(&fields, "ciphertext")?)?;
+    let encryption_key = derive_backup_encryption_key(passphrase, &salt)?;
+
+    decrypt_metadata_key_backup(&encryption_key, &nonce, &ciphertext)
+}
+
+fn create_private_file_parent(path: &Path) -> Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+
+    fs::create_dir_all(parent).map_err(MetaStoreError::io_storage)
+}
+
+fn validate_backup_passphrase(passphrase: &[u8]) -> Result<()> {
+    if passphrase.len() < BACKUP_PASSPHRASE_MIN_BYTES
+        || passphrase.iter().all(u8::is_ascii_whitespace)
+    {
+        return Err(MetaStoreError::weak_passphrase());
+    }
+
+    Ok(())
+}
+
+fn derive_backup_encryption_key(
+    passphrase: &[u8],
+    salt: &[u8; BACKUP_SALT_LEN],
+) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
+    let params = Params::new(
+        BACKUP_KDF_MEMORY_KIB,
+        BACKUP_KDF_ITERATIONS,
+        BACKUP_KDF_PARALLELISM,
+        Some(METADATA_ENCRYPTION_KEY_LEN),
+    )
+    .map_err(|_| MetaStoreError::crypto())?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let mut key = [0_u8; METADATA_ENCRYPTION_KEY_LEN];
+    argon2
+        .hash_password_into(passphrase, salt, &mut key)
+        .map_err(|_| MetaStoreError::crypto())?;
+    Ok(key)
+}
+
+fn encrypt_metadata_key_backup(
+    encryption_key: &[u8; METADATA_ENCRYPTION_KEY_LEN],
+    nonce: &[u8; BACKUP_NONCE_LEN],
+    metadata_key: &[u8; METADATA_ENCRYPTION_KEY_LEN],
+) -> Result<Vec<u8>> {
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(encryption_key).map_err(|_| MetaStoreError::crypto())?;
+    cipher
+        .encrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: metadata_key,
+                aad: METADATA_ENCRYPTION_KEY_BACKUP_SCHEMA_VERSION.as_bytes(),
+            },
+        )
+        .map_err(|_| MetaStoreError::crypto())
+}
+
+fn decrypt_metadata_key_backup(
+    encryption_key: &[u8; METADATA_ENCRYPTION_KEY_LEN],
+    nonce: &[u8; BACKUP_NONCE_LEN],
+    ciphertext: &[u8],
+) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
+    let cipher = XChaCha20Poly1305::new_from_slice(encryption_key)
+        .map_err(|_| MetaStoreError::invalid_backup())?;
+    let plaintext = cipher
+        .decrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad: METADATA_ENCRYPTION_KEY_BACKUP_SCHEMA_VERSION.as_bytes(),
+            },
+        )
+        .map_err(|_| MetaStoreError::invalid_backup())?;
+    plaintext
+        .try_into()
+        .map_err(|_| MetaStoreError::invalid_backup())
+}
+
+fn parse_backup_fields<'a>(
+    lines: impl Iterator<Item = &'a str>,
+) -> Result<BTreeMap<&'a str, &'a str>> {
+    let mut fields = BTreeMap::new();
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(MetaStoreError::invalid_backup());
+        };
+        if key.is_empty() || value.is_empty() || fields.insert(key, value).is_some() {
+            return Err(MetaStoreError::invalid_backup());
+        }
+    }
+
+    Ok(fields)
+}
+
+fn require_backup_field(
+    fields: &BTreeMap<&str, &str>,
+    key: &'static str,
+    expected: &str,
+) -> Result<()> {
+    if required_backup_value(fields, key)? != expected {
+        return Err(MetaStoreError::invalid_backup());
+    }
+
+    Ok(())
+}
+
+fn required_backup_value<'a>(
+    fields: &'a BTreeMap<&str, &str>,
+    key: &'static str,
+) -> Result<&'a str> {
+    fields
+        .get(key)
+        .copied()
+        .ok_or_else(MetaStoreError::invalid_backup)
+}
+
+fn decode_fixed_backup_hex<const N: usize>(value: &str) -> Result<[u8; N]> {
+    let bytes = decode_backup_hex(value)?;
+    bytes
+        .try_into()
+        .map_err(|_| MetaStoreError::invalid_backup())
+}
+
+fn decode_backup_hex(value: &str) -> Result<Vec<u8>> {
+    if !value.len().is_multiple_of(2) {
+        return Err(MetaStoreError::invalid_backup());
+    }
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    let mut index = 0;
+    while index < value.len() {
+        let byte = u8::from_str_radix(&value[index..index + 2], 16)
+            .map_err(|_| MetaStoreError::invalid_backup())?;
+        bytes.push(byte);
+        index += 2;
+    }
+
+    Ok(bytes)
+}
+
 fn write_new_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -209,6 +464,34 @@ fn restrict_private_file_permissions(path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct MetadataEncryptionKeyBackup {
+    _private: (),
+}
+
+impl fmt::Debug for MetadataEncryptionKeyBackup {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MetadataEncryptionKeyBackup")
+            .field("key", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct MetadataEncryptionKeyRestore {
+    _private: (),
+}
+
+impl fmt::Debug for MetadataEncryptionKeyRestore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MetadataEncryptionKeyRestore")
+            .field("key", &"<redacted>")
+            .finish()
+    }
 }
 
 pub struct MetaStore {
@@ -3494,6 +3777,30 @@ impl MetaStoreError {
         }
     }
 
+    fn weak_passphrase() -> Self {
+        Self {
+            kind: MetaStoreErrorKind::WeakPassphrase,
+        }
+    }
+
+    fn invalid_backup() -> Self {
+        Self {
+            kind: MetaStoreErrorKind::InvalidBackup,
+        }
+    }
+
+    fn crypto() -> Self {
+        Self {
+            kind: MetaStoreErrorKind::Crypto,
+        }
+    }
+
+    fn key_already_exists() -> Self {
+        Self {
+            kind: MetaStoreErrorKind::KeyAlreadyExists,
+        }
+    }
+
     fn migration(_error: rusqlite::Error) -> Self {
         Self {
             kind: MetaStoreErrorKind::Migration,
@@ -3550,6 +3857,16 @@ impl fmt::Display for MetaStoreError {
             MetaStoreErrorKind::InvalidTransition => {
                 formatter.write_str("metadata store job status transition is invalid")
             }
+            MetaStoreErrorKind::WeakPassphrase => {
+                formatter.write_str("metadata key backup passphrase is too weak")
+            }
+            MetaStoreErrorKind::InvalidBackup => {
+                formatter.write_str("metadata key backup is invalid or cannot be decrypted")
+            }
+            MetaStoreErrorKind::Crypto => formatter.write_str("metadata key backup crypto failed"),
+            MetaStoreErrorKind::KeyAlreadyExists => {
+                formatter.write_str("metadata encryption key already exists")
+            }
         }
     }
 }
@@ -3563,6 +3880,10 @@ enum MetaStoreErrorKind {
     InvalidPersistedValue { field: &'static str },
     NotFound { entity: &'static str },
     InvalidTransition,
+    WeakPassphrase,
+    InvalidBackup,
+    Crypto,
+    KeyAlreadyExists,
 }
 
 const SCHEMA_V1: &str = r#"
