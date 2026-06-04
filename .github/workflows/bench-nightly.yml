@@ -40,6 +40,40 @@ jobs:
       - name: Synthetic OCR benchmark gate
         run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- ocr-gate --report ocr-benchmark-smoke.json --allow-synthetic --min-pages 25 --max-p95-ms 5000 --min-pages-per-second 0.001
 
+      - name: Labeled vector benchmark smoke
+        run: |
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+          cat > "$tmpdir/embedding-fixture.sh" <<'SH'
+          #!/usr/bin/env sh
+          printf 'resume-ir-embedding-v1\n'
+          printf 'model_id=%s\n' "$RESUME_IR_EMBEDDING_MODEL_ID"
+          printf 'dimension=%s\n' "$RESUME_IR_EMBEDDING_DIMENSION"
+          awk '
+            /^input=/ {
+              split(substr($0, 7), parts, "\t");
+              id = parts[1];
+              if (id ~ /^query-000000/ || id ~ /^candidate-000000-000000/) {
+                vector = "1.0,0.0,0.0";
+              } else if (id ~ /^query-000001/ || id ~ /^candidate-000001-000000/) {
+                vector = "0.0,1.0,0.0";
+              } else {
+                vector = "0.0,0.0,1.0";
+              }
+              printf "vector=%s\t%s\n", id, vector;
+            }
+          ' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+          SH
+          chmod 700 "$tmpdir/embedding-fixture.sh"
+          cat > "$tmpdir/vector-dataset.jsonl" <<'JSONL'
+          {"query":"Backend Java payment search","candidates":[{"id":"java-match","text":"Java payment backend search engineer","relevant":true},{"id":"sales-miss","text":"Sales operations recruiter","relevant":false}]}
+          {"query":"Rust indexing platform","candidates":[{"id":"rust-match","text":"Rust indexing platform engineer","relevant":true},{"id":"hr-miss","text":"HR business partner","relevant":false}]}
+          JSONL
+          cargo run -p benchmark-runner --bin resume-benchmark --locked -- vector-quality --dataset "$tmpdir/vector-dataset.jsonl" --command "$tmpdir/embedding-fixture.sh" --model-id fixture-local-model --dimension 3 --top-k 1 --json > vector-benchmark-smoke.json
+
+      - name: Labeled vector benchmark gate
+        run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- vector-gate --report vector-benchmark-smoke.json --min-samples 2 --min-recall-at-k 0.99 --min-mrr 0.99 --min-ndcg-at-k 0.99 --max-zero-recall-queries 0
+
       - name: Upload benchmark smoke artifact
         uses: actions/upload-artifact@v4
         with:
@@ -47,4 +81,5 @@ jobs:
           path: |
             benchmark-smoke.json
             ocr-benchmark-smoke.json
+            vector-benchmark-smoke.json
           if-no-files-found: error

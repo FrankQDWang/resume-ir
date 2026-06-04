@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, and S108 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, and S111 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, and S110 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -146,9 +146,10 @@ obsolete preliminary files and checklists are not product scope.
   tests, local-only production runbooks, a runbook CI policy guard, a workflow
   policy guard, and a synthetic OCR throughput benchmark/gate exist.
   The benchmark runner now has explicit synthetic query, synthetic OCR
-  throughput, and labeled vector-quality benchmark gates; query and OCR smoke
-  gates are wired into PR and nightly workflows. Synthetic runs must opt in with
-  `--allow-synthetic` and cannot prove 100k/1M production performance.
+  throughput, and labeled vector-quality benchmark gates; query, OCR, and
+  vector smoke gates are wired into PR and nightly workflows. Synthetic runs
+  must opt in with `--allow-synthetic` and cannot prove 100k/1M production
+  performance.
   Missing or BLOCKED work includes 100k/1M real-corpus benchmarks,
   real-corpus nightly/release performance gates, licensed model selection/
   distribution, real semantic/vector quality datasets/results, destructive
@@ -269,8 +270,71 @@ obsolete preliminary files and checklists are not product scope.
 | S108 | Product workflow-gate slice complete | `sh scripts/ci/check-workflows.sh` first failed because PR/nightly workflows did not include `ocr-throughput`; after implementation, workflow guard, synthetic local OCR benchmark smoke plus redaction scan, shell syntax checks, fmt, diff, and `./scripts/ci/verify-local.sh` passed. | None for this OCR benchmark workflow wiring slice; it does not prove real scanned-resume OCR quality, full-library OCR completion, non-English OCR behavior, packaged OCR runtime distribution, 100k/1M corpus performance, or Windows/Linux behavior. |
 | S109 | Product local OCR witness resilience slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_budget_reports_failed_documents_without_stopping_or_leaking_paths --locked -- --exact` first failed because a budgeted witness stopped as `blocked` on the first per-document OCR failure; after implementation, the focused exact, full `s9_import_search`, focused CLI clippy, fmt, diff, guard checks, marker scans, `./scripts/ci/verify-local.sh`, and private local-only PDF/Word witness runs passed with redacted aggregate output and temporary private data removal. | None for this bounded local witness resilience slice; it does not prove OCR quality, full-library OCR completion, non-English OCR behavior, packaged runtime distribution, 100k/1M corpus performance, or Windows/Linux behavior. |
 | S110 | Product vector-quality gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_report_scores_labeled_samples_without_text_id_path_or_vector_leakage --locked -- --exact` first failed because vector-quality APIs did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_quality_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` rejected `vector-quality`; after implementation, focused vector-quality tests, full benchmark-runner tests, focused benchmark-runner clippy, fmt, diff, guard checks, `./scripts/ci/verify-local.sh`, and private local-only bounded PDF/Word witness runs passed with redacted aggregate output and temporary private data removal. | None for this labeled vector-quality evaluator/gate slice; it does not supply real business labeled semantic datasets, choose/license/package a production embedding model, add ANN production indexing, prove large-corpus semantic latency, or validate Windows/Linux behavior. |
+| S111 | Product vector workflow-gate slice complete | `./scripts/ci/check-workflows.sh` first failed because PR/nightly workflows did not include `vector-quality`; after implementation, workflow guard, strict local vector smoke/gate reproduction with redaction scan, shell syntax, workflow YAML parse, diff, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this vector-quality workflow wiring slice; it uses a synthetic labeled smoke dataset and temporary fixture embedding command, so it does not prove real semantic quality, licensed production model selection, ANN latency, 100k/1M corpus performance, or Windows/Linux behavior. |
 
 ## Command Log
+
+### S111
+
+Design target:
+
+- Wire the S110 vector-quality evaluator/gate into PR and nightly benchmark
+  smoke workflows.
+- Keep the workflow smoke local-only, synthetic-labeled, redacted, and explicit
+  that it is not proof of production semantic quality.
+- Extend the workflow policy guard so future edits cannot silently drop the
+  vector smoke gate.
+
+Observed RED:
+
+```bash
+./scripts/ci/check-workflows.sh
+```
+
+Output summary:
+
+- The workflow guard failed because `.github/workflows/pr.yml` was missing the
+  required `resume-benchmark --locked -- vector-quality` command.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-workflows.sh
+sh -n scripts/ci/check-workflows.sh
+ruby -e 'require "yaml"; ARGV.each { |file| YAML.load_file(file); puts "yaml ok: #{file}" }' .github/workflows/pr.yml .github/workflows/bench-nightly.yml
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n --hidden --glob '!target/**' --glob '!.git/**' '[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension|[p]rivate-sample-path-marker' .; then exit 1; else echo "no private witness markers"; fi
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Workflow guard: exit 0 after PR and nightly workflows were wired to run
+  `vector-quality` and `vector-gate`.
+- Strict local vector smoke reproduction: exit 0; `vector quality gate passed`,
+  and the generated report did not contain the temporary command path, raw
+  queries, candidate text, candidate IDs, or vector values.
+- Shell syntax check: exit 0.
+- Workflow YAML parse: exit 0 for PR and nightly workflow files.
+- `git diff --check`: exit 0.
+- Runbook guard: exit 0.
+- Public repository guard: exit 0.
+- Private witness marker scan: exit 0.
+- Obsolete reference marker guard: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, workflow check, and
+  public repo guard.
+
+Scope note:
+
+- S111 adds CI coverage for the benchmark gate path only. It does not provide
+  real business relevance labels, choose or license a production embedding
+  model, prove ANN behavior, prove 100k/1M semantic latency, or complete product
+  readiness.
+- Full product is still not complete.
 
 ### S110
 
