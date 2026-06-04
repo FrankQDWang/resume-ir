@@ -65,6 +65,12 @@ fn run_gate(args: GateArgs) -> Result<(), CliError> {
     if args.allow_synthetic {
         config = config.allow_synthetic();
     }
+    if args.require_private_real_corpus {
+        config = config.require_private_real_corpus();
+    }
+    if args.require_million_scale {
+        config = config.require_million_scale();
+    }
     evaluate_benchmark_gate_json(&report_json, config).map_err(CliError::gate)?;
     println!("benchmark gate passed");
     Ok(())
@@ -231,6 +237,8 @@ fn parse_synthetic_query_args(args: &[String]) -> Result<SyntheticQueryArgs, Cli
 fn parse_gate_args(args: &[String]) -> Result<GateArgs, CliError> {
     let mut report = None;
     let mut allow_synthetic = false;
+    let mut require_private_real_corpus = false;
+    let mut require_million_scale = false;
     let mut min_documents = 100_000_usize;
     let mut min_queries = 100_usize;
     let mut max_p95_ms = 200.0_f64;
@@ -248,6 +256,14 @@ fn parse_gate_args(args: &[String]) -> Result<GateArgs, CliError> {
             }
             "--allow-synthetic" => {
                 allow_synthetic = true;
+                index += 1;
+            }
+            "--require-private-real-corpus" => {
+                require_private_real_corpus = true;
+                index += 1;
+            }
+            "--require-million-scale" => {
+                require_million_scale = true;
                 index += 1;
             }
             "--min-documents" => {
@@ -276,6 +292,8 @@ fn parse_gate_args(args: &[String]) -> Result<GateArgs, CliError> {
     Ok(GateArgs {
         report: report.ok_or_else(CliError::usage)?,
         allow_synthetic,
+        require_private_real_corpus,
+        require_million_scale,
         min_documents,
         min_queries,
         max_p95_ms,
@@ -634,7 +652,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -663,6 +681,8 @@ struct SyntheticQueryArgs {
 struct GateArgs {
     report: PathBuf,
     allow_synthetic: bool,
+    require_private_real_corpus: bool,
+    require_million_scale: bool,
     min_documents: usize,
     min_queries: usize,
     max_p95_ms: f64,

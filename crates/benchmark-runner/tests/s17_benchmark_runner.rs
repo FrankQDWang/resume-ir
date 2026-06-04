@@ -100,6 +100,111 @@ fn benchmark_gate_rejects_unproven_million_scale_claims() {
 }
 
 #[test]
+fn benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence() {
+    let report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false);
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
+
+    let evaluation = evaluate_benchmark_gate_json(&report, config).unwrap();
+
+    assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
+    assert_eq!(evaluation.document_count(), 100_000);
+    assert_eq!(evaluation.query_count(), 200);
+    assert_eq!(evaluation.p95_ms(), 150.0);
+}
+
+#[test]
+fn benchmark_gate_rejects_real_release_report_without_private_boundary() {
+    let report = minimal_benchmark_json("private-real-corpus", 100_000, 200, 150.0, 0, false);
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires redacted local boundary"));
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_report_without_boundary_even_without_release_flag() {
+    let report = minimal_benchmark_json("private-real-corpus", 100_000, 200, 150.0, 0, false);
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0);
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires redacted local boundary"));
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_report_with_extra_payload_field() {
+    let mut report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false);
+    report.pop();
+    report.push_str(",\"notes\":\"private local path /Users/frankqdwang/MLE/resume-ir\"");
+    report.push('}');
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("unsupported private real-corpus benchmark field"));
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_report_with_payload_in_allowed_fields() {
+    let report = minimal_private_real_benchmark_json(1_000_000, 500, 150.0, true)
+        .replace(
+            "\"qps\":100.0",
+            "\"qps\":\"/Users/frankqdwang/private/resume.pdf\"",
+        )
+        .replace("\"min\":1.0", "\"min\":\"private search query\"");
+    let config = BenchmarkGateConfig::new(1_000_000, 500, 200.0)
+        .require_private_real_corpus()
+        .require_million_scale();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires redacted local boundary"));
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_report_with_duplicate_payload_keys() {
+    let report = minimal_private_real_benchmark_json(1_000_000, 500, 150.0, true)
+        .replace(
+            "\"run_id\":\"bench_test\"",
+            "\"run_id\":\"/Users/frankqdwang/private/resume.pdf\",\"run_id\":\"bench_test\"",
+        )
+        .replace(
+            "\"min\":1.0",
+            "\"min\":\"private search query\",\"min\":1.0",
+        );
+    let config = BenchmarkGateConfig::new(1_000_000, 500, 200.0)
+        .require_private_real_corpus()
+        .require_million_scale();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error.to_string().contains("duplicate JSON object key"));
+}
+
+#[test]
+fn benchmark_gate_rejects_million_release_gate_without_million_proof() {
+    let report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false);
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0)
+        .require_private_real_corpus()
+        .require_million_scale();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("million-scale benchmark required"));
+}
+
+#[test]
 fn field_quality_report_scores_labeled_samples_without_raw_value_leakage() {
     let dataset = concat!(
         "{\"sample_id\":\"case-a\",\"text\":\"Name: Synthetic Candidate\\nEmail: candidate@example.test\\nPhone: +1 (415) 555-0132\\nSkills: Rust, Java\\nBachelor of Science\",",
@@ -381,6 +486,42 @@ fn minimal_benchmark_json(
         zero_result_queries,
         million_scale_verified,
     )
+}
+
+fn minimal_private_real_benchmark_json(
+    document_count: usize,
+    query_count: usize,
+    p95_ms: f64,
+    million_scale_verified: bool,
+) -> String {
+    let mut report = minimal_benchmark_json(
+        "private-real-corpus",
+        document_count,
+        query_count,
+        p95_ms,
+        0,
+        million_scale_verified,
+    )
+    .replace(
+        "\"target_claim\":\"not_evaluated\"",
+        "\"target_claim\":\"query_latency_target_met\"",
+    )
+    .replace(
+        "\"scope\":\"synthetic query benchmark; no raw resume text, paths, or queries included\"",
+        "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
+    );
+    report.pop();
+    report.push_str(concat!(
+        ",\"corpus_origin\":\"private_local\"",
+        ",\"privacy_boundary\":\"redacted_local_aggregate\"",
+        ",\"contains_raw_resume_text\":false",
+        ",\"contains_resume_paths\":false",
+        ",\"contains_queries\":false",
+        ",\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
+        ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\""
+    ));
+    report.push('}');
+    report
 }
 
 fn minimal_ocr_throughput_json(

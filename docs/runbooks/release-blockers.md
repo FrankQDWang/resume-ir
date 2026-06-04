@@ -52,6 +52,32 @@ benchmark-smoke.json`.
 The explicit `--allow-synthetic` flag is required for synthetic smoke artifacts.
 Do not treat a passing synthetic gate as 100k or 1M real-corpus proof.
 
+Run private real-corpus benchmark gates only against local redacted aggregate
+reports. The report must use `dataset_kind: "private-real-corpus"`,
+`corpus_origin: "private_local"`, `privacy_boundary:
+"redacted_local_aggregate"`, false raw-data/path/query booleans, and sha256
+digests for the local dataset manifest plus query set. Do not upload the
+reports if they contain raw resume text, local paths, queries, sample IDs, or
+filenames.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  gate --report private-benchmark-100k.json \
+  --require-private-real-corpus \
+  --min-documents 100000 --min-queries 500 \
+  --max-p95-ms 200 --max-zero-result-queries 0
+
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  gate --report private-benchmark-1m.json \
+  --require-private-real-corpus --require-million-scale \
+  --min-documents 1000000 --min-queries 500 \
+  --max-p95-ms 200 --max-zero-result-queries 0
+```
+
+These gates are release evidence validators. They do not create, upload, or
+sanitize private benchmark reports and cannot clear the benchmark blocker until
+representative local 100k and 1M runs exist.
+
 Generate a local release dry-run manifest only after release binaries have been
 built:
 

@@ -14,6 +14,7 @@ use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
     OcrPageRequest, OcrWorkerBudget, RenderedPage, TesseractOcrClient, TesseractOcrSpec,
 };
+use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 
 pub fn crate_name() -> &'static str {
     "benchmark-runner"
@@ -913,6 +914,8 @@ pub struct BenchmarkGateConfig {
     max_p95_ms: f64,
     max_zero_result_queries: usize,
     allow_synthetic: bool,
+    require_private_real_corpus: bool,
+    require_million_scale: bool,
 }
 
 impl BenchmarkGateConfig {
@@ -923,11 +926,23 @@ impl BenchmarkGateConfig {
             max_p95_ms,
             max_zero_result_queries: 0,
             allow_synthetic: false,
+            require_private_real_corpus: false,
+            require_million_scale: false,
         }
     }
 
     pub fn allow_synthetic(mut self) -> Self {
         self.allow_synthetic = true;
+        self
+    }
+
+    pub fn require_private_real_corpus(mut self) -> Self {
+        self.require_private_real_corpus = true;
+        self
+    }
+
+    pub fn require_million_scale(mut self) -> Self {
+        self.require_million_scale = true;
         self
     }
 
@@ -1720,6 +1735,7 @@ pub fn evaluate_benchmark_gate_json(
     report_json: &str,
     config: BenchmarkGateConfig,
 ) -> std::result::Result<BenchmarkGateEvaluation, BenchmarkGateError> {
+    reject_duplicate_json_object_keys(report_json)?;
     let report: serde_json::Value =
         serde_json::from_str(report_json).map_err(|_| BenchmarkGateError::invalid_json())?;
 
@@ -1740,10 +1756,24 @@ pub fn evaluate_benchmark_gate_json(
     let million_scale_verified = required_bool(&report, "million_scale_verified")?;
     let target_claim = required_str(&report, "target_claim")?;
 
-    if dataset_kind == "synthetic" && !config.allow_synthetic {
+    match dataset_kind {
+        "synthetic" => {
+            if !config.allow_synthetic {
+                return Err(BenchmarkGateError::failed(
+                    "synthetic benchmark requires explicit allowance",
+                ));
+            }
+        }
+        "private-real-corpus" => {}
+        _ => return Err(BenchmarkGateError::failed("unsupported benchmark dataset")),
+    }
+    if config.require_private_real_corpus && dataset_kind != "private-real-corpus" {
         return Err(BenchmarkGateError::failed(
-            "synthetic benchmark requires explicit allowance",
+            "private real-corpus benchmark required",
         ));
+    }
+    if dataset_kind == "private-real-corpus" {
+        validate_private_real_benchmark_boundary(&report, target_claim)?;
     }
     if document_count < config.min_documents {
         return Err(BenchmarkGateError::failed(
@@ -1763,12 +1793,19 @@ pub fn evaluate_benchmark_gate_json(
             "zero-result query count exceeded threshold",
         ));
     }
-    if million_scale_verified && (dataset_kind == "synthetic" || document_count < 1_000_000) {
+    if million_scale_verified
+        && (dataset_kind != "private-real-corpus" || document_count < 1_000_000)
+    {
         return Err(BenchmarkGateError::failed(
             "million-scale claim is not proven",
         ));
     }
-    if target_claim != "not_evaluated" && (dataset_kind == "synthetic" || !million_scale_verified) {
+    if config.require_million_scale && (!million_scale_verified || document_count < 1_000_000) {
+        return Err(BenchmarkGateError::failed(
+            "million-scale benchmark required",
+        ));
+    }
+    if target_claim != "not_evaluated" && !config.require_private_real_corpus {
         return Err(BenchmarkGateError::failed("target claim is not proven"));
     }
 
@@ -1778,6 +1815,226 @@ pub fn evaluate_benchmark_gate_json(
         query_count,
         p95_ms,
     })
+}
+
+fn validate_private_real_benchmark_boundary(
+    report: &serde_json::Value,
+    target_claim: &str,
+) -> std::result::Result<(), BenchmarkGateError> {
+    validate_private_real_report_shape(report)?;
+    if private_real_str(report, "corpus_origin")? != "private_local"
+        || private_real_str(report, "privacy_boundary")? != "redacted_local_aggregate"
+        || private_real_bool(report, "contains_raw_resume_text")?
+        || private_real_bool(report, "contains_resume_paths")?
+        || private_real_bool(report, "contains_queries")?
+        || !is_sha256_hex(private_real_str(report, "dataset_manifest_sha256")?)
+        || !is_sha256_hex(private_real_str(report, "query_set_sha256")?)
+        || private_real_str(report, "scope")?
+            != "private local real-corpus query benchmark; aggregate redacted report only"
+    {
+        return Err(private_real_boundary_error());
+    }
+    if target_claim != "query_latency_target_met" {
+        return Err(BenchmarkGateError::failed(
+            "private real-corpus benchmark requires query latency target claim",
+        ));
+    }
+    if !is_safe_benchmark_token(private_real_str(report, "run_id")?) {
+        return Err(private_real_boundary_error());
+    }
+    if !is_safe_platform_label(private_real_str(report, "platform")?) {
+        return Err(private_real_boundary_error());
+    }
+    if !matches!(
+        private_real_str(report, "percentile_confidence")?,
+        "sampled" | "release"
+    ) {
+        return Err(private_real_boundary_error());
+    }
+
+    Ok(())
+}
+
+fn validate_private_real_report_shape(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = report.as_object() else {
+        return Err(private_real_boundary_error());
+    };
+    for (key, value) in object {
+        if !is_allowed_private_real_report_key(key) {
+            return Err(BenchmarkGateError::failed(
+                "unsupported private real-corpus benchmark field",
+            ));
+        }
+        if key == "query_latency_ms" {
+            validate_private_real_latency_shape(value)?;
+        }
+    }
+    private_real_str(report, "schema_version")?;
+    private_real_str(report, "run_id")?;
+    private_real_str(report, "platform")?;
+    private_real_str(report, "dataset_kind")?;
+    private_real_usize(report, "document_count")?;
+    private_real_usize(report, "query_count")?;
+    private_real_usize(report, "top_k")?;
+    private_real_number(report, "build_ms")?;
+    private_real_number(report, "query_total_ms")?;
+    private_real_number(report, "qps")?;
+    private_real_usize(report, "index_size_bytes")?;
+    private_real_usize(report, "zero_result_queries")?;
+    private_real_usize(report, "total_hits")?;
+    private_real_bool(report, "million_scale_verified")?;
+    private_real_str(report, "percentile_confidence")?;
+    private_real_str(report, "target_claim")?;
+    private_real_str(report, "corpus_origin")?;
+    private_real_str(report, "privacy_boundary")?;
+    private_real_bool(report, "contains_raw_resume_text")?;
+    private_real_bool(report, "contains_resume_paths")?;
+    private_real_bool(report, "contains_queries")?;
+    private_real_str(report, "dataset_manifest_sha256")?;
+    private_real_str(report, "query_set_sha256")?;
+    private_real_str(report, "scope")?;
+    Ok(())
+}
+
+fn validate_private_real_latency_shape(
+    latency: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = latency.as_object() else {
+        return Err(private_real_boundary_error());
+    };
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "samples" | "min" | "mean" | "p50" | "p95" | "p99" | "max"
+        ) {
+            return Err(BenchmarkGateError::failed(
+                "unsupported private real-corpus benchmark field",
+            ));
+        }
+    }
+    private_real_usize(latency, "samples")?;
+    private_real_number(latency, "min")?;
+    private_real_number(latency, "mean")?;
+    private_real_number(latency, "p50")?;
+    private_real_number(latency, "p95")?;
+    private_real_number(latency, "p99")?;
+    private_real_number(latency, "max")?;
+    Ok(())
+}
+
+fn reject_duplicate_json_object_keys(
+    report_json: &str,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let mut deserializer = serde_json::Deserializer::from_str(report_json);
+    DuplicateKeyDetector
+        .deserialize(&mut deserializer)
+        .map_err(|error| {
+            if error.to_string().contains("duplicate JSON object key") {
+                BenchmarkGateError::failed("duplicate JSON object key")
+            } else {
+                BenchmarkGateError::invalid_json()
+            }
+        })?;
+    deserializer
+        .end()
+        .map_err(|_| BenchmarkGateError::invalid_json())?;
+    Ok(())
+}
+
+struct DuplicateKeyDetector;
+
+impl<'de> DeserializeSeed<'de> for DuplicateKeyDetector {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> std::result::Result<(), D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(DuplicateKeyVisitor)
+    }
+}
+
+struct DuplicateKeyVisitor;
+
+impl<'de> Visitor<'de> for DuplicateKeyVisitor {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a JSON value without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, _value: bool) -> std::result::Result<(), E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_i64<E>(self, _value: i64) -> std::result::Result<(), E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_u64<E>(self, _value: u64) -> std::result::Result<(), E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_f64<E>(self, _value: f64) -> std::result::Result<(), E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_str<E>(self, _value: &str) -> std::result::Result<(), E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_string<E>(self, _value: String) -> std::result::Result<(), E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_unit<E>(self) -> std::result::Result<(), E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_seq<A>(self, mut access: A) -> std::result::Result<(), A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        while let Some(()) = access.next_element_seed(DuplicateKeyDetector)? {}
+        Ok(())
+    }
+
+    fn visit_map<A>(self, mut access: A) -> std::result::Result<(), A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut keys = BTreeSet::<String>::new();
+        while let Some(key) = access.next_key::<String>()? {
+            if !keys.insert(key) {
+                return Err(de::Error::custom("duplicate JSON object key"));
+            }
+            access.next_value_seed(DuplicateKeyDetector)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn evaluate_ocr_throughput_gate_json(
@@ -1877,6 +2134,105 @@ fn required_bool(
         .get(field)
         .and_then(serde_json::Value::as_bool)
         .ok_or_else(|| BenchmarkGateError::missing_field(field))
+}
+
+fn private_real_str<'a>(
+    value: &'a serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<&'a str, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(private_real_boundary_error)
+}
+
+fn private_real_bool(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<bool, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(private_real_boundary_error)
+}
+
+fn private_real_usize(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<usize, BenchmarkGateError> {
+    let number = value
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(private_real_boundary_error)?;
+    usize::try_from(number).map_err(|_| private_real_boundary_error())
+}
+
+fn private_real_number(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<f64, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|number| number.is_finite() && *number >= 0.0)
+        .ok_or_else(private_real_boundary_error)
+}
+
+fn private_real_boundary_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private real-corpus benchmark requires redacted local boundary")
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn is_allowed_private_real_report_key(key: &str) -> bool {
+    matches!(
+        key,
+        "schema_version"
+            | "run_id"
+            | "platform"
+            | "dataset_kind"
+            | "document_count"
+            | "query_count"
+            | "top_k"
+            | "build_ms"
+            | "query_total_ms"
+            | "qps"
+            | "index_size_bytes"
+            | "query_latency_ms"
+            | "zero_result_queries"
+            | "total_hits"
+            | "million_scale_verified"
+            | "percentile_confidence"
+            | "target_claim"
+            | "corpus_origin"
+            | "privacy_boundary"
+            | "contains_raw_resume_text"
+            | "contains_resume_paths"
+            | "contains_queries"
+            | "dataset_manifest_sha256"
+            | "query_set_sha256"
+            | "scope"
+    )
+}
+
+fn is_safe_benchmark_token(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+
+fn is_safe_platform_label(value: &str) -> bool {
+    let mut parts = value.split('/');
+    let Some(os) = parts.next() else {
+        return false;
+    };
+    let Some(arch) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none() && is_safe_benchmark_token(os) && is_safe_benchmark_token(arch)
 }
 
 impl LatencySummary {

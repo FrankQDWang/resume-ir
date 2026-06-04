@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, and S154 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, and S155 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -267,12 +267,15 @@ obsolete preliminary files and checklists are not product scope.
   compatibility guards, hosted release dry-run execution evidence, and a
   synthetic OCR throughput benchmark/gate exist.
   The benchmark runner now has explicit synthetic query, synthetic OCR
-  throughput, and labeled vector-quality benchmark gates; query, OCR, and
-  vector smoke gates are wired into PR and nightly workflows. Synthetic runs
-  must opt in with `--allow-synthetic` and cannot prove 100k/1M production
-  performance.
-  Missing or BLOCKED work includes 100k/1M real-corpus benchmarks,
-  real-corpus nightly/release performance gates, licensed model selection/
+  throughput, labeled vector-quality, and private real-corpus release-evidence
+  benchmark gates; query, OCR, and vector smoke gates are wired into PR and
+  nightly workflows. Synthetic runs must opt in with `--allow-synthetic` and
+  cannot prove 100k/1M production performance. Private real-corpus query
+  reports are accepted only as strict redacted local aggregate JSON with local
+  corpus/query-set digests and no raw text, paths, queries, filenames, or
+  sample identifiers.
+  Missing or BLOCKED work includes actual 100k/1M real-corpus benchmark runs,
+  real-corpus nightly/release performance evidence, licensed model selection/
   distribution, real semantic/vector quality datasets/results, destructive
   service-level kill/actual ENOSPC fault injection, battery/external-drive
   fault drills, Windows/macOS validation, and cross-platform performance
@@ -435,8 +438,72 @@ obsolete preliminary files and checklists are not product scope.
 | S152 | Product OCR word-box purge proof complete locally | A focused delete/purge test first failed because `purge --deleted` did not report removal of persisted OCR word boxes from purged OCR page-cache rows. After implementation, the meta-store OCR page-cache purge API reports both purged cache entries and the count of OCR word boxes removed, and CLI purge prints `ocr word boxes purged` without paths or OCR text. Focused RED/GREEN test, full delete suite, full meta-store suite, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | This slice covers current OCR cache word-box cleanup only. It does not prove forensic erasure of SQLite free pages, purge future unrelated PII surfaces, distribute OCR engines/language packs, prove OCR quality, or clear model, benchmark, installer, signing, notarization, or real cross-platform validation blockers. |
 | S153 | Product embedding job-spec purge audit complete locally | A focused delete/purge test first failed because `purge --deleted` did not report removal of persisted embedding job specs linked to purged ingest jobs for deleted documents. After implementation, the meta-store ingest-job purge API reports both purged ingest jobs and the count of embedding job specs removed, and CLI purge prints `embedding job specs purged` without paths, model command details, or resume text. Focused RED/GREEN test, full delete suite, full meta-store suite, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | This slice covers current embedding job-spec cleanup visibility only. It does not prove forensic erasure of SQLite free pages, choose/license/distribute a real embedding model, prove semantic quality, prove large-corpus ANN performance, or clear model, benchmark, installer, signing, notarization, or real cross-platform validation blockers. |
 | S154 | Product Windows full-text snapshot publish stability complete locally | Hosted Windows PR #9 repeatedly failed on the previous commit with full-text snapshot publish returning `os error 33` during encrypted snapshot publication. A focused regression first failed because transient snapshot FS retry did not treat the Windows file-lock violation as retryable. After implementation, snapshot publish retries transient directory cleanup, encrypted snapshot publish cleanup, active-pointer replacement operations, and Windows file-lock diagnostics without exposing paths or payloads. Focused RED/GREEN tests, full `index-fulltext`, full import/search witness suite, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | This slice covers transient Windows full-text snapshot filesystem locks only. It does not prove all platform installer/service flows, large-corpus performance, full OCR/model quality, signing, notarization, or release readiness. |
+| S155 | Product private real-corpus benchmark release-gate slice complete locally | Focused benchmark gate tests first failed because `resume-benchmark gate` had no `--require-private-real-corpus` / `--require-million-scale` API and later allowed private real-corpus reports without fail-closed boundary validation or strict value typing. After implementation, synthetic smoke still requires `--allow-synthetic`, while any `dataset_kind: "private-real-corpus"` report must use strict aggregate-only JSON with local/redacted boundary fields, sha256 corpus/query digests, fixed target claim, and typed non-raw numeric/string fields; release gates can additionally require 1M scale. Focused RED/GREEN tests, full benchmark-runner tests, fmt, focused clippy, diff check, runbook policy, public repo guard, and full local verification passed. | This slice validates redacted private benchmark evidence format only. It does not create or upload real benchmark reports, run 100k/1M corpora, prove the P95 target on representative hardware, or clear real-corpus performance, model, installer, signing, notarization, or cross-platform blockers. |
 
 ## Command Log
+
+### S155
+
+Design target:
+
+- Add a fail-closed release evidence gate for local private real-corpus query
+  benchmark reports without uploading real resumes, queries, filenames, paths,
+  sample IDs, diagnostics, or local data.
+- Preserve existing synthetic smoke behavior: synthetic reports still require
+  explicit `--allow-synthetic` and cannot prove 100k/1M performance.
+- Require strict aggregate-only `private-real-corpus` JSON with local/redacted
+  boundary markers, false raw-data/path/query booleans, sha256 corpus/query
+  digests, fixed target claim, and typed numeric/string fields.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner resume_benchmark_gate_accepts_private_real_corpus_release_report --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner benchmark_gate_rejects_private_real_report_without_boundary_even_without_release_flag --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner benchmark_gate_rejects_private_real_report_with_extra_payload_field --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner benchmark_gate_rejects_private_real_report_with_payload_in_allowed_fields --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner benchmark_gate_rejects_private_real_report_with_duplicate_payload_keys --locked -- --exact
+```
+
+Output summary:
+
+- The first focused tests failed because the release-gate API and CLI flags did
+  not exist.
+- Review-fix regressions then failed because private real-corpus validation was
+  conditional on the release flag, accepted extra top-level payload fields, and
+  accepted string payloads inside allowed aggregate fields.
+- A final review-fix regression failed because duplicate JSON object keys could
+  hide an earlier private payload behind a later valid aggregate value.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner benchmark_gate_rejects_private_real_report_with_payload_in_allowed_fields --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner benchmark_gate_rejects_private_real_report_with_duplicate_payload_keys --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner resume_benchmark_gate_accepts_private_real_corpus_release_report --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- Focused private real-corpus boundary and CLI release-gate tests passed after
+  implementation.
+- Full `benchmark-runner` tests passed: 9 CLI tests, 23 runner tests, and
+  doc-tests.
+- Focused clippy, fmt, diff check, and runbook policy passed.
+
+Scope note:
+
+- S155 validates only the redacted local aggregate report format used as release
+  performance evidence. It does not run a real 100k/1M benchmark, clear the
+  production P95 performance blocker, choose/distribute models, validate
+  installers/services, sign/notarize artifacts, or upload a GitHub Release.
 
 ### S154
 
