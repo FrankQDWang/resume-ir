@@ -9,6 +9,8 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
 
 use regex::Regex;
 use tantivy::collector::TopDocs;
@@ -24,6 +26,8 @@ const MAX_LIMIT: usize = 100;
 const ACTIVE_SNAPSHOT_FILE: &str = "active-snapshot";
 const SNAPSHOTS_DIR: &str = "snapshots";
 const STAGING_DIR: &str = "staging";
+const SNAPSHOT_PUBLISH_RETRY_ATTEMPTS: usize = 6;
+const SNAPSHOT_PUBLISH_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct IndexDocument {
@@ -398,14 +402,76 @@ where
     index.commit()?;
     drop(index);
 
-    let validation = FullTextIndex::open(&staging_dir)?;
-    validation.search(SearchQuery::new("diagnostic").with_limit(1))?;
-    drop(validation);
-
-    fs::rename(&staging_dir, &published_dir).map_err(FullTextError::io)?;
+    publish_staging_snapshot(&staging_dir, &published_dir)?;
+    let validation = validate_snapshot_contents(&published_dir);
+    if validation.is_err() {
+        let _ = fs::remove_dir_all(&published_dir);
+    }
+    validation?;
     write_active_snapshot(index_root, snapshot_name)?;
 
     Ok(())
+}
+
+fn publish_staging_snapshot(staging_dir: &Path, published_dir: &Path) -> Result<()> {
+    publish_staging_snapshot_with(
+        staging_dir,
+        published_dir,
+        &FsSnapshotPublisher,
+        SNAPSHOT_PUBLISH_RETRY_DELAY,
+    )
+}
+
+trait SnapshotPublisher {
+    fn publish(&self, staging_dir: &Path, published_dir: &Path) -> std::io::Result<()>;
+}
+
+struct FsSnapshotPublisher;
+
+impl SnapshotPublisher for FsSnapshotPublisher {
+    fn publish(&self, staging_dir: &Path, published_dir: &Path) -> std::io::Result<()> {
+        fs::rename(staging_dir, published_dir)
+    }
+}
+
+fn publish_staging_snapshot_with<P: SnapshotPublisher>(
+    staging_dir: &Path,
+    published_dir: &Path,
+    publisher: &P,
+    retry_delay: Duration,
+) -> Result<()> {
+    for attempt in 0..SNAPSHOT_PUBLISH_RETRY_ATTEMPTS {
+        match publisher.publish(staging_dir, published_dir) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt + 1 < SNAPSHOT_PUBLISH_RETRY_ATTEMPTS
+                    && is_transient_snapshot_publish_error(&error) =>
+            {
+                if !retry_delay.is_zero() {
+                    thread::sleep(retry_delay);
+                }
+            }
+            Err(error) => return Err(FullTextError::io(error)),
+        }
+    }
+
+    Err(FullTextError::internal(
+        "full-text snapshot publish retry exhausted",
+    ))
+}
+
+fn is_transient_snapshot_publish_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::Interrupted | ErrorKind::PermissionDenied | ErrorKind::WouldBlock
+    )
+}
+
+fn validate_snapshot_contents(snapshot_dir: &Path) -> Result<()> {
+    let validation = FullTextIndex::open(snapshot_dir)?;
+    validation
+        .search(SearchQuery::new("diagnostic").with_limit(1))
+        .map(|_| ())
 }
 
 pub fn inspect_snapshot_root(index_root: &Path) -> Result<SnapshotRootInspection> {
@@ -754,13 +820,7 @@ fn snapshot_is_usable(snapshot_dir: &Path) -> bool {
         return false;
     }
 
-    FullTextIndex::open(snapshot_dir)
-        .and_then(|index| {
-            index
-                .search(SearchQuery::new("diagnostic").with_limit(1))
-                .map(|_| ())
-        })
-        .is_ok()
+    validate_snapshot_contents(snapshot_dir).is_ok()
 }
 
 fn snapshot_metadata_looks_valid(snapshot_dir: &Path) -> bool {
@@ -969,3 +1029,124 @@ impl fmt::Display for FullTextError {
 }
 
 impl std::error::Error for FullTextError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn snapshot_publish_retries_transient_windows_rename_lock() {
+        let index_root = temp_dir("retry-publish");
+        let staging_dir = index_root.join("staging").join("fulltext-retry.tmp");
+        let published_dir = index_root.join("snapshots").join("fulltext-retry");
+        fs::create_dir_all(&staging_dir).unwrap();
+        fs::create_dir_all(published_dir.parent().unwrap()).unwrap();
+        fs::write(staging_dir.join("meta.json"), b"{}").unwrap();
+
+        let publisher = TransientLockPublisher::new(2);
+        publish_staging_snapshot_with(
+            &staging_dir,
+            &published_dir,
+            &publisher,
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(publisher.attempts(), 3);
+        assert!(published_dir.join("meta.json").exists());
+        assert!(!staging_dir.exists());
+
+        remove_dir(&index_root);
+    }
+
+    #[test]
+    fn snapshot_publish_does_not_retry_existing_destination() {
+        let index_root = temp_dir("already-exists-publish");
+        let staging_dir = index_root.join("staging").join("fulltext-exists.tmp");
+        let published_dir = index_root.join("snapshots").join("fulltext-exists");
+        fs::create_dir_all(&staging_dir).unwrap();
+        fs::create_dir_all(&published_dir).unwrap();
+
+        let publisher = ExistingDestinationPublisher::default();
+        let error = publish_staging_snapshot_with(
+            &staging_dir,
+            &published_dir,
+            &publisher,
+            std::time::Duration::ZERO,
+        )
+        .unwrap_err();
+
+        assert_eq!(publisher.attempts(), 1);
+        assert!(matches!(error, FullTextError::Io { .. }));
+
+        remove_dir(&index_root);
+    }
+
+    struct TransientLockPublisher {
+        remaining_failures: Mutex<usize>,
+        attempts: Mutex<usize>,
+    }
+
+    impl TransientLockPublisher {
+        fn new(failures: usize) -> Self {
+            Self {
+                remaining_failures: Mutex::new(failures),
+                attempts: Mutex::new(0),
+            }
+        }
+
+        fn attempts(&self) -> usize {
+            *self.attempts.lock().unwrap()
+        }
+    }
+
+    impl SnapshotPublisher for TransientLockPublisher {
+        fn publish(&self, staging_dir: &Path, published_dir: &Path) -> std::io::Result<()> {
+            *self.attempts.lock().unwrap() += 1;
+            let mut remaining_failures = self.remaining_failures.lock().unwrap();
+            if *remaining_failures > 0 {
+                *remaining_failures -= 1;
+                return Err(std::io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "fixture transient lock",
+                ));
+            }
+            fs::rename(staging_dir, published_dir)
+        }
+    }
+
+    #[derive(Default)]
+    struct ExistingDestinationPublisher {
+        attempts: Mutex<usize>,
+    }
+
+    impl ExistingDestinationPublisher {
+        fn attempts(&self) -> usize {
+            *self.attempts.lock().unwrap()
+        }
+    }
+
+    impl SnapshotPublisher for ExistingDestinationPublisher {
+        fn publish(&self, _staging_dir: &Path, _published_dir: &Path) -> std::io::Result<()> {
+            *self.attempts.lock().unwrap() += 1;
+            Err(std::io::Error::new(ErrorKind::AlreadyExists, "exists"))
+        }
+    }
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("resume-ir-index-unit-{label}-{unique}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn remove_dir(path: &Path) {
+        let _ = fs::remove_dir_all(path);
+    }
+}
