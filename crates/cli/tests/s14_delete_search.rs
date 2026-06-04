@@ -5,7 +5,9 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
-use meta_store::{DocumentId, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, UnixTimestamp};
+use meta_store::{
+    DocumentId, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrWordBox, UnixTimestamp,
+};
 
 #[test]
 fn delete_soft_tombstones_document_and_removes_it_from_default_search() {
@@ -327,15 +329,17 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
             .expect("deleted candidate document before tombstone");
         let content_hash = deleted_document.content_hash.clone().expect("content hash");
         let ocr_cache_key = OcrPageCacheKey::new(content_hash, 1, 300, "eng", "balanced").unwrap();
-        let ocr_cache_entry = OcrPageCacheEntry::succeeded(
+        let ocr_cache_entry = OcrPageCacheEntry::succeeded_with_word_boxes(
             ocr_cache_key.clone(),
             "PRIVATE_PURGE_OCR_TEXT_SHOULD_NOT_SURVIVE",
             0.91,
             "fixture-ocr-engine",
             17,
+            vec![OcrWordBox::new("PRIVATE_PURGE_WORD_BOX", 1, 2, 3, 4, 0.88).unwrap()],
             UnixTimestamp::from_unix_seconds(1_800_014_000),
         )
         .unwrap();
+        assert_eq!(ocr_cache_entry.word_boxes().len(), 1);
         store.upsert_ocr_page_cache_entry(&ocr_cache_entry).unwrap();
         let ocr_job = store
             .enqueue_ocr_job_for_document(
@@ -380,6 +384,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     assert!(stdout.contains("vector documents purged: 1"));
     assert!(stdout.contains("ingest jobs purged: 1"));
     assert!(stdout.contains("ocr cache entries purged: 1"));
+    assert!(stdout.contains("ocr word boxes purged: 1"));
     assert!(stdout.contains("metadata vacuum: yes"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));

@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, and S151 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, and S152 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -124,10 +124,14 @@ obsolete preliminary files and checklists are not product scope.
   default SQLCipher metadata store; doctor/export report that boundary, and a
   synthetic OCR worker test proves raw default `metadata.sqlite3` lacks the
   SQLite header, OCR text token, and engine-profile marker after a cache write.
+  Deleted-document purge now reports and proves removal of persisted OCR word
+  boxes from purged OCR page-cache rows, covering the current bbox/PII evidence
+  surface for OCR cache cleanup.
   Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
   F1 datasets/results, dedupe quality metrics, candidate merge review
-  workflows, future bbox/PII surface purge coverage, and forensic erase proof.
+  workflows, future non-cache PII surface purge coverage, and forensic erase
+  proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
   helpers, embedding worker, model/dimension-scoped durable per-version
@@ -424,8 +428,62 @@ obsolete preliminary files and checklists are not product scope.
 | S149 | Product vector snapshot encryption slice complete locally | A focused `index-vector` test first failed because `vector.snapshot` was plaintext TSV with vector IDs, document IDs, model IDs, and float values. After implementation, persistent vector snapshots are written as XChaCha20-Poly1305 encrypted local envelopes with an owner-only local key file; raw snapshot files expose only an encrypted header, nonce, and ciphertext while reopen, inspection, HNSW ANN search, model-scoped semantic search, daemon embedding workers, and diagnostics continue to work without path/vector leaks. Focused RED/GREEN test, full `index-vector` tests, CLI embedding tests, daemon embedding worker/job tests, diagnostics test, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this vector snapshot artifact-encryption slice; it does not encrypt full-text snapshots or OCR-cache artifacts, select/license/distribute a real embedding model, prove large-corpus ANN latency/recall, or clear platform/signing blockers. |
 | S150 | Product full-text snapshot encryption slice complete locally | A focused `index-fulltext` test first failed because published full-text snapshots were plaintext Tantivy directories and no `fulltext.snapshot.enc` envelope existed. After implementation, `publish_snapshot` validates the plaintext staging index, archives it, writes an XChaCha20-Poly1305 encrypted local envelope with an owner-only local snapshot key, removes plaintext staging before publication, and opens active/fallback published snapshots through a private temporary decrypt-and-open path. Raw `snapshots/<name>` artifacts expose only the encrypted envelope while CLI search, daemon search, diagnostics, active snapshot fallback, delete/purge, and import/search flows continue to work. Focused RED/GREEN test, full `index-fulltext` tests, related CLI/daemon full-text suites, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this full-text published-snapshot artifact-encryption slice; it does not prove OCR-cache encryption beyond the default SQLCipher metadata path, encrypt transient runtime decrypt directories while a search process is actively using Tantivy, prove large-corpus full-text latency with encrypted snapshot open, or clear platform/signing blockers. |
 | S151 | Product OCR cache encryption proof slice complete locally | A focused diagnostics test first failed because doctor/export did not report OCR cache encryption even though the cache table lives inside the metadata store. After implementation, doctor and redacted diagnostics report `ocr cache encryption: sqlcipher` / `ocr_cache_encryption: "sqlcipher"` from the active metadata-store encryption state, and the OCR worker cache-write test proves raw default `metadata.sqlite3` lacks the SQLite header, synthetic OCR token, and engine-profile marker after a cache write. Full local verification also exposed an unrelated `s20_status_ipc` closed-port race, so that test now reserves a `127.0.0.1` port and connects to the same port on `127.0.0.2` to keep the loopback connect-failure path deterministic under concurrent fake daemons. Focused RED/GREEN test, full diagnostics, OCR handoff, and status IPC suites, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this OCR cache encryption proof and verification-stability slice; it does not add a separate OCR cache artifact format, encrypt active process memory, prove future bbox purge coverage, prove forensic erase, distribute OCR engines/language packs, or clear OCR quality, model, benchmark, installer, signing, notarization, or real cross-platform validation blockers. |
+| S152 | Product OCR word-box purge proof complete locally | A focused delete/purge test first failed because `purge --deleted` did not report removal of persisted OCR word boxes from purged OCR page-cache rows. After implementation, the meta-store OCR page-cache purge API reports both purged cache entries and the count of OCR word boxes removed, and CLI purge prints `ocr word boxes purged` without paths or OCR text. Focused RED/GREEN test, full delete suite, full meta-store suite, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | This slice covers current OCR cache word-box cleanup only. It does not prove forensic erasure of SQLite free pages, purge future unrelated PII surfaces, distribute OCR engines/language packs, prove OCR quality, or clear model, benchmark, installer, signing, notarization, or real cross-platform validation blockers. |
 
 ## Command Log
+
+### S152
+
+Design target:
+
+- Extend deleted-document purge proof to the current OCR word-box/bbox evidence
+  surface, not only plain OCR cache text.
+- Keep purge output aggregate and redacted: counts only, no OCR text, word-box
+  text, file paths, or local data paths.
+- Preserve the existing local best-effort / not-forensic-erase boundary.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- The first edited test run failed to compile because the test used the wrong
+  `succeeded_with_word_boxes` argument order; after fixing the test fixture, the
+  focused test failed as intended because purge output did not contain
+  `ocr word boxes purged: 1`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused GREEN test: exit 0 after implementation; 1 test passed.
+- Full `s14_delete_search` suite: exit 0; 7 tests passed.
+- Full `meta-store` tests: exit 0; 46 integration tests, 1 identity test, and
+  doc-tests passed.
+- `cargo fmt --check`, focused clippy, `git diff --check`, public repo guard,
+  and full local verification passed.
+
+Scope note:
+
+- S152 makes OCR word-box purge visible and tested for the current
+  `ocr_page_cache.word_boxes_json` surface. It does not claim forensic erasure,
+  deletion of user source files, future unrelated PII surface coverage,
+  OCR/model quality, production-scale performance, release readiness, signing,
+  notarization, or platform installer/service validation.
 
 ### S151
 

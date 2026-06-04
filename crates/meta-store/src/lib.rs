@@ -1063,26 +1063,52 @@ impl MetaStore {
     pub fn purge_ocr_page_cache_by_content_hashes(
         &self,
         content_hashes: &[String],
-    ) -> Result<usize> {
+    ) -> Result<OcrPageCachePurge> {
         if content_hashes.is_empty() {
-            return Ok(0);
+            return Ok(OcrPageCachePurge::empty());
         }
 
         let placeholders = (0..content_hashes.len())
             .map(|index| format!("?{}", index + 1))
             .collect::<Vec<_>>()
             .join(", ");
+        let connection = self.connection.borrow();
+        let word_boxes = {
+            let query_params = content_hashes
+                .iter()
+                .map(|content_hash| Value::Text(content_hash.clone()))
+                .collect::<Vec<_>>();
+            let select_sql = format!(
+                "SELECT word_boxes_json FROM ocr_page_cache WHERE file_content_hash IN ({placeholders})"
+            );
+            let mut statement = connection
+                .prepare(&select_sql)
+                .map_err(MetaStoreError::storage)?;
+            let mut rows = statement
+                .query(params_from_iter(query_params))
+                .map_err(MetaStoreError::storage)?;
+            let mut word_boxes = 0;
+            while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+                word_boxes +=
+                    read_ocr_word_boxes_json(read_optional_string(row, 0)?.as_deref())?.len();
+            }
+            word_boxes
+        };
         let delete_sql =
             format!("DELETE FROM ocr_page_cache WHERE file_content_hash IN ({placeholders})");
         let delete_params = content_hashes
             .iter()
             .map(|content_hash| Value::Text(content_hash.clone()))
             .collect::<Vec<_>>();
-        let connection = self.connection.borrow();
 
-        connection
+        let entries = connection
             .execute(&delete_sql, params_from_iter(delete_params))
-            .map_err(MetaStoreError::storage)
+            .map_err(MetaStoreError::storage)?;
+
+        Ok(OcrPageCachePurge {
+            entries,
+            word_boxes,
+        })
     }
 
     pub fn upsert_candidate(&self, candidate: &Candidate) -> Result<()> {
@@ -3422,6 +3448,29 @@ pub enum OcrPageCacheStatus {
     Succeeded,
     FailedRetryable,
     FailedPermanent,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OcrPageCachePurge {
+    entries: usize,
+    word_boxes: usize,
+}
+
+impl OcrPageCachePurge {
+    fn empty() -> Self {
+        Self {
+            entries: 0,
+            word_boxes: 0,
+        }
+    }
+
+    pub fn entries(self) -> usize {
+        self.entries
+    }
+
+    pub fn word_boxes(self) -> usize {
+        self.word_boxes
+    }
 }
 
 #[derive(Clone, PartialEq)]

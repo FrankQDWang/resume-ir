@@ -4962,7 +4962,7 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .purge_ingest_jobs_for_documents(&deleted_document_ids)
         .map_err(CliError::store)?;
     let ocr_cache_hashes = deleted_content_hashes.into_iter().collect::<Vec<_>>();
-    let ocr_cache_entries_purged = store
+    let ocr_cache_purge = store
         .purge_ocr_page_cache_by_content_hashes(&ocr_cache_hashes)
         .map_err(CliError::store)?;
     let now = current_timestamp()?;
@@ -4996,7 +4996,8 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
     println!("vector documents purged: {vector_documents_purged}");
     println!("ingest jobs purged: {ingest_jobs_purged}");
-    println!("ocr cache entries purged: {ocr_cache_entries_purged}");
+    println!("ocr cache entries purged: {}", ocr_cache_purge.entries());
+    println!("ocr word boxes purged: {}", ocr_cache_purge.word_boxes());
     println!("metadata vacuum: yes");
     println!("physical purge scope: local best-effort, not forensic erase");
 
