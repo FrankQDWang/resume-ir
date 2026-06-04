@@ -9,7 +9,7 @@ production-ready scope source.
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
 - Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, and S126 used synthetic fixtures only.
-  S97, S99, S100, S105, S106, S109, S110, S113, S122, and S123 also used private local-only witnesses against anonymized temporary copies from a
+  S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
@@ -65,7 +65,11 @@ obsolete preliminary files and checklists are not product scope.
   redacted output, can run a redacted internal full-text search probe without
   printing the private query or matched files, can run a redacted field-extraction
   aggregate probe without printing field values, filenames, or paths, and
-  removes private witness data. Missing production work includes
+  removes private witness data. S127 reran the explicit-root private PDF/Word
+  witness against the user-authorized local sample directory for import/search/
+  field probes plus a bounded OCR witness using local `tesseract` and
+  `pdftoppm`; both runs removed private temporary data and no private evidence
+  was committed or uploaded. Missing production work includes
   production-grade PDF coverage, full
   legacy Word converter distribution and cross-platform proof, large-corpus
   proof, cross-platform watcher behavior proof, and incremental index updates.
@@ -324,8 +328,47 @@ obsolete preliminary files and checklists are not product scope.
 | S124 | Product release SBOM dry-run slice complete | `./scripts/ci/check-release-sbom.sh` first failed because the release SBOM guard did not exist. After implementation, the release SBOM guard, release artifact guard, workflow guard, runbook guard, shell syntax checks, diff check, public guard, `./scripts/ci/verify-local.sh`, and hosted PR checks passed. | None for this release SBOM dry-run slice; it does not build MSI/pkg/dmg installers, sign, notarize, create a GitHub Release, upload release binaries, validate installer lifecycle behavior, or prove release readiness. |
 | S125 | Product workflow runtime compatibility slice complete | Hosted release dry-run run `26939532282` passed but emitted a GitHub annotation warning that Node.js 20 actions are deprecated for the tracked checkout and artifact upload actions. Official GitHub action release listings showed `actions/checkout` latest `v6.0.3` and `actions/upload-artifact` latest `v7.0.1`. After implementation, workflow YAML parsing, workflow guard, release artifact guard, release SBOM guard, `cargo fmt --check`, `git diff --check`, public repository guard, and `./scripts/ci/verify-local.sh` passed. | None for this workflow runtime compatibility slice; it does not build MSI/pkg/dmg installers, sign, notarize, create a GitHub Release, validate installer lifecycle behavior, prove release readiness, or prove the updated hosted release workflow until the branch is pushed and rerun. |
 | S126 | Product hosted release dry-run evidence slice complete | Updated Release workflow run `26940230718` executed on commit `ea043fc`, passed in hosted GitHub Actions, produced a non-expired `release-dry-run` artifact, and its job log no longer contained the Node.js 20 action warning or v4 checkout/upload-artifact references. PR #9 hosted checks for the same commit also passed: Rust workspace, macOS Platform CI, Windows Platform CI, dependency tree, license policy, runbook policy, and public repository guard. | None for this hosted release dry-run evidence slice; it does not build MSI/pkg/dmg installers, sign, notarize, create/upload a GitHub Release, validate installer lifecycle behavior, prove release readiness, or clear the separate `Swatinem/rust-cache@v2`/Node `punycode` warning observed in the cache step logs. |
+| S127 | Product local PDF/Word witness validation slice complete | Authorized local-only PDF/Word witnesses over the private sample root completed without uploading or committing real resume data. The import/search/field witness completed with redacted aggregate output and removed private temporary data. A second bounded OCR witness used local `tesseract` and `pdftoppm`, completed the configured OCR document budget without OCR failures, kept the remaining OCR queue budgeted rather than pretending full completion, and removed private temporary data. | None for this local-only private sample witness; it does not prove full-library OCR completion, OCR quality, non-English OCR quality, large-corpus latency/throughput, packaging/signing/installers, Windows/Linux real sample behavior, or production model/ANN readiness. |
 
 ## Command Log
+
+### S127
+
+Design target:
+
+- Use the user-authorized local resume sample directory for a private local-only
+  PDF/Word witness.
+- Ignore other sample formats through the existing witness supported-extension
+  filter.
+- Verify import, field extraction, search probing, and bounded OCR with local
+  OCR tools, while keeping paths, filenames, raw text, sample counts, and
+  diagnostics out of git and remote services.
+
+Private local-only checks:
+
+```bash
+./target/debug/resume-cli witness --root <private-local-root> --probe-search --probe-fields
+./target/debug/resume-cli witness --root <private-local-root> --max-files <bounded> --probe-search --probe-fields --run-ocr --ocr-max-documents <bounded> --ocr-tesseract-command <local-tesseract> --ocr-pdftoppm-command <local-pdftoppm>
+```
+
+Output summary:
+
+- Import/search/field witness: exit 0; source root was redacted; only
+  PDF/DOCX/DOC inputs were selected by the witness path; import completed;
+  field probe completed; search probe completed; private witness data was
+  removed.
+- Bounded OCR witness: exit 0; local `tesseract` and `pdftoppm` were used; OCR
+  status completed for the configured document budget; remaining OCR work stayed
+  budgeted instead of being reported as full-library completion; no OCR failures
+  were reported for the budgeted run; private witness data was removed.
+
+Scope note:
+
+- S127 is private local-only witness evidence. No real resume data, filenames,
+  paths, sample counts, raw text, or diagnostics were committed or uploaded. It
+  does not prove full-library OCR completion, OCR quality, non-English OCR
+  quality, large-corpus latency/throughput, Windows/Linux private sample
+  behavior, or release/installer readiness.
 
 ### S126
 
