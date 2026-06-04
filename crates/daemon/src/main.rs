@@ -202,6 +202,16 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: --import-rescan-min-age-seconds requires --rescan-completed-imports",
         ));
     }
+    if options.stale_import_task_seconds.is_some() && !options.work_imports {
+        return Err(DaemonError::usage(
+            "usage: --stale-import-task-seconds requires --work-imports",
+        ));
+    }
+    if options.import_retry_backoff_seconds.is_some() && !options.work_imports {
+        return Err(DaemonError::usage(
+            "usage: --import-retry-backoff-seconds requires --work-imports",
+        ));
+    }
     if options.rescan_completed_imports && !options.work_imports {
         return Err(DaemonError::usage(
             "usage: import rescan options require --work-imports",
@@ -344,16 +354,18 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 index += 1;
             }
             "--import-rescan-min-age-seconds" => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err(DaemonError::usage(run_usage()));
-                };
-                options.import_rescan_min_age_seconds = Some(
-                    value
-                        .parse::<i64>()
-                        .ok()
-                        .filter(|value| *value >= 0)
-                        .ok_or_else(|| DaemonError::usage(run_usage()))?,
-                );
+                options.import_rescan_min_age_seconds =
+                    Some(parse_nonnegative_i64_run_value(args.get(index + 1))?);
+                index += 2;
+            }
+            "--stale-import-task-seconds" => {
+                options.stale_import_task_seconds =
+                    Some(parse_nonnegative_i64_run_value(args.get(index + 1))?);
+                index += 2;
+            }
+            "--import-retry-backoff-seconds" => {
+                options.import_retry_backoff_seconds =
+                    Some(parse_nonnegative_i64_run_value(args.get(index + 1))?);
                 index += 2;
             }
             "--work-ocr-once" => {
@@ -561,7 +573,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>] [--stale-import-task-seconds <n>] [--import-retry-backoff-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -579,6 +591,15 @@ fn parse_positive_usize_run_value(value: &str) -> Result<usize> {
         .parse::<usize>()
         .ok()
         .filter(|value| *value > 0)
+        .ok_or_else(|| DaemonError::usage(run_usage()))
+}
+
+fn parse_nonnegative_i64_run_value(value: Option<&String>) -> Result<i64> {
+    value
+        .ok_or_else(|| DaemonError::usage(run_usage()))?
+        .parse::<i64>()
+        .ok()
+        .filter(|value| *value >= 0)
         .ok_or_else(|| DaemonError::usage(run_usage()))
 }
 
@@ -651,7 +672,13 @@ fn run_worker_loop(
         if options.work_imports {
             let now = current_timestamp()?;
             let mut import_summary = ImportWorkerSummary {
-                stale_recovered: recover_stale_import_tasks(store, now)?,
+                stale_recovered: recover_stale_import_tasks(
+                    store,
+                    now,
+                    options
+                        .stale_import_task_seconds
+                        .unwrap_or(STALE_IMPORT_TASK_SECONDS),
+                )?,
                 ..ImportWorkerSummary::default()
             };
             if options.rescan_completed_imports {
@@ -669,7 +696,12 @@ fn run_worker_loop(
             import_summary.extend(run_import_worker_once_with_retry_due(
                 data_dir,
                 store,
-                timestamp_minus_seconds(now, IMPORT_RETRY_BACKOFF_SECONDS),
+                timestamp_minus_seconds(
+                    now,
+                    options
+                        .import_retry_backoff_seconds
+                        .unwrap_or(IMPORT_RETRY_BACKOFF_SECONDS),
+                ),
             )?);
             if import_summary.has_activity() {
                 print_import_worker_summary(&import_summary)?;
@@ -1534,12 +1566,13 @@ fn mark_embedding_jobs_failed_retryable(
     Ok(())
 }
 
-fn recover_stale_import_tasks(store: &MetaStore, now: UnixTimestamp) -> Result<usize> {
+fn recover_stale_import_tasks(
+    store: &MetaStore,
+    now: UnixTimestamp,
+    stale_seconds: i64,
+) -> Result<usize> {
     store
-        .recover_stale_running_import_tasks(
-            now,
-            timestamp_minus_seconds(now, STALE_IMPORT_TASK_SECONDS),
-        )
+        .recover_stale_running_import_tasks(now, timestamp_minus_seconds(now, stale_seconds))
         .map_err(DaemonError::store)
 }
 
@@ -3668,6 +3701,8 @@ struct RunOptions {
     rescan_completed_imports: bool,
     watch_import_roots: bool,
     import_rescan_min_age_seconds: Option<i64>,
+    stale_import_task_seconds: Option<i64>,
+    import_retry_backoff_seconds: Option<i64>,
     work_ocr_once: bool,
     work_ocr: bool,
     work_embeddings_once: bool,
@@ -3706,6 +3741,8 @@ impl Default for RunOptions {
             rescan_completed_imports: false,
             watch_import_roots: false,
             import_rescan_min_age_seconds: None,
+            stale_import_task_seconds: None,
+            import_retry_backoff_seconds: None,
             work_ocr_once: false,
             work_ocr: false,
             work_embeddings_once: false,

@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, and S169 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, and S170 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -277,6 +277,11 @@ obsolete preliminary files and checklists are not product scope.
   cover battery-mode degradation and external-drive disconnect recovery
   messaging, and doctor/redacted diagnostics advertise those fault hooks while
   the release-readiness gate keeps real hardware drills blocked.
+  Active import daemon kill/restart proof now exists for a running import task:
+  the foreground import scheduler can be killed after claiming a task, then a
+  restarted worker can explicitly lower stale-running recovery and retry-backoff
+  thresholds for local drills, recover the interrupted task, complete import,
+  and produce searchable full-text results without printing local paths.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, labeled vector-quality, and private real-corpus release-evidence
   benchmark gates; query, OCR, and vector smoke gates are wired into PR and
@@ -464,8 +469,59 @@ obsolete preliminary files and checklists are not product scope.
 | S167 | Product incremental full-text snapshot update path complete locally | A focused full-text test first failed because `publish_incremental_snapshot` did not exist. After implementation, index-fulltext can synthesize a next snapshot from the active published snapshot by retaining unchanged documents, replacing same-doc_id delta documents, excluding deleted doc_ids, and publishing through the existing encrypted snapshot path. Import, OCR text indexing, and soft-delete now use this incremental snapshot document synthesis before falling back to metadata rebuild if the active snapshot is unreadable. A CLI regression corrupts the active encrypted snapshot and proves reimport rebuilds from metadata without leaking paths. Focused RED/GREEN, full index-fulltext, import-pipeline, S9 import/search, S14 delete/search, S15 OCR handoff, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice reduces full-text update work and preserves corrupt-active fallback behavior for synthetic local paths only. It does not prove million-scale incremental latency, real-corpus performance, cross-platform watcher soak, platform installer/service validation, signing, notarization, OCR/model licensing, or release readiness. |
 | S168 | Product query telemetry observability complete locally | A focused meta-store test first failed because `record_query_observation` and `StoreStatusSummary.query_latency` did not exist. After implementation, metadata schema V17 adds a bounded `query_observation` table that stores mode, duration, result count, and timestamp only, never query text. Successful local CLI searches and daemon full-text IPC searches record best-effort samples. Local status, daemon status IPC, doctor, and `export-diagnostics --redact` report aggregate query telemetry sample count plus P50/P95/P99 and last result count without raw queries or paths. Focused RED/GREEN, full meta-store, S4 status, S9 import/search, S13 diagnostics, daemon S20 status IPC, daemon S48 search IPC, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice adds runtime observability only. It does not prove the `<200ms` hybrid P95 target, real 100k/1M corpus latency, real semantic/vector quality, cross-platform performance evidence, installer/service validation, signing, notarization, OCR/model licensing, or stable release readiness. |
 | S169 | Product hardware fault-drill simulation coverage complete locally | A focused CLI fault test first failed because `fault-simulate` did not accept `battery-mode`. After implementation, the safe local fault-simulation CLI accepts `battery-mode --battery-state <battery|ac>` and `external-drive-disconnect --drive-state <disconnected|mounted>`, prints redacted degradation/recovery guidance, does not touch private paths, and explicitly marks the real hardware drill as blocked. Doctor and `export-diagnostics --redact` advertise the two new hooks, `release-readiness` plus its CI guard include a `hardware fault drills` blocker, and the fault-injection runbook/guard document the safe probes so safe simulation cannot be mistaken for release evidence. Focused RED/GREEN, full fault-injection tests, diagnostics tests, release-readiness tests, release-readiness guard, runbook guard, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers safe local synthetic drill surfaces only. It does not perform real battery-mode switching, physically disconnect external drives, prove platform-specific power/storage behavior, clear destructive ENOSPC/service-level fault drills, or clear Windows/macOS validation, signing, notarization, installer lifecycle, real benchmark, OCR/model licensing, or stable release readiness blockers. |
+| S170 | Product active import daemon kill/restart recovery complete locally | A focused daemon scheduler test first failed because restart drills could not lower stale-running recovery or retry-backoff thresholds, so a freshly killed running import task could not be recovered and reprocessed deterministically. After implementation, `resume-daemon run --work-imports` accepts `--stale-import-task-seconds <n>` and `--import-retry-backoff-seconds <n>` with production defaults unchanged at 15 minutes and 60 seconds. The regression starts a foreground import over 1,024 synthetic files, waits until the task is `Running`, kills the daemon, restarts with zero-second drill thresholds, proves one stale task recovered, one import processed, 1,024 searchable documents indexed, full-text search succeeds, and stdout/stderr omit data paths. Focused RED/GREEN, full S4 daemon scheduler tests, fmt, full local verification, and public repo guard passed locally. | This slice covers synthetic active-import kill/restart recovery only. It does not prove destructive service-level chaos, real external storage interruption, 100k/1M import recovery latency, cross-platform service lifecycle, installer validation, signing, notarization, OCR/model licensing, or stable release readiness. |
 
 ## Command Log
+
+### S170
+
+Design target:
+
+- Close part of the P6 daemon resilience gap from the acceptance docs: prove a
+  daemon killed during an active import can be restarted and recover the
+  interrupted running import task.
+- Preserve production defaults: the normal stale-running threshold remains 15
+  minutes, and the normal retry backoff remains 60 seconds.
+- Preserve privacy: use synthetic fixtures only and keep daemon output free of
+  local data-dir/root paths.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_recovers_active_import_after_kill_and_restart -- --nocapture
+```
+
+Output summary:
+
+- The focused daemon test failed before implementation because the restarted
+  worker rejected `--stale-import-task-seconds` and
+  `--import-retry-backoff-seconds`, leaving no deterministic local drill path for
+  freshly killed active imports.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_recovers_active_import_after_kill_and_restart -- --nocapture
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The active-import kill/restart regression passed after daemon worker-loop
+  options for stale-running recovery and retry backoff were added.
+- Full S4 daemon tests passed: 13 tests, 0 failures.
+- Full local verification passed, including workspace tests, doc-tests,
+  license/runbook/workflow/release-readiness/release-artifact/SBOM/package
+  guards, and public repo guard.
+
+Scope note:
+
+- S170 is synthetic active-import daemon recovery coverage only. It does not
+  prove real service-level destructive chaos, platform installer/service
+  lifecycle, real external-drive interruption, real-corpus scale recovery,
+  signing, notarization, OCR/model licensing, or stable release readiness.
 
 ### S169
 

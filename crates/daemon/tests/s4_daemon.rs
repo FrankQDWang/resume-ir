@@ -572,6 +572,96 @@ fn foreground_import_scheduler_recovers_stale_running_import_task() {
 }
 
 #[test]
+fn foreground_import_scheduler_recovers_active_import_after_kill_and_restart() {
+    let data_dir = temp_dir("daemon-import-active-kill-data");
+    let fixture_root = active_kill_fixture_root(1_024);
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let task_id = seed_queued_import_task(
+        &data_dir,
+        "daemon-import-active-kill",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--worker-interval-ms",
+            "25",
+            "--max-worker-ticks",
+            "240",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon import scheduler");
+    let stdout = child.stdout.take().expect("daemon stdout");
+    wait_until_import_task_running(&mut child, &data_dir, &task_id);
+
+    child.kill().expect("kill daemon during active import");
+    let killed_output = wait_killed_daemon(child, BufReader::new(stdout));
+    assert!(!killed_output.success);
+    assert!(!killed_output.stdout.contains(path_str(&data_dir)));
+    assert!(!killed_output.stdout.contains(path_str(&fixture_root)));
+    assert!(!killed_output
+        .stdout
+        .contains(path_str(&canonical_fixture_root)));
+    assert!(!killed_output.stderr.contains(path_str(&data_dir)));
+    assert!(!killed_output.stderr.contains(path_str(&fixture_root)));
+    assert!(!killed_output
+        .stderr
+        .contains(path_str(&canonical_fixture_root)));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--stale-import-task-seconds",
+            "0",
+            "--import-retry-backoff-seconds",
+            "0",
+            "--worker-interval-ms",
+            "1",
+            "--max-worker-ticks",
+            "2",
+        ])
+        .output()
+        .expect("restart resume-daemon import scheduler");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("import worker recovered stale running: 1"));
+    assert!(stdout.contains("import worker processed: 1"));
+    assert!(stdout.contains("import worker searchable documents: 1024"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains(path_str(&canonical_fixture_root)));
+    assert!(!search_fulltext(&data_dir, "ActiveKillToken").is_empty());
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+    assert_eq!(task.status, ImportTaskStatus::Completed);
+    assert_eq!(store.status_summary().unwrap().searchable_documents, 1_024);
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
+}
+
+#[test]
 fn foreground_import_watcher_requeues_completed_root_after_file_change_without_path_leak() {
     let data_dir = temp_dir("daemon-import-watcher-data");
     let watched_root = temp_dir("daemon-import-watcher-root");
@@ -689,6 +779,21 @@ fn fixture_root() -> PathBuf {
         .join("tests/fixtures/resumes")
 }
 
+fn active_kill_fixture_root(file_count: usize) -> PathBuf {
+    let root = temp_dir("daemon-import-active-kill-root");
+    for index in 0..file_count {
+        fs::write(
+            root.join(format!("candidate-{index:04}.txt")),
+            format!(
+                "Synthetic resume {index}\nSkills: Rust Java Kubernetes ActiveKillToken\nExperience: {}\n",
+                "local-first search ".repeat(48)
+            ),
+        )
+        .unwrap();
+    }
+    root
+}
+
 fn run_import_worker_once(data_dir: &Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
@@ -778,10 +883,54 @@ fn wait_until_metadata_store_ready(child: &mut Child, data_dir: &Path) {
     panic!("daemon did not prepare metadata store before timeout");
 }
 
+fn wait_until_import_task_running(child: &mut Child, data_dir: &Path, task_id: &ImportTaskId) {
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("poll daemon child") {
+            panic!("daemon exited before import task entered running: {status}");
+        }
+        let task = store.import_task_by_id(task_id).unwrap().unwrap();
+        match task.status {
+            ImportTaskStatus::Running => return,
+            ImportTaskStatus::Completed => {
+                panic!("import completed before active kill window")
+            }
+            _ => {}
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("import task did not enter running before timeout");
+}
+
 struct DaemonOutput {
     success: bool,
     stdout: String,
     stderr: String,
+}
+
+fn wait_killed_daemon(mut child: Child, mut stdout: BufReader<ChildStdout>) -> DaemonOutput {
+    let status = child.wait().expect("wait killed daemon");
+    let mut stdout_text = String::new();
+    stdout
+        .read_to_string(&mut stdout_text)
+        .expect("read killed daemon stdout");
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .expect("daemon stderr")
+        .read_to_string(&mut stderr)
+        .expect("read killed daemon stderr");
+    DaemonOutput {
+        success: status.success(),
+        stdout: stdout_text,
+        stderr,
+    }
 }
 
 fn wait_daemon(mut child: Child, mut stdout: BufReader<ChildStdout>) -> DaemonOutput {
