@@ -125,6 +125,10 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
         "representative private real-corpus hot-index hybrid performance evidence is not available",
     ),
     (
+        "field extraction quality",
+        "private business labeled field-quality evidence is not available",
+    ),
+    (
         "OCR engine license/distribution",
         "reviewed OCR runtime manifest, engine distribution, and language-pack distribution evidence is not complete",
     ),

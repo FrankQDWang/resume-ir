@@ -15,7 +15,7 @@ require_file() {
 require_text() {
   file="$1"
   text="$2"
-  if ! grep -Fq "$text" "$file"; then
+  if ! grep -Fq -- "$text" "$file"; then
     fail "runbook $file is missing required text: $text"
   fi
 }
@@ -51,6 +51,10 @@ require_text "$worker_runbook" "resume-daemon"
 require_text "$worker_runbook" "FailedRetryable"
 require_text "$release_runbook" "BLOCKED"
 require_text "$release_runbook" "resume-benchmark gate"
+require_text "$release_runbook" "field-gate"
+require_text "$release_runbook" "--require-private-business-labeled"
+require_text "$release_runbook" 'target_claim: "field_quality_target_met"'
+require_text "$release_runbook" 'field_taxonomy:'
 require_text "$release_runbook" 'query_mode: "hybrid"'
 require_text "$release_runbook" 'retrieval_layers:'
 require_text "$release_runbook" "hot_index: true"

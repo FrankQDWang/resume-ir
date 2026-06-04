@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, and S175 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, and S176 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -105,6 +105,11 @@ obsolete preliminary files and checklists are not product scope.
   paths; forensic erase proof remains absent. A labeled
   field-quality evaluator and gate now score precision/recall/F1 from JSONL
   samples without emitting raw text, sample IDs, paths, or field values.
+  Private business labeled field-quality release evidence is now accepted only
+  as strict redacted local aggregate JSON with dataset/annotation manifest
+  digests, explicit false raw-data/path/value/sample-ID booleans, a fixed field
+  taxonomy, and production field metrics for email, phone, school, degree,
+  company, title, skill, and date ranges.
   Soft-dedupe scoring now compares
   same-name profiles with bounded non-contact evidence overlap and surfaces
   redacted suspected-duplicate hints in local CLI and daemon search results
@@ -299,18 +304,23 @@ obsolete preliminary files and checklists are not product scope.
   writes through the existing transient Windows lock retry helper, covering the
   observed `os error 33` setup race in synthetic snapshot tests.
   The benchmark runner now has explicit synthetic query, synthetic OCR
-  throughput, labeled vector-quality, and private real-corpus release-evidence
-  benchmark gates; query, OCR, and vector smoke gates are wired into PR and
-  nightly workflows. Synthetic runs must opt in with `--allow-synthetic` and
-  cannot prove 100k/1M production performance. Private real-corpus query
+  throughput, labeled vector-quality, private real-corpus query release-
+  evidence, and private business field-quality release-evidence gates; query,
+  OCR, and vector smoke gates are wired into PR and nightly workflows. Synthetic
+  runs must opt in with `--allow-synthetic` and cannot prove 100k/1M production
+  performance. Private real-corpus query
   reports are accepted only as strict redacted local aggregate JSON with local
   corpus/query-set digests, explicit hot-index hybrid query evidence
   (`query_mode: hybrid`, `fulltext+field+vector+rrf`, no hot-path OCR, parsing,
   or heavy model inference), and no raw text, paths, queries, filenames, or
+  sample identifiers. Private business field-quality reports are accepted only
+  as strict redacted aggregate JSON with dataset/annotation manifest digests and
+  production field metrics, and cannot include raw text, paths, field values, or
   sample identifiers.
   Missing or BLOCKED work includes actual 100k/1M real-corpus benchmark runs,
-  real-corpus nightly/release performance evidence, licensed model selection/
-  distribution, real semantic/vector quality datasets/results, destructive
+  real-corpus nightly/release performance evidence, real business labeled field
+  datasets/results, licensed model selection/distribution, real semantic/vector
+  quality datasets/results, destructive
   service-level kill/actual ENOSPC fault injection, actual battery/external-
   drive hardware fault drills, Windows/macOS validation, and cross-platform
   performance evidence.
@@ -493,8 +503,59 @@ obsolete preliminary files and checklists are not product scope.
 | S173 | Product Windows service dry-run evidence surface complete locally | A focused service lifecycle test first failed because `resume-cli service` did not accept `--platform windows-service`, and focused release-readiness tests first failed because Windows service lifecycle was not tracked separately from MSI installer lifecycle. After implementation, explicit Windows Service dry-run mode reports redacted install/status/start/stop/uninstall command plans without touching LaunchAgent files, requiring `HOME`, or exposing local paths, and release-readiness plus its CI guard include a separate `Windows service lifecycle` blocker. Focused RED/GREEN service and readiness tests, service lifecycle suite, readiness guard, runbook guard, fmt, focused clippy, diff check, public repo guard, and full local verification passed locally. | This slice adds local redacted Windows Service command-plan evidence only. It does not register a Windows service, prove administrator-elevated service install/start/stop/status/uninstall, prove recovery/rollback/upgrade behavior, validate MSI lifecycle, or clear signing, notarization, platform validation, real benchmark, OCR/model licensing, or stable release blockers. |
 | S174 | Product OCR runtime manifest validation gate complete locally | A focused OCR manifest test first failed because `resume-cli` had no `ocr validate-manifest` command. After implementation, local OCR runtime manifests use schema `resume-ir.ocr-runtime-manifest.v1`, require a runtime pack id, reviewed local component licenses, artifact sha256 checks for OCR engines/renderers/language packs, optional reviewed language-pack entries, and redacted output that omits runtime bytes, local paths, and full digests. The OCR worker runbook, release blocker runbook, runbook guard, and release-readiness OCR blocker detail now include the OCR runtime manifest gate. Focused RED/GREEN OCR manifest tests, release-readiness tests, runbook/readiness guards, fmt, focused clippy, public repo guard, and full local verification passed locally. | This slice adds local OCR runtime distribution governance only. It does not bundle or approve Tesseract/Poppler/language packs, prove non-English OCR quality, prove full-library scanned-resume OCR, prove large-corpus OCR throughput, validate platform installers/services, or clear signing, notarization, OCR/model licensing, benchmark, or stable release blockers. |
 | S175 | Product hot-index hybrid private benchmark gate complete locally | A focused benchmark gate test first failed because a private real-corpus benchmark report without `query_mode`, retrieval-layer, hot-index, and hot-path exclusion evidence was accepted as release evidence. After implementation, private real-corpus benchmark reports must now prove `query_mode: hybrid`, `retrieval_layers: fulltext+field+vector+rrf`, `hot_index: true`, and false hot-path OCR/parsing/heavy-model-inference flags, while preserving the existing redacted local aggregate boundary and private corpus/query-set digests. Release blocker docs, runbook guard, and release-readiness blocker detail now name hot-index hybrid evidence explicitly. Focused RED/GREEN benchmark gate tests and CLI private report acceptance passed locally. | This slice tightens release evidence validation only. It does not run 100k or 1M real-corpus benchmarks, prove `<200ms` P95 on representative hardware, provide licensed embedding model distribution, prove semantic/vector quality, clear OCR/model licensing, platform validation, signing, notarization, or stable release readiness. |
+| S176 | Product private business field-quality release gate complete locally | A focused field-quality gate test first failed because `FieldQualityGateConfig` had no `require_private_business_labeled` mode. After implementation, `resume-benchmark field-gate --require-private-business-labeled` rejects ordinary labeled reports, accepts only strict `private-business-labeled` redacted local aggregate reports, requires dataset and annotation manifest digests, false raw-data/path/field-value/sample-ID booleans, the `resume-ir.fields.v1` taxonomy, and production field metrics for email, phone, school, degree, company, title, skill, and date ranges. Release-readiness plus its CI guard now include a `field extraction quality` blocker, and the release blocker runbook documents the private field-quality evidence gate. Focused RED/GREEN field-quality tests, full benchmark-runner tests, release-readiness tests, readiness/runbook guards, fmt, diff check, focused clippy, public repo guard, and full local verification passed locally. | This slice tightens release evidence validation only. It does not create or upload private labels, run real business field-quality evaluation, prove production field F1 on representative resumes, improve extraction rules/models, clear OCR/model licensing, clear platform validation, or clear stable release readiness. |
 
 ## Command Log
+
+### S176
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_rejects_release_evidence_without_private_business_boundary -- --exact
+```
+
+Output summary:
+
+- The focused test failed with `E0599` because `FieldQualityGateConfig` did not
+  have `require_private_business_labeled`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_ -- --nocapture
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_ -- --nocapture
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner -p resume-cli --all-targets -- -D warnings
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The field-quality gate suite passed for ordinary labeled smoke acceptance,
+  strict private-business acceptance, missing production field rejection, missing
+  redacted boundary rejection, and unsupported extra payload field rejection.
+- The CLI field-quality suite passed for normal labeled smoke gate behavior and
+  the strict `--require-private-business-labeled` release evidence mode.
+- The full benchmark-runner suite passed with 11 CLI tests and 29 runner tests.
+- Release-readiness focused tests plus the release-readiness and runbook guards
+  passed with the new `field extraction quality` blocker. The runbook guard was
+  also hardened so required text that starts with `--` is parsed as text, not a
+  `grep` option.
+- Fmt, diff check, focused benchmark/CLI clippy, public repo guard, and full
+  local verification passed.
+
+Scope note:
+
+- S176 is a release-evidence validator only. It does not generate, sanitize,
+  upload, or certify private field-quality reports and does not clear the
+  missing real business labeled field-quality blocker.
 
 ### S175
 

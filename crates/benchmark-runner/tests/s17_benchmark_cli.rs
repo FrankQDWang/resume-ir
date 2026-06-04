@@ -316,6 +316,95 @@ fn resume_benchmark_field_quality_outputs_redacted_report_and_gate() {
 }
 
 #[test]
+fn resume_benchmark_field_gate_requires_private_business_labeled_flag() {
+    let dataset_dir = temp_dir("field-quality-private-business-reject");
+    let report_path = dataset_dir.join("field-report.json");
+    fs::write(
+        &report_path,
+        concat!(
+            "{",
+            "\"schema_version\":\"field-quality.v1\",",
+            "\"run_id\":\"fieldq_test\",",
+            "\"platform\":\"test/test\",",
+            "\"dataset_kind\":\"labeled\",",
+            "\"sample_count\":1000,",
+            "\"expected_mentions\":1000,",
+            "\"predicted_mentions\":1000,",
+            "\"overall\":{\"true_positive\":1000,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+            "\"fields\":{\"email\":{\"true_positive\":1000,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0}},",
+            "\"target_claim\":\"not_evaluated\",",
+            "\"scope\":\"labeled field extraction quality; no raw resume text, paths, sample ids, or field values included\"",
+            "}"
+        ),
+    )
+    .unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "field-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-business-labeled",
+            "--min-samples",
+            "1000",
+            "--min-precision",
+            "0.93",
+            "--min-recall",
+            "0.93",
+            "--min-f1",
+            "0.93",
+        ])
+        .output()
+        .expect("run private business field quality gate");
+
+    assert!(!gate.status.success());
+    assert!(String::from_utf8_lossy(&gate.stderr)
+        .contains("private business field-quality benchmark required"));
+    assert!(!String::from_utf8_lossy(&gate.stderr).contains(path_str(&report_path)));
+
+    remove_dir(&dataset_dir);
+}
+
+#[test]
+fn resume_benchmark_field_gate_accepts_private_business_labeled_report() {
+    let dataset_dir = temp_dir("field-quality-private-business-accept");
+    let report_path = dataset_dir.join("field-report.json");
+    fs::write(&report_path, minimal_private_business_field_quality_json()).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "field-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-business-labeled",
+            "--min-samples",
+            "1000",
+            "--min-precision",
+            "0.93",
+            "--min-recall",
+            "0.93",
+            "--min-f1",
+            "0.93",
+        ])
+        .output()
+        .expect("run private business field quality gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "field quality gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(&dataset_dir);
+}
+
+#[test]
 fn resume_benchmark_ocr_throughput_outputs_redacted_report_and_gate() {
     let command = ocr_fixture_script("ocr-throughput-cli-private-command");
     let report_dir = temp_dir("ocr-throughput-cli-report");
@@ -691,6 +780,43 @@ fn temp_dir(label: &str) -> PathBuf {
 
 fn path_str(path: &Path) -> &str {
     path.to_str().unwrap()
+}
+
+fn minimal_private_business_field_quality_json() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"field-quality.v1\",",
+        "\"run_id\":\"fieldq_test\",",
+        "\"platform\":\"test/test\",",
+        "\"dataset_kind\":\"private-business-labeled\",",
+        "\"sample_count\":1000,",
+        "\"expected_mentions\":1000,",
+        "\"predicted_mentions\":1000,",
+        "\"overall\":{\"true_positive\":1000,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"fields\":{",
+        "\"email\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"phone\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"school\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"degree\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"company\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"title\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"skill\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"date_range\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0}",
+        "},",
+        "\"target_claim\":\"field_quality_target_met\",",
+        "\"corpus_origin\":\"private_local\",",
+        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"contains_raw_resume_text\":false,",
+        "\"contains_resume_paths\":false,",
+        "\"contains_field_values\":false,",
+        "\"contains_sample_ids\":false,",
+        "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+        "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"field_taxonomy\":\"resume-ir.fields.v1\",",
+        "\"scope\":\"private business field-quality benchmark; aggregate redacted report only\"",
+        "}"
+    )
+    .to_string()
 }
 
 fn remove_dir(path: &Path) {

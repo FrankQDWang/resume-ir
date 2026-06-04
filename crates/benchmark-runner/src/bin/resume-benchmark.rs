@@ -87,8 +87,11 @@ fn run_field_quality(args: FieldQualityArgs) -> Result<(), CliError> {
 fn run_field_gate(args: FieldGateArgs) -> Result<(), CliError> {
     let report_json = fs::read_to_string(&args.report)
         .map_err(|_| CliError::user("unable to read field quality report"))?;
-    let config = FieldQualityGateConfig::new(args.min_precision, args.min_recall, args.min_f1)
+    let mut config = FieldQualityGateConfig::new(args.min_precision, args.min_recall, args.min_f1)
         .with_min_samples(args.min_samples);
+    if args.require_private_business_labeled {
+        config = config.require_private_business_labeled();
+    }
     evaluate_field_quality_gate_json(&report_json, config).map_err(CliError::gate)?;
     println!("field quality gate passed");
     Ok(())
@@ -331,6 +334,7 @@ fn parse_field_quality_args(args: &[String]) -> Result<FieldQualityArgs, CliErro
 
 fn parse_field_gate_args(args: &[String]) -> Result<FieldGateArgs, CliError> {
     let mut report = None;
+    let mut require_private_business_labeled = false;
     let mut min_samples = 1_usize;
     let mut min_precision = 0.95_f64;
     let mut min_recall = 0.95_f64;
@@ -345,6 +349,10 @@ fn parse_field_gate_args(args: &[String]) -> Result<FieldGateArgs, CliError> {
                 };
                 report = Some(PathBuf::from(value));
                 index += 2;
+            }
+            "--require-private-business-labeled" => {
+                require_private_business_labeled = true;
+                index += 1;
             }
             "--min-samples" => {
                 min_samples = parse_positive_usize(args.get(index + 1))?;
@@ -371,6 +379,7 @@ fn parse_field_gate_args(args: &[String]) -> Result<FieldGateArgs, CliError> {
 
     Ok(FieldGateArgs {
         report: report.ok_or_else(CliError::usage)?,
+        require_private_business_labeled,
         min_samples,
         min_precision,
         min_recall,
@@ -652,7 +661,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -697,6 +706,7 @@ struct FieldQualityArgs {
 #[derive(Clone, Debug)]
 struct FieldGateArgs {
     report: PathBuf,
+    require_private_business_labeled: bool,
     min_samples: usize,
     min_precision: f64,
     min_recall: f64,

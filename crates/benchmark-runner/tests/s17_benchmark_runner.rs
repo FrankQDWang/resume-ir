@@ -312,6 +312,92 @@ fn field_quality_gate_accepts_labeled_report() {
 }
 
 #[test]
+fn field_quality_gate_rejects_release_evidence_without_private_business_boundary() {
+    let dataset = concat!(
+        "{\"text\":\"Email: candidate@example.test\\nPhone: (415) 555-0132\",",
+        "\"expected\":[",
+        "{\"type\":\"email\",\"normalized\":\"candidate@example.test\"},",
+        "{\"type\":\"phone\",\"normalized\":\"+14155550132\"}",
+        "]}\n",
+    );
+    let report = run_field_quality_jsonl(dataset).unwrap();
+    let config = FieldQualityGateConfig::new(0.99, 0.99, 0.99)
+        .with_min_samples(1)
+        .require_private_business_labeled();
+
+    let error = evaluate_field_quality_gate_json(&report.to_redacted_json(), config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business field-quality benchmark required"));
+}
+
+#[test]
+fn field_quality_gate_accepts_private_business_labeled_release_evidence() {
+    let report = minimal_private_business_field_quality_json();
+    let config = FieldQualityGateConfig::new(0.93, 0.93, 0.93)
+        .with_min_samples(1_000)
+        .require_private_business_labeled();
+
+    let evaluation = evaluate_field_quality_gate_json(&report, config).unwrap();
+
+    assert_eq!(evaluation.dataset_kind(), "private-business-labeled");
+    assert_eq!(evaluation.sample_count(), 1_000);
+    assert!(evaluation.f1() >= 0.99);
+}
+
+#[test]
+fn field_quality_gate_rejects_private_business_report_without_production_fields() {
+    let report = minimal_private_business_field_quality_json().replace(
+        ",\"date_range\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0}",
+        "",
+    );
+    let config = FieldQualityGateConfig::new(0.93, 0.93, 0.93)
+        .with_min_samples(1_000)
+        .require_private_business_labeled();
+
+    let error = evaluate_field_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business field quality requires production field metrics"));
+}
+
+#[test]
+fn field_quality_gate_rejects_private_business_report_without_boundary_metadata() {
+    let report = minimal_private_business_field_quality_json().replace(
+        "\"privacy_boundary\":\"redacted_local_aggregate\"",
+        "\"privacy_boundary\":\"raw_local_files\"",
+    );
+    let config = FieldQualityGateConfig::new(0.93, 0.93, 0.93)
+        .with_min_samples(1_000)
+        .require_private_business_labeled();
+
+    let error = evaluate_field_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business field quality requires redacted local boundary"));
+}
+
+#[test]
+fn field_quality_gate_rejects_private_business_report_with_extra_payload_field() {
+    let mut report = minimal_private_business_field_quality_json();
+    report.pop();
+    report.push_str(",\"notes\":\"private local path /Users/frankqdwang/resume.pdf\"");
+    report.push('}');
+    let config = FieldQualityGateConfig::new(0.93, 0.93, 0.93)
+        .with_min_samples(1_000)
+        .require_private_business_labeled();
+
+    let error = evaluate_field_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("unsupported private business field quality field"));
+}
+
+#[test]
 fn synthetic_ocr_throughput_reports_page_latency_without_payload_or_path_leakage() {
     let command = ocr_fixture_script("ocr-throughput-private-command");
     let config = SyntheticOcrBenchmarkConfig::new(3, 5_000).unwrap();
@@ -559,6 +645,43 @@ fn minimal_private_real_benchmark_json(
     ));
     report.push('}');
     report
+}
+
+fn minimal_private_business_field_quality_json() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"field-quality.v1\",",
+        "\"run_id\":\"fieldq_test\",",
+        "\"platform\":\"test/test\",",
+        "\"dataset_kind\":\"private-business-labeled\",",
+        "\"sample_count\":1000,",
+        "\"expected_mentions\":1000,",
+        "\"predicted_mentions\":1000,",
+        "\"overall\":{\"true_positive\":1000,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"fields\":{",
+        "\"email\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"phone\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"school\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"degree\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"company\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"title\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"skill\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"date_range\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0}",
+        "},",
+        "\"target_claim\":\"field_quality_target_met\",",
+        "\"corpus_origin\":\"private_local\",",
+        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"contains_raw_resume_text\":false,",
+        "\"contains_resume_paths\":false,",
+        "\"contains_field_values\":false,",
+        "\"contains_sample_ids\":false,",
+        "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+        "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"field_taxonomy\":\"resume-ir.fields.v1\",",
+        "\"scope\":\"private business field-quality benchmark; aggregate redacted report only\"",
+        "}"
+    )
+    .to_string()
 }
 
 fn minimal_ocr_throughput_json(

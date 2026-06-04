@@ -18,6 +18,7 @@ unresolved.
   are not proven
 - macOS signed pkg/dmg install, upgrade, uninstall, and rollback are not proven
 - 100k and 1M hot-index hybrid real-corpus benchmarks are not available
+- private business labeled field-quality evidence is not available
 - a reviewed licensed OCR engine is not selected or distributed
 - a reviewed licensed embedding model is not selected or distributed
 - Windows and macOS cross-platform validation are not complete
@@ -87,6 +88,29 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
 These gates are release evidence validators. They do not create, upload, or
 sanitize private benchmark reports and cannot clear the benchmark blocker until
 representative local 100k and 1M runs exist.
+
+Run private business field-quality gates only against local redacted aggregate
+reports. The report must use `dataset_kind: "private-business-labeled"`,
+`target_claim: "field_quality_target_met"`, `corpus_origin: "private_local"`,
+`privacy_boundary: "redacted_local_aggregate"`, `field_taxonomy:
+"resume-ir.fields.v1"`, false raw-data/path/field-value/sample-ID booleans, and
+sha256 digests for both the dataset and annotation manifests. It must include
+production field metrics for email, phone, school, degree, company, title,
+skill, and date ranges. Do not upload reports if they contain raw resume text,
+local paths, field values, sample IDs, filenames, or notes.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  field-gate --report private-field-quality.json \
+  --require-private-business-labeled \
+  --min-samples 1000 \
+  --min-precision 0.93 --min-recall 0.93 --min-f1 0.93
+```
+
+This gate is a release evidence validator. It does not create, upload, label,
+or sanitize private field-quality reports and cannot clear the field extraction
+quality blocker until representative local business labels and aggregate field
+metrics exist.
 
 Generate a local release dry-run manifest only after release binaries have been
 built:

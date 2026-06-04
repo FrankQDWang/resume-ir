@@ -1034,6 +1034,7 @@ pub struct FieldQualityGateConfig {
     min_recall: f64,
     min_f1: f64,
     min_samples: usize,
+    require_private_business_labeled: bool,
 }
 
 impl FieldQualityGateConfig {
@@ -1043,11 +1044,17 @@ impl FieldQualityGateConfig {
             min_recall,
             min_f1,
             min_samples: 1,
+            require_private_business_labeled: false,
         }
     }
 
     pub fn with_min_samples(mut self, min_samples: usize) -> Self {
         self.min_samples = min_samples;
+        self
+    }
+
+    pub fn require_private_business_labeled(mut self) -> Self {
+        self.require_private_business_labeled = true;
         self
     }
 }
@@ -1329,10 +1336,25 @@ pub fn run_field_quality_jsonl(dataset_jsonl: &str) -> Result<FieldQualityReport
     })
 }
 
+const PRIVATE_BUSINESS_FIELD_QUALITY_SCOPE: &str =
+    "private business field-quality benchmark; aggregate redacted report only";
+const PRIVATE_BUSINESS_FIELD_QUALITY_TARGET_CLAIM: &str = "field_quality_target_met";
+const PRODUCTION_FIELD_QUALITY_THRESHOLDS: &[(&str, f64)] = &[
+    ("email", 0.995),
+    ("phone", 0.995),
+    ("school", 0.93),
+    ("degree", 0.95),
+    ("company", 0.90),
+    ("title", 0.88),
+    ("skill", 0.92),
+    ("date_range", 0.93),
+];
+
 pub fn evaluate_field_quality_gate_json(
     report_json: &str,
     config: FieldQualityGateConfig,
 ) -> std::result::Result<FieldQualityGateEvaluation, BenchmarkGateError> {
+    reject_duplicate_json_object_keys(report_json)?;
     let report: serde_json::Value =
         serde_json::from_str(report_json).map_err(|_| BenchmarkGateError::invalid_json())?;
 
@@ -1343,9 +1365,17 @@ pub fn evaluate_field_quality_gate_json(
         ));
     }
     let dataset_kind = required_str(&report, "dataset_kind")?;
-    if dataset_kind != "labeled" {
+    match dataset_kind {
+        "labeled" | "private-business-labeled" => {}
+        _ => {
+            return Err(BenchmarkGateError::failed(
+                "field quality requires labeled dataset",
+            ));
+        }
+    }
+    if config.require_private_business_labeled && dataset_kind != "private-business-labeled" {
         return Err(BenchmarkGateError::failed(
-            "field quality requires labeled dataset",
+            "private business field-quality benchmark required",
         ));
     }
     let sample_count = required_usize(&report, "sample_count")?;
@@ -1357,6 +1387,9 @@ pub fn evaluate_field_quality_gate_json(
     let f1 = required_f64(overall, "f1")?;
     let target_claim = required_str(&report, "target_claim")?;
 
+    if dataset_kind == "private-business-labeled" {
+        validate_private_business_field_quality_boundary(&report, target_claim)?;
+    }
     if sample_count < config.min_samples {
         return Err(BenchmarkGateError::failed(
             "field sample count below gate minimum",
@@ -1373,7 +1406,7 @@ pub fn evaluate_field_quality_gate_json(
     if f1 < config.min_f1 {
         return Err(BenchmarkGateError::failed("field f1 below threshold"));
     }
-    if target_claim != "not_evaluated" {
+    if dataset_kind == "labeled" && target_claim != "not_evaluated" {
         return Err(BenchmarkGateError::failed(
             "field target claim is not proven",
         ));
@@ -1386,6 +1419,221 @@ pub fn evaluate_field_quality_gate_json(
         recall,
         f1,
     })
+}
+
+fn validate_private_business_field_quality_boundary(
+    report: &serde_json::Value,
+    target_claim: &str,
+) -> std::result::Result<(), BenchmarkGateError> {
+    validate_private_business_field_quality_shape(report)?;
+    if private_field_quality_str(report, "corpus_origin")? != "private_local"
+        || private_field_quality_str(report, "privacy_boundary")? != "redacted_local_aggregate"
+        || private_field_quality_bool(report, "contains_raw_resume_text")?
+        || private_field_quality_bool(report, "contains_resume_paths")?
+        || private_field_quality_bool(report, "contains_field_values")?
+        || private_field_quality_bool(report, "contains_sample_ids")?
+        || !is_sha256_hex(private_field_quality_str(
+            report,
+            "dataset_manifest_sha256",
+        )?)
+        || !is_sha256_hex(private_field_quality_str(
+            report,
+            "annotation_manifest_sha256",
+        )?)
+        || private_field_quality_str(report, "field_taxonomy")? != "resume-ir.fields.v1"
+        || private_field_quality_str(report, "scope")? != PRIVATE_BUSINESS_FIELD_QUALITY_SCOPE
+    {
+        return Err(private_field_quality_boundary_error());
+    }
+    if target_claim != PRIVATE_BUSINESS_FIELD_QUALITY_TARGET_CLAIM {
+        return Err(BenchmarkGateError::failed(
+            "private business field quality requires target claim",
+        ));
+    }
+    if !is_safe_benchmark_token(private_field_quality_str(report, "run_id")?) {
+        return Err(private_field_quality_boundary_error());
+    }
+    if !is_safe_platform_label(private_field_quality_str(report, "platform")?) {
+        return Err(private_field_quality_boundary_error());
+    }
+
+    Ok(())
+}
+
+fn validate_private_business_field_quality_shape(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = report.as_object() else {
+        return Err(private_field_quality_boundary_error());
+    };
+    for key in object.keys() {
+        if !is_allowed_private_business_field_quality_key(key) {
+            return Err(BenchmarkGateError::failed(
+                "unsupported private business field quality field",
+            ));
+        }
+    }
+    private_field_quality_str(report, "schema_version")?;
+    private_field_quality_str(report, "run_id")?;
+    private_field_quality_str(report, "platform")?;
+    private_field_quality_str(report, "dataset_kind")?;
+    private_field_quality_usize(report, "sample_count")?;
+    private_field_quality_usize(report, "expected_mentions")?;
+    private_field_quality_usize(report, "predicted_mentions")?;
+    private_field_quality_str(report, "target_claim")?;
+    private_field_quality_str(report, "corpus_origin")?;
+    private_field_quality_str(report, "privacy_boundary")?;
+    private_field_quality_bool(report, "contains_raw_resume_text")?;
+    private_field_quality_bool(report, "contains_resume_paths")?;
+    private_field_quality_bool(report, "contains_field_values")?;
+    private_field_quality_bool(report, "contains_sample_ids")?;
+    private_field_quality_str(report, "dataset_manifest_sha256")?;
+    private_field_quality_str(report, "annotation_manifest_sha256")?;
+    private_field_quality_str(report, "field_taxonomy")?;
+    private_field_quality_str(report, "scope")?;
+    let overall = report
+        .get("overall")
+        .ok_or_else(private_field_quality_boundary_error)?;
+    validate_private_business_field_quality_metric_shape(overall)?;
+    let fields = report
+        .get("fields")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(private_business_field_metric_error)?;
+    validate_private_business_field_metrics(fields)?;
+    Ok(())
+}
+
+fn validate_private_business_field_metrics(
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> std::result::Result<(), BenchmarkGateError> {
+    for field_name in fields.keys() {
+        if !PRODUCTION_FIELD_QUALITY_THRESHOLDS
+            .iter()
+            .any(|(required_field, _)| required_field == field_name)
+        {
+            return Err(BenchmarkGateError::failed(
+                "unsupported private business field quality field",
+            ));
+        }
+    }
+
+    for (field_name, min_score) in PRODUCTION_FIELD_QUALITY_THRESHOLDS {
+        let metric = fields
+            .get(*field_name)
+            .ok_or_else(private_business_field_metric_error)?;
+        validate_private_business_field_quality_metric_shape(metric)?;
+        let precision = private_field_quality_number(metric, "precision")?;
+        let recall = private_field_quality_number(metric, "recall")?;
+        let f1 = private_field_quality_number(metric, "f1")?;
+        if precision < *min_score || recall < *min_score || f1 < *min_score {
+            return Err(BenchmarkGateError::failed(
+                "private business field quality below production field threshold",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_private_business_field_quality_metric_shape(
+    metric: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = metric.as_object() else {
+        return Err(private_field_quality_boundary_error());
+    };
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "true_positive" | "false_positive" | "false_negative" | "precision" | "recall" | "f1"
+        ) {
+            return Err(BenchmarkGateError::failed(
+                "unsupported private business field quality metric field",
+            ));
+        }
+    }
+    private_field_quality_usize(metric, "true_positive")?;
+    private_field_quality_usize(metric, "false_positive")?;
+    private_field_quality_usize(metric, "false_negative")?;
+    private_field_quality_number(metric, "precision")?;
+    private_field_quality_number(metric, "recall")?;
+    private_field_quality_number(metric, "f1")?;
+    Ok(())
+}
+
+fn is_allowed_private_business_field_quality_key(key: &str) -> bool {
+    matches!(
+        key,
+        "schema_version"
+            | "run_id"
+            | "platform"
+            | "dataset_kind"
+            | "sample_count"
+            | "expected_mentions"
+            | "predicted_mentions"
+            | "overall"
+            | "fields"
+            | "target_claim"
+            | "corpus_origin"
+            | "privacy_boundary"
+            | "contains_raw_resume_text"
+            | "contains_resume_paths"
+            | "contains_field_values"
+            | "contains_sample_ids"
+            | "dataset_manifest_sha256"
+            | "annotation_manifest_sha256"
+            | "field_taxonomy"
+            | "scope"
+    )
+}
+
+fn private_field_quality_str<'a>(
+    value: &'a serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<&'a str, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(private_field_quality_boundary_error)
+}
+
+fn private_field_quality_bool(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<bool, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(private_field_quality_boundary_error)
+}
+
+fn private_field_quality_usize(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<usize, BenchmarkGateError> {
+    let number = value
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(private_field_quality_boundary_error)?;
+    usize::try_from(number).map_err(|_| private_field_quality_boundary_error())
+}
+
+fn private_field_quality_number(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<f64, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|number| number.is_finite() && (0.0..=1.0).contains(number))
+        .ok_or_else(private_field_quality_boundary_error)
+}
+
+fn private_field_quality_boundary_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private business field quality requires redacted local boundary")
+}
+
+fn private_business_field_metric_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private business field quality requires production field metrics")
 }
 
 pub fn evaluate_vector_quality_gate_json(
