@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
@@ -34,6 +34,10 @@ use meta_store::{
     IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey,
     OcrPageCacheStatus, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
     WorkerTaskKind,
+};
+use notify::{
+    event::EventKind as NotifyEventKind, Config as NotifyConfig, Event as NotifyEvent,
+    RecommendedWatcher, RecursiveMode, Watcher,
 };
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
@@ -197,6 +201,11 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: import rescan options require --work-imports",
         ));
     }
+    if options.watch_import_roots && !options.work_imports {
+        return Err(DaemonError::usage(
+            "usage: import watcher options require --work-imports",
+        ));
+    }
     if options.has_worker_loop()
         && options.ipc_listen.is_some()
         && options.max_worker_ticks.is_some()
@@ -322,6 +331,10 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
             }
             "--rescan-completed-imports" => {
                 options.rescan_completed_imports = true;
+                index += 1;
+            }
+            "--watch-import-roots" => {
+                options.watch_import_roots = true;
                 index += 1;
             }
             "--import-rescan-min-age-seconds" => {
@@ -542,7 +555,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--import-rescan-min-age-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -613,6 +626,11 @@ fn run_worker_loop(
 ) -> Result<()> {
     let interval = Duration::from_millis(options.worker_interval_ms.unwrap_or(1_000));
     let mut ticks = 0_usize;
+    let mut import_watcher = if options.watch_import_roots {
+        Some(ImportWatcher::new()?)
+    } else {
+        None
+    };
 
     loop {
         if stop_signal
@@ -636,6 +654,9 @@ fn run_worker_loop(
                         .import_rescan_min_age_seconds
                         .unwrap_or(DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS),
                 )?;
+            }
+            if let Some(watcher) = import_watcher.as_mut() {
+                import_summary.extend_watcher(watcher.sync_and_requeue(store, now)?);
             }
             import_summary.extend(run_import_worker_once_with_retry_due(
                 data_dir,
@@ -1484,44 +1505,213 @@ fn requeue_completed_imports(
 
     for (index, scope) in scopes.into_iter().enumerate() {
         let task_id = new_import_task_id(index)?;
-        let task = ImportTask {
-            id: task_id.clone(),
-            root_path: scope.canonical_root_path.clone(),
-            status: ImportTaskStatus::Queued,
-            queued_at: now,
-            started_at: None,
-            finished_at: None,
-            updated_at: now,
-        };
-        let next_scope = ImportScanScope {
-            import_task_id: task_id,
-            root_kind: scope.root_kind,
-            root_preset: scope.root_preset,
-            scan_profile: scope.scan_profile,
-            requested_root_path: scope.requested_root_path,
-            canonical_root_path: scope.canonical_root_path,
-            files_discovered: 0,
-            ignored_entries: 0,
-            scan_errors: 0,
-            searchable_documents: 0,
-            ocr_required_documents: 0,
-            ocr_jobs_queued: 0,
-            failed_documents: 0,
-            deleted_documents: 0,
-            scan_budget_kind: scope.scan_budget_kind,
-            scan_budget_limit: scope.scan_budget_limit,
-            scan_budget_observed: scope.scan_budget_limit.map(|_| 0),
-            scan_budget_exhausted: false,
-            updated_at: now,
-        };
-
-        store
-            .insert_import_task_with_scan_scope(&task, &next_scope)
-            .map_err(DaemonError::store)?;
+        enqueue_import_from_completed_scope(store, scope, task_id, now)?;
         requeued += 1;
     }
 
     Ok(requeued)
+}
+
+fn enqueue_import_from_completed_scope(
+    store: &MetaStore,
+    scope: ImportScanScope,
+    task_id: ImportTaskId,
+    now: UnixTimestamp,
+) -> Result<()> {
+    let task = ImportTask {
+        id: task_id.clone(),
+        root_path: scope.canonical_root_path.clone(),
+        status: ImportTaskStatus::Queued,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    };
+    let next_scope = ImportScanScope {
+        import_task_id: task_id,
+        root_kind: scope.root_kind,
+        root_preset: scope.root_preset,
+        scan_profile: scope.scan_profile,
+        requested_root_path: scope.requested_root_path,
+        canonical_root_path: scope.canonical_root_path,
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: scope.scan_budget_kind,
+        scan_budget_limit: scope.scan_budget_limit,
+        scan_budget_observed: scope.scan_budget_limit.map(|_| 0),
+        scan_budget_exhausted: false,
+        updated_at: now,
+    };
+
+    store
+        .insert_import_task_with_scan_scope(&task, &next_scope)
+        .map_err(DaemonError::store)
+}
+
+struct ImportWatcher {
+    watcher: RecommendedWatcher,
+    receiver: Receiver<notify::Result<NotifyEvent>>,
+    watched_roots: BTreeSet<String>,
+    pending_roots: BTreeSet<String>,
+}
+
+impl ImportWatcher {
+    fn new() -> Result<Self> {
+        let (sender, receiver) = mpsc::channel();
+        let watcher = RecommendedWatcher::new(
+            move |event| {
+                let _ = sender.send(event);
+            },
+            NotifyConfig::default(),
+        )
+        .map_err(|_| DaemonError::user("import watcher blocked: local watcher unavailable"))?;
+
+        Ok(Self {
+            watcher,
+            receiver,
+            watched_roots: BTreeSet::new(),
+            pending_roots: BTreeSet::new(),
+        })
+    }
+
+    fn sync_and_requeue(
+        &mut self,
+        store: &MetaStore,
+        now: UnixTimestamp,
+    ) -> Result<ImportWatcherSummary> {
+        let scopes = store
+            .completed_import_scan_scopes_due_for_requeue(now)
+            .map_err(DaemonError::store)?;
+        let scopes_by_root = scopes
+            .into_iter()
+            .map(|scope| (scope.canonical_root_path.clone(), scope))
+            .collect::<BTreeMap<_, _>>();
+        let roots = scopes_by_root.keys().cloned().collect::<BTreeSet<_>>();
+        let mut summary = self.sync_watched_roots(&roots);
+        self.drain_events(&scopes_by_root, &mut summary);
+        let pending_roots = std::mem::take(&mut self.pending_roots);
+
+        for (index, root) in pending_roots.into_iter().enumerate() {
+            let Some(scope) = scopes_by_root.get(&root).cloned() else {
+                continue;
+            };
+            if store
+                .pending_import_task_by_root(&root)
+                .map_err(DaemonError::store)?
+                .is_some()
+            {
+                continue;
+            }
+            enqueue_import_from_completed_scope(store, scope, new_import_task_id(index)?, now)?;
+            summary.requeued += 1;
+        }
+
+        Ok(summary)
+    }
+
+    fn sync_watched_roots(&mut self, roots: &BTreeSet<String>) -> ImportWatcherSummary {
+        let previous_roots = self.watched_roots.clone();
+        let mut next_roots = BTreeSet::new();
+        let mut event_errors = 0_usize;
+
+        for root in previous_roots.difference(roots) {
+            if self.watcher.unwatch(Path::new(root)).is_err() {
+                event_errors += 1;
+            }
+        }
+
+        for root in roots {
+            if previous_roots.contains(root) {
+                next_roots.insert(root.clone());
+                continue;
+            }
+            if !Path::new(root).exists() {
+                event_errors += 1;
+                continue;
+            }
+            if self
+                .watcher
+                .watch(Path::new(root), RecursiveMode::Recursive)
+                .is_ok()
+            {
+                next_roots.insert(root.clone());
+            } else {
+                event_errors += 1;
+            }
+        }
+
+        self.watched_roots = next_roots;
+        ImportWatcherSummary {
+            active_roots: (self.watched_roots != previous_roots)
+                .then_some(self.watched_roots.len()),
+            event_errors,
+            ..ImportWatcherSummary::default()
+        }
+    }
+
+    fn drain_events(
+        &mut self,
+        scopes_by_root: &BTreeMap<String, ImportScanScope>,
+        summary: &mut ImportWatcherSummary,
+    ) {
+        loop {
+            match self.receiver.try_recv() {
+                Ok(Ok(event)) => {
+                    if !import_watcher_event_is_relevant(&event) {
+                        continue;
+                    }
+                    summary.events += 1;
+                    for path in event.paths {
+                        if let Some(root) = import_watcher_root_for_path(scopes_by_root, &path) {
+                            self.pending_roots.insert(root.to_string());
+                        }
+                    }
+                }
+                Ok(Err(_)) => {
+                    summary.event_errors += 1;
+                }
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => {
+                    summary.event_errors += 1;
+                    return;
+                }
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct ImportWatcherSummary {
+    active_roots: Option<usize>,
+    events: usize,
+    requeued: usize,
+    event_errors: usize,
+}
+
+fn import_watcher_event_is_relevant(event: &NotifyEvent) -> bool {
+    matches!(
+        event.kind,
+        NotifyEventKind::Any
+            | NotifyEventKind::Create(_)
+            | NotifyEventKind::Modify(_)
+            | NotifyEventKind::Remove(_)
+    )
+}
+
+fn import_watcher_root_for_path<'a>(
+    scopes_by_root: &'a BTreeMap<String, ImportScanScope>,
+    event_path: &Path,
+) -> Option<&'a str> {
+    scopes_by_root
+        .keys()
+        .find(|root| event_path.starts_with(Path::new(root.as_str())))
+        .map(String::as_str)
 }
 
 fn mark_import_task_failed_permanent(
@@ -3188,6 +3378,7 @@ struct RunOptions {
     work_imports_once: bool,
     work_imports: bool,
     rescan_completed_imports: bool,
+    watch_import_roots: bool,
     import_rescan_min_age_seconds: Option<i64>,
     work_ocr_once: bool,
     work_ocr: bool,
@@ -3225,6 +3416,7 @@ impl Default for RunOptions {
             work_imports_once: false,
             work_imports: false,
             rescan_completed_imports: false,
+            watch_import_roots: false,
             import_rescan_min_age_seconds: None,
             work_ocr_once: false,
             work_ocr: false,
@@ -3264,6 +3456,10 @@ impl RunOptions {
 struct ImportWorkerSummary {
     stale_recovered: usize,
     completed_requeued: usize,
+    watcher_active_roots: Option<usize>,
+    watcher_events: usize,
+    watcher_requeued: usize,
+    watcher_event_errors: usize,
     processed: usize,
     cancelled: usize,
     failed: usize,
@@ -3275,6 +3471,10 @@ impl ImportWorkerSummary {
     fn has_activity(&self) -> bool {
         self.stale_recovered > 0
             || self.completed_requeued > 0
+            || self.watcher_active_roots.is_some()
+            || self.watcher_events > 0
+            || self.watcher_requeued > 0
+            || self.watcher_event_errors > 0
             || self.processed > 0
             || self.cancelled > 0
             || self.failed > 0
@@ -3285,11 +3485,26 @@ impl ImportWorkerSummary {
     fn extend(&mut self, other: Self) {
         self.stale_recovered += other.stale_recovered;
         self.completed_requeued += other.completed_requeued;
+        if other.watcher_active_roots.is_some() {
+            self.watcher_active_roots = other.watcher_active_roots;
+        }
+        self.watcher_events += other.watcher_events;
+        self.watcher_requeued += other.watcher_requeued;
+        self.watcher_event_errors += other.watcher_event_errors;
         self.processed += other.processed;
         self.cancelled += other.cancelled;
         self.failed += other.failed;
         self.searchable_documents += other.searchable_documents;
         self.ocr_jobs_queued += other.ocr_jobs_queued;
+    }
+
+    fn extend_watcher(&mut self, watcher_summary: ImportWatcherSummary) {
+        if watcher_summary.active_roots.is_some() {
+            self.watcher_active_roots = watcher_summary.active_roots;
+        }
+        self.watcher_events += watcher_summary.events;
+        self.watcher_requeued += watcher_summary.requeued;
+        self.watcher_event_errors += watcher_summary.event_errors;
     }
 }
 
@@ -3301,6 +3516,18 @@ fn print_import_worker_summary(import_summary: &ImportWorkerSummary) -> Result<(
     println!(
         "import worker requeued completed imports: {}",
         import_summary.completed_requeued
+    );
+    if let Some(active_roots) = import_summary.watcher_active_roots {
+        println!("import watcher active roots: {active_roots}");
+    }
+    println!("import watcher events: {}", import_summary.watcher_events);
+    println!(
+        "import watcher requeued imports: {}",
+        import_summary.watcher_requeued
+    );
+    println!(
+        "import watcher event errors: {}",
+        import_summary.watcher_event_errors
     );
     println!("import worker processed: {}", import_summary.processed);
     println!("import worker cancelled: {}", import_summary.cancelled);

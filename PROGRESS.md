@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96 and S98 used synthetic fixtures only. S97, S99, and S100
-  also used private local-only witnesses against anonymized temporary copies from a
+- Data policy: S0-S96, S98, and S101 used synthetic fixtures only. S97, S99,
+  and S100 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
@@ -51,15 +51,16 @@ obsolete preliminary files and checklists are not product scope.
   Windows validation.
 - P1 import/search: directory scanning, DOCX/legacy `.doc` via local converter,
   text-layer PDF/UTF-8 and BOM-marked UTF-16 TXT parsing, cleaning, sectioning,
-  polling background rescan for completed import roots, full-text snapshot
-  publish/recover, delete rebuild, redacted snippets, and an isolated local
-  PDF/Word witness command that anonymizes selected inputs, runs the real import
-  path in a temporary data directory, can optionally run OCR jobs through the
-  existing local OCR worker path, prints only aggregate redacted output, and
-  removes private witness data exist. Missing production work includes OS
-  filesystem watcher integration, production-grade PDF coverage, full legacy
-  Word converter distribution and cross-platform proof, large-corpus proof, and
-  incremental index updates.
+  polling background rescan for completed import roots, OS filesystem watcher
+  integration that requeues completed roots through the existing durable import
+  task path on local file changes, full-text snapshot publish/recover, delete
+  rebuild, redacted snippets, and an isolated local PDF/Word witness command
+  that anonymizes selected inputs, runs the real import path in a temporary data
+  directory, can optionally run OCR jobs through the existing local OCR worker
+  path, prints only aggregate redacted output, and removes private witness data
+  exist. Missing production work includes production-grade PDF coverage, full
+  legacy Word converter distribution and cross-platform proof, large-corpus
+  proof, cross-platform watcher behavior proof, and incremental index updates.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
   education/company/title/skills/certs/years, persisted entity mentions,
   metadata-indexed field prefiltering before the full-text TopDocs cutoff,
@@ -238,8 +239,69 @@ obsolete preliminary files and checklists are not product scope.
 | S98 | Product import scheduler slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_rescans_completed_root_without_path_leak --locked -- --exact` first failed because daemon did not accept `--rescan-completed-imports`; after implementation, daemon import scheduler, meta-store, fmt, focused clippy, focused tests, `git diff --check`, runbook guard, public-repo guard, private-witness marker scan, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this polling background rescan slice; true OS filesystem watcher integration, large-corpus long-running rescan proof, cross-platform watcher behavior, and incremental index-update-only writes remain not complete or BLOCKED. |
 | S99 | Product local witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_imports_only_pdf_and_word_samples_without_persisting_private_data --locked -- --exact` first failed because `resume-cli witness` was unsupported; after implementation, focused witness, full `s9_import_search`, fmt, focused clippy, guard checks, `./scripts/ci/verify-local.sh`, and a private local-only PDF/Word witness with redacted output passed. | None for this isolated local PDF/Word witness command slice; it is not a production benchmark, does not package converters/OCR/model runtimes, does not prove Windows/Linux behavior, and does not complete full real-library quality/performance validation. |
 | S100 | Product local OCR witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_executes_local_command_without_output_or_path_leak --locked -- --exact` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_without_command_reports_blocked_without_persisting_private_data --locked -- --exact` first failed because `resume-cli witness` did not accept OCR options; after implementation, focused witness OCR tests, full import-search and OCR suites, fmt, focused clippy, guard checks, `./scripts/ci/verify-local.sh`, and bounded private local-only OCR witnesses passed. | None for this isolated local OCR witness option slice; it is not a full-library OCR proof, does not package OCR runtimes, does not prove non-English OCR quality, does not prove Windows/Linux behavior, and does not complete large-corpus OCR throughput validation. |
+| S101 | Product import watcher slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_watcher_requeues_completed_root_after_file_change_without_path_leak --locked -- --exact` first failed because daemon did not accept `--watch-import-roots`; after implementation, focused watcher exact, full daemon import scheduler suite, daemon clippy, license guard, fmt, guard checks, and `./scripts/ci/verify-local.sh` passed. | None for this local OS watcher requeue slice; it does not prove Windows watcher behavior, long-running watcher soak stability, large-corpus event storms, or incremental index-update-only writes. |
 
 ## Command Log
+
+### S101
+
+Design target:
+
+- Add `resume-daemon run --foreground --work-imports --watch-import-roots`.
+- Watch latest completed import roots through a real local filesystem watcher,
+  aggregate relevant create/modify/remove events, and requeue the affected root
+  through the existing durable import task plus scan-scope path.
+- Print only aggregate watcher counts; do not print source roots, event paths,
+  filenames, or notify error details.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_watcher_requeues_completed_root_after_file_change_without_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- The test failed because `resume-daemon` rejected `--watch-import-roots` as
+  unsupported usage.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_watcher_requeues_completed_root_after_file_change_without_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets --locked -- -D warnings
+./scripts/ci/check-licenses.sh
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n --hidden --glob '!target/**' --glob '!.git/**' '[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension|[p]rivate-sample-path-marker' .; then exit 1; else echo "no private witness markers"; fi
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused import watcher exact: exit 0.
+- `s4_daemon`: exit 0; 12 tests passed.
+- Focused daemon clippy: exit 0.
+- License guard: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- Runbook guard: exit 0.
+- Public repository guard: exit 0.
+- Private witness marker scan: exit 0.
+- Obsolete reference marker guard: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, and public repo guard.
+
+Scope note:
+
+- S101 adds local OS watcher event-to-import-task integration for completed
+  roots. It does not prove Windows watcher behavior, long-running watcher soak
+  stability, large-corpus event storms, or incremental index-update-only writes.
+- Full product is still not complete.
 
 ### S100
 

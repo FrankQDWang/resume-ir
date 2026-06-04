@@ -16,6 +16,7 @@ index-fulltext = { path = "../index-fulltext" }
 index-vector = { path = "../index-vector" }
 import-pipeline = { path = "../import-pipeline" }
 meta-store = { path = "../meta-store" }
+notify = "6"
 ocr-client = { path = "../ocr-client" }
 rank-fusion = { path = "../rank-fusion" }
 search-planner = { path = "../search-planner" }

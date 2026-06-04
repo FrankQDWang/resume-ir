@@ -571,6 +571,72 @@ fn foreground_import_scheduler_recovers_stale_running_import_task() {
     remove_dir(&data_dir);
 }
 
+#[test]
+fn foreground_import_watcher_requeues_completed_root_after_file_change_without_path_leak() {
+    let data_dir = temp_dir("daemon-import-watcher-data");
+    let watched_root = temp_dir("daemon-import-watcher-root");
+    let watched_file = watched_root.join("candidate.txt");
+    fs::write(
+        &watched_file,
+        "Initial watcher candidate with Rust backend experience.",
+    )
+    .unwrap();
+    let canonical_watched_root = fs::canonicalize(&watched_root).unwrap();
+    seed_queued_import_task(
+        &data_dir,
+        "daemon-import-watcher-initial",
+        &canonical_watched_root,
+        1_700_000_000,
+    );
+    run_import_worker_once(&data_dir);
+    assert!(search_fulltext(&data_dir, "WatcherUpdatedToken").is_empty());
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--watch-import-roots",
+            "--worker-interval-ms",
+            "25",
+            "--max-worker-ticks",
+            "120",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon import watcher");
+    wait_until_metadata_store_ready(&mut child, &data_dir);
+    std::thread::sleep(Duration::from_millis(250));
+    fs::write(
+        &watched_file,
+        "WatcherUpdatedToken refreshed candidate with Rust backend experience.",
+    )
+    .unwrap();
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let output = wait_daemon(child, BufReader::new(stdout));
+    assert!(
+        output.success,
+        "stdout:\n{}\nstderr:\n{}",
+        output.stdout, output.stderr
+    );
+    assert!(output.stderr.is_empty());
+    assert!(output.stdout.contains("import watcher active roots: 1"));
+    assert!(output.stdout.contains("import watcher requeued imports: 1"));
+    assert!(output.stdout.contains("import worker processed: 1"));
+    assert!(!output.stdout.contains(path_str(&data_dir)));
+    assert!(!output.stdout.contains(path_str(&watched_root)));
+    assert!(!output.stdout.contains(path_str(&canonical_watched_root)));
+    assert!(!output.stdout.contains(path_str(&watched_file)));
+    assert!(!search_fulltext(&data_dir, "WatcherUpdatedToken").is_empty());
+
+    remove_dir(&data_dir);
+    remove_dir(&watched_root);
+}
+
 fn seed_queued_import_task(
     data_dir: &Path,
     label: &str,
