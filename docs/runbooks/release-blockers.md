@@ -71,6 +71,21 @@ inventory derived from locked Cargo metadata. These dry-run files are not an
 installer, signature, notarization ticket, or GitHub Release upload, and they
 must not contain local paths or runtime data.
 
+On macOS only, generate unsigned pkg/dmg dry-run artifacts after release
+binaries have been built:
+
+```bash
+scripts/release/create-macos-package.sh \
+  --version v0.1.0 \
+  --target-dir target/release \
+  --out-dir release-dry-run
+```
+
+The generated `macos-package.json` records only artifact filenames, byte counts,
+hashes, unsigned status, and still-blocked release steps. The pkg/dmg files are
+local evidence only. They are not signed, not notarized, not uploaded, and do
+not prove install, upgrade, uninstall, rollback, or Gatekeeper behavior.
+
 Validate any proposed local model pack before worker configuration:
 
 ```bash
