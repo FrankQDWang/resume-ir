@@ -12,6 +12,10 @@ production-ready scope source.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
+  S136 also used a private local-only witness against anonymized temporary
+  copies from the user-authorized local resume sample directory; no real resume
+  data, filenames, paths, counts, raw text, or diagnostics were committed or
+  uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -65,10 +69,10 @@ obsolete preliminary files and checklists are not product scope.
   redacted output, can run a redacted internal full-text search probe without
   printing the private query or matched files, can run a redacted field-extraction
   aggregate probe without printing field values, filenames, or paths, and
-  removes private witness data. S127 reran the explicit-root private PDF/Word
-  witness against the user-authorized local sample directory for import/search/
-  field probes plus a bounded OCR witness using local `tesseract` and
-  `pdftoppm`; both runs removed private temporary data and no private evidence
+  removes private witness data. S127 and S136 reran the explicit-root private
+  PDF/Word witness against the user-authorized local sample directory for import/
+  search/field probes plus bounded OCR witnesses using local `tesseract` and
+  `pdftoppm`; these runs removed private temporary data and no private evidence
   was committed or uploaded. Missing production work includes
   production-grade PDF coverage, full
   legacy Word converter distribution and cross-platform proof, large-corpus
@@ -356,8 +360,51 @@ obsolete preliminary files and checklists are not product scope.
 | S133 | Product WiX package-tool pin slice complete locally | Hosted Release run `26944149485` passed the Ubuntu release dry-run and macOS package dry-run jobs, but the Windows MSI job failed at `Create unsigned Windows MSI dry run` because WiX `7.0.0` required OSMF EULA acceptance. The fix avoids accepting legal/fee terms in CI by pinning the Release workflow and runbook to WiX `6.0.2` and updating the workflow policy guard to reject a missing version pin. Focused workflow, Windows package, runbook, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` checks passed locally. | Hosted Release must rerun after push to prove Windows MSI creation; this does not sign artifacts, create/upload a GitHub Release, validate installer lifecycle, validate Windows service lifecycle, accept WiX v7 terms, or complete production release readiness. |
 | S134 | Product macOS DMG verify retry slice complete locally | Hosted Release run `26944923353` proved the WiX `6.0.2` fix by passing the Windows package dry-run job, including MSI creation, boundary check, artifact upload, and release gate. The same run failed the macOS package dry-run boundary step because `hdiutil verify` immediately after DMG creation reported `Resource temporarily unavailable`. The fix adds a shared bounded `scripts/release/verify-macos-dmg.sh` helper and wires the Release workflow plus local macOS package guard to use it without skipping checksum verification. Focused workflow, macOS package, shell syntax, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` checks passed locally. | Hosted Release must rerun after push to prove the combined release dry-run, macOS package dry-run, and Windows package dry-run all pass on the same branch tip; this does not sign artifacts, create/upload a GitHub Release, validate installer lifecycle, validate Windows service lifecycle, or complete production release readiness. |
 | S135 | Product hosted cross-platform Release dry-run evidence slice complete | PR #9 checks for commit `13f35a7` passed: dependency tree, license policy, public repository guard, runbook policy, Rust workspace, hosted macOS Platform CI, and hosted Windows Platform CI. Release workflow run `26945622774` executed successfully on the same commit and passed all three jobs: `release dry run`, `macOS package dry run`, and `Windows package dry run`. The run produced non-expired `release-dry-run`, `macos-package-dry-run`, and `windows-package-dry-run` artifacts without downloading or exposing artifact contents. | None for this hosted dry-run evidence slice; it still does not sign or notarize artifacts, create/upload a GitHub Release, validate install/upgrade/uninstall/rollback behavior, prove Gatekeeper behavior, install/register/start/stop a Windows service, or complete production release readiness. |
+| S136 | Product private local PDF/Word witness refresh complete | PR #9 checks for commit `22e1adc` passed: dependency tree, license policy, public repository guard, runbook policy, Rust workspace, hosted macOS Platform CI, and hosted Windows Platform CI. A private local-only explicit-root PDF/Word witness then ran against the user-authorized sample directory with import, redacted search probe, redacted field probe, and bounded OCR through local `tesseract` plus `pdftoppm`. The witness completed without scan budget exhaustion or filesystem scan errors, kept unsupported formats out of scope, surfaced aggregate OCR outcomes under the local English-only OCR configuration, and removed private temporary data. | None for this local-only private sample witness; it does not prove full-library OCR completion, OCR quality, non-English OCR quality, production recall/precision, large-corpus latency/throughput, packaging/signing/installers, Windows/Linux real sample behavior, or production model/ANN readiness. |
 
 ## Command Log
+
+### S136
+
+Design target:
+
+- Confirm the latest PR #9 branch tip is green after the hosted Release dry-run
+  evidence update.
+- Rerun the explicit-root PDF/Word witness against the user-authorized local
+  sample root without committing or uploading paths, filenames, raw content,
+  sample counts, or diagnostics.
+- Use local OCR only as a bounded chain witness, not as a claim of full private
+  corpus OCR completion or OCR quality.
+
+Implementation checks:
+
+```bash
+gh pr checks 9
+cargo run --quiet -p resume-cli -- witness --root <authorized-local-sample-root> --max-files 10000 --probe-search --probe-fields --run-ocr --ocr-tesseract-command /opt/homebrew/bin/tesseract --ocr-pdftoppm-command /opt/homebrew/bin/pdftoppm --ocr-lang eng --ocr-max-documents 2 --ocr-max-pages-per-document 1
+```
+
+Output summary:
+
+- PR #9 checks passed on commit `22e1adc`: dependency tree, license policy,
+  public repository guard, runbook policy, Rust workspace, hosted macOS Platform
+  CI, and hosted Windows Platform CI. Sourcery review remained skipped.
+- The private witness ran with `source root: <redacted>`, explicit scan profile,
+  and PDF/DOCX/DOC support only.
+- The witness completed import, the redacted field probe, and the redacted
+  search probe, without printing private search queries, field values,
+  filenames, or paths.
+- The bounded OCR witness used local `tesseract` and `pdftoppm`, exercised the
+  configured OCR document budget under the local English-only OCR language
+  configuration, and left the remaining OCR queue budgeted.
+- The witness reported `private witness data: removed`.
+
+Scope note:
+
+- S136 is a local-only private sample witness refresh and hosted PR-check status
+  record. It does not prove full private corpus OCR completion, OCR quality,
+  non-English OCR quality, production recall/precision, large-corpus latency/
+  throughput, packaging/signing/installers, Windows/Linux real sample behavior,
+  or production model/ANN readiness.
 
 ### S135
 
