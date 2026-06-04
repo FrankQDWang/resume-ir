@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, and S153 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, and S154 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -59,7 +59,8 @@ obsolete preliminary files and checklists are not product scope.
   polling background rescan for completed import roots, OS filesystem watcher
   integration that requeues completed roots through the existing durable import
   task path on local file changes, encrypted full-text published snapshot
-  publish/recover with Windows transient read-open retry, delete rebuild,
+  publish/recover with Windows transient read-open and snapshot-publish
+  filesystem retry, delete rebuild,
   redacted snippets, and an
   isolated local PDF/Word witness command
   that can use either an explicit root or the local-discovery root preset,
@@ -433,8 +434,67 @@ obsolete preliminary files and checklists are not product scope.
 | S151 | Product OCR cache encryption proof slice complete locally | A focused diagnostics test first failed because doctor/export did not report OCR cache encryption even though the cache table lives inside the metadata store. After implementation, doctor and redacted diagnostics report `ocr cache encryption: sqlcipher` / `ocr_cache_encryption: "sqlcipher"` from the active metadata-store encryption state, and the OCR worker cache-write test proves raw default `metadata.sqlite3` lacks the SQLite header, synthetic OCR token, and engine-profile marker after a cache write. Full local verification also exposed an unrelated `s20_status_ipc` closed-port race, so that test now reserves a `127.0.0.1` port and connects to the same port on `127.0.0.2` to keep the loopback connect-failure path deterministic under concurrent fake daemons. Focused RED/GREEN test, full diagnostics, OCR handoff, and status IPC suites, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this OCR cache encryption proof and verification-stability slice; it does not add a separate OCR cache artifact format, encrypt active process memory, prove future bbox purge coverage, prove forensic erase, distribute OCR engines/language packs, or clear OCR quality, model, benchmark, installer, signing, notarization, or real cross-platform validation blockers. |
 | S152 | Product OCR word-box purge proof complete locally | A focused delete/purge test first failed because `purge --deleted` did not report removal of persisted OCR word boxes from purged OCR page-cache rows. After implementation, the meta-store OCR page-cache purge API reports both purged cache entries and the count of OCR word boxes removed, and CLI purge prints `ocr word boxes purged` without paths or OCR text. Focused RED/GREEN test, full delete suite, full meta-store suite, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | This slice covers current OCR cache word-box cleanup only. It does not prove forensic erasure of SQLite free pages, purge future unrelated PII surfaces, distribute OCR engines/language packs, prove OCR quality, or clear model, benchmark, installer, signing, notarization, or real cross-platform validation blockers. |
 | S153 | Product embedding job-spec purge audit complete locally | A focused delete/purge test first failed because `purge --deleted` did not report removal of persisted embedding job specs linked to purged ingest jobs for deleted documents. After implementation, the meta-store ingest-job purge API reports both purged ingest jobs and the count of embedding job specs removed, and CLI purge prints `embedding job specs purged` without paths, model command details, or resume text. Focused RED/GREEN test, full delete suite, full meta-store suite, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | This slice covers current embedding job-spec cleanup visibility only. It does not prove forensic erasure of SQLite free pages, choose/license/distribute a real embedding model, prove semantic quality, prove large-corpus ANN performance, or clear model, benchmark, installer, signing, notarization, or real cross-platform validation blockers. |
+| S154 | Product Windows full-text snapshot publish stability complete locally | Hosted Windows PR #9 repeatedly failed on the previous commit with full-text snapshot publish returning `os error 33` during encrypted snapshot publication. A focused regression first failed because transient snapshot FS retry did not treat the Windows file-lock violation as retryable. After implementation, snapshot publish retries transient directory cleanup, encrypted snapshot publish cleanup, active-pointer replacement operations, and Windows file-lock diagnostics without exposing paths or payloads. Focused RED/GREEN tests, full `index-fulltext`, full import/search witness suite, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | This slice covers transient Windows full-text snapshot filesystem locks only. It does not prove all platform installer/service flows, large-corpus performance, full OCR/model quality, signing, notarization, or release readiness. |
 
 ## Command Log
+
+### S154
+
+Design target:
+
+- Stabilize encrypted full-text snapshot publication under hosted Windows
+  transient file locks observed as `os error 33`.
+- Keep the fix scoped to retrying transient local filesystem operations in the
+  snapshot publish path; do not print snapshot paths, resume text, encrypted
+  payloads, or local data directories.
+- Preserve existing published-snapshot encryption, active snapshot fallback,
+  and local witness behavior.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext transient_snapshot_fs_operation_retries_windows_lock_violation --locked
+```
+
+Output summary:
+
+- The focused regression failed as intended because a simulated Windows
+  `locked a portion of the file (os error 33)` operation was not retried.
+- Hosted Windows PR #9 also repeatedly failed on the previous commit in
+  `published_snapshot_encrypts_payload_at_rest` with `os error 33` from
+  `publish_snapshot`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext transient_snapshot_fs_operation_retries_windows_lock_violation --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_can_budget_documents_after_full_private_scan_without_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p index-fulltext -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused GREEN lock-violation test: exit 0 after implementation; 1 test
+  passed.
+- Full `index-fulltext` tests: exit 0; 5 unit tests, 13 integration tests,
+  and doc-tests passed.
+- Focused witness OCR budget regression: exit 0; 1 test passed.
+- Full `s9_import_search` suite: exit 0; 25 tests passed locally.
+- `cargo fmt --check`, focused clippy, `git diff --check`, public repo guard,
+  and full local verification passed.
+
+Scope note:
+
+- S154 treats Windows full-text snapshot publish file-lock retries as a platform
+  stability fix. It does not claim release readiness, real-data validation,
+  service/installer validation, signing, notarization, OCR/model quality, or
+  production-scale performance.
 
 ### S153
 

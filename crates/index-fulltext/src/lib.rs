@@ -451,7 +451,7 @@ where
 
     let staging_dir = staging_root.join(format!("{snapshot_name}.tmp"));
     if staging_dir.exists() {
-        fs::remove_dir_all(&staging_dir).map_err(FullTextError::io)?;
+        remove_snapshot_dir_all(&staging_dir)?;
     }
     let published_dir = snapshots_root.join(snapshot_name);
     if published_dir.exists() {
@@ -482,7 +482,7 @@ fn publish_encrypted_staging_snapshot(
 ) -> Result<()> {
     let temp_published_dir = private_snapshot_dir_path(published_dir)?;
     if temp_published_dir.exists() {
-        fs::remove_dir_all(&temp_published_dir).map_err(FullTextError::io)?;
+        remove_snapshot_dir_all(&temp_published_dir)?;
     }
     fs::create_dir_all(&temp_published_dir).map_err(FullTextError::io)?;
     restrict_private_dir_permissions(&temp_published_dir)?;
@@ -493,7 +493,7 @@ fn publish_encrypted_staging_snapshot(
         &index_root.join(SNAPSHOT_KEY_FILE),
         &archive,
     )?;
-    fs::remove_dir_all(staging_dir).map_err(FullTextError::io)?;
+    remove_snapshot_dir_all(staging_dir)?;
 
     let publish_result = publish_staging_snapshot_with(
         &temp_published_dir,
@@ -502,9 +502,14 @@ fn publish_encrypted_staging_snapshot(
         SNAPSHOT_PUBLISH_RETRY_DELAY,
     );
     if publish_result.is_err() {
-        let _ = fs::remove_dir_all(&temp_published_dir);
+        let _ = remove_snapshot_dir_all(&temp_published_dir);
     }
     publish_result
+}
+
+fn remove_snapshot_dir_all(path: &Path) -> Result<()> {
+    retry_transient_snapshot_fs_operation(SNAPSHOT_PUBLISH_RETRY_DELAY, || fs::remove_dir_all(path))
+        .map_err(FullTextError::io)
 }
 
 trait SnapshotPublisher {
@@ -545,11 +550,46 @@ fn publish_staging_snapshot_with<P: SnapshotPublisher>(
     ))
 }
 
+fn retry_transient_snapshot_fs_operation<T>(
+    retry_delay: Duration,
+    mut operation: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    for attempt in 0..SNAPSHOT_PUBLISH_RETRY_ATTEMPTS {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if attempt + 1 < SNAPSHOT_PUBLISH_RETRY_ATTEMPTS
+                    && is_transient_snapshot_publish_error(&error) =>
+            {
+                if !retry_delay.is_zero() {
+                    thread::sleep(retry_delay);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(std::io::Error::other(
+        "full-text snapshot filesystem retry exhausted",
+    ))
+}
+
 fn is_transient_snapshot_publish_error(error: &std::io::Error) -> bool {
-    matches!(
+    if matches!(
         error.kind(),
         ErrorKind::Interrupted | ErrorKind::PermissionDenied | ErrorKind::WouldBlock
-    )
+    ) {
+        return true;
+    }
+
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(), Some(32 | 33)) {
+        return true;
+    }
+
+    let diagnostic = error.to_string();
+    diagnostic.contains("being used by another process")
+        || diagnostic.contains("locked a portion of the file")
 }
 
 fn validate_plaintext_snapshot_contents(snapshot_dir: &Path) -> Result<()> {
@@ -1283,11 +1323,19 @@ fn write_active_snapshot(index_root: &Path, snapshot_name: &str) -> Result<()> {
     let active_path = index_root.join(ACTIVE_SNAPSHOT_FILE);
     let temp_path = index_root.join(format!(".{ACTIVE_SNAPSHOT_FILE}.tmp"));
     fs::write(&temp_path, format!("{snapshot_name}\n")).map_err(FullTextError::io)?;
-    match fs::rename(&temp_path, &active_path) {
+    match retry_transient_snapshot_fs_operation(SNAPSHOT_PUBLISH_RETRY_DELAY, || {
+        fs::rename(&temp_path, &active_path)
+    }) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            fs::remove_file(&active_path).map_err(FullTextError::io)?;
-            fs::rename(&temp_path, &active_path).map_err(FullTextError::io)
+            retry_transient_snapshot_fs_operation(SNAPSHOT_PUBLISH_RETRY_DELAY, || {
+                fs::remove_file(&active_path)
+            })
+            .map_err(FullTextError::io)?;
+            retry_transient_snapshot_fs_operation(SNAPSHOT_PUBLISH_RETRY_DELAY, || {
+                fs::rename(&temp_path, &active_path)
+            })
+            .map_err(FullTextError::io)
         }
         Err(error) => Err(FullTextError::io(error)),
     }
@@ -1652,6 +1700,45 @@ mod tests {
         .unwrap();
 
         assert_eq!(opened, "opened");
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn transient_snapshot_fs_operation_retries_permission_denied() {
+        let mut attempts = 0_usize;
+
+        let result = retry_transient_snapshot_fs_operation(std::time::Duration::ZERO, || {
+            attempts += 1;
+            if attempts < 3 {
+                return Err(std::io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "fixture transient Windows file lock",
+                ));
+            }
+            Ok("removed")
+        })
+        .unwrap();
+
+        assert_eq!(result, "removed");
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn transient_snapshot_fs_operation_retries_windows_lock_violation() {
+        let mut attempts = 0_usize;
+
+        let result = retry_transient_snapshot_fs_operation(std::time::Duration::ZERO, || {
+            attempts += 1;
+            if attempts < 3 {
+                return Err(std::io::Error::other(
+                    "The process cannot access the file because another process has locked a portion of the file. (os error 33)",
+                ));
+            }
+            Ok("published")
+        })
+        .unwrap();
+
+        assert_eq!(result, "published");
         assert_eq!(attempts, 3);
     }
 
