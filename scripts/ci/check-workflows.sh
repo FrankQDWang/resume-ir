@@ -69,6 +69,7 @@ require_text "$platform_workflow" "cargo test --workspace --locked"
 require_text "$platform_workflow" "actions/checkout@v6"
 
 require_text "$verify_script" "./scripts/ci/check-workflows.sh"
+require_text "$verify_script" "./scripts/ci/check-release-readiness.sh"
 require_text "$verify_script" "./scripts/ci/check-release-artifacts.sh"
 require_text "$verify_script" "./scripts/ci/check-release-sbom.sh"
 require_text "$verify_script" "./scripts/ci/check-macos-package.sh"

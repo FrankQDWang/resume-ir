@@ -29,6 +29,13 @@ Run the local gate before any public push:
 ./scripts/ci/guard-public-repo.sh
 ```
 
+The explicit stable-release readiness gate must remain blocked until every
+release criterion has current local evidence:
+
+```bash
+resume-cli --data-dir <local-data-dir> release-readiness --json
+```
+
 Run the benchmark smoke only as smoke evidence, not as production performance
 proof:
 

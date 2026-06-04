@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, and S163 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, and S164 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -448,8 +448,65 @@ obsolete preliminary files and checklists are not product scope.
 | S161 | Product release-readiness blocker gate complete locally | A focused CLI test first failed because `resume-cli` had no `release-readiness` command. After implementation, `resume-cli release-readiness` prints `stable release: blocked`, enumerates signing, notarization, platform installer lifecycle, real 100k/1M benchmark, OCR/model license/distribution, and cross-platform validation blockers without local path leaks, and exits nonzero so dry-run artifacts or green checks cannot be mistaken for stable release readiness. Focused release-readiness test, fmt, focused clippy, diff check, full local verification, and public repo guard passed. | This slice adds a fail-closed release-readiness blocker gate only. It does not clear signing certificates, notarization, real-corpus benchmark, licensed OCR/model distribution, platform installer/service lifecycle, or cross-platform validation blockers, so the complete production goal remains not complete. |
 | S162 | Product machine-readable release-readiness evidence complete locally | A focused CLI test first failed because `resume-cli release-readiness --json` produced no JSON report. After implementation, `release-readiness --json` prints a stable `release-readiness.v1` JSON schema with `stable_release: "blocked"`, dry-run evidence status, eight blocked release criteria, details for each blocker, and the next gate, then exits nonzero without printing local data-dir paths. The focused release-readiness suite, fmt, focused clippy, diff check, full local verification, and public repo guard passed. | This slice makes the existing fail-closed release-readiness gate automation-readable only. It does not clear signing certificates, notarization, real-corpus benchmark, licensed OCR/model distribution, platform installer/service lifecycle, or cross-platform validation blockers, so the complete production goal remains not complete. |
 | S163 | Product hosted Ubuntu embedder process-test stability complete locally | The pushed S162 run passed Security, macOS Platform CI, and Windows Platform CI, but hosted Ubuntu `rust workspace` failed in `local_command_embedder_times_out_and_keeps_input_file_private`: the slow synthetic local embedding command returned `EngineFailed` instead of `Timeout`. The failure matched the existing local process-test concurrency class previously seen in OCR command tests. After implementation, Unix local embedding command tests take a local process-test mutex so missing-binary, normal command, timeout, descendant-cleanup, and in-test parallel command scenarios do not run concurrently with each other in the same test binary. The hosted-failing exact test, full `s11_embedder`, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers hosted Ubuntu embedder command test harness stability only. It does not change production embedding runtime behavior, prove hosted Rust Workspace CI has passed until the pushed branch check completes, or clear licensed model, large-corpus, installer, signing, notarization, or release blockers. |
+| S164 | Product release-readiness CI guard complete locally | A focused shell check first failed because `scripts/ci/check-release-readiness.sh` did not exist. After implementation, `verify-local` runs a local CI guard that executes `resume-cli release-readiness --json` against a private-looking synthetic data-dir, requires the command to exit nonzero, validates the `release-readiness.v1` blocked schema and all eight release blockers, checks stderr blocker messaging, and fails on local path or private marker leaks. Focused release-readiness guard, workflow guard, runbook guard, shell syntax, diff check, full local verification, and public repo guard passed. | This slice wires the blocked release-readiness gate into local CI only. It does not clear signing/notarization, real 100k/1M private benchmark, licensed OCR/model distribution, platform installer/service lifecycle, or cross-platform release validation blockers. |
 
 ## Command Log
+
+### S164
+
+Design target:
+
+- Wire the fail-closed `release-readiness --json` command into local CI so
+  stable release blockers cannot silently regress to test-only coverage.
+- Keep stable release blocked unless all current release evidence exists.
+- Keep output aggregate and redacted: no local data-dir paths, resume text,
+  diagnostics, tokens, model cache paths, or private corpus details.
+
+Observed RED:
+
+```bash
+./scripts/ci/check-release-readiness.sh
+```
+
+Output summary:
+
+- The focused shell check failed with exit 127 because
+  `scripts/ci/check-release-readiness.sh` did not exist.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-workflows.sh
+./scripts/ci/check-runbooks.sh
+sh -n scripts/ci/check-release-readiness.sh scripts/ci/check-workflows.sh scripts/ci/check-runbooks.sh scripts/ci/verify-local.sh
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The new release-readiness guard passed by confirming
+  `resume-cli release-readiness --json` exits nonzero, emits
+  `release-readiness.v1`, reports `stable_release: "blocked"`, reports
+  `local_dry_run_artifacts: "evidence_only"`, includes all eight blocked
+  release criteria, writes the expected stderr blocker message, and does not
+  print the synthetic private-looking data-dir path or local runtime markers.
+- Workflow and runbook guards passed, confirming `verify-local` now runs the
+  release-readiness guard and the release blockers runbook documents the
+  explicit blocked command.
+- Shell syntax and diff checks passed.
+- `verify-local.sh`: exit 0; metadata, fmt, workspace clippy, workspace tests,
+  license, runbook, workflow, release-readiness, release artifact, release
+  SBOM, macOS package, Windows package skip-on-non-Windows, and public repo
+  guards all passed.
+
+Scope note:
+
+- S164 adds CI enforcement for the existing release-readiness blocker gate only.
+  It does not clear signing certificates, notarization, real-corpus benchmark
+  evidence, licensed OCR/model distribution, installer/service lifecycle proof,
+  or cross-platform validation blockers.
 
 ### S163
 

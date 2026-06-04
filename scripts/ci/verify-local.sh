@@ -13,6 +13,7 @@ fi
 ./scripts/ci/check-licenses.sh
 ./scripts/ci/check-runbooks.sh
 ./scripts/ci/check-workflows.sh
+./scripts/ci/check-release-readiness.sh
 ./scripts/ci/check-release-artifacts.sh
 ./scripts/ci/check-release-sbom.sh
 ./scripts/ci/check-macos-package.sh
