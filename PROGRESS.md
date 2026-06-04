@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, and S174 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, and S175 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -304,7 +304,9 @@ obsolete preliminary files and checklists are not product scope.
   nightly workflows. Synthetic runs must opt in with `--allow-synthetic` and
   cannot prove 100k/1M production performance. Private real-corpus query
   reports are accepted only as strict redacted local aggregate JSON with local
-  corpus/query-set digests and no raw text, paths, queries, filenames, or
+  corpus/query-set digests, explicit hot-index hybrid query evidence
+  (`query_mode: hybrid`, `fulltext+field+vector+rrf`, no hot-path OCR, parsing,
+  or heavy model inference), and no raw text, paths, queries, filenames, or
   sample identifiers.
   Missing or BLOCKED work includes actual 100k/1M real-corpus benchmark runs,
   real-corpus nightly/release performance evidence, licensed model selection/
@@ -490,8 +492,58 @@ obsolete preliminary files and checklists are not product scope.
 | S172 | Product hosted Windows full-text staging-orphan test stability complete locally | PR #9 hosted Windows Platform CI failed in `published_snapshot_becomes_active_without_reading_staging_orphans` during the synthetic staging-orphan fixture write with Windows `os error 33`. Root cause: the test used direct `fs::write` immediately after publishing a snapshot, while the same test file already has a bounded retry helper for transient Windows file locks. After implementation, the fixture write uses `write_snapshot_test_file_with_retry`, preserving the test's behavior while tolerating transient setup locks. The hosted-failing exact test, full `index-fulltext`, fmt, diff check, public repo guard, and full local verification passed locally. | This slice covers hosted Windows synthetic test harness stability only. It does not change production full-text behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear large-corpus, installer/service, signing, notarization, OCR/model licensing, or stable release blockers. |
 | S173 | Product Windows service dry-run evidence surface complete locally | A focused service lifecycle test first failed because `resume-cli service` did not accept `--platform windows-service`, and focused release-readiness tests first failed because Windows service lifecycle was not tracked separately from MSI installer lifecycle. After implementation, explicit Windows Service dry-run mode reports redacted install/status/start/stop/uninstall command plans without touching LaunchAgent files, requiring `HOME`, or exposing local paths, and release-readiness plus its CI guard include a separate `Windows service lifecycle` blocker. Focused RED/GREEN service and readiness tests, service lifecycle suite, readiness guard, runbook guard, fmt, focused clippy, diff check, public repo guard, and full local verification passed locally. | This slice adds local redacted Windows Service command-plan evidence only. It does not register a Windows service, prove administrator-elevated service install/start/stop/status/uninstall, prove recovery/rollback/upgrade behavior, validate MSI lifecycle, or clear signing, notarization, platform validation, real benchmark, OCR/model licensing, or stable release blockers. |
 | S174 | Product OCR runtime manifest validation gate complete locally | A focused OCR manifest test first failed because `resume-cli` had no `ocr validate-manifest` command. After implementation, local OCR runtime manifests use schema `resume-ir.ocr-runtime-manifest.v1`, require a runtime pack id, reviewed local component licenses, artifact sha256 checks for OCR engines/renderers/language packs, optional reviewed language-pack entries, and redacted output that omits runtime bytes, local paths, and full digests. The OCR worker runbook, release blocker runbook, runbook guard, and release-readiness OCR blocker detail now include the OCR runtime manifest gate. Focused RED/GREEN OCR manifest tests, release-readiness tests, runbook/readiness guards, fmt, focused clippy, public repo guard, and full local verification passed locally. | This slice adds local OCR runtime distribution governance only. It does not bundle or approve Tesseract/Poppler/language packs, prove non-English OCR quality, prove full-library scanned-resume OCR, prove large-corpus OCR throughput, validate platform installers/services, or clear signing, notarization, OCR/model licensing, benchmark, or stable release blockers. |
+| S175 | Product hot-index hybrid private benchmark gate complete locally | A focused benchmark gate test first failed because a private real-corpus benchmark report without `query_mode`, retrieval-layer, hot-index, and hot-path exclusion evidence was accepted as release evidence. After implementation, private real-corpus benchmark reports must now prove `query_mode: hybrid`, `retrieval_layers: fulltext+field+vector+rrf`, `hot_index: true`, and false hot-path OCR/parsing/heavy-model-inference flags, while preserving the existing redacted local aggregate boundary and private corpus/query-set digests. Release blocker docs, runbook guard, and release-readiness blocker detail now name hot-index hybrid evidence explicitly. Focused RED/GREEN benchmark gate tests and CLI private report acceptance passed locally. | This slice tightens release evidence validation only. It does not run 100k or 1M real-corpus benchmarks, prove `<200ms` P95 on representative hardware, provide licensed embedding model distribution, prove semantic/vector quality, clear OCR/model licensing, platform validation, signing, notarization, or stable release readiness. |
 
 ## Command Log
+
+### S175
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_without_hot_hybrid_evidence -- --exact
+```
+
+Output summary:
+
+- The focused test failed because the benchmark gate accepted a
+  `private-real-corpus` report without hot-index hybrid query evidence:
+  `unwrap_err()` received an `Ok` `BenchmarkGateEvaluation`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_ -- --nocapture
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_gate_accepts_private_real_corpus_release_report -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner
+git diff --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner -p resume-cli --all-targets -- -D warnings
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The benchmark gate suite passed for synthetic allowance, private boundary
+  enforcement, duplicate-key rejection, million-scale proof rejection, and the
+  new hot-index hybrid evidence requirement.
+- The CLI private real-corpus release-report gate fixture passed only after it
+  included redacted hot-index hybrid query evidence.
+- Release-readiness focused tests plus the release-readiness and runbook guards
+  passed with the tightened hot-index hybrid benchmark blocker text.
+- Full benchmark-runner tests, fmt, diff check, and focused benchmark/CLI clippy
+  passed.
+- Public repo guard and full local verification passed.
+
+Scope note:
+
+- S175 is a release-evidence validator only. It does not generate, sanitize,
+  upload, or certify private benchmark reports and does not clear the missing
+  real 100k/1M benchmark blocker.
 
 ### S174
 

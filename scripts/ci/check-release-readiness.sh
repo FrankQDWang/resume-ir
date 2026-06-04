@@ -72,6 +72,7 @@ require_text "$stdout_file" '"label": "Windows installer lifecycle"'
 require_text "$stdout_file" '"label": "Windows service lifecycle"'
 require_text "$stdout_file" '"label": "macOS installer lifecycle"'
 require_text "$stdout_file" '"label": "100k/1M real-corpus benchmarks"'
+require_text "$stdout_file" "representative private real-corpus hot-index hybrid performance evidence is not available"
 require_text "$stdout_file" '"label": "OCR engine license/distribution"'
 require_text "$stdout_file" '"label": "embedding model license/distribution"'
 require_text "$stdout_file" '"label": "cross-platform release validation"'

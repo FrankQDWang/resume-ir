@@ -51,6 +51,10 @@ require_text "$worker_runbook" "resume-daemon"
 require_text "$worker_runbook" "FailedRetryable"
 require_text "$release_runbook" "BLOCKED"
 require_text "$release_runbook" "resume-benchmark gate"
+require_text "$release_runbook" 'query_mode: "hybrid"'
+require_text "$release_runbook" 'retrieval_layers:'
+require_text "$release_runbook" "hot_index: true"
+require_text "$release_runbook" "heavy-model-inference"
 require_text "$release_runbook" "resume-cli --data-dir <local-data-dir> ocr validate-manifest"
 require_text "$release_runbook" "resume-cli --data-dir <local-data-dir> model validate-manifest"
 require_text "$release_runbook" "signing"

@@ -1839,6 +1839,7 @@ fn validate_private_real_benchmark_boundary(
             "private real-corpus benchmark requires query latency target claim",
         ));
     }
+    validate_private_real_hot_hybrid_evidence(report)?;
     if !is_safe_benchmark_token(private_real_str(report, "run_id")?) {
         return Err(private_real_boundary_error());
     }
@@ -1895,6 +1896,52 @@ fn validate_private_real_report_shape(
     private_real_str(report, "dataset_manifest_sha256")?;
     private_real_str(report, "query_set_sha256")?;
     private_real_str(report, "scope")?;
+    validate_private_real_hot_hybrid_evidence(report)?;
+    Ok(())
+}
+
+fn validate_private_real_hot_hybrid_evidence(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let error = || {
+        BenchmarkGateError::failed(
+            "private real-corpus benchmark requires hot-index hybrid query evidence",
+        )
+    };
+    let query_mode = report
+        .get("query_mode")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(error)?;
+    let retrieval_layers = report
+        .get("retrieval_layers")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(error)?;
+    let hot_index = report
+        .get("hot_index")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(error)?;
+    let hot_path_ocr = report
+        .get("hot_path_ocr")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(error)?;
+    let hot_path_parsing = report
+        .get("hot_path_parsing")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(error)?;
+    let hot_path_heavy_model_inference = report
+        .get("hot_path_heavy_model_inference")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(error)?;
+
+    if query_mode != "hybrid"
+        || retrieval_layers != "fulltext+field+vector+rrf"
+        || !hot_index
+        || hot_path_ocr
+        || hot_path_parsing
+        || hot_path_heavy_model_inference
+    {
+        return Err(error());
+    }
     Ok(())
 }
 
@@ -2206,6 +2253,12 @@ fn is_allowed_private_real_report_key(key: &str) -> bool {
             | "million_scale_verified"
             | "percentile_confidence"
             | "target_claim"
+            | "query_mode"
+            | "retrieval_layers"
+            | "hot_index"
+            | "hot_path_ocr"
+            | "hot_path_parsing"
+            | "hot_path_heavy_model_inference"
             | "corpus_origin"
             | "privacy_boundary"
             | "contains_raw_resume_text"

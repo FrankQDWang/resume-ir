@@ -17,7 +17,7 @@ unresolved.
 - Windows service install, start, stop, status, uninstall, rollback, and recovery
   are not proven
 - macOS signed pkg/dmg install, upgrade, uninstall, and rollback are not proven
-- 100k and 1M real-corpus benchmarks are not available
+- 100k and 1M hot-index hybrid real-corpus benchmarks are not available
 - a reviewed licensed OCR engine is not selected or distributed
 - a reviewed licensed embedding model is not selected or distributed
 - Windows and macOS cross-platform validation are not complete
@@ -64,10 +64,11 @@ Do not treat a passing synthetic gate as 100k or 1M real-corpus proof.
 Run private real-corpus benchmark gates only against local redacted aggregate
 reports. The report must use `dataset_kind: "private-real-corpus"`,
 `corpus_origin: "private_local"`, `privacy_boundary:
-"redacted_local_aggregate"`, false raw-data/path/query booleans, and sha256
-digests for the local dataset manifest plus query set. Do not upload the
-reports if they contain raw resume text, local paths, queries, sample IDs, or
-filenames.
+"redacted_local_aggregate"`, `query_mode: "hybrid"`, `retrieval_layers:
+"fulltext+field+vector+rrf"`, `hot_index: true`, false hot-path OCR/parsing/
+heavy-model-inference booleans, false raw-data/path/query booleans, and sha256
+digests for the local dataset manifest plus query set. Do not upload reports if
+they contain raw resume text, local paths, queries, sample IDs, or filenames.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
@@ -197,7 +198,7 @@ Stable release requires current evidence for:
 - Windows install, upgrade, uninstall, service start, service stop, and rollback
 - macOS install, upgrade, uninstall, LaunchAgent start, LaunchAgent stop, signing,
   and notarization
-- 100k and 1M benchmark runs on representative hardware
+- 100k and 1M hot-index hybrid benchmark runs on representative hardware
 - OCR and embedding model license review
 - OCR runtime manifest checksum validation
 - model pack manifest checksum validation

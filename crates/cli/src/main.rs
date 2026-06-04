@@ -122,7 +122,7 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "100k/1M real-corpus benchmarks",
-        "representative private real-corpus performance evidence is not available",
+        "representative private real-corpus hot-index hybrid performance evidence is not available",
     ),
     (
         "OCR engine license/distribution",

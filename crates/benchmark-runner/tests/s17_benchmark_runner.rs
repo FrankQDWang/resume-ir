@@ -113,6 +113,37 @@ fn benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence() {
 }
 
 #[test]
+fn benchmark_gate_rejects_private_real_report_without_hot_hybrid_evidence() {
+    let mut report = minimal_benchmark_json("private-real-corpus", 100_000, 200, 150.0, 0, false)
+        .replace(
+            "\"target_claim\":\"not_evaluated\"",
+            "\"target_claim\":\"query_latency_target_met\"",
+        )
+        .replace(
+            "\"scope\":\"synthetic query benchmark; no raw resume text, paths, or queries included\"",
+            "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
+        );
+    report.pop();
+    report.push_str(concat!(
+        ",\"corpus_origin\":\"private_local\"",
+        ",\"privacy_boundary\":\"redacted_local_aggregate\"",
+        ",\"contains_raw_resume_text\":false",
+        ",\"contains_resume_paths\":false",
+        ",\"contains_queries\":false",
+        ",\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
+        ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\""
+    ));
+    report.push('}');
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires hot-index hybrid query evidence"));
+}
+
+#[test]
 fn benchmark_gate_rejects_real_release_report_without_private_boundary() {
     let report = minimal_benchmark_json("private-real-corpus", 100_000, 200, 150.0, 0, false);
     let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
@@ -514,6 +545,12 @@ fn minimal_private_real_benchmark_json(
     report.push_str(concat!(
         ",\"corpus_origin\":\"private_local\"",
         ",\"privacy_boundary\":\"redacted_local_aggregate\"",
+        ",\"query_mode\":\"hybrid\"",
+        ",\"retrieval_layers\":\"fulltext+field+vector+rrf\"",
+        ",\"hot_index\":true",
+        ",\"hot_path_ocr\":false",
+        ",\"hot_path_parsing\":false",
+        ",\"hot_path_heavy_model_inference\":false",
         ",\"contains_raw_resume_text\":false",
         ",\"contains_resume_paths\":false",
         ",\"contains_queries\":false",
