@@ -198,11 +198,85 @@ exit 9
     assert!(stdout.contains("\"ocr_runtime\": {"));
     assert!(stdout.contains("\"pdftoppm\": \"available\""));
     assert!(stdout.contains("\"tesseract\": \"available\""));
-    assert!(stdout.contains("\"tesseract_eng\": \"available\""));
+    assert!(stdout.contains("\"requested_language\": \"eng\""));
+    assert!(stdout.contains("\"requested_language_status\": \"available\""));
     assert!(stdout.contains("\"paths\": \"<redacted>\""));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&bin_dir)));
     assert!(!stdout.contains("chi_sim"));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_and_diagnostics_check_requested_ocr_language_without_language_dump() {
+    let data_dir = temp_dir("diagnostics-ocr-runtime-custom-lang-data");
+    let bin_dir = temp_dir("diagnostics-ocr-runtime-custom-lang-bin");
+    write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
+    write_executable(
+        &bin_dir,
+        "tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--list-langs" ]; then
+  printf 'List of available languages (3):\n'
+  printf 'eng\n'
+  printf 'chi_sim\n'
+  printf 'jpn\n'
+  exit 0
+fi
+exit 9
+"#,
+    );
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--ocr-lang",
+            "chi_sim",
+        ])
+        .output()
+        .expect("run resume-cli doctor with requested OCR language");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("ocr renderer pdftoppm: available"));
+    assert!(stdout.contains("ocr engine tesseract: available"));
+    assert!(stdout.contains("ocr language chi_sim: available"));
+    assert!(!stdout.contains("ocr language eng:"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stdout.contains("jpn"));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+            "--ocr-lang",
+            "chi_sim",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with requested OCR language");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"ocr_runtime\": {"));
+    assert!(stdout.contains("\"pdftoppm\": \"available\""));
+    assert!(stdout.contains("\"tesseract\": \"available\""));
+    assert!(stdout.contains("\"requested_language\": \"chi_sim\""));
+    assert!(stdout.contains("\"requested_language_status\": \"available\""));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(!stdout.contains("\"tesseract_eng\""));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stdout.contains("jpn"));
 
     remove_dir(&data_dir);
     remove_dir(&bin_dir);

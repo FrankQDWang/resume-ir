@@ -111,12 +111,7 @@ fn run() -> Result<()> {
         "service" => service_command(&data_dir, &args[1..]),
         "fault-simulate" => fault_simulate_command(&data_dir, &args[1..]),
         "witness" => witness_command(&args[1..]),
-        "doctor" => {
-            if args.len() != 1 {
-                return Err(CliError::usage("usage: resume-cli doctor"));
-            }
-            doctor_command(&data_dir)
-        }
+        "doctor" => doctor_command(&data_dir, &args[1..]),
         "export-diagnostics" => export_diagnostics_command(&data_dir, &args[1..]),
         _ => Err(CliError::usage(TOP_LEVEL_USAGE)),
     }
@@ -5627,14 +5622,15 @@ fn embed_worker_usage() -> CliError {
     )
 }
 
-fn doctor_command(data_dir: &Path) -> Result<()> {
+fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let diagnostic_args = parse_doctor_args(args)?;
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
     let resource_telemetry = collect_resource_telemetry(data_dir);
-    let ocr_runtime = inspect_ocr_runtime();
+    let ocr_runtime = inspect_ocr_runtime(&diagnostic_args.ocr_lang);
 
     println!("resume-ir doctor");
     println!("metadata: ok");
@@ -5696,7 +5692,11 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     println!("cpu cores: {}", resource_telemetry.cpu_cores);
     println!("ocr renderer pdftoppm: {}", ocr_runtime.pdftoppm.label());
     println!("ocr engine tesseract: {}", ocr_runtime.tesseract.label());
-    println!("ocr language eng: {}", ocr_runtime.tesseract_eng.label());
+    println!(
+        "ocr language {}: {}",
+        ocr_runtime.requested_language,
+        ocr_runtime.requested_language_status.label()
+    );
     println!("fault simulations: available");
     println!(
         "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock,metadata_migration,model_checksum,ocr_crash"
@@ -5707,11 +5707,7 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
 }
 
 fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    if args != ["--redact"] {
-        return Err(CliError::usage(
-            "usage: resume-cli export-diagnostics --redact",
-        ));
-    }
+    let diagnostic_args = parse_export_diagnostics_args(args)?;
 
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
@@ -5719,7 +5715,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
     let resource_telemetry = collect_resource_telemetry(data_dir);
-    let ocr_runtime = inspect_ocr_runtime();
+    let ocr_runtime = inspect_ocr_runtime(&diagnostic_args.ocr_lang);
 
     println!("{{");
     println!("  \"schema_version\": \"diagnostics.v1\",");
@@ -5835,8 +5831,12 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("    \"pdftoppm\": \"{}\",", ocr_runtime.pdftoppm.label());
     println!("    \"tesseract\": \"{}\",", ocr_runtime.tesseract.label());
     println!(
-        "    \"tesseract_eng\": \"{}\"",
-        ocr_runtime.tesseract_eng.label()
+        "    \"requested_language\": \"{}\",",
+        ocr_runtime.requested_language
+    );
+    println!(
+        "    \"requested_language_status\": \"{}\"",
+        ocr_runtime.requested_language_status.label()
     );
     println!("  }},");
     println!("  \"fault_simulations\": [");
@@ -5854,6 +5854,70 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("}}");
 
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiagnosticArgs {
+    ocr_lang: String,
+}
+
+fn parse_doctor_args(args: &[String]) -> Result<DiagnosticArgs> {
+    parse_diagnostic_ocr_args(args, "usage: resume-cli doctor [--ocr-lang <lang>]")
+}
+
+fn parse_export_diagnostics_args(args: &[String]) -> Result<DiagnosticArgs> {
+    if args.first().map(String::as_str) != Some("--redact") {
+        return Err(CliError::usage(
+            "usage: resume-cli export-diagnostics --redact [--ocr-lang <lang>]",
+        ));
+    }
+    parse_diagnostic_ocr_args(
+        &args[1..],
+        "usage: resume-cli export-diagnostics --redact [--ocr-lang <lang>]",
+    )
+}
+
+fn parse_diagnostic_ocr_args(args: &[String], usage: &'static str) -> Result<DiagnosticArgs> {
+    let mut ocr_lang = "eng".to_string();
+    let mut seen_ocr_lang = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--ocr-lang" => {
+                if seen_ocr_lang {
+                    return Err(CliError::usage(usage));
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(CliError::usage(usage));
+                };
+                ocr_lang = parse_ocr_diagnostic_language(value, usage)?;
+                seen_ocr_lang = true;
+                index += 1;
+            }
+            _ => return Err(CliError::usage(usage)),
+        }
+    }
+
+    Ok(DiagnosticArgs { ocr_lang })
+}
+
+fn parse_ocr_diagnostic_language(value: &str, usage: &'static str) -> Result<String> {
+    if !valid_ocr_diagnostic_language(value) {
+        return Err(CliError::usage(usage));
+    }
+    Ok(value.to_string())
+}
+
+fn valid_ocr_diagnostic_language(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || character == '_'
+                || character == '-'
+                || character == '+'
+        })
 }
 
 #[derive(Debug, Clone)]
@@ -5919,11 +5983,12 @@ fn collect_resource_telemetry(data_dir: &Path) -> ResourceTelemetry {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct OcrRuntimeDiagnostic {
     pdftoppm: OcrRuntimeState,
     tesseract: OcrRuntimeState,
-    tesseract_eng: OcrRuntimeState,
+    requested_language: String,
+    requested_language_status: OcrRuntimeState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5943,18 +6008,19 @@ impl OcrRuntimeState {
     }
 }
 
-fn inspect_ocr_runtime() -> OcrRuntimeDiagnostic {
+fn inspect_ocr_runtime(requested_language: &str) -> OcrRuntimeDiagnostic {
     let pdftoppm = find_command_in_path("pdftoppm");
     let tesseract = find_command_in_path("tesseract");
-    let tesseract_eng = tesseract
+    let requested_language_status = tesseract
         .as_ref()
-        .map(|path| inspect_tesseract_language(path, "eng"))
+        .map(|path| inspect_tesseract_language(path, requested_language))
         .unwrap_or(OcrRuntimeState::Missing);
 
     OcrRuntimeDiagnostic {
         pdftoppm: tool_state(pdftoppm.as_ref()),
         tesseract: tool_state(tesseract.as_ref()),
-        tesseract_eng,
+        requested_language: requested_language.to_string(),
+        requested_language_status,
     }
 }
 

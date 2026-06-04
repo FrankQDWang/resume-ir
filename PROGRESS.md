@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, and S119 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, and S120 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, and S110 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -121,8 +121,8 @@ obsolete preliminary files and checklists are not product scope.
   invocation, persist a safe `ocr_page_budget_exceeded` job failure kind,
   surface aggregate page-budget blocks through local status, doctor, redacted
   diagnostics, and daemon status IPC, report local `pdftoppm`, Tesseract, and
-  English language-pack availability without binary paths or language dumps,
-  render valid PDF pages through local `pdftoppm` or a configured renderer,
+  requested Tesseract OCR language-pack availability without binary paths or
+  dumping the full local language list, render valid PDF pages through local `pdftoppm` or a configured renderer,
   execute local OCR commands or local Tesseract on the rendered image, persist
   cache entries for each page, index combined OCR text with page count, honor
   persistent pause state, keep serving status IPC while OCR runs, and exercise
@@ -134,7 +134,7 @@ obsolete preliminary files and checklists are not product scope.
   Deleted-document purge now removes
   current OCR jobs and current OCR page-cache entries that are no longer shared
   by visible documents. Missing or BLOCKED work includes final OCR/renderer
-  distribution policy, non-English language pack policy, full-library scanned
+  distribution policy, full non-English OCR quality and language-pack distribution policy, full-library scanned
   resume OCR proof beyond bounded local witness budgets, real large-corpus OCR
   throughput proof, and Windows/macOS
   validation.
@@ -300,8 +300,64 @@ obsolete preliminary files and checklists are not product scope.
 | S117 | Product macOS service runtime witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli tests::launchctl_status_success_with_running_state_reports_running --locked -- --exact` first failed because service runtime state parsing did not exist. After implementation, the launchctl parser tests, service lifecycle integration tests, focused clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and a local-only temporary macOS LaunchAgent install/start/status IPC/stop/uninstall witness passed. | None for this local macOS LaunchAgent runtime witness; it does not prove signed pkg/dmg packaging, notarization, upgrade/rollback behavior, Windows service/MSI behavior, or hosted release workflow execution. |
 | S118 | Product service status cross-platform portability slice complete | Hosted Windows Platform CI for `288a4c9` first failed in `service_status_and_uninstall_are_redacted_and_preserve_user_data` because `service status` tried to derive a macOS launchctl domain through `/usr/bin/id` on Windows. After implementation, service lifecycle integration tests, launchctl parser tests, focused clippy, fmt, diff, public guard, and `./scripts/ci/verify-local.sh` passed. Hosted Rust Workspace for `c56e966` then exposed a non-macOS clippy dead-code gap that is handled in S119. | None for this portability fix; Windows service/MSI install/start/stop behavior remains not implemented or proven, and non-macOS service runtime status intentionally reports `unknown` for the macOS LaunchAgent command surface. |
 | S119 | Product service runtime cfg portability slice complete | Hosted Rust Workspace for `c56e966` first failed on Ubuntu clippy because non-macOS binary builds treated macOS-only launchctl parser code and `running`/`loaded` runtime states as dead code, and newer clippy flagged a needless return in the non-macOS branch. After implementation, service lifecycle integration tests, launchctl parser tests, focused CLI clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this cfg portability fix; it proves the macOS LaunchAgent command surface remains portable across hosted clippy/builds, but it does not implement Windows services/MSI or prove Windows service lifecycle behavior. |
+| S120 | Product OCR requested-language diagnostics slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_requested_ocr_language_without_language_dump --locked -- --exact` first failed because `doctor` did not accept OCR diagnostic arguments and diagnostics always reported only `eng`. After implementation, the focused exact test, full diagnostics suite, focused CLI clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this OCR runtime diagnostics slice; it does not distribute OCR engines or language packs, prove non-English OCR quality, complete full-library OCR, or validate Windows/macOS installed OCR runtime behavior beyond local/hosted command checks. |
 
 ## Command Log
+
+### S120
+
+Design target:
+
+- Let users check the configured Tesseract OCR language from local diagnostics
+  without dumping the full local `--list-langs` output.
+- Keep `doctor` and `export-diagnostics --redact` output path-redacted and
+  free of unrelated language-pack names.
+- Preserve the default English check when no OCR language is requested.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_requested_ocr_language_without_language_dump --locked -- --exact
+```
+
+Output summary:
+
+- The focused diagnostics test failed because `doctor --ocr-lang chi_sim`
+  returned non-zero; diagnostics did not parse a requested OCR language and
+  only checked `eng`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_requested_ocr_language_without_language_dump --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+gh pr checks 9 --watch
+```
+
+Output summary:
+
+- Focused requested-language diagnostics test: exit 0; 1 test passed.
+- Full diagnostics suite: exit 0; 12 tests passed.
+- Focused CLI clippy: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, and public
+  repository guard passed.
+- Hosted PR checks: final run passed macOS Platform CI, Windows Platform CI,
+  Rust workspace, dependency tree, license policy, runbook policy, and public
+  repository guard.
+
+Scope note:
+
+- S120 improves local OCR runtime diagnostics only. It does not package OCR
+  engines or language packs and does not prove non-English OCR quality.
 
 ### S119
 
