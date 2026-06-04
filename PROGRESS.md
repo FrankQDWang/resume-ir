@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, and S111 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, and S112 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, and S110 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -46,9 +46,10 @@ obsolete preliminary files and checklists are not product scope.
   repair non-ready snapshot roots. Public-repository governance now includes
   MIT licensing, CODEOWNERS, contribution/security policy, PR templates,
   GitHub Actions workflow definitions, dependency update configuration, local
-  license checks, and public push guardrails. Missing or BLOCKED production
-  control-plane work includes full service lifecycle proof and macOS plus
-  Windows validation.
+  license checks, public push guardrails, and a PR-triggered hosted macOS plus
+  Windows workspace build/test workflow. Missing or BLOCKED production
+  control-plane work includes full service lifecycle proof, platform installer
+  proof, and platform service validation.
 - P1 import/search: directory scanning, DOCX/legacy `.doc` via local converter,
   text-layer PDF/UTF-8 and BOM-marked UTF-16 TXT parsing, cleaning, sectioning,
   polling background rescan for completed import roots, OS filesystem watcher
@@ -129,10 +130,12 @@ obsolete preliminary files and checklists are not product scope.
   validation.
 - P5 packaging/platform: not production-ready. A local CLI service lifecycle
   now writes, reports, removes, and dry-run starts/stops a macOS user
-  LaunchAgent plist without CLI path disclosure. Installer packaging, signing,
-  notarization, Windows service/MSI, real upgrade/uninstall runs, hosted release
-  workflow execution, and cross-platform validation remain absent, not complete,
-  or externally blocked by platform credentials/runners.
+  LaunchAgent plist without CLI path disclosure. Hosted macOS and Windows
+  workspace build/test checks now run for pull requests through Platform CI.
+  Installer packaging, signing, notarization, Windows service/MSI, real upgrade/
+  uninstall runs, hosted release workflow execution, and platform installer/
+  service validation remain absent, not complete, or externally blocked by
+  platform credentials/runners.
 - P6 performance/stability: synthetic benchmark runner, status/doctor/export
   diagnostics, redacted resource telemetry for the data-disk volume, current
   process memory, CPU cores, OCR page-budget remediation, and OCR runtime
@@ -271,8 +274,60 @@ obsolete preliminary files and checklists are not product scope.
 | S109 | Product local OCR witness resilience slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_budget_reports_failed_documents_without_stopping_or_leaking_paths --locked -- --exact` first failed because a budgeted witness stopped as `blocked` on the first per-document OCR failure; after implementation, the focused exact, full `s9_import_search`, focused CLI clippy, fmt, diff, guard checks, marker scans, `./scripts/ci/verify-local.sh`, and private local-only PDF/Word witness runs passed with redacted aggregate output and temporary private data removal. | None for this bounded local witness resilience slice; it does not prove OCR quality, full-library OCR completion, non-English OCR behavior, packaged runtime distribution, 100k/1M corpus performance, or Windows/Linux behavior. |
 | S110 | Product vector-quality gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_report_scores_labeled_samples_without_text_id_path_or_vector_leakage --locked -- --exact` first failed because vector-quality APIs did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_quality_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` rejected `vector-quality`; after implementation, focused vector-quality tests, full benchmark-runner tests, focused benchmark-runner clippy, fmt, diff, guard checks, `./scripts/ci/verify-local.sh`, and private local-only bounded PDF/Word witness runs passed with redacted aggregate output and temporary private data removal. | None for this labeled vector-quality evaluator/gate slice; it does not supply real business labeled semantic datasets, choose/license/package a production embedding model, add ANN production indexing, prove large-corpus semantic latency, or validate Windows/Linux behavior. |
 | S111 | Product vector workflow-gate slice complete | `./scripts/ci/check-workflows.sh` first failed because PR/nightly workflows did not include `vector-quality`; after implementation, workflow guard, strict local vector smoke/gate reproduction with redaction scan, shell syntax, workflow YAML parse, diff, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this vector-quality workflow wiring slice; it uses a synthetic labeled smoke dataset and temporary fixture embedding command, so it does not prove real semantic quality, licensed production model selection, ANN latency, 100k/1M corpus performance, or Windows/Linux behavior. |
+| S112 | Product platform workflow slice complete | `./scripts/ci/check-workflows.sh` first failed because `.github/workflows/ci-platform.yml` did not include a PR trigger; after implementation, workflow guard, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` passed, and GitHub PR checks are expected to provide hosted macOS/Windows build/test evidence for the pushed commit. | None for this Platform CI PR-trigger slice; it does not prove installer packaging, signing, notarization, Windows service/MSI install/upgrade/uninstall/rollback, macOS pkg/dmg install/upgrade/uninstall/rollback, or platform-specific service lifecycle behavior. |
 
 ## Command Log
+
+### S112
+
+Design target:
+
+- Make hosted macOS and Windows workspace build/test validation run on pull
+  requests rather than only on manual or scheduled workflows.
+- Extend the workflow policy guard so the platform matrix and core build/test
+  commands cannot be silently removed.
+- Keep the scope to build/test validation only; packaging, signing,
+  notarization, MSI/pkg/dmg install flows, and service lifecycle proof remain
+  separate release blockers.
+
+Observed RED:
+
+```bash
+./scripts/ci/check-workflows.sh
+```
+
+Output summary:
+
+- The workflow guard failed because `.github/workflows/ci-platform.yml` was
+  missing required text: `pull_request`.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-workflows.sh
+ruby -e 'require "yaml"; ARGV.each { |file| YAML.load_file(file); puts "yaml ok: #{file}" }' .github/workflows/ci-platform.yml .github/workflows/pr.yml .github/workflows/bench-nightly.yml
+git diff --check
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Workflow guard: exit 0 after Platform CI required `pull_request`,
+  `macos-latest`, `windows-latest`, `cargo build --workspace --locked`, and
+  `cargo test --workspace --locked`.
+- Workflow YAML parse: exit 0 for Platform CI, PR, and nightly workflow files.
+- `git diff --check`: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, workflow check, and
+  public repo guard.
+
+Scope note:
+
+- S112 improves hosted cross-platform build/test coverage only. It does not
+  prove platform installer behavior, service manager behavior, signing,
+  notarization, upgrade, uninstall, rollback, real whole-machine scans, or
+  complete release readiness.
+- Full product is still not complete.
 
 ### S111
 

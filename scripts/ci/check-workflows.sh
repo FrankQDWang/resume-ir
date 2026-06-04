@@ -22,9 +22,10 @@ require_text() {
 
 pr_workflow=".github/workflows/pr.yml"
 nightly_workflow=".github/workflows/bench-nightly.yml"
+platform_workflow=".github/workflows/ci-platform.yml"
 verify_script="scripts/ci/verify-local.sh"
 
-for file in "$pr_workflow" "$nightly_workflow" "$verify_script"; do
+for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$verify_script"; do
   require_file "$file"
 done
 
@@ -47,6 +48,12 @@ require_text "$nightly_workflow" "resume-benchmark --locked -- vector-quality"
 require_text "$nightly_workflow" "resume-benchmark --locked -- vector-gate"
 require_text "$nightly_workflow" "vector-benchmark-smoke.json"
 require_text "$nightly_workflow" "--allow-synthetic"
+
+require_text "$platform_workflow" "pull_request"
+require_text "$platform_workflow" "macos-latest"
+require_text "$platform_workflow" "windows-latest"
+require_text "$platform_workflow" "cargo build --workspace --locked"
+require_text "$platform_workflow" "cargo test --workspace --locked"
 
 require_text "$verify_script" "./scripts/ci/check-workflows.sh"
 
