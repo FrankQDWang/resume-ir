@@ -73,6 +73,8 @@ const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
 const WITNESS_DEFAULT_MAX_FILES: usize = 10_000;
 const WITNESS_CLEANUP_RETRY_ATTEMPTS: usize = 6;
 const WITNESS_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(25);
+const WITNESS_SEARCH_PROBE_LIMIT: usize = 5;
+const WITNESS_SEARCH_PROBE_MAX_CANDIDATES: usize = 64;
 const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, witness, doctor, or export-diagnostics";
 
 fn main() {
@@ -2584,6 +2586,11 @@ fn witness_command(args: &[String]) -> Result<()> {
     } else {
         WitnessOcrStatus::NotRequested
     };
+    let witness_search = if witness_args.probe_search {
+        run_witness_search_probe(&temp_dirs.data_dir, &store)?
+    } else {
+        WitnessSearchStatus::NotRequested
+    };
     drop(store);
     let private_data_removed = temp_dirs.cleanup();
 
@@ -2611,6 +2618,7 @@ fn witness_command(args: &[String]) -> Result<()> {
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("failed documents: {}", summary.failed_documents);
     print_witness_ocr_status(&witness_ocr);
+    print_witness_search_status(&witness_search);
     println!(
         "private witness data: {}",
         if private_data_removed {
@@ -2634,6 +2642,7 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
     let mut root_preset = None;
     let mut max_files = WITNESS_DEFAULT_MAX_FILES;
     let mut run_ocr = false;
+    let mut probe_search = false;
     let mut seen_ocr_option = false;
     let mut ocr_worker_args = default_ocr_worker_args();
     let mut ocr_max_documents = None;
@@ -2677,6 +2686,10 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
             }
             "--run-ocr" => {
                 run_ocr = true;
+                index += 1;
+            }
+            "--probe-search" => {
+                probe_search = true;
                 index += 1;
             }
             "--ocr-command" => {
@@ -2835,6 +2848,7 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
         root_selection,
         max_files,
         run_ocr,
+        probe_search,
         ocr_max_documents,
         ocr_worker_args,
     })
@@ -2842,7 +2856,7 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
 
 fn witness_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]",
+        "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--probe-search] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]",
     )
 }
 
@@ -2989,6 +3003,120 @@ fn print_witness_ocr_status(status: &WitnessOcrStatus) {
     }
 }
 
+fn run_witness_search_probe(data_dir: &Path, store: &MetaStore) -> Result<WitnessSearchStatus> {
+    let candidates = witness_search_probe_candidates(store)?;
+    if candidates.is_empty() {
+        return Ok(WitnessSearchStatus::Blocked {
+            reason: "no searchable witness text",
+            hits: 0,
+        });
+    }
+
+    let Some(index) =
+        FullTextIndex::open_active(&data_dir.join("search-index")).map_err(CliError::fulltext)?
+    else {
+        return Ok(WitnessSearchStatus::Blocked {
+            reason: "full-text index unavailable",
+            hits: 0,
+        });
+    };
+
+    let mut best_hits = 0_usize;
+    for query in candidates {
+        let hits = index
+            .search(SearchQuery::new(query).with_limit(WITNESS_SEARCH_PROBE_LIMIT))
+            .map_err(CliError::fulltext)?;
+        let visible = visible_hits(store, hits, WITNESS_SEARCH_PROBE_LIMIT)?;
+        best_hits = best_hits.max(visible.len());
+        if !visible.is_empty() {
+            return Ok(WitnessSearchStatus::Completed {
+                hits: visible.len(),
+            });
+        }
+    }
+
+    Ok(WitnessSearchStatus::Blocked {
+        reason: "search probe returned no visible results",
+        hits: best_hits,
+    })
+}
+
+fn witness_search_probe_candidates(store: &MetaStore) -> Result<Vec<String>> {
+    let mut candidates = Vec::new();
+
+    for document in store.visible_documents().map_err(CliError::store)? {
+        for version in store
+            .resume_versions_for_document(&document.id)
+            .map_err(CliError::store)?
+        {
+            if version.visibility != ResumeVisibility::Searchable {
+                continue;
+            }
+
+            if let Some(text) = version
+                .clean_text
+                .as_deref()
+                .or(version.raw_text.as_deref())
+            {
+                collect_witness_search_tokens(text, &mut candidates);
+                if candidates.len() >= WITNESS_SEARCH_PROBE_MAX_CANDIDATES {
+                    return Ok(candidates);
+                }
+            }
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn collect_witness_search_tokens(text: &str, candidates: &mut Vec<String>) {
+    let mut token = String::new();
+
+    for character in text.chars() {
+        if character.is_alphabetic() {
+            token.push(character);
+            continue;
+        }
+
+        push_witness_search_token(&mut token, candidates);
+        if candidates.len() >= WITNESS_SEARCH_PROBE_MAX_CANDIDATES {
+            return;
+        }
+    }
+
+    push_witness_search_token(&mut token, candidates);
+}
+
+fn push_witness_search_token(token: &mut String, candidates: &mut Vec<String>) {
+    let char_count = token.chars().count();
+    let min_chars = if token.is_ascii() { 4 } else { 2 };
+    if char_count >= min_chars && candidates.len() < WITNESS_SEARCH_PROBE_MAX_CANDIDATES {
+        let candidate = token.chars().take(32).collect::<String>();
+        if !candidates.iter().any(|existing| existing == &candidate) {
+            candidates.push(candidate);
+        }
+    }
+    token.clear();
+}
+
+fn print_witness_search_status(status: &WitnessSearchStatus) {
+    match status {
+        WitnessSearchStatus::NotRequested => {
+            println!("witness search status: not_requested");
+            println!("search probe hits: 0");
+        }
+        WitnessSearchStatus::Completed { hits } => {
+            println!("witness search status: completed");
+            println!("search probe hits: {hits}");
+        }
+        WitnessSearchStatus::Blocked { reason, hits } => {
+            println!("witness search status: blocked");
+            println!("search block reason: {reason}");
+            println!("search probe hits: {hits}");
+        }
+    }
+}
+
 fn canonical_witness_root(root: &Path) -> Result<PathBuf> {
     let metadata = fs::metadata(root)
         .map_err(|_| CliError::user("witness root must exist and be a directory"))?;
@@ -3100,6 +3228,7 @@ struct WitnessArgs {
     root_selection: WitnessRootSelection,
     max_files: usize,
     run_ocr: bool,
+    probe_search: bool,
     ocr_max_documents: Option<usize>,
     ocr_worker_args: OcrWorkerArgs,
 }
@@ -3144,6 +3273,12 @@ enum WitnessOcrStatus {
         cache_hits: usize,
         budget_exhausted: bool,
     },
+}
+
+enum WitnessSearchStatus {
+    NotRequested,
+    Completed { hits: usize },
+    Blocked { reason: &'static str, hits: usize },
 }
 
 struct WitnessTempDirs {

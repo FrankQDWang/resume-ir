@@ -9,7 +9,7 @@ production-ready scope source.
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
 - Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, and S121 used synthetic fixtures only.
-  S97, S99, S100, S105, S106, S109, and S110 also used private local-only witnesses against anonymized temporary copies from a
+  S97, S99, S100, S105, S106, S109, S110, and S122 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
@@ -62,7 +62,8 @@ obsolete preliminary files and checklists are not product scope.
   directory, can optionally run bounded OCR jobs through the existing local OCR
   worker path, reports redacted success/failure counters without stopping a
   budgeted witness on the first per-document OCR failure, prints only aggregate
-  redacted output, and removes private witness data
+  redacted output, can run a redacted internal full-text search probe without
+  printing the private query or matched files, and removes private witness data
   exist. Missing production work includes production-grade PDF coverage, full
   legacy Word converter distribution and cross-platform proof, large-corpus
   proof, cross-platform watcher behavior proof, and incremental index updates.
@@ -305,8 +306,75 @@ obsolete preliminary files and checklists are not product scope.
 | S119 | Product service runtime cfg portability slice complete | Hosted Rust Workspace for `c56e966` first failed on Ubuntu clippy because non-macOS binary builds treated macOS-only launchctl parser code and `running`/`loaded` runtime states as dead code, and newer clippy flagged a needless return in the non-macOS branch. After implementation, service lifecycle integration tests, launchctl parser tests, focused CLI clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this cfg portability fix; it proves the macOS LaunchAgent command surface remains portable across hosted clippy/builds, but it does not implement Windows services/MSI or prove Windows service lifecycle behavior. |
 | S120 | Product OCR requested-language diagnostics slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_requested_ocr_language_without_language_dump --locked -- --exact` first failed because `doctor` did not accept OCR diagnostic arguments and diagnostics always reported only `eng`. After implementation, the focused exact test, full diagnostics suite, focused CLI clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this OCR runtime diagnostics slice; it does not distribute OCR engines or language packs, prove non-English OCR quality, complete full-library OCR, or validate Windows/macOS installed OCR runtime behavior beyond local/hosted command checks. |
 | S121 | Product release dry-run manifest slice complete | `sh scripts/ci/check-release-artifacts.sh` first failed because `scripts/release/create-artifact-manifest.sh` did not exist. After implementation, the release artifact guard, workflow guard, runbook guard, diff check, and `./scripts/ci/verify-local.sh` passed. | None for this dry-run manifest/checksum slice; it does not build MSI/pkg/dmg installers, sign, notarize, generate an SBOM, create a GitHub Release, upload release binaries, or prove install/upgrade/uninstall/rollback behavior. |
+| S122 | Product local witness search-probe slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_search_runs_private_query_without_leaking_query_or_paths --locked -- --exact` first failed because `witness` rejected `--probe-search`. After implementation, the focused exact test, full `s9_import_search` suite, focused CLI clippy, fmt, diff, marker scan, public guard, `./scripts/ci/verify-local.sh`, private local-only import/search witness, private local-only bounded OCR/search witness, and final hosted PR checks passed. | None for this redacted witness search-probe slice; it does not prove full-library OCR completion, real search quality, real large-corpus latency/throughput, production embedding model readiness, Windows/Linux real sample behavior, or installer/release readiness. |
 
 ## Command Log
+
+### S122
+
+Design target:
+
+- Let `resume-cli witness` prove a local import-to-search loop on private
+  PDF/Word samples without requiring the user to supply a query.
+- Generate the search probe query only inside the temporary private witness
+  data directory, never print the query, matched filenames, snippets, paths, or
+  raw resume text, and remove temporary private witness data after the run.
+- Keep the probe aggregate-only: status plus hit count.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_search_runs_private_query_without_leaking_query_or_paths --locked -- --exact
+```
+
+Output summary:
+
+- The focused witness test failed because `resume-cli witness` did not accept
+  `--probe-search` and returned the witness usage string.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_search_runs_private_query_without_leaking_query_or_paths --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+gh pr checks 9 --watch
+```
+
+Output summary:
+
+- Focused witness search-probe test: exit 0; it confirmed the probe completes
+  with non-zero hits and does not print the private root, canonical private
+  root, data dir, private filenames, fixture filenames, or internal query.
+- Full import/search witness suite: exit 0; 24 tests passed.
+- Focused CLI clippy: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, release
+  artifact check, and public repository guard passed.
+- Private local-only import/search witness: exit 0; redacted aggregate status
+  showed completed import, completed search probe, and private data removal;
+  temporary stdout/stderr logs were removed and no private output was committed.
+- Private local-only bounded OCR/search witness: exit 0; redacted aggregate
+  status showed completed import, completed OCR, completed search probe, and
+  private data removal; temporary stdout/stderr logs were removed and no private
+  output was committed.
+- Hosted PR checks: final run passed macOS Platform CI, Windows Platform CI,
+  Rust workspace, dependency tree, license policy, runbook policy, and public
+  repository guard.
+
+Scope note:
+
+- S122 proves only a redacted local witness search probe and bounded local
+  OCR/search witness behavior. It does not prove full-library OCR completion,
+  real ranking quality, large-corpus performance, production embedding model
+  readiness, Windows/Linux private sample behavior, or release readiness.
 
 ### S121
 
