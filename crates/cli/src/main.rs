@@ -16,8 +16,8 @@ use fs4::fs_std::FileExt;
 use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions};
 use import_pipeline::{
     detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
-    ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary,
-    ScanProfile,
+    remove_documents_from_full_text_index, ImportOptions,
+    ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, purge_obsolete_snapshots, redact_contact_values, FullTextIndex,
@@ -5007,7 +5007,9 @@ fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
     else {
         return Err(CliError::user("delete document was not found"));
     };
-    let rebuild = rebuild_full_text_index(data_dir, &store, now).map_err(CliError::import)?;
+    let deleted_doc_ids = BTreeSet::from([deleted_document.id.as_str().to_string()]);
+    let rebuild = remove_documents_from_full_text_index(data_dir, &store, &deleted_doc_ids, now)
+        .map_err(CliError::import)?;
 
     println!("delete completed");
     println!("doc_id: {}", deleted_document.id);

@@ -1,7 +1,9 @@
 use std::fs;
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -14,6 +16,8 @@ use meta_store::{
 use meta_store::{ImportScanErrorKind, ImportScanErrorOperation};
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
+const SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS: usize = 100;
+const SNAPSHOT_TEST_WRITE_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 macro_rules! serialize_windows_s9_import_test {
     () => {
@@ -697,6 +701,98 @@ fn import_txt_resume_builds_searchable_index_without_path_leakage() {
         Some("synthetic candidate")
     );
     assert_eq!(name.raw_value, "Synthetic Candidate");
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
+fn import_rebuilds_from_metadata_when_active_snapshot_is_unreadable() {
+    serialize_windows_s9_import_test!();
+    let data_dir = temp_dir("incremental-corrupt-active-data");
+    let private_root = temp_dir("incremental-corrupt-active-root");
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+    fs::write(
+        private_root.join("synthetic-first.txt"),
+        "Synthetic First\nRust firsttoken search\n",
+    )
+    .unwrap();
+
+    let first_import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run first import before corrupting active snapshot");
+    assert!(
+        first_import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first_import.stdout),
+        String::from_utf8_lossy(&first_import.stderr)
+    );
+
+    let active_snapshot = fs::read_to_string(data_dir.join("search-index").join("active-snapshot"))
+        .unwrap()
+        .trim()
+        .to_string();
+    write_snapshot_test_file_with_retry(
+        &data_dir
+            .join("search-index")
+            .join("snapshots")
+            .join(active_snapshot)
+            .join("fulltext.snapshot.enc"),
+        b"corrupted active snapshot envelope",
+    )
+    .unwrap();
+    fs::write(
+        private_root.join("synthetic-second.txt"),
+        "Synthetic Second\nPython secondtoken ranking\n",
+    )
+    .unwrap();
+
+    let second_import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run import after corrupting active snapshot");
+    assert!(
+        second_import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second_import.stdout),
+        String::from_utf8_lossy(&second_import.stderr)
+    );
+    assert!(second_import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&second_import.stdout);
+    assert!(import_stdout.contains("files discovered: 2"));
+    assert!(import_stdout.contains("searchable documents: 2"));
+    assert!(!import_stdout.contains(path_str(&private_root)));
+    assert!(!import_stdout.contains(path_str(&canonical_private_root)));
+
+    for (query, file_name) in [
+        ("firsttoken", "synthetic-first.txt"),
+        ("secondtoken", "synthetic-second.txt"),
+    ] {
+        let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .args(["--data-dir", path_str(&data_dir), "search", query])
+            .output()
+            .expect("run search after incremental fallback rebuild");
+        assert!(search.status.success());
+        assert!(search.stderr.is_empty());
+        let stdout = String::from_utf8_lossy(&search.stdout);
+        assert!(stdout.contains("results: 1"));
+        assert!(stdout.contains(file_name));
+        assert!(!stdout.contains(path_str(&private_root)));
+        assert!(!stdout.contains(path_str(&canonical_private_root)));
+    }
 
     remove_dir(&data_dir);
     remove_dir(&private_root);
@@ -1637,6 +1733,47 @@ fn stdout_value<'a>(output: &'a str, prefix: &str) -> &'a str {
 
 fn remove_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
+}
+
+fn write_snapshot_test_file_with_retry(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    for attempt in 0..SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS {
+        match fs::write(path, bytes) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt + 1 < SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS
+                    && is_transient_snapshot_test_write_error(&error) =>
+            {
+                thread::sleep(SNAPSHOT_TEST_WRITE_RETRY_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(io::Error::other("snapshot test write retry exhausted"))
+}
+
+fn is_transient_snapshot_test_write_error(error: &io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        ErrorKind::Interrupted | ErrorKind::PermissionDenied | ErrorKind::WouldBlock
+    ) {
+        return true;
+    }
+
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(), Some(32 | 33 | 145)) {
+        return true;
+    }
+
+    let diagnostic = error.to_string().to_ascii_lowercase();
+    diagnostic.contains("os error 5")
+        || diagnostic.contains("os error 32")
+        || diagnostic.contains("os error 33")
+        || diagnostic.contains("os error 145")
+        || diagnostic.contains("access is denied")
+        || diagnostic.contains("permission denied")
+        || diagnostic.contains("being used by another process")
+        || diagnostic.contains("locked a portion of the file")
 }
 
 #[cfg(unix)]

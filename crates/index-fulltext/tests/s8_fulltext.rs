@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
@@ -5,8 +6,8 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{
-    inspect_snapshot_root, publish_snapshot, redact_contact_values, FullTextIndex, IndexDocument,
-    IndexSection, SearchQuery, SnapshotReadTarget, SnapshotRootState,
+    inspect_snapshot_root, publish_incremental_snapshot, publish_snapshot, redact_contact_values,
+    FullTextIndex, IndexDocument, IndexSection, SearchQuery, SnapshotReadTarget, SnapshotRootState,
 };
 use tantivy::collector::TopDocs;
 use tantivy::query::AllQuery;
@@ -394,6 +395,94 @@ fn published_snapshot_encrypts_payload_at_rest() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].doc_id, "doc_private_fulltext");
     assert!(hits[0].snippet.contains("Rust"));
+
+    remove_dir(&index_root);
+}
+
+#[test]
+fn incremental_snapshot_inherits_replaces_and_excludes_documents() {
+    let index_root = temp_dir("incremental-snapshot");
+
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800004000-1-0-0",
+        [
+            java_payment_document(false),
+            IndexDocument {
+                doc_id: "doc_backend".to_string(),
+                version_id: "ver_backend_old".to_string(),
+                file_name: "synthetic-backend-old.pdf".to_string(),
+                clean_text: "Rust backend retiredtoken".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: "Rust backend retiredtoken".to_string(),
+                }],
+                is_deleted: false,
+            },
+        ],
+    )
+    .unwrap();
+
+    publish_incremental_snapshot(
+        &index_root,
+        "fulltext-1800005000-1-0-0",
+        [
+            IndexDocument {
+                doc_id: "doc_backend".to_string(),
+                version_id: "ver_backend_new".to_string(),
+                file_name: "synthetic-backend-new.pdf".to_string(),
+                clean_text: "Go backend updated snapshot token".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: "Go backend updated".to_string(),
+                }],
+                is_deleted: false,
+            },
+            IndexDocument {
+                doc_id: "doc_python".to_string(),
+                version_id: "ver_python_new".to_string(),
+                file_name: "synthetic-python-new.pdf".to_string(),
+                clean_text: "Python ranking new snapshot token".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "skill".to_string(),
+                    text: "Python ranking".to_string(),
+                }],
+                is_deleted: false,
+            },
+        ],
+        &BTreeSet::from(["doc_java_payment".to_string()]),
+    )
+    .unwrap();
+
+    let inspection = inspect_snapshot_root(&index_root).unwrap();
+    assert_eq!(inspection.state(), SnapshotRootState::Ready);
+    assert_eq!(
+        inspection.active_snapshot(),
+        Some("fulltext-1800005000-1-0-0")
+    );
+
+    let index = FullTextIndex::open_active(&index_root).unwrap().unwrap();
+    assert!(index
+        .search(SearchQuery::new("Java payment").with_limit(5))
+        .unwrap()
+        .is_empty());
+    assert!(index
+        .search(SearchQuery::new("retiredtoken").with_limit(5))
+        .unwrap()
+        .is_empty());
+
+    let updated_hits = index
+        .search(SearchQuery::new("Go backend").with_limit(5))
+        .unwrap();
+    assert_eq!(updated_hits.len(), 1);
+    assert_eq!(updated_hits[0].doc_id, "doc_backend");
+    assert_eq!(updated_hits[0].version_id, "ver_backend_new");
+
+    let new_hits = index
+        .search(SearchQuery::new("Python ranking").with_limit(5))
+        .unwrap();
+    assert_eq!(new_hits.len(), 1);
+    assert_eq!(new_hits[0].doc_id, "doc_python");
 
     remove_dir(&index_root);
 }

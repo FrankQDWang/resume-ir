@@ -297,6 +297,51 @@ impl FullTextIndex {
         self.search_internal(query, Some(allowed_doc_ids))
     }
 
+    fn stored_documents_except(
+        &self,
+        excluded_doc_ids: &BTreeSet<String>,
+    ) -> Result<Vec<IndexDocument>> {
+        self.reload()?;
+        let searcher = self.reader.searcher();
+        let mut documents = Vec::new();
+        for segment_reader in searcher.segment_readers() {
+            let store_reader = segment_reader
+                .get_store_reader(10)
+                .map_err(FullTextError::io)?;
+            for stored in store_reader.iter::<TantivyDocument>(segment_reader.alive_bitset()) {
+                let stored = stored.map_err(FullTextError::tantivy)?;
+                if bool_value(&stored, self.fields.is_deleted).unwrap_or(false) {
+                    continue;
+                }
+
+                let Some(doc_id) = text_value(&stored, self.fields.doc_id) else {
+                    continue;
+                };
+                if excluded_doc_ids.contains(&doc_id) {
+                    continue;
+                }
+
+                let Some(version_id) = text_value(&stored, self.fields.version_id) else {
+                    continue;
+                };
+                let Some(clean_text) = text_value(&stored, self.fields.clean_text) else {
+                    continue;
+                };
+
+                documents.push(IndexDocument {
+                    doc_id,
+                    version_id,
+                    file_name: text_value(&stored, self.fields.file_name).unwrap_or_default(),
+                    clean_text,
+                    sections: section_values(&stored, self.fields),
+                    is_deleted: false,
+                });
+            }
+        }
+
+        Ok(documents)
+    }
+
     fn search_internal(
         &self,
         query: SearchQuery,
@@ -471,6 +516,74 @@ where
     write_active_snapshot(index_root, snapshot_name)?;
 
     Ok(())
+}
+
+pub fn publish_incremental_snapshot<I>(
+    index_root: &Path,
+    snapshot_name: &str,
+    replacement_documents: I,
+    deleted_doc_ids: &BTreeSet<String>,
+) -> Result<SnapshotPublishSummary>
+where
+    I: IntoIterator<Item = IndexDocument>,
+{
+    let documents =
+        incremental_snapshot_documents(index_root, replacement_documents, deleted_doc_ids)?;
+    let indexed_documents = documents.len();
+    publish_snapshot(index_root, snapshot_name, documents)?;
+
+    Ok(SnapshotPublishSummary { indexed_documents })
+}
+
+pub fn incremental_snapshot_documents<I>(
+    index_root: &Path,
+    replacement_documents: I,
+    deleted_doc_ids: &BTreeSet<String>,
+) -> Result<Vec<IndexDocument>>
+where
+    I: IntoIterator<Item = IndexDocument>,
+{
+    let replacement_documents = replacement_documents.into_iter().collect::<Vec<_>>();
+    let mut excluded_doc_ids = deleted_doc_ids.clone();
+    for document in &replacement_documents {
+        excluded_doc_ids.insert(document.doc_id.clone());
+    }
+
+    let mut documents = active_index_documents_except(index_root, &excluded_doc_ids)?;
+    documents.extend(
+        replacement_documents
+            .into_iter()
+            .filter(|document| !document.is_deleted),
+    );
+    documents.sort_by(|left, right| {
+        left.doc_id
+            .cmp(&right.doc_id)
+            .then_with(|| left.version_id.cmp(&right.version_id))
+    });
+
+    Ok(documents)
+}
+
+fn active_index_documents_except(
+    index_root: &Path,
+    excluded_doc_ids: &BTreeSet<String>,
+) -> Result<Vec<IndexDocument>> {
+    let Some(index) = FullTextIndex::open_active(index_root)? else {
+        return Ok(Vec::new());
+    };
+
+    index.stored_documents_except(excluded_doc_ids)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapshotPublishSummary {
+    indexed_documents: usize,
+}
+
+impl SnapshotPublishSummary {
+    pub fn indexed_documents(self) -> usize {
+        self.indexed_documents
+    }
 }
 
 fn publish_encrypted_staging_snapshot(
@@ -1515,6 +1628,20 @@ fn bool_value(document: &TantivyDocument, field: Field) -> Option<bool> {
     document
         .get_first(field)
         .and_then(|value| value.as_value().as_bool())
+}
+
+fn section_values(document: &TantivyDocument, fields: IndexFields) -> Vec<IndexSection> {
+    let section_types = document
+        .get_all(fields.section_type)
+        .filter_map(|value| value.as_value().as_str().map(str::to_string));
+    let section_texts = document
+        .get_all(fields.section_text)
+        .filter_map(|value| value.as_value().as_str().map(str::to_string));
+
+    section_types
+        .zip(section_texts)
+        .map(|(section_type, text)| IndexSection { section_type, text })
+        .collect()
 }
 
 fn build_snippet(text: &str, query: &str) -> String {

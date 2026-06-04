@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, and S166 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, and S167 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -60,7 +60,8 @@ obsolete preliminary files and checklists are not product scope.
   integration that requeues completed roots through the existing durable import
   task path on local file changes, encrypted full-text published snapshot
   publish/recover with extended Windows transient read-open, snapshot-publish,
-  and directory-cleanup filesystem retries, delete rebuild,
+  and directory-cleanup filesystem retries, incremental full-text snapshot
+  updates for import, OCR text indexing, and soft-delete removals, delete rebuild,
   redacted snippets, and an
   isolated local PDF/Word witness command
   that can use either an explicit root or the local-discovery root preset,
@@ -78,7 +79,8 @@ obsolete preliminary files and checklists are not product scope.
   was committed or uploaded. Missing production work includes
   production-grade PDF coverage, full
   legacy Word converter distribution and cross-platform proof, large-corpus
-  proof, cross-platform watcher behavior proof, and incremental index updates.
+  proof, cross-platform watcher behavior proof, and large-corpus incremental
+  update performance proof.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
   education/company/title/skills/certs/years, persisted entity mentions,
   metadata-indexed field prefiltering before the full-text TopDocs cutoff,
@@ -261,7 +263,8 @@ obsolete preliminary files and checklists are not product scope.
   local model artifacts, local model-pack manifest validation, targeted fault
   tests, persistent vector snapshot writer-lock protection against stale
   concurrent writers, hosted-Windows full-text snapshot read-open/publish/
-  directory-cleanup retry hardening,
+  directory-cleanup retry hardening, metadata-rebuild fallback when import
+  encounters an unreadable active full-text snapshot,
   local-only macOS LaunchAgent start/stop witness evidence, local-only
   production runbooks, a runbook CI policy guard, a workflow policy guard, and
   release artifact manifest plus SBOM policy guards, GitHub Actions runtime
@@ -451,8 +454,67 @@ obsolete preliminary files and checklists are not product scope.
 | S164 | Product release-readiness CI guard complete locally | A focused shell check first failed because `scripts/ci/check-release-readiness.sh` did not exist. After implementation, `verify-local` runs a local CI guard that executes `resume-cli release-readiness --json` against a private-looking synthetic data-dir, requires the command to exit nonzero, validates the `release-readiness.v1` blocked schema and all eight release blockers, checks stderr blocker messaging, and fails on local path or private marker leaks. Focused release-readiness guard, workflow guard, runbook guard, shell syntax, diff check, full local verification, and public repo guard passed. | This slice wires the blocked release-readiness gate into local CI only. It does not clear signing/notarization, real 100k/1M private benchmark, licensed OCR/model distribution, platform installer/service lifecycle, or cross-platform release validation blockers. |
 | S165 | Product release workflow readiness gate complete locally | Focused guard checks first failed because `.github/workflows/release.yml` did not explicitly run `./scripts/ci/check-release-readiness.sh`; the release workflow only reached it indirectly through `verify-local`. After implementation, the Release dry-run job has a named stable-release blocked confirmation step after workspace verification, and both workflow policy plus release-readiness guard require that explicit release workflow wiring. Focused release-readiness guard, workflow guard, shell syntax, workflow YAML parse, diff check, full local verification, and public repo guard passed locally. | This slice strengthens hosted Release dry-run fail-closed behavior only. It does not clear signing, notarization, GitHub Release upload approval, real 100k/1M private benchmark evidence, licensed OCR/model distribution, installer/service lifecycle validation, or cross-platform release blockers. |
 | S166 | Product hosted Windows full-text corruption-test stability complete locally | The pushed S165 run passed dependency, license, runbook, public guard, Rust Workspace, and macOS Platform CI, but hosted Windows Platform CI failed in `s8_fulltext::active_snapshot_corruption_falls_back_to_last_good_snapshot`: the test attempted to overwrite the freshly published active encrypted snapshot with `fs::write` and hit Windows `os error 33` because another process still held a region lock. Root cause was the test's corruption setup bypassing the existing transient snapshot filesystem retry policy. After implementation, the corruption write uses a bounded test helper that retries the same Windows file-lock diagnostics before asserting fallback behavior. The hosted-failing exact test, full `index-fulltext`, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers hosted Windows full-text test harness stability only. It does not change production full-text fallback behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear large-corpus, model, installer, signing, notarization, or release blockers. |
+| S167 | Product incremental full-text snapshot update path complete locally | A focused full-text test first failed because `publish_incremental_snapshot` did not exist. After implementation, index-fulltext can synthesize a next snapshot from the active published snapshot by retaining unchanged documents, replacing same-doc_id delta documents, excluding deleted doc_ids, and publishing through the existing encrypted snapshot path. Import, OCR text indexing, and soft-delete now use this incremental snapshot document synthesis before falling back to metadata rebuild if the active snapshot is unreadable. A CLI regression corrupts the active encrypted snapshot and proves reimport rebuilds from metadata without leaking paths. Focused RED/GREEN, full index-fulltext, import-pipeline, S9 import/search, S14 delete/search, S15 OCR handoff, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice reduces full-text update work and preserves corrupt-active fallback behavior for synthetic local paths only. It does not prove million-scale incremental latency, real-corpus performance, cross-platform watcher soak, platform installer/service validation, signing, notarization, OCR/model licensing, or release readiness. |
 
 ## Command Log
+
+### S167
+
+Design target:
+
+- Close the P1 functional gap for full-text updates that previously rebuilt
+  from metadata for every import, OCR text write, and soft-delete.
+- Keep the privacy boundary: do not use Tantivy term-deletes as the durable
+  published representation because stale stored text can remain in old segments;
+  synthesize the next snapshot document set and publish a new encrypted snapshot
+  instead.
+- Preserve the old full metadata rebuild behavior when the active snapshot is
+  unreadable, so index corruption does not block import recovery.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext --test s8_fulltext incremental_snapshot_inherits_replaces_and_excludes_documents --locked -- --exact
+```
+
+Output summary:
+
+- The focused full-text test failed before implementation with unresolved import
+  `index_fulltext::publish_incremental_snapshot`.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext --test s8_fulltext incremental_snapshot_inherits_replaces_and_excludes_documents --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s9_import_search import_rebuilds_from_metadata_when_active_snapshot_is_unreadable --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p index-fulltext --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p import-pipeline --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s9_import_search --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s14_delete_search --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s15_ocr_handoff --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p index-fulltext -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- The incremental full-text test passed, proving unchanged active docs are
+  inherited, replacement doc_ids override older versions, and deleted doc_ids do
+  not remain searchable.
+- The corrupt-active regression passed, proving import falls back to metadata
+  rebuild when active snapshot synthesis cannot read the current snapshot.
+- Full `index-fulltext`, `import-pipeline`, S9 import/search, S14 delete/search,
+  S15 OCR handoff, fmt, focused clippy, full local verification, and public
+  repo guard passed.
+
+Scope note:
+
+- S167 is a synthetic local incremental full-text update slice. It does not
+  prove million-scale incremental update latency, real-corpus behavior,
+  cross-platform watcher soak, installer/service lifecycle, signing,
+  notarization, OCR/model licensing, or stable release readiness.
 
 ### S166
 

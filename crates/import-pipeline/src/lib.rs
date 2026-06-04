@@ -11,7 +11,9 @@ use fs_crawler::{
     crawl_directory_with_options_and_control, normalize_path, CrawlError, CrawlErrorKind,
     DiscoveredFile, FsOperation, NormalizedPath, ScanBudgetKind, ScanControl, ScanOptions,
 };
-use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
+use index_fulltext::{
+    incremental_snapshot_documents, publish_snapshot, IndexDocument, IndexSection,
+};
 use meta_store::{
     Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
     ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanError, ImportScanErrorKind,
@@ -174,9 +176,9 @@ fn run_import(
         }
     }
 
-    if can_propagate_deletions {
+    let deleted_document_ids = if can_propagate_deletions {
         ensure_import_not_cancelled(store, &task.id)?;
-        summary.deleted_documents = mark_missing_documents_deleted(
+        let deleted_document_ids = mark_missing_documents_deleted(
             store,
             root,
             options.scan_profile,
@@ -185,31 +187,32 @@ fn run_import(
             &discovered_doc_ids,
             now,
         )?;
+        summary.deleted_documents = deleted_document_ids.len();
         publish_import_progress(store, &task.id, &summary, now)?;
-    }
+        deleted_document_ids
+    } else {
+        BTreeSet::new()
+    };
 
-    let pending_doc_ids = pending_index_documents
-        .iter()
-        .map(|(document, _)| document.id.as_str().to_string())
-        .collect::<BTreeSet<_>>();
-    ensure_import_not_cancelled(store, &task.id)?;
-    let mut index_documents = persisted_index_documents(store, &sectionizer, &pending_doc_ids)?;
-    index_documents.extend(
-        pending_index_documents
-            .iter()
-            .map(|(_, index_document)| index_document.clone()),
-    );
-    let indexed_document_count = index_documents.len();
-    let snapshot_token = index_snapshot_token(
-        now,
-        indexed_document_count,
-        summary.ocr_required_documents,
-        summary.deleted_documents,
-    );
-    ensure_import_not_cancelled(store, &task.id)?;
-    write_full_text_index(data_dir, &snapshot_token, index_documents)?;
+    let mut excluded_doc_ids = discovered_doc_ids;
+    excluded_doc_ids.extend(deleted_document_ids);
 
     let pending_searchable_total = pending_index_documents.len();
+    let pending_replacements = pending_index_documents
+        .iter()
+        .map(|(_, index_document)| index_document.clone())
+        .collect::<Vec<_>>();
+    ensure_import_not_cancelled(store, &task.id)?;
+    let (snapshot_token, _indexed_document_count) = write_incremental_full_text_index(
+        data_dir,
+        store,
+        now,
+        pending_replacements,
+        &excluded_doc_ids,
+        summary.ocr_required_documents,
+        summary.deleted_documents,
+    )?;
+
     for (index, (mut document, _)) in pending_index_documents.into_iter().enumerate() {
         ensure_import_not_cancelled(store, &task.id)?;
         document.status = DocumentStatus::Searchable;
@@ -299,6 +302,26 @@ pub fn rebuild_full_text_index(
     Ok(IndexRebuildSummary { indexed_documents })
 }
 
+pub fn remove_documents_from_full_text_index(
+    data_dir: &Path,
+    store: &MetaStore,
+    document_ids: &BTreeSet<String>,
+    now: UnixTimestamp,
+) -> Result<IndexRebuildSummary> {
+    let (snapshot_token, indexed_documents) = write_incremental_full_text_index(
+        data_dir,
+        store,
+        now,
+        Vec::new(),
+        document_ids,
+        0,
+        document_ids.len(),
+    )?;
+    update_index_state(store, now, snapshot_token)?;
+
+    Ok(IndexRebuildSummary { indexed_documents })
+}
+
 pub fn index_ocr_text(
     data_dir: &Path,
     store: &MetaStore,
@@ -321,8 +344,15 @@ pub fn index_ocr_text(
     let clean_text = TextNormalizer::normalize(ocr_text).text().to_string();
     let pending_doc_ids = BTreeSet::from([document.id.as_str().to_string()]);
     if clean_text.trim().is_empty() {
-        let (snapshot_token, indexed_documents) =
-            write_rebuilt_full_text_index(data_dir, store, now, &pending_doc_ids, Vec::new())?;
+        let (snapshot_token, indexed_documents) = write_incremental_full_text_index(
+            data_dir,
+            store,
+            now,
+            Vec::new(),
+            &pending_doc_ids,
+            0,
+            0,
+        )?;
         document.status = DocumentStatus::OcrDone;
         document.updated_at = now;
         store
@@ -375,12 +405,14 @@ pub fn index_ocr_text(
         sections: sections_to_index(sectionizer.sectionize(&clean_text)),
         is_deleted: document.is_deleted,
     };
-    let (snapshot_token, indexed_documents) = write_rebuilt_full_text_index(
+    let (snapshot_token, indexed_documents) = write_incremental_full_text_index(
         data_dir,
         store,
         now,
-        &pending_doc_ids,
         vec![pending_index_document],
+        &pending_doc_ids,
+        0,
+        0,
     )?;
     document.status = DocumentStatus::Searchable;
     document.updated_at = now;
@@ -430,6 +462,45 @@ fn write_full_text_index(
         index_documents,
     )
     .map_err(ImportPipelineError::index)
+}
+
+fn write_incremental_full_text_index(
+    data_dir: &Path,
+    store: &MetaStore,
+    now: UnixTimestamp,
+    replacement_documents: Vec<IndexDocument>,
+    excluded_doc_ids: &BTreeSet<String>,
+    ocr_required_documents: usize,
+    deleted_documents: usize,
+) -> Result<(String, usize)> {
+    let index_documents = match incremental_snapshot_documents(
+        &data_dir.join("search-index"),
+        replacement_documents.clone(),
+        excluded_doc_ids,
+    ) {
+        Ok(index_documents) => index_documents,
+        Err(_) => {
+            let sectionizer = Sectionizer::default();
+            let mut rebuilt_documents =
+                persisted_index_documents(store, &sectionizer, excluded_doc_ids)?;
+            rebuilt_documents.extend(
+                replacement_documents
+                    .into_iter()
+                    .filter(|document| !document.is_deleted),
+            );
+            rebuilt_documents
+        }
+    };
+    let indexed_documents = index_documents.len();
+    let snapshot_token = index_snapshot_token(
+        now,
+        indexed_documents,
+        ocr_required_documents,
+        deleted_documents,
+    );
+    write_full_text_index(data_dir, &snapshot_token, index_documents)?;
+
+    Ok((snapshot_token, indexed_documents))
 }
 
 fn write_rebuilt_full_text_index(
@@ -505,11 +576,11 @@ fn mark_missing_documents_deleted(
     skipped_directories: &[NormalizedPath],
     discovered_doc_ids: &BTreeSet<String>,
     now: UnixTimestamp,
-) -> Result<usize> {
+) -> Result<BTreeSet<String>> {
     let documents = store
         .visible_documents()
         .map_err(ImportPipelineError::store)?;
-    let mut deleted_count = 0_usize;
+    let mut deleted_doc_ids = BTreeSet::new();
 
     for document in documents {
         if !document_path_is_deletion_candidate(
@@ -529,11 +600,11 @@ fn mark_missing_documents_deleted(
             .map_err(ImportPipelineError::store)?
             .is_some()
         {
-            deleted_count += 1;
+            deleted_doc_ids.insert(document.id.as_str().to_string());
         }
     }
 
-    Ok(deleted_count)
+    Ok(deleted_doc_ids)
 }
 
 fn document_path_is_deletion_candidate(
