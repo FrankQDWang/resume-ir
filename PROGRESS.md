@@ -8,10 +8,10 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96 and S98 used synthetic fixtures only. S97 also used a private
-  local-only witness against anonymized temporary copies from the user-authorized
-  local resume sample directory; no real resume data, filenames, paths, counts,
-  raw text, or diagnostics were committed or uploaded.
+- Data policy: S0-S96 and S98 used synthetic fixtures only. S97 and S99 also used
+  private local-only witnesses against anonymized temporary copies from the
+  user-authorized local resume sample directory; no real resume data, filenames,
+  paths, counts, raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -52,10 +52,13 @@ obsolete preliminary files and checklists are not product scope.
 - P1 import/search: directory scanning, DOCX/legacy `.doc` via local converter,
   text-layer PDF/UTF-8 and BOM-marked UTF-16 TXT parsing, cleaning, sectioning,
   polling background rescan for completed import roots, full-text snapshot
-  publish/recover, delete rebuild, and redacted snippets exist. Missing
-  production work includes OS filesystem watcher integration, production-grade
-  PDF coverage, full legacy Word converter distribution and cross-platform
-  proof, large-corpus proof, and incremental index updates.
+  publish/recover, delete rebuild, redacted snippets, and an isolated local
+  PDF/Word witness command that anonymizes selected inputs, runs the real import
+  path in a temporary data directory, prints only aggregate redacted output, and
+  removes private witness data exist. Missing production work includes OS
+  filesystem watcher integration, production-grade PDF coverage, full legacy
+  Word converter distribution and cross-platform proof, large-corpus proof, and
+  incremental index updates.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
   education/company/title/skills/certs/years, persisted entity mentions,
   metadata-indexed field prefiltering before the full-text TopDocs cutoff,
@@ -229,8 +232,75 @@ obsolete preliminary files and checklists are not product scope.
 | S96 | Product OCR diagnostics slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_report_ocr_runtime_without_paths_or_language_dump --locked -- --exact` first failed because doctor did not report `ocr renderer pdftoppm`; after implementation, OCR runtime diagnostics, non-executable tool handling, full diagnostics, fmt, focused clippy, guards, and local verification passed. | None for this redacted local OCR runtime diagnostics slice; final OCR/renderer distribution policy, non-English language pack install/selection policy, real scanned-resume witness runs, large-corpus OCR throughput proof, and Windows/macOS validation remain not complete or BLOCKED. |
 | S97 | Product import slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p parser-doc --test s6_doc extracts_legacy_doc_text_with_local_converter_without_output_leakage --locked -- --exact` first failed because `DocParser::with_converter` did not exist; after implementation, parser-doc, parser-common, import-pipeline, fmt, focused clippy, and a private local-only PDF/Word witness passed with no path leaks. | None for this legacy Word local-converter slice; converter distribution policy, Windows/Linux converter proof, remaining malformed/encrypted DOC behavior, full OCR completion for scanned PDFs, large-corpus proof, and full real-resume library validation remain not complete or BLOCKED. |
 | S98 | Product import scheduler slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_rescans_completed_root_without_path_leak --locked -- --exact` first failed because daemon did not accept `--rescan-completed-imports`; after implementation, daemon import scheduler, meta-store, fmt, focused clippy, focused tests, `git diff --check`, runbook guard, public-repo guard, private-witness marker scan, obsolete-reference marker scan, and `./scripts/ci/verify-local.sh` passed. | None for this polling background rescan slice; true OS filesystem watcher integration, large-corpus long-running rescan proof, cross-platform watcher behavior, and incremental index-update-only writes remain not complete or BLOCKED. |
+| S99 | Product local witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_imports_only_pdf_and_word_samples_without_persisting_private_data --locked -- --exact` first failed because `resume-cli witness` was unsupported; after implementation, focused witness, full `s9_import_search`, fmt, focused clippy, guard checks, `./scripts/ci/verify-local.sh`, and a private local-only PDF/Word witness with redacted output passed. | None for this isolated local PDF/Word witness command slice; it is not a production benchmark, does not package converters/OCR/model runtimes, does not prove Windows/Linux behavior, and does not complete full real-library quality/performance validation. |
 
 ## Command Log
+
+### S99
+
+Design target:
+
+- Add `resume-cli witness --root <path> [--max-files <count>]` for
+  user-authorized local-only PDF/Word validation.
+- Select only PDF/DOCX/DOC inputs, copy them under anonymized temporary
+  filenames, run the existing import/index path in an isolated temporary data
+  directory, and remove the temporary private input and data directories before
+  returning.
+- Print only aggregate redacted output; do not print source paths, filenames,
+  resume text, diagnostics, or user sample counts in committed artifacts.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_imports_only_pdf_and_word_samples_without_persisting_private_data --locked -- --exact
+```
+
+Output summary:
+
+- The test failed because the CLI rejected `witness` as an unknown top-level
+  command.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_imports_only_pdf_and_word_samples_without_persisting_private_data --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n --hidden --glob '!target/**' --glob '!.git/**' '/Users/frankqdwang/MLE/[简]历|MLE/[简]历|[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension' .; then exit 1; else echo "no private witness markers"; fi
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused witness exact: exit 0.
+- `s9_import_search`: exit 0; 18 tests passed.
+- `cargo fmt --check`: exit 0.
+- Focused CLI clippy: exit 0.
+- `git diff --check`: exit 0.
+- Runbook guard: exit 0.
+- Public repository guard: exit 0.
+- Private witness marker scan: exit 0.
+- Obsolete reference marker guard: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, and public repo guard.
+- Private local-only PDF/Word witness using the user-authorized sample directory:
+  exit 0 with redacted output, no scan-budget exhaustion at the default witness
+  budget, and no metadata persisted in the external data directory. No real
+  resume path, filename, count, raw text, or diagnostic payload was committed or
+  uploaded.
+
+Scope note:
+
+- S99 adds a privacy-preserving local witness command for PDF/Word validation.
+  It does not prove production-scale performance, complete converter/OCR/model
+  packaging, validate Windows/Linux, or replace the remaining full-library
+  quality gates.
+- Full product is still not complete.
 
 ### S98
 

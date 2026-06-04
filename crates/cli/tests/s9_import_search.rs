@@ -110,6 +110,71 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
 }
 
 #[test]
+fn witness_imports_only_pdf_and_word_samples_without_persisting_private_data() {
+    let data_dir = temp_dir("witness-unused-data-dir");
+    let private_root = temp_dir("witness-private-root");
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        private_root.join("real-person-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-engineer.docx"),
+        private_root.join("real-person-engineer.docx"),
+    )
+    .unwrap();
+    fs::write(
+        private_root.join("real-person-legacy.doc"),
+        b"Synthetic legacy Word resume\nSkills: Rust\n",
+    )
+    .unwrap();
+    fs::write(
+        private_root.join("real-person-not-a-resume.txt"),
+        b"must not be copied by witness\n",
+    )
+    .unwrap();
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+
+    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "witness",
+            "--root",
+            path_str(&private_root),
+            "--max-files",
+            "10",
+        ])
+        .output()
+        .expect("run resume-cli local witness");
+
+    assert!(
+        witness.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&witness.stdout),
+        String::from_utf8_lossy(&witness.stderr)
+    );
+    assert!(witness.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&witness.stdout);
+    assert!(stdout.contains("resume-ir local witness"));
+    assert!(stdout.contains("source root: <redacted>"));
+    assert!(stdout.contains("formats: pdf,docx,doc"));
+    assert!(stdout.contains("files selected: 3"));
+    assert!(stdout.contains("unsupported entries skipped: 1"));
+    assert!(stdout.contains("witness import status: completed"));
+    assert!(stdout.contains("private witness data: removed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&canonical_private_root)));
+    assert!(!stdout.contains("real-person"));
+    assert!(!stdout.contains("not-a-resume"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
 fn import_txt_resume_builds_searchable_index_without_path_leakage() {
     let data_dir = temp_dir("txt-import-data");
     let private_root = temp_dir("txt-import-private-root");

@@ -66,7 +66,8 @@ const OCR_PAGE_BUDGET_REMEDIATION: &str =
     "raise OCR max pages per document or skip oversized scanned PDFs";
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, doctor, or export-diagnostics";
+const WITNESS_DEFAULT_MAX_FILES: usize = 10_000;
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, witness, doctor, or export-diagnostics";
 
 fn main() {
     if let Err(error) = run() {
@@ -103,6 +104,7 @@ fn run() -> Result<()> {
         "model" => model_command(&args[1..]),
         "service" => service_command(&data_dir, &args[1..]),
         "fault-simulate" => fault_simulate_command(&data_dir, &args[1..]),
+        "witness" => witness_command(&args[1..]),
         "doctor" => {
             if args.len() != 1 {
                 return Err(CliError::usage("usage: resume-cli doctor"));
@@ -2380,6 +2382,271 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
 
     Ok(())
+}
+
+fn witness_command(args: &[String]) -> Result<()> {
+    let witness_args = parse_witness_args(args)?;
+    let source_root = canonical_witness_root(&witness_args.root)?;
+    let selection = collect_witness_inputs(&source_root, witness_args.max_files)?;
+    let temp_dirs = WitnessTempDirs::create()?;
+    copy_witness_inputs(&selection.selected, &temp_dirs.input_root)?;
+
+    let store = open_store(&temp_dirs.data_dir)?;
+    let now = current_timestamp()?;
+    let task = ImportTask {
+        id: new_import_task_id()?,
+        root_path: path_string(&temp_dirs.input_root),
+        status: ImportTaskStatus::Queued,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    };
+    store.insert_import_task(&task).map_err(CliError::store)?;
+    let summary = import_root_with_options(
+        &temp_dirs.data_dir,
+        &store,
+        &task,
+        &temp_dirs.input_root,
+        now,
+        ImportOptions {
+            scan_profile: ScanProfile::Explicit,
+            max_files: None,
+        },
+    )
+    .map_err(CliError::import)?;
+    let private_data_removed = temp_dirs.cleanup();
+
+    println!("resume-ir local witness");
+    println!("source root: <redacted>");
+    println!("formats: pdf,docx,doc");
+    println!("files selected: {}", selection.selected.len());
+    println!(
+        "unsupported entries skipped: {}",
+        selection.unsupported_entries
+    );
+    println!("filesystem scan errors: {}", selection.scan_errors);
+    println!(
+        "scan budget exhausted: {}",
+        yes_no(selection.budget_exhausted)
+    );
+    println!("witness import status: completed");
+    println!("searchable documents: {}", summary.searchable_documents);
+    println!("ocr required documents: {}", summary.ocr_required_documents);
+    println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
+    println!("failed documents: {}", summary.failed_documents);
+    println!(
+        "private witness data: {}",
+        if private_data_removed {
+            "removed"
+        } else {
+            "cleanup_failed"
+        }
+    );
+
+    if !private_data_removed {
+        return Err(CliError::user(
+            "unable to remove private local witness data",
+        ));
+    }
+
+    Ok(())
+}
+
+fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
+    let mut root = None;
+    let mut max_files = WITNESS_DEFAULT_MAX_FILES;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--root" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                root = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--max-files" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                max_files = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            _ => return Err(witness_usage()),
+        }
+    }
+
+    let root = root.ok_or_else(witness_usage)?;
+    Ok(WitnessArgs { root, max_files })
+}
+
+fn witness_usage() -> CliError {
+    CliError::usage("usage: resume-cli witness --root <path> [--max-files <count>]")
+}
+
+fn canonical_witness_root(root: &Path) -> Result<PathBuf> {
+    let metadata = fs::metadata(root)
+        .map_err(|_| CliError::user("witness root must exist and be a directory"))?;
+    if !metadata.is_dir() {
+        return Err(CliError::user("witness root must exist and be a directory"));
+    }
+    fs::canonicalize(root).map_err(|_| CliError::user("witness root must exist and be a directory"))
+}
+
+fn collect_witness_inputs(root: &Path, max_files: usize) -> Result<WitnessSelection> {
+    let mut selection = WitnessSelection::default();
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(directory) = stack.pop() {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(_) => {
+                selection.scan_errors += 1;
+                continue;
+            }
+        };
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => {
+                    selection.scan_errors += 1;
+                    continue;
+                }
+            };
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) => {
+                    selection.scan_errors += 1;
+                    continue;
+                }
+            };
+
+            if file_type.is_dir() {
+                stack.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+
+            if witness_supported_extension(&entry.path()).is_some() {
+                if selection.selected.len() >= max_files {
+                    selection.budget_exhausted = true;
+                    return Ok(selection);
+                }
+                selection.selected.push(entry.path());
+            } else {
+                selection.unsupported_entries += 1;
+            }
+        }
+    }
+
+    Ok(selection)
+}
+
+fn copy_witness_inputs(paths: &[PathBuf], import_root: &Path) -> Result<()> {
+    fs::create_dir_all(import_root)
+        .map_err(|_| CliError::user("unable to prepare private witness input"))?;
+
+    for (index, path) in paths.iter().enumerate() {
+        let extension = witness_supported_extension(path)
+            .ok_or_else(|| CliError::user("witness input extension is unsupported"))?;
+        let destination = import_root.join(format!("sample-{index:06}.{extension}"));
+        fs::copy(path, destination)
+            .map_err(|_| CliError::user("unable to copy private witness input"))?;
+    }
+
+    Ok(())
+}
+
+fn witness_supported_extension(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("pdf") => Some("pdf"),
+        Some("docx") => Some("docx"),
+        Some("doc") => Some("doc"),
+        _ => None,
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+struct WitnessArgs {
+    root: PathBuf,
+    max_files: usize,
+}
+
+#[derive(Default)]
+struct WitnessSelection {
+    selected: Vec<PathBuf>,
+    unsupported_entries: usize,
+    scan_errors: usize,
+    budget_exhausted: bool,
+}
+
+struct WitnessTempDirs {
+    root: PathBuf,
+    input_root: PathBuf,
+    data_dir: PathBuf,
+}
+
+impl WitnessTempDirs {
+    fn create() -> Result<Self> {
+        let root = unique_witness_temp_root()?;
+        let input_root = root.join("input");
+        let data_dir = root.join("data");
+        fs::create_dir_all(&input_root)
+            .map_err(|_| CliError::user("unable to prepare private witness input"))?;
+        fs::create_dir_all(&data_dir)
+            .map_err(|_| CliError::user("unable to prepare private witness data"))?;
+        Ok(Self {
+            root,
+            input_root,
+            data_dir,
+        })
+    }
+
+    fn cleanup(&self) -> bool {
+        let _ = fs::remove_dir_all(&self.root);
+        !self.root.exists()
+    }
+}
+
+impl Drop for WitnessTempDirs {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn unique_witness_temp_root() -> Result<PathBuf> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| CliError::user("system clock is before the Unix epoch"))?;
+    let root = std::env::temp_dir().join(format!(
+        "resume-ir-local-witness-{}-{}",
+        std::process::id(),
+        duration.as_nanos()
+    ));
+    fs::create_dir_all(&root)
+        .map_err(|_| CliError::user("unable to prepare private witness data"))?;
+    Ok(root)
 }
 
 fn import_ipc_command(endpoint: &IpcImportEndpoint, import_args: &ImportArgs) -> Result<()> {
