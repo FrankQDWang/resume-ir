@@ -805,7 +805,7 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
     let data_dir = temp_dir("ipc-import-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let request_limit = 80_usize;
+    let request_limit = 160_usize;
     let request_limit_arg = request_limit.to_string();
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
@@ -839,7 +839,7 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 39);
+    let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 120);
     let used_requests = 1 + worker_requests;
     drain_status_requests(&endpoint, request_limit - used_requests);
 

@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, and S131 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, and S132 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -345,8 +345,62 @@ obsolete preliminary files and checklists are not product scope.
 | S129 | Product hosted macOS package workflow wiring slice complete | `./scripts/ci/check-workflows.sh` first failed because the Release workflow did not include the macOS package dry-run. After implementation, the Release workflow includes a hosted `macos-latest` job that builds release binaries, runs the unsigned macOS package dry-run, verifies the dmg with `hdiutil`, checks the public artifact boundary, uploads `macos-package-dry-run`, and keeps signing/notarization/release upload gated. Workflow guard, workflow YAML parsing, release artifact guard, release SBOM guard, macOS package guard, diff check, public repository guard, and `./scripts/ci/verify-local.sh` passed. | None for this workflow wiring slice; the updated hosted Release workflow still must run after push, and signing, notarization, installer lifecycle validation, Windows MSI, GitHub Release upload, and production release readiness remain absent or gated. |
 | S130 | Product hosted macOS package dry-run evidence slice complete | PR #9 checks for commit `a7dc1c0` passed: dependency tree, license policy, public repository guard, runbook policy, Rust workspace, hosted macOS Platform CI, and hosted Windows Platform CI. Release workflow run `26942549866` executed on the same commit and passed both jobs: `macOS package dry run` and `release dry run`. The run produced non-expired `macos-package-dry-run` and `release-dry-run` artifacts; the macOS job log confirmed dmg checksum verification and unsigned/not-notarized manifest status, and the release job logs did not contain the Node.js 20 action warning or v4 checkout/upload-artifact references. | None for this hosted dry-run evidence slice; it does not sign, notarize, create a GitHub Release, validate install/upgrade/uninstall/rollback behavior, prove Gatekeeper behavior, build Windows MSI, or complete release readiness. |
 | S131 | Product Windows MSI dry-run wiring slice complete | `./scripts/ci/check-workflows.sh` first failed because `verify-local` and the Release workflow did not include Windows package dry-run wiring. After implementation, `scripts/release/create-windows-package.ps1` can build an unsigned MSI dry-run through the WiX .NET tool on Windows, writes a redacted `windows-package.json`, rejects invalid versions and missing binaries, and keeps signing/release upload/service lifecycle gated. The Release workflow includes a hosted `windows-latest` job that installs WiX `7.0.0`, builds release binaries, runs the Windows package script, checks artifact boundaries, and uploads `windows-package-dry-run`. Focused workflow, Windows package, runbook, workflow YAML, diff, public guard checks, and `./scripts/ci/verify-local.sh` passed locally, with the Windows package guard explicitly skipped on this non-Windows host. | None for this wiring/local-guard slice; the updated hosted Release workflow still must run after push to prove MSI creation, and signing, service install/start/stop validation, installer lifecycle validation, GitHub Release upload, and production release readiness remain absent or gated. |
+| S132 | Product hosted Windows daemon IPC wait-budget fix complete locally | Hosted Windows Platform CI for commit `cd26a04` failed in `daemon_serves_status_while_import_worker_processes_late_queued_task` because the late-queued import worker test did not observe `searchable_documents: 2` inside the previous short polling budget. The fix keeps the same daemon behavior and assertions, but raises this test's max request budget to match the adjacent command-IPC import-worker test. Focused local exact, full `s20_ipc`, diff, public guard, and `./scripts/ci/verify-local.sh` passed. | Hosted PR checks still must rerun after push; this is a CI stability/test-budget fix only and does not prove Windows MSI creation, service lifecycle, installer lifecycle, signing, GitHub Release upload, or production release readiness. |
 
 ## Command Log
+
+### S132
+
+Design target:
+
+- Preserve the daemon IPC behavior and assertions while giving the hosted
+  Windows runner enough polling budget for the late-queued import worker to
+  complete.
+- Keep the daemon `--max-requests` drain path covered so the child process still
+  exits normally after the test.
+
+Observed hosted RED:
+
+```bash
+gh pr checks 9 --watch
+```
+
+Output summary:
+
+- PR #9 check run for commit `cd26a04` failed only in hosted Windows Platform CI.
+- The failing command was `cargo test --workspace --locked`, with the concrete
+  failing test `crates\daemon\tests\s20_ipc.rs:967:5`
+  `daemon_serves_status_while_import_worker_processes_late_queued_task`.
+- Failure message: `daemon status did not report searchable document count 2`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_serves_status_while_import_worker_processes_late_queued_task --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc --locked
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused exact test: exit 0; 1 passed.
+- Full daemon IPC suite: exit 0; 18 passed.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, release
+  artifact check, release SBOM check, macOS package check, Windows package
+  wiring check, and public repository guard passed.
+
+Scope note:
+
+- S132 is a hosted Windows CI wait-budget fix for an existing daemon IPC test
+  exposed after S131 was pushed. It does not change production daemon behavior,
+  prove Windows MSI creation, sign artifacts, create/upload a GitHub Release,
+  validate install/upgrade/uninstall/rollback behavior, install/register/start/
+  stop a Windows service, or complete release readiness.
 
 ### S131
 
