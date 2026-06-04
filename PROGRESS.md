@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, and S135 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, and S137 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -145,7 +145,11 @@ obsolete preliminary files and checklists are not product scope.
   and per-document failure aggregate output. The benchmark runner can now
   exercise synthetic OCR page throughput through the existing local command or
   Tesseract OCR clients and gate redacted page-latency/pages-per-second reports
-  with explicit synthetic opt-in.
+  with explicit synthetic opt-in. OCR runtime diagnostics now support combined
+  Tesseract language requests such as `eng+chi_sim` by checking each requested
+  language pack without dumping the full local language list; this machine also
+  verified a local Apache-2.0 `tesseract-lang` install and `eng+chi_sim`
+  availability through redacted doctor output.
   Deleted-document purge now removes
   current OCR jobs and current OCR page-cache entries that are no longer shared
   by visible documents. Missing or BLOCKED work includes final OCR/renderer
@@ -361,8 +365,68 @@ obsolete preliminary files and checklists are not product scope.
 | S134 | Product macOS DMG verify retry slice complete locally | Hosted Release run `26944923353` proved the WiX `6.0.2` fix by passing the Windows package dry-run job, including MSI creation, boundary check, artifact upload, and release gate. The same run failed the macOS package dry-run boundary step because `hdiutil verify` immediately after DMG creation reported `Resource temporarily unavailable`. The fix adds a shared bounded `scripts/release/verify-macos-dmg.sh` helper and wires the Release workflow plus local macOS package guard to use it without skipping checksum verification. Focused workflow, macOS package, shell syntax, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` checks passed locally. | Hosted Release must rerun after push to prove the combined release dry-run, macOS package dry-run, and Windows package dry-run all pass on the same branch tip; this does not sign artifacts, create/upload a GitHub Release, validate installer lifecycle, validate Windows service lifecycle, or complete production release readiness. |
 | S135 | Product hosted cross-platform Release dry-run evidence slice complete | PR #9 checks for commit `13f35a7` passed: dependency tree, license policy, public repository guard, runbook policy, Rust workspace, hosted macOS Platform CI, and hosted Windows Platform CI. Release workflow run `26945622774` executed successfully on the same commit and passed all three jobs: `release dry run`, `macOS package dry run`, and `Windows package dry run`. The run produced non-expired `release-dry-run`, `macos-package-dry-run`, and `windows-package-dry-run` artifacts without downloading or exposing artifact contents. | None for this hosted dry-run evidence slice; it still does not sign or notarize artifacts, create/upload a GitHub Release, validate install/upgrade/uninstall/rollback behavior, prove Gatekeeper behavior, install/register/start/stop a Windows service, or complete production release readiness. |
 | S136 | Product private local PDF/Word witness refresh complete | PR #9 checks for commit `22e1adc` passed: dependency tree, license policy, public repository guard, runbook policy, Rust workspace, hosted macOS Platform CI, and hosted Windows Platform CI. A private local-only explicit-root PDF/Word witness then ran against the user-authorized sample directory with import, redacted search probe, redacted field probe, and bounded OCR through local `tesseract` plus `pdftoppm`. The witness completed without scan budget exhaustion or filesystem scan errors, kept unsupported formats out of scope, surfaced aggregate OCR outcomes under the local English-only OCR configuration, and removed private temporary data. | None for this local-only private sample witness; it does not prove full-library OCR completion, OCR quality, non-English OCR quality, production recall/precision, large-corpus latency/throughput, packaging/signing/installers, Windows/Linux real sample behavior, or production model/ANN readiness. |
+| S137 | Product combined OCR language diagnostics slice complete locally | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_combined_ocr_languages_without_language_dump --locked -- --exact` first failed because OCR diagnostics treated `eng+chi_sim` as one language pack name. After implementation, diagnostics split Tesseract combined language requests, require every requested language pack to be installed, reject empty or invalid language components, and keep redacted output from dumping unrelated installed languages. The focused exact test, full diagnostics suite, fmt, focused CLI clippy, local `eng+chi_sim` doctor check, and local Apache-2.0 `tesseract-lang` install verification passed. | None for this local OCR language diagnostics slice; it does not distribute language packs in installers, prove non-English OCR quality, complete full-library OCR, validate Windows/macOS installed OCR runtime behavior, or clear the broader OCR quality and packaging blockers. |
 
 ## Command Log
+
+### S137
+
+Design target:
+
+- Support production-style Tesseract combined language requests such as
+  `eng+chi_sim` in doctor and redacted diagnostics.
+- Treat the combined request as available only when every requested component is
+  present, without dumping unrelated local language-pack names.
+- Verify that the local machine can now report the combined English/Simplified
+  Chinese OCR language profile as available using an Apache-2.0 language-pack
+  dependency.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_combined_ocr_languages_without_language_dump --locked -- --exact
+```
+
+Output summary:
+
+- The focused test failed because `doctor --ocr-lang eng+chi_sim` did not report
+  `ocr language eng+chi_sim: available` when the fake local Tesseract runtime
+  exposed separate `eng` and `chi_sim` language packs.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_combined_ocr_languages_without_language_dump --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets -- -D warnings
+brew info --json=v2 tesseract-lang
+HOMEBREW_NO_AUTO_UPDATE=1 brew install tesseract-lang
+cargo run --quiet -p resume-cli -- doctor --ocr-lang eng+chi_sim
+tesseract --list-langs
+brew list --versions tesseract-lang
+```
+
+Output summary:
+
+- Focused combined-language diagnostics test: exit 0; 1 test passed.
+- `cargo fmt --check`: exit 0 after formatting.
+- Full diagnostics suite: exit 0; 13 tests passed.
+- Focused CLI clippy: exit 0.
+- Homebrew metadata reported `tesseract-lang` license `Apache-2.0`; local
+  install completed for `tesseract-lang 4.1.0`.
+- Local Tesseract language listing included both `eng` and `chi_sim`.
+- Local `doctor --ocr-lang eng+chi_sim` reported OCR renderer, OCR engine, and
+  combined OCR language availability without printing binary paths or dumping
+  the full language list.
+
+Scope note:
+
+- S137 completes combined-language availability diagnostics and local
+  `eng+chi_sim` runtime availability only. It does not distribute language packs
+  in installers, prove OCR accuracy on Chinese resumes, complete full-library
+  OCR, validate Windows/macOS installed runtime behavior, or clear broader OCR
+  quality and release-readiness blockers.
 
 ### S136
 

@@ -6203,14 +6203,27 @@ fn parse_ocr_diagnostic_language(value: &str, usage: &'static str) -> Result<Str
 }
 
 fn valid_ocr_diagnostic_language(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 80
-        && value.chars().all(|character| {
-            character.is_ascii_alphanumeric()
-                || character == '_'
-                || character == '-'
-                || character == '+'
-        })
+    ocr_language_components(value).is_some()
+}
+
+fn ocr_language_components(value: &str) -> Option<Vec<&str>> {
+    if value.is_empty() || value.len() > 80 {
+        return None;
+    }
+
+    let mut components = Vec::new();
+    for component in value.split('+') {
+        if component.is_empty()
+            || !component.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            })
+        {
+            return None;
+        }
+        components.push(component);
+    }
+
+    Some(components)
 }
 
 #[derive(Debug, Clone)]
@@ -6326,6 +6339,9 @@ fn tool_state(path: Option<&PathBuf>) -> OcrRuntimeState {
 }
 
 fn inspect_tesseract_language(command_path: &Path, language: &str) -> OcrRuntimeState {
+    let Some(requested_languages) = ocr_language_components(language) else {
+        return OcrRuntimeState::Missing;
+    };
     let Ok(output) = Command::new(command_path).arg("--list-langs").output() else {
         return OcrRuntimeState::Unknown;
     };
@@ -6335,11 +6351,16 @@ fn inspect_tesseract_language(command_path: &Path, language: &str) -> OcrRuntime
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if stdout
+    let available_languages = stdout
         .lines()
         .chain(stderr.lines())
-        .any(|line| line.trim() == language)
-    {
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    if requested_languages.iter().all(|language| {
+        available_languages
+            .iter()
+            .any(|available| available == language)
+    }) {
         OcrRuntimeState::Available
     } else {
         OcrRuntimeState::Missing
