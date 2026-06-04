@@ -231,6 +231,60 @@ fn witness_probe_search_runs_private_query_without_leaking_query_or_paths() {
 }
 
 #[test]
+fn witness_probe_fields_reports_aggregate_counts_without_values_or_paths() {
+    let data_dir = temp_dir("witness-probe-fields-unused-data-dir");
+    let private_root = temp_dir("witness-probe-fields-private-root");
+    fs::copy(
+        fixture_root().join("synthetic-java-engineer.docx"),
+        private_root.join("real-person-engineer.docx"),
+    )
+    .unwrap();
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+
+    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "witness",
+            "--root",
+            path_str(&private_root),
+            "--max-files",
+            "10",
+            "--probe-fields",
+        ])
+        .output()
+        .expect("run resume-cli local witness with field probe");
+
+    assert!(
+        witness.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&witness.stdout),
+        String::from_utf8_lossy(&witness.stderr)
+    );
+    assert!(witness.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&witness.stdout);
+    assert!(stdout.contains("witness field status: completed"));
+    assert!(stdout.contains("field probe documents: 1"));
+    assert!(stdout.contains("field probe mentions: "));
+    assert!(!stdout.contains("field probe mentions: 0"));
+    assert!(stdout.contains("field probe email mentions: "));
+    assert!(stdout.contains("field probe skill mentions: "));
+    assert!(stdout.contains("field probe degree mentions: "));
+    assert!(stdout.contains("private witness data: removed"));
+    assert!(!stdout.contains("synthetic@example.test"));
+    assert!(!stdout.contains("Java"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&canonical_private_root)));
+    assert!(!stdout.contains("real-person"));
+    assert!(!stdout.contains("synthetic-java-engineer.docx"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
 fn witness_local_discovery_preset_uses_discovery_profile_without_path_leak() {
     let data_dir = temp_dir("witness-local-discovery-unused-data-dir");
     let private_root = temp_dir("witness-local-discovery-private-root");

@@ -75,6 +75,22 @@ const WITNESS_CLEANUP_RETRY_ATTEMPTS: usize = 6;
 const WITNESS_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(25);
 const WITNESS_SEARCH_PROBE_LIMIT: usize = 5;
 const WITNESS_SEARCH_PROBE_MAX_CANDIDATES: usize = 64;
+const WITNESS_FIELD_LABELS: &[&str] = &[
+    "name",
+    "email",
+    "phone",
+    "school",
+    "degree",
+    "company",
+    "title",
+    "education",
+    "skill",
+    "certificate",
+    "date",
+    "date_range",
+    "years_experience",
+    "location",
+];
 const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, service, fault-simulate, witness, doctor, or export-diagnostics";
 
 fn main() {
@@ -2586,6 +2602,11 @@ fn witness_command(args: &[String]) -> Result<()> {
     } else {
         WitnessOcrStatus::NotRequested
     };
+    let witness_fields = if witness_args.probe_fields {
+        run_witness_field_probe(&store)?
+    } else {
+        WitnessFieldStatus::NotRequested
+    };
     let witness_search = if witness_args.probe_search {
         run_witness_search_probe(&temp_dirs.data_dir, &store)?
     } else {
@@ -2618,6 +2639,7 @@ fn witness_command(args: &[String]) -> Result<()> {
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("failed documents: {}", summary.failed_documents);
     print_witness_ocr_status(&witness_ocr);
+    print_witness_field_status(&witness_fields);
     print_witness_search_status(&witness_search);
     println!(
         "private witness data: {}",
@@ -2643,6 +2665,7 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
     let mut max_files = WITNESS_DEFAULT_MAX_FILES;
     let mut run_ocr = false;
     let mut probe_search = false;
+    let mut probe_fields = false;
     let mut seen_ocr_option = false;
     let mut ocr_worker_args = default_ocr_worker_args();
     let mut ocr_max_documents = None;
@@ -2690,6 +2713,10 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
             }
             "--probe-search" => {
                 probe_search = true;
+                index += 1;
+            }
+            "--probe-fields" => {
+                probe_fields = true;
                 index += 1;
             }
             "--ocr-command" => {
@@ -2849,6 +2876,7 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
         max_files,
         run_ocr,
         probe_search,
+        probe_fields,
         ocr_max_documents,
         ocr_worker_args,
     })
@@ -2856,7 +2884,7 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
 
 fn witness_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--probe-search] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]",
+        "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--probe-search] [--probe-fields] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]",
     )
 }
 
@@ -3000,6 +3028,105 @@ fn print_witness_ocr_status(status: &WitnessOcrStatus) {
                 yes_no(*budget_exhausted)
             );
         }
+    }
+}
+
+fn run_witness_field_probe(store: &MetaStore) -> Result<WitnessFieldStatus> {
+    let mut documents = 0_usize;
+    let mut mentions = 0_usize;
+    let mut counts = WitnessFieldCounts::default();
+
+    for document in store.visible_documents().map_err(CliError::store)? {
+        let mut document_has_mentions = false;
+        for (entity_type, count) in store
+            .visible_entity_type_counts_for_document(&document.id)
+            .map_err(CliError::store)?
+        {
+            let Some(label) = witness_field_label(&entity_type) else {
+                continue;
+            };
+            counts.add(label, count);
+            mentions += count;
+            document_has_mentions = true;
+        }
+
+        if document_has_mentions {
+            documents += 1;
+        }
+    }
+
+    if mentions == 0 {
+        Ok(WitnessFieldStatus::Blocked {
+            reason: "no witness field mentions",
+            documents,
+            mentions,
+            counts,
+        })
+    } else {
+        Ok(WitnessFieldStatus::Completed {
+            documents,
+            mentions,
+            counts,
+        })
+    }
+}
+
+fn witness_field_label(entity_type: &EntityType) -> Option<&'static str> {
+    match entity_type {
+        EntityType::Name => Some("name"),
+        EntityType::Email => Some("email"),
+        EntityType::Phone => Some("phone"),
+        EntityType::School => Some("school"),
+        EntityType::Degree => Some("degree"),
+        EntityType::Company => Some("company"),
+        EntityType::Title => Some("title"),
+        EntityType::Education => Some("education"),
+        EntityType::Skills | EntityType::Skill => Some("skill"),
+        EntityType::Certificate => Some("certificate"),
+        EntityType::Date => Some("date"),
+        EntityType::DateRange => Some("date_range"),
+        EntityType::YearsExperience => Some("years_experience"),
+        EntityType::Location => Some("location"),
+        EntityType::Other(_) => None,
+    }
+}
+
+fn print_witness_field_status(status: &WitnessFieldStatus) {
+    match status {
+        WitnessFieldStatus::NotRequested => {
+            println!("witness field status: not_requested");
+            println!("field probe documents: 0");
+            println!("field probe mentions: 0");
+            print_witness_field_counts(&WitnessFieldCounts::default());
+        }
+        WitnessFieldStatus::Completed {
+            documents,
+            mentions,
+            counts,
+        } => {
+            println!("witness field status: completed");
+            println!("field probe documents: {documents}");
+            println!("field probe mentions: {mentions}");
+            print_witness_field_counts(counts);
+        }
+        WitnessFieldStatus::Blocked {
+            reason,
+            documents,
+            mentions,
+            counts,
+        } => {
+            println!("witness field status: blocked");
+            println!("field block reason: {reason}");
+            println!("field probe documents: {documents}");
+            println!("field probe mentions: {mentions}");
+            print_witness_field_counts(counts);
+        }
+    }
+}
+
+fn print_witness_field_counts(counts: &WitnessFieldCounts) {
+    for label in WITNESS_FIELD_LABELS {
+        println!("field probe {label} mentions: {}", counts.get(label));
     }
 }
 
@@ -3229,6 +3356,7 @@ struct WitnessArgs {
     max_files: usize,
     run_ocr: bool,
     probe_search: bool,
+    probe_fields: bool,
     ocr_max_documents: Option<usize>,
     ocr_worker_args: OcrWorkerArgs,
 }
@@ -3279,6 +3407,36 @@ enum WitnessSearchStatus {
     NotRequested,
     Completed { hits: usize },
     Blocked { reason: &'static str, hits: usize },
+}
+
+#[derive(Clone, Default)]
+struct WitnessFieldCounts {
+    by_label: BTreeMap<&'static str, usize>,
+}
+
+impl WitnessFieldCounts {
+    fn add(&mut self, label: &'static str, count: usize) {
+        *self.by_label.entry(label).or_default() += count;
+    }
+
+    fn get(&self, label: &str) -> usize {
+        self.by_label.get(label).copied().unwrap_or(0)
+    }
+}
+
+enum WitnessFieldStatus {
+    NotRequested,
+    Completed {
+        documents: usize,
+        mentions: usize,
+        counts: WitnessFieldCounts,
+    },
+    Blocked {
+        reason: &'static str,
+        documents: usize,
+        mentions: usize,
+        counts: WitnessFieldCounts,
+    },
 }
 
 struct WitnessTempDirs {

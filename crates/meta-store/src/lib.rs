@@ -727,6 +727,37 @@ impl MetaStore {
         Ok(mentions)
     }
 
+    pub fn visible_entity_type_counts_for_document(
+        &self,
+        document_id: &DocumentId,
+    ) -> Result<Vec<(EntityType, usize)>> {
+        let connection = self.connection.borrow();
+        let sql = "\
+            SELECT mention.entity_type, COUNT(*)
+            FROM entity_mention AS mention
+            JOIN resume_version AS version ON version.id = mention.resume_version_id
+            WHERE version.document_id = ?1
+                AND version.visibility <> ?2
+            GROUP BY mention.entity_type
+            ORDER BY mention.entity_type";
+        let mut statement = connection.prepare(sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                document_id.as_str(),
+                resume_visibility_to_storage(ResumeVisibility::Hidden),
+            ])
+            .map_err(MetaStoreError::storage)?;
+        let mut counts = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            let entity_type = entity_type_from_storage(&read_string(row, 0)?)?;
+            let count = i64_to_usize(read_i64(row, 1)?, "entity_mention.count")?;
+            counts.push((entity_type, count));
+        }
+
+        Ok(counts)
+    }
+
     pub fn searchable_document_ids_with_entity_values(
         &self,
         entity_type: EntityType,

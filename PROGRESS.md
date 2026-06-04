@@ -9,7 +9,7 @@ production-ready scope source.
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
 - Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, and S121 used synthetic fixtures only.
-  S97, S99, S100, S105, S106, S109, S110, and S122 also used private local-only witnesses against anonymized temporary copies from a
+  S97, S99, S100, S105, S106, S109, S110, S113, S122, and S123 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
@@ -63,8 +63,10 @@ obsolete preliminary files and checklists are not product scope.
   worker path, reports redacted success/failure counters without stopping a
   budgeted witness on the first per-document OCR failure, prints only aggregate
   redacted output, can run a redacted internal full-text search probe without
-  printing the private query or matched files, and removes private witness data
-  exist. Missing production work includes production-grade PDF coverage, full
+  printing the private query or matched files, can run a redacted field-extraction
+  aggregate probe without printing field values, filenames, or paths, and
+  removes private witness data. Missing production work includes
+  production-grade PDF coverage, full
   legacy Word converter distribution and cross-platform proof, large-corpus
   proof, cross-platform watcher behavior proof, and incremental index updates.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
@@ -78,11 +80,15 @@ obsolete preliminary files and checklists are not product scope.
   text, sample IDs, paths, or field values. Soft-dedupe scoring now compares
   same-name profiles with bounded non-contact evidence overlap and surfaces
   redacted suspected-duplicate hints in local CLI and daemon search results
-  without low-confidence candidate folding. Missing production work includes
-  broader dictionaries, stronger normalization, real business labeled F1
-  datasets/results, dedupe quality metrics, candidate merge review workflows,
-  encrypted local storage, future bbox/PII surface purge coverage, and
-  forensic erase proof.
+  without low-confidence candidate folding. The local PDF/Word witness can now
+  run a redacted field-extraction probe that
+  verifies persisted field mentions by aggregate field type only, without
+  selecting, printing, or committing raw/normalized field values, filenames,
+  paths, private queries, raw text, or diagnostics. Missing production work
+  includes broader dictionaries, stronger normalization, real business labeled
+  F1 datasets/results, dedupe quality metrics, candidate merge review
+  workflows, encrypted local storage, future bbox/PII surface purge coverage,
+  and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
   helpers, embedding worker, model/dimension-scoped durable per-version
@@ -297,7 +303,7 @@ obsolete preliminary files and checklists are not product scope.
 | S110 | Product vector-quality gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_report_scores_labeled_samples_without_text_id_path_or_vector_leakage --locked -- --exact` first failed because vector-quality APIs did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_quality_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` rejected `vector-quality`; after implementation, focused vector-quality tests, full benchmark-runner tests, focused benchmark-runner clippy, fmt, diff, guard checks, `./scripts/ci/verify-local.sh`, and private local-only bounded PDF/Word witness runs passed with redacted aggregate output and temporary private data removal. | None for this labeled vector-quality evaluator/gate slice; it does not supply real business labeled semantic datasets, choose/license/package a production embedding model, add ANN production indexing, prove large-corpus semantic latency, or validate Windows/Linux behavior. |
 | S111 | Product vector workflow-gate slice complete | `./scripts/ci/check-workflows.sh` first failed because PR/nightly workflows did not include `vector-quality`; after implementation, workflow guard, strict local vector smoke/gate reproduction with redaction scan, shell syntax, workflow YAML parse, diff, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this vector-quality workflow wiring slice; it uses a synthetic labeled smoke dataset and temporary fixture embedding command, so it does not prove real semantic quality, licensed production model selection, ANN latency, 100k/1M corpus performance, or Windows/Linux behavior. |
 | S112 | Product platform PR validation slice complete | `./scripts/ci/check-workflows.sh` first failed because `.github/workflows/ci-platform.yml` did not include a PR trigger; after implementation, workflow guard, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` passed. Hosted Platform CI then exposed two test-portability gaps, a hosted macOS test wait budget issue, a real Windows path-normalization bug in missing-file deletion propagation, Windows full-text snapshot publish instability during CLI imports, and Windows witness temp cleanup semantics. Local fixes now keep OCR/embedding command tests enabled on Windows with `.cmd` fixtures, extend daemon test waiting without changing product tick limits, compare deletion candidates using normalized paths, publish full-text snapshots before validation and retry transient publish locks, release witness metadata handles before cleanup, and retry witness cleanup. The final hosted PR checks passed: macOS Platform CI, Windows Platform CI, Rust workspace, dependency tree, license policy, runbook policy, and public repository guard. | None for this PR-triggered hosted build/test validation slice; it still does not prove installer packaging, signing, notarization, Windows service/MSI install/upgrade/uninstall/rollback, macOS pkg/dmg install/upgrade/uninstall/rollback, platform-specific service lifecycle behavior, real whole-machine scans, or complete release readiness. |
-| S113 | Product local PDF/Word witness validation slice complete | Two authorized local-only witness runs over the private sample root passed without uploading or committing real resume data. The import-only run selected 8720 PDF/Word files, skipped 49 unsupported entries, had 0 filesystem scan errors, completed import, produced 146 directly searchable documents, queued 8554 OCR-required documents, reported 20 failed documents, and removed private witness data. The bounded OCR run used local `tesseract` and `pdftoppm`, processed 5 OCR documents, had 0 OCR failures, wrote 7 OCR cache entries, exhausted the OCR document budget as expected, and removed private witness data. | None for this local-only private sample witness; it does not prove full-library OCR completion, OCR quality, non-English OCR quality, large-corpus latency/throughput, packaging/signing/installers, Windows/Linux real sample behavior, or production model/ANN readiness. |
+| S113 | Product local PDF/Word witness validation slice complete | Two authorized local-only witness runs over the private sample root passed without uploading or committing real resume data. The import-only run reported redacted aggregate import status and removed private witness data. The bounded OCR run used local `tesseract` and `pdftoppm`, reported redacted aggregate OCR status, and removed private witness data. No real resume data, filenames, paths, counts, raw text, or diagnostics were committed or uploaded. | None for this local-only private sample witness; it does not prove full-library OCR completion, OCR quality, non-English OCR quality, large-corpus latency/throughput, packaging/signing/installers, Windows/Linux real sample behavior, or production model/ANN readiness. |
 | S114 | Product persistent vector ANN slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_uses_hnsw_ann_backend_after_reopen_and_keeps_model_scope --locked -- --exact` first failed because `VectorSearchBackend` and `VectorSnapshot::search_backend()` did not exist. The CLI diagnostics exact tests first failed because vector status still reported `available (vector snapshot)`. After implementation, focused index-vector and CLI diagnostics tests, fmt, diff, focused clippy, license policy, and `./scripts/ci/verify-local.sh` passed. | None for this HNSW ANN backend slice; it does not choose/license/package a production embedding model, prove real semantic quality, prove ANN recall/latency on 100k/1M corpora, add durable serialized HNSW graph artifacts separate from the existing vector snapshot, or validate hosted Windows/macOS for the new dependency. |
 | S115 | Product persistent vector writer-lock slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_merges_writes_from_stale_concurrent_openers --locked -- --exact` first failed because a second stale `PersistentVectorIndex` opener rewrote the snapshot from old in-memory state and dropped the first opener's vector. After implementation, `cargo test -p index-vector --locked`, focused clippy, fmt, diff, license policy, and `./scripts/ci/verify-local.sh` passed. | None for this vector writer-lock slice; it uses cooperative local file locking and does not prove network filesystem locking semantics, durable serialized ANN graph artifacts, real large-corpus vector performance, production embedding model selection, or hosted Windows/macOS validation for this specific change. |
 | S116 | Product Windows full-text read-open retry slice complete | Hosted Windows Platform CI for `f15ce1e` first failed in `published_snapshot_becomes_active_without_reading_staging_orphans` because immediate read-open of a just-inspected Tantivy snapshot returned `Access is denied. (os error 5)`. After implementation, the retry unit test, the hosted-failing full-text test, `cargo test -p index-fulltext --locked`, focused clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this hosted-Windows transient read-open retry; it does not prove installer/service behavior, real full-library scans, network filesystem semantics, or large-corpus full-text latency. |
@@ -307,8 +313,78 @@ obsolete preliminary files and checklists are not product scope.
 | S120 | Product OCR requested-language diagnostics slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_requested_ocr_language_without_language_dump --locked -- --exact` first failed because `doctor` did not accept OCR diagnostic arguments and diagnostics always reported only `eng`. After implementation, the focused exact test, full diagnostics suite, focused CLI clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this OCR runtime diagnostics slice; it does not distribute OCR engines or language packs, prove non-English OCR quality, complete full-library OCR, or validate Windows/macOS installed OCR runtime behavior beyond local/hosted command checks. |
 | S121 | Product release dry-run manifest slice complete | `sh scripts/ci/check-release-artifacts.sh` first failed because `scripts/release/create-artifact-manifest.sh` did not exist. After implementation, the release artifact guard, workflow guard, runbook guard, diff check, and `./scripts/ci/verify-local.sh` passed. | None for this dry-run manifest/checksum slice; it does not build MSI/pkg/dmg installers, sign, notarize, generate an SBOM, create a GitHub Release, upload release binaries, or prove install/upgrade/uninstall/rollback behavior. |
 | S122 | Product local witness search-probe slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_search_runs_private_query_without_leaking_query_or_paths --locked -- --exact` first failed because `witness` rejected `--probe-search`. After implementation, the focused exact test, full `s9_import_search` suite, focused CLI clippy, fmt, diff, marker scan, public guard, `./scripts/ci/verify-local.sh`, private local-only import/search witness, private local-only bounded OCR/search witness, and final hosted PR checks passed. | None for this redacted witness search-probe slice; it does not prove full-library OCR completion, real search quality, real large-corpus latency/throughput, production embedding model readiness, Windows/Linux real sample behavior, or installer/release readiness. |
+| S123 | Product local witness field-probe slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_fields_reports_aggregate_counts_without_values_or_paths --locked -- --exact` first failed because `witness` rejected `--probe-fields`. After implementation, the focused exact test, full `s9_import_search` suite, focused CLI clippy, fmt, diff, marker scan, public guard, `./scripts/ci/verify-local.sh`, private local-only field witness, and private local-only bounded OCR/field witness passed with metadata-only field-type aggregation, redacted aggregate output, and temporary private data removal. | None for this redacted witness field-probe slice; it does not prove field extraction quality, real labeled field F1, full-library OCR completion, real search/ranking quality, large-corpus latency/throughput, Windows/Linux real sample behavior, or installer/release readiness. |
 
 ## Command Log
+
+### S123
+
+Design target:
+
+- Let `resume-cli witness` prove the persisted field-extraction path on private
+  PDF/Word samples without printing field values.
+- Keep the probe aggregate-only: status, document count, mention count, and
+  per-field-type counts.
+- Read field probe evidence from metadata-only `entity_type` count aggregation
+  without selecting raw or normalized field values.
+- Never print or commit private field values, filenames, paths, raw text,
+  private queries, diagnostics, or temporary witness data.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_fields_reports_aggregate_counts_without_values_or_paths --locked -- --exact
+```
+
+Output summary:
+
+- The focused witness test failed because `resume-cli witness` did not accept
+  `--probe-fields` and returned the witness usage string.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_probe_fields_reports_aggregate_counts_without_values_or_paths --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused witness field-probe test: exit 0; it confirmed the probe completes
+  with non-zero field mentions and does not print the private root, canonical
+  private root, data dir, private filenames, fixture filenames, or extracted
+  field values.
+- Full import/search witness suite: exit 0; 25 tests passed.
+- Focused CLI clippy: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- Private local-only field witness: exit 0; redacted aggregate status showed
+  completed import, completed field probe, and private data removal; the probe
+  used metadata-only field-type aggregation, temporary stdout/stderr logs were
+  removed, and no private output was committed.
+- Private local-only bounded OCR/field witness: exit 0; redacted aggregate
+  status showed completed import, completed OCR, completed field probe, and
+  private data removal; temporary stdout/stderr logs were removed and no
+  private output was committed.
+- Marker scan: no private sample root, path marker, token marker, or temporary
+  witness-log marker was present in tracked progress/code changes.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, release
+  artifact check, and public repository guard passed.
+
+Scope note:
+
+- S123 proves only a redacted local witness field-extraction probe and bounded
+  local OCR/field witness behavior. It does not prove field extraction quality,
+  real labeled field F1, full-library OCR completion, real ranking quality,
+  large-corpus performance, Windows/Linux private sample behavior, or release
+  readiness.
 
 ### S122
 
@@ -870,15 +946,12 @@ target/debug/resume-cli --data-dir <temporary-unused-data-dir> witness --root <a
 
 Output summary:
 
-- Import-only witness: exit 0; selected 8720 PDF/Word files; skipped 49
-  unsupported entries; had 0 filesystem scan errors; completed import; produced
-  146 directly searchable documents, 8554 OCR-required documents, 8554 queued
-  OCR jobs, 20 failed documents, and `private witness data: removed`.
-- Bounded OCR witness: exit 0; selected the same 8720 PDF/Word files; completed
-  import; processed 5 OCR documents with 0 OCR failures; wrote 7 OCR cache
-  entries; exhausted the OCR document budget as expected; removed private
-  witness data.
-- No real resume paths, filenames, extracted text, OCR output, tokens,
+- Import-only witness: exit 0; redacted aggregate status showed completed
+  import and private data removal.
+- Bounded OCR witness: exit 0; redacted aggregate status showed completed
+  import, completed bounded OCR, expected OCR budget behavior, and private data
+  removal.
+- No real resume paths, filenames, counts, extracted text, OCR output, tokens,
   diagnostics packages, or model caches were committed or uploaded.
 
 Scope note:
