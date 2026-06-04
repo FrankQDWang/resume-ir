@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
 use meta_store::{
     EntityType, ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile,
     ImportTask, ImportTaskId, ImportTaskStatus, MetaStore, UnixTimestamp,
@@ -12,8 +15,25 @@ use meta_store::{ImportScanErrorKind, ImportScanErrorOperation};
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 
+macro_rules! serialize_windows_s9_import_test {
+    () => {
+        #[cfg(windows)]
+        let _guard = windows_s9_import_test_lock();
+    };
+}
+
+#[cfg(windows)]
+fn windows_s9_import_test_lock() -> MutexGuard<'static, ()> {
+    static WINDOWS_S9_IMPORT_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    WINDOWS_S9_IMPORT_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("import-search-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -112,6 +132,7 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
 
 #[test]
 fn witness_imports_only_pdf_and_word_samples_without_persisting_private_data() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("witness-unused-data-dir");
     let private_root = temp_dir("witness-private-root");
     fs::copy(
@@ -177,6 +198,7 @@ fn witness_imports_only_pdf_and_word_samples_without_persisting_private_data() {
 
 #[test]
 fn witness_probe_search_runs_private_query_without_leaking_query_or_paths() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("witness-probe-search-unused-data-dir");
     let private_root = temp_dir("witness-probe-search-private-root");
     fs::copy(
@@ -232,6 +254,7 @@ fn witness_probe_search_runs_private_query_without_leaking_query_or_paths() {
 
 #[test]
 fn witness_probe_fields_reports_aggregate_counts_without_values_or_paths() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("witness-probe-fields-unused-data-dir");
     let private_root = temp_dir("witness-probe-fields-private-root");
     fs::copy(
@@ -286,6 +309,7 @@ fn witness_probe_fields_reports_aggregate_counts_without_values_or_paths() {
 
 #[test]
 fn witness_local_discovery_preset_uses_discovery_profile_without_path_leak() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("witness-local-discovery-unused-data-dir");
     let private_root = temp_dir("witness-local-discovery-private-root");
     fs::create_dir_all(private_root.join("Documents")).unwrap();
@@ -348,6 +372,7 @@ fn witness_local_discovery_preset_uses_discovery_profile_without_path_leak() {
 
 #[test]
 fn witness_run_ocr_executes_local_command_without_output_or_path_leak() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("witness-ocr-unused-data-dir");
     let private_root = temp_dir("witness-ocr-private-root");
     fs::copy(
@@ -406,6 +431,7 @@ printf 'WitnessOCRSecretToken local OCR text\n'
 
 #[test]
 fn witness_run_ocr_can_budget_documents_after_full_private_scan_without_path_leak() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("witness-ocr-budget-unused-data-dir");
     let private_root = temp_dir("witness-ocr-budget-private-root");
     fs::copy(
@@ -472,6 +498,7 @@ printf 'WitnessOCRBudgetSecret local OCR text\n'
 
 #[test]
 fn witness_run_ocr_budget_reports_failed_documents_without_stopping_or_leaking_paths() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("witness-ocr-partial-unused-data-dir");
     let private_root = temp_dir("witness-ocr-partial-private-root");
     fs::copy(
@@ -555,6 +582,7 @@ printf 'WitnessOCRPartialSecret local OCR text\n'
 
 #[test]
 fn witness_run_ocr_without_command_reports_blocked_without_persisting_private_data() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("witness-ocr-blocked-unused-data-dir");
     let private_root = temp_dir("witness-ocr-blocked-private-root");
     fs::copy(
@@ -599,6 +627,7 @@ fn witness_run_ocr_without_command_reports_blocked_without_persisting_private_da
 
 #[test]
 fn import_txt_resume_builds_searchable_index_without_path_leakage() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("txt-import-data");
     let private_root = temp_dir("txt-import-private-root");
     let canonical_private_root = fs::canonicalize(&private_root).unwrap();
@@ -675,6 +704,7 @@ fn import_txt_resume_builds_searchable_index_without_path_leakage() {
 
 #[test]
 fn import_blank_txt_resume_fails_without_queueing_ocr() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("blank-txt-import-data");
     let private_root = temp_dir("blank-txt-import-private-root");
     let canonical_private_root = fs::canonicalize(&private_root).unwrap();
@@ -724,6 +754,7 @@ fn import_blank_txt_resume_fails_without_queueing_ocr() {
 
 #[test]
 fn import_enqueue_persists_task_without_running_foreground_import() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("enqueue-import-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -786,6 +817,7 @@ fn import_enqueue_persists_task_without_running_foreground_import() {
 
 #[test]
 fn cancel_import_task_hides_queued_work_without_running_import_or_leaking_paths() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("cancel-import-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -852,6 +884,7 @@ fn cancel_import_task_hides_queued_work_without_running_import_or_leaking_paths(
 
 #[test]
 fn import_multiple_roots_builds_searchable_index_without_path_leak() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("multi-root-import-data");
     let first_root = temp_dir("multi-root-a-private");
     let second_root = temp_dir("multi-root-b-private");
@@ -915,6 +948,7 @@ fn import_multiple_roots_builds_searchable_index_without_path_leak() {
 
 #[test]
 fn explicit_root_import_without_max_files_has_no_default_scan_budget() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("explicit-root-no-budget-data");
     let private_root = temp_dir("explicit-root-no-budget-private-root");
     let canonical_private_root = fs::canonicalize(&private_root).unwrap();
@@ -967,6 +1001,7 @@ fn explicit_root_import_without_max_files_has_no_default_scan_budget() {
 
 #[test]
 fn local_discovery_root_preset_uses_discovery_profile_without_path_leak() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("local-discovery-import-data");
     let local_root = temp_dir("local-discovery-private-root");
     let canonical_local_root = fs::canonicalize(&local_root).unwrap();
@@ -1055,6 +1090,7 @@ fn local_discovery_root_preset_uses_discovery_profile_without_path_leak() {
 
 #[test]
 fn local_discovery_root_preset_allows_explicit_file_budget_override_without_path_leak() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("local-discovery-budgeted-data");
     let local_root = temp_dir("local-discovery-budgeted-private-root");
     let canonical_local_root = fs::canonicalize(&local_root).unwrap();
@@ -1123,6 +1159,7 @@ fn local_discovery_root_preset_allows_explicit_file_budget_override_without_path
 
 #[test]
 fn import_max_files_limits_scan_and_persists_budget_state_without_path_leak() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("budgeted-import-data");
     let private_root = temp_dir("budgeted-import-private-root");
     let canonical_private_root = fs::canonicalize(&private_root).unwrap();
@@ -1189,6 +1226,7 @@ fn import_max_files_limits_scan_and_persists_budget_state_without_path_leak() {
 
 #[test]
 fn multi_root_import_reports_budget_exhausted_when_later_root_hits_file_limit() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("multi-root-budgeted-data");
     let first_root = temp_dir("multi-root-budgeted-first-private-root");
     let second_root = temp_dir("multi-root-budgeted-second-private-root");
@@ -1250,6 +1288,7 @@ fn multi_root_import_reports_budget_exhausted_when_later_root_hits_file_limit() 
 #[cfg(unix)]
 #[test]
 fn import_persists_scan_errors_without_path_leak() {
+    serialize_windows_s9_import_test!();
     use std::os::unix::fs::PermissionsExt;
 
     let data_dir = temp_dir("scan-error-import-data");
@@ -1316,6 +1355,7 @@ fn import_persists_scan_errors_without_path_leak() {
 
 #[test]
 fn import_reuses_recoverable_task_after_restart() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("import-restart-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -1364,6 +1404,7 @@ fn import_reuses_recoverable_task_after_restart() {
 
 #[test]
 fn import_does_not_take_over_live_running_task() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("import-live-running-data");
     let fixture_root = fixture_root();
     let pending_task_id = seed_live_running_import_task(&data_dir, &fixture_root);
@@ -1395,6 +1436,7 @@ fn import_does_not_take_over_live_running_task() {
 
 #[test]
 fn discovery_import_does_not_take_over_live_running_task_for_same_root() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("discovery-import-live-running-data");
     let fixture_root = fixture_root();
     let pending_task_id = seed_live_running_import_task(&data_dir, &fixture_root);
@@ -1428,6 +1470,7 @@ fn discovery_import_does_not_take_over_live_running_task_for_same_root() {
 
 #[test]
 fn multi_root_import_does_not_take_over_live_running_task_for_any_root() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("multi-root-live-running-data");
     let fixture_root = fixture_root();
     let second_root = temp_dir("multi-root-live-second");
@@ -1464,6 +1507,7 @@ fn multi_root_import_does_not_take_over_live_running_task_for_any_root() {
 
 #[test]
 fn multi_root_import_reuses_recoverable_task_for_each_root() {
+    serialize_windows_s9_import_test!();
     let data_dir = temp_dir("multi-root-recoverable-data");
     let fixture_root = fixture_root();
     let second_root = temp_dir("multi-root-recoverable-second");
