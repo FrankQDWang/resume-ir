@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, and S147 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, and S148 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -109,14 +109,16 @@ obsolete preliminary files and checklists are not product scope.
   encrypted file that cannot be read without the correct key. The default
   CLI/daemon data-dir metadata path now creates an owner-only local metadata
   SQLCipher key under `metadata-secrets/`, opens `metadata.sqlite3` through
-  SQLCipher, reports `sqlcipher` in doctor/redacted diagnostics, and keeps
-  contact-key permission failures isolated from metadata-key availability.
+  SQLCipher, migrates an existing plaintext `metadata.sqlite3` in the default
+  data-dir path to SQLCipher while preserving synthetic rows and removing the
+  plaintext file from the default path, reports `sqlcipher` in doctor/redacted
+  diagnostics, and keeps contact-key permission failures isolated from
+  metadata-key availability.
   Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
   F1 datasets/results, dedupe quality metrics, candidate merge review
-  workflows, plaintext-to-encrypted migration
-  proof for pre-release local stores if needed, future bbox/PII surface purge
-  coverage, and forensic erase proof.
+  workflows, full-text/vector/OCR-cache artifact encryption, future bbox/PII
+  surface purge coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
   helpers, embedding worker, model/dimension-scoped durable per-version
@@ -405,8 +407,71 @@ obsolete preliminary files and checklists are not product scope.
 | S145 | Product default SQLCipher metadata data-dir slice complete locally | A focused diagnostics test first failed because `doctor` still reported plaintext metadata. After implementation, `MetaStore::open_data_dir` creates or reads an owner-only metadata SQLCipher key under `metadata-secrets/`, CLI and daemon default store opens use SQLCipher, daemon import heartbeats reopen encrypted stores correctly, doctor and redacted diagnostics report `sqlcipher` without remediation, raw default `metadata.sqlite3` lacks the plaintext SQLite header, plaintext opens fail, and metadata-key storage is isolated from contact-key permission failures. Focused default-encryption test, full CLI tests, full daemon tests, full meta-store tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this default encrypted metadata path slice; it does not back up or rotate metadata SQLCipher keys, prove plaintext-to-encrypted migration for old pre-release local stores, encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, or clear non-metadata privacy blockers. |
 | S146 | Product metadata SQLCipher key backup/restore slice complete locally | A focused CLI test first failed because `resume-cli privacy` did not expose metadata key backup/restore commands. After implementation, metadata key backup writes a passphrase-protected local envelope with Argon2id plus XChaCha20-Poly1305, restore recreates an owner-only metadata SQLCipher key for a copied encrypted metadata DB, wrong passphrases fail without creating a key, duplicate restores are refused, and backup files plus stdout/stderr stay free of passphrases, key material, local paths, and schema payloads. Focused metadata-key CLI tests, existing contact-key CLI tests, full meta-store tests, full CLI tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this metadata key backup/recovery slice; it does not rotate metadata SQLCipher keys, automatically sync backups, prove plaintext-to-encrypted migration for old pre-release local stores, encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, or clear non-metadata privacy blockers. |
 | S147 | Product metadata SQLCipher key rotation slice complete locally | A focused CLI test first failed because `resume-cli privacy rotate-metadata-key` did not exist. After implementation, metadata key rotation opens the encrypted metadata DB with the existing key, SQLCipher-rekeys it with fresh local key material, replaces the owner-only metadata key file, proves the old key can no longer open the DB, proves the new key can reopen schema version 16, and keeps CLI/doctor output free of local paths and old/new key material. Focused rotation CLI tests, existing metadata backup/restore CLI tests, full meta-store tests, full CLI tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this metadata key rotation slice; it does not automatically sync backups, prove crash recovery for every mid-rotation failure window, prove plaintext-to-encrypted migration for old pre-release local stores, encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, or clear non-metadata privacy blockers. |
+| S148 | Product plaintext metadata migration-to-SQLCipher slice complete locally | A focused meta-store test first failed because `MetaStore::open_data_dir` could not open an existing plaintext default metadata DB after creating the SQLCipher key. After implementation, the default data-dir open path detects a plaintext SQLite header, exports the plaintext DB to a SQLCipher temp DB with the local metadata key, atomically replaces the default DB, removes the plaintext file from the default path, preserves synthetic document/version rows, and proves plaintext open fails afterward while SQLCipher reopen succeeds. Full local verification then exposed a daemon IPC status-loop regression under SQLCipher WAL; the daemon now keeps a persistent IPC metadata connection, and the late-queued-task test seeds task/scope atomically. Focused migration test, full meta-store tests, full CLI tests, full daemon IPC tests, fmt, focused clippy, diff check, public repo guard, and full local verification passed. | None for this plaintext metadata migration slice; it does not encrypt full-text/vector/OCR cache artifacts, prove forensic erasure, prove crash recovery for every mid-migration failure window, run migration on real user stores, or clear non-metadata privacy blockers. |
 
 ## Command Log
+
+### S148
+
+Design target:
+
+- Make the default `MetaStore::open_data_dir` path handle an existing plaintext
+  `metadata.sqlite3` by migrating it to SQLCipher instead of failing after
+  generating the local metadata key.
+- Preserve existing metadata rows during migration and remove plaintext from the
+  default metadata DB path after success.
+- Keep migration errors redacted: no raw SQL, local paths, DB filenames, or
+  synthetic payload text in user-facing error strings.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher --locked -- --exact
+```
+
+Output summary:
+
+- The focused test failed because `MetaStore::open_data_dir` returned
+  `MetaStoreError { kind: Storage }` when a plaintext default metadata DB was
+  already present.
+- The first full local verification attempt exposed
+  `daemon_serves_status_while_import_worker_processes_late_queued_task`
+  failing under SQLCipher because repeated new IPC status connections could hit
+  a transient encrypted WAL read error while the worker was polling/writing.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_serves_status_while_import_worker_processes_late_queued_task --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-daemon -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused plaintext metadata migration test: exit 0 after implementation; 1
+  test passed.
+- Full `meta-store` tests: exit 0; 46 integration tests and doc-tests passed.
+- Full `resume-cli` tests: exit 0; all CLI tests passed.
+- Focused daemon IPC regression and full `s20_ipc` suite: exit 0; the exact
+  late-queued-task test passed and the full suite passed 18 tests.
+- `cargo fmt --check`, focused clippy over `meta-store`, `resume-daemon`, and
+  `resume-cli`, `git diff --check`, public repo guard, and full local
+  verification passed.
+
+Scope note:
+
+- S148 migrates only the default metadata SQLite store from plaintext to
+  SQLCipher. It does not encrypt full-text/vector/OCR-cache artifacts, prove
+  forensic erasure, prove every mid-migration crash recovery window, run on real
+  user stores, or complete the full product goal.
 
 ### S147
 

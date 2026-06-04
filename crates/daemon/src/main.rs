@@ -58,6 +58,8 @@ const IPC_ENDPOINT_FILE: &str = "ipc.endpoints.json";
 const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
 const IPC_AUTH_TOKEN_BYTES: usize = 32;
 const IPC_MAX_REQUEST_BYTES: usize = 64 * 1024;
+const IPC_METADATA_READ_ATTEMPTS: usize = 40;
+const IPC_METADATA_READ_RETRY_MS: u64 = 25;
 const IMPORT_PROGRESS_STREAM_EVENTS: usize = 3;
 const IMPORT_PROGRESS_STREAM_INTERVAL_MS: u64 = 25;
 const DEFAULT_OCR_ENGINE_PROFILE: &str = "local-command";
@@ -595,6 +597,7 @@ fn run_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
     listener
         .set_nonblocking(true)
         .map_err(|_| DaemonError::user("unable to configure daemon ipc listener"))?;
+    let ipc_store = open_store(data_dir)?;
     let stop_worker = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop_worker);
     let worker_data_dir = data_dir.to_path_buf();
@@ -610,6 +613,7 @@ fn run_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
 
     let ipc_result = serve_ipc_listener_with_worker_monitor(
         data_dir,
+        &ipc_store,
         &listener,
         options.max_requests,
         &worker_result_receiver,
@@ -1961,11 +1965,12 @@ fn serve_ipc_listener(
     max_requests: Option<usize>,
 ) -> Result<()> {
     let request_limit = max_requests.unwrap_or(usize::MAX);
+    let ipc_store = open_store(data_dir)?;
     for _ in 0..request_limit {
         let (stream, _) = listener
             .accept()
             .map_err(|_| DaemonError::user("unable to accept daemon ipc request"))?;
-        handle_ipc_stream(data_dir, stream)?;
+        handle_ipc_stream(data_dir, &ipc_store, stream)?;
     }
 
     Ok(())
@@ -1973,6 +1978,7 @@ fn serve_ipc_listener(
 
 fn serve_ipc_listener_with_worker_monitor(
     data_dir: &Path,
+    ipc_store: &MetaStore,
     listener: &TcpListener,
     max_requests: Option<usize>,
     worker_result_receiver: &Receiver<Result<()>>,
@@ -1998,7 +2004,7 @@ fn serve_ipc_listener_with_worker_monitor(
 
         match listener.accept() {
             Ok((stream, _)) => {
-                handle_ipc_stream(data_dir, stream)?;
+                handle_ipc_stream(data_dir, ipc_store, stream)?;
                 handled_requests += 1;
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -2011,7 +2017,7 @@ fn serve_ipc_listener_with_worker_monitor(
     Ok(())
 }
 
-fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
+fn handle_ipc_stream(data_dir: &Path, ipc_store: &MetaStore, mut stream: TcpStream) -> Result<()> {
     stream
         .set_nonblocking(false)
         .map_err(|_| DaemonError::user("unable to configure daemon ipc stream"))?;
@@ -2032,7 +2038,7 @@ fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
         && request.path == "/status"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        let body = status_json(data_dir)?;
+        let body = status_json(ipc_store)?;
         return write_http_response(&mut stream, 200, "application/json", &body);
     }
 
@@ -3510,8 +3516,11 @@ struct DaemonResumeDetailField {
     extractor: String,
 }
 
-fn status_json(data_dir: &Path) -> Result<String> {
-    let store = open_store(data_dir)?;
+fn status_json(store: &MetaStore) -> Result<String> {
+    retry_ipc_metadata_read(|| status_json_once(store))
+}
+
+fn status_json_once(store: &MetaStore) -> Result<String> {
     let summary = store.status_summary().map_err(DaemonError::store)?;
     let latest_import_scan = store
         .latest_import_scan_scope()
@@ -3554,6 +3563,25 @@ fn status_json(data_dir: &Path) -> Result<String> {
         "snapshot_present": summary.last_snapshot_id.is_some(),
     });
     Ok(body.to_string())
+}
+
+fn retry_ipc_metadata_read<T>(mut read: impl FnMut() -> Result<T>) -> Result<T> {
+    let mut last_error = None;
+    for attempt in 1..=IPC_METADATA_READ_ATTEMPTS {
+        match read() {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if error.is_metadata_store_storage_error()
+                    && attempt < IPC_METADATA_READ_ATTEMPTS =>
+            {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(IPC_METADATA_READ_RETRY_MS));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last_error.expect("metadata read retry loop records a failed attempt"))
 }
 
 fn import_progress_stream_event_json(data_dir: &Path) -> Result<String> {
@@ -4078,6 +4106,10 @@ impl DaemonError {
 
     fn exit_code(&self) -> i32 {
         self.exit_code
+    }
+
+    fn is_metadata_store_storage_error(&self) -> bool {
+        self.message == "metadata store operation failed"
     }
 }
 

@@ -113,6 +113,67 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
 }
 
 #[test]
+fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
+    let data_dir = temp_data_dir("plaintext-metadata-migration");
+    let db_path = meta_store::metadata_store_path(&data_dir);
+    let document = document(
+        "plaintext-migration-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let mut version = resume_version("plaintext-migration-version", document.id.clone());
+    version.clean_text = Some("SYNTHETIC PLAINTEXT MIGRATION CLEAN TEXT".to_string());
+
+    {
+        let plaintext = MetaStore::open(&db_path).unwrap();
+        plaintext.run_migrations().unwrap();
+        plaintext.upsert_document(&document).unwrap();
+        plaintext.upsert_resume_version(&version).unwrap();
+        assert_eq!(plaintext.schema_version().unwrap(), 16);
+        assert_eq!(
+            plaintext.metadata_encryption_state(),
+            MetadataEncryptionState::Plaintext
+        );
+    }
+
+    let plaintext_bytes = fs::read(&db_path).unwrap();
+    assert!(plaintext_bytes.starts_with(b"SQLite format 3"));
+
+    let migrated = MetaStore::open_data_dir(&data_dir).unwrap();
+    assert_eq!(
+        migrated.metadata_encryption_state(),
+        MetadataEncryptionState::SqlCipher
+    );
+    assert_eq!(migrated.schema_version().unwrap(), 16);
+    assert_eq!(
+        migrated.document_by_id(&document.id).unwrap().unwrap().id,
+        document.id
+    );
+    assert_eq!(
+        migrated
+            .resume_version_by_id(&version.id)
+            .unwrap()
+            .unwrap()
+            .clean_text,
+        version.clean_text
+    );
+
+    let encrypted_bytes = fs::read(&db_path).unwrap();
+    assert!(!encrypted_bytes.starts_with(b"SQLite format 3"));
+    assert!(!encrypted_bytes
+        .windows(b"PLAINTEXT MIGRATION".len())
+        .any(|window| window == b"PLAINTEXT MIGRATION"));
+    assert!(meta_store::metadata_encryption_key_path(&data_dir).exists());
+
+    let plaintext_open_error = MetaStore::open(&db_path)
+        .and_then(|store| store.schema_version().map(|_| ()))
+        .unwrap_err();
+    assert_redacted_store_error(plaintext_open_error);
+
+    remove_temp_dir(&data_dir);
+}
+
+#[test]
 fn worker_task_control_defaults_to_running_and_persists_pause_state() {
     let db_path = temp_db_path("worker-task-control-placeholder");
     let pause_at = UnixTimestamp::from_unix_seconds(1_800_000_330);
@@ -2573,10 +2634,24 @@ fn temp_db_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("resume-ir-s3-{label}-{unique}.sqlite3"))
 }
 
+fn temp_data_dir(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("resume-ir-s3-{label}-{unique}"));
+    fs::create_dir_all(&path).unwrap();
+    path
+}
+
 fn remove_temp_db(db_path: &PathBuf) {
     let _ = fs::remove_file(db_path);
     let _ = fs::remove_file(format!("{}-wal", db_path.display()));
     let _ = fs::remove_file(format!("{}-shm", db_path.display()));
+}
+
+fn remove_temp_dir(path: &PathBuf) {
+    let _ = fs::remove_dir_all(path);
 }
 
 fn document(label: &str, is_deleted: bool, status: DocumentStatus) -> Document {

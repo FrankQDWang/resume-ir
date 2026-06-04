@@ -732,7 +732,8 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, None);
     assert!(response.contains("HTTP/1.1 202 Accepted"));
 
-    let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 120);
+    let (worker_requests, completed_response) =
+        wait_for_searchable_documents(&mut child, &data_dir, &endpoint, 2, 120);
     let used_requests = 1 + worker_requests;
     drain_status_requests(&endpoint, request_limit - used_requests);
 
@@ -840,7 +841,8 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 120);
+    let (worker_requests, completed_response) =
+        wait_for_searchable_documents(&mut child, &data_dir, &endpoint, 2, 120);
     let used_requests = 1 + worker_requests;
     drain_status_requests(&endpoint, request_limit - used_requests);
 
@@ -950,13 +952,37 @@ fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> St
 }
 
 fn wait_for_searchable_documents(
+    child: &mut Child,
+    data_dir: &Path,
     endpoint: &str,
     expected: usize,
     max_requests: usize,
 ) -> (usize, String) {
     for request_count in 1..=max_requests {
-        let response = http_get(endpoint);
-        assert!(response.contains("HTTP/1.1 200 OK"));
+        if let Some(status) = child.try_wait().expect("poll daemon child") {
+            let stderr = read_child_stderr(child);
+            let store_state = describe_store_state(data_dir);
+            panic!(
+                "daemon exited before searchable document count {expected}: {status}\n{stderr}\n{store_state}"
+            );
+        }
+        let response = match try_http_get(endpoint) {
+            Ok(response) if response.is_empty() => {
+                std::thread::sleep(Duration::from_millis(25));
+                continue;
+            }
+            Ok(response) => response,
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(25));
+                continue;
+            }
+        };
+        if !response.contains("HTTP/1.1 200 OK") {
+            let _ = child.kill();
+            let _ = child.wait();
+            let stderr = read_child_stderr(child);
+            panic!("unexpected status response: {response}\nstderr:\n{stderr}");
+        }
         if response.contains(&format!("\"searchable_documents\":{expected}")) {
             assert!(response.contains("\"import_tasks_queued\":0"));
             assert!(!response.contains("raw_resume_text"));
@@ -966,6 +992,29 @@ fn wait_for_searchable_documents(
     }
 
     panic!("daemon status did not report searchable document count {expected}");
+}
+
+fn describe_store_state(data_dir: &Path) -> String {
+    let store = match MetaStore::open_data_dir(data_dir) {
+        Ok(store) => store,
+        Err(error) => return format!("store open failed: {error}"),
+    };
+    let schema_version = store.schema_version();
+    let summary = store.status_summary();
+    let latest_scope = store.latest_import_scan_scope();
+    format!(
+        "store state: encryption={}, schema={schema_version:?}, summary={summary:?}, latest_scope={latest_scope:?}",
+        store.metadata_encryption_state().label()
+    )
+}
+
+fn read_child_stderr(child: &mut Child) -> String {
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        pipe.read_to_string(&mut stderr)
+            .expect("read daemon stderr");
+    }
+    stderr
 }
 
 fn drain_status_requests(endpoint: &str, count: usize) {
@@ -1157,39 +1206,39 @@ fn seed_queued_import_task(
     store.run_migrations().unwrap();
     let now = UnixTimestamp::from_unix_seconds(queued_at_seconds);
     let task_id = ImportTaskId::from_non_secret_parts(&["s45", label]);
+    let root_path = path_str(canonical_root).to_string();
+    let task = ImportTask {
+        id: task_id.clone(),
+        root_path: root_path.clone(),
+        status: ImportTaskStatus::Queued,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    };
+    let scope = ImportScanScope {
+        import_task_id: task_id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: root_path.clone(),
+        canonical_root_path: root_path,
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
+        updated_at: now,
+    };
     store
-        .insert_import_task(&ImportTask {
-            id: task_id.clone(),
-            root_path: path_str(canonical_root).to_string(),
-            status: ImportTaskStatus::Queued,
-            queued_at: now,
-            started_at: None,
-            finished_at: None,
-            updated_at: now,
-        })
-        .unwrap();
-    store
-        .upsert_import_scan_scope(&ImportScanScope {
-            import_task_id: task_id.clone(),
-            root_kind: ImportRootKind::Explicit,
-            root_preset: None,
-            scan_profile: ImportScanProfile::Explicit,
-            requested_root_path: path_str(canonical_root).to_string(),
-            canonical_root_path: path_str(canonical_root).to_string(),
-            files_discovered: 0,
-            ignored_entries: 0,
-            scan_errors: 0,
-            searchable_documents: 0,
-            ocr_required_documents: 0,
-            ocr_jobs_queued: 0,
-            failed_documents: 0,
-            deleted_documents: 0,
-            scan_budget_kind: None,
-            scan_budget_limit: None,
-            scan_budget_observed: None,
-            scan_budget_exhausted: false,
-            updated_at: now,
-        })
+        .insert_import_task_with_scan_scope(&task, &scope)
         .unwrap();
     task_id
 }

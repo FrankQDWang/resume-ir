@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
@@ -457,6 +457,112 @@ fn decode_backup_hex(value: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn metadata_store_has_plaintext_header(path: &Path) -> Result<bool> {
+    if !path.try_exists().map_err(MetaStoreError::io_storage)? {
+        return Ok(false);
+    }
+
+    let mut file = fs::File::open(path).map_err(MetaStoreError::io_storage)?;
+    let mut header = [0_u8; 16];
+    let bytes_read = file.read(&mut header).map_err(MetaStoreError::io_storage)?;
+    Ok(bytes_read == header.len() && header.starts_with(b"SQLite format 3"))
+}
+
+fn migrate_plaintext_metadata_store_to_encrypted(
+    db_path: &Path,
+    key: &[u8; METADATA_ENCRYPTION_KEY_LEN],
+) -> Result<()> {
+    let encrypted_temp_path =
+        private_replacement_path(db_path).map_err(MetaStoreError::io_storage)?;
+    let plaintext_backup_path =
+        private_replacement_path(db_path).map_err(MetaStoreError::io_storage)?;
+
+    export_plaintext_metadata_store_to_encrypted(db_path, &encrypted_temp_path, key)?;
+    if let Err(error) =
+        replace_plaintext_metadata_store(db_path, &encrypted_temp_path, &plaintext_backup_path)
+    {
+        let _ = fs::remove_file(&encrypted_temp_path);
+        return Err(MetaStoreError::io_storage(error));
+    }
+    let _ = fs::remove_file(&plaintext_backup_path);
+    remove_sqlite_sidecars(&plaintext_backup_path);
+
+    Ok(())
+}
+
+fn export_plaintext_metadata_store_to_encrypted(
+    db_path: &Path,
+    encrypted_temp_path: &Path,
+    key: &[u8; METADATA_ENCRYPTION_KEY_LEN],
+) -> Result<()> {
+    let connection = Connection::open(db_path).map_err(MetaStoreError::storage)?;
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(MetaStoreError::storage)?;
+    let encrypted_temp_literal = sql_string_literal(encrypted_temp_path)?;
+    let key_hex = encode_hex(key);
+    connection
+        .execute_batch(&format!(
+            "\
+            ATTACH DATABASE {encrypted_temp_literal} AS encrypted KEY \"x'{key_hex}'\";
+            SELECT sqlcipher_export('encrypted');
+            DETACH DATABASE encrypted;
+            "
+        ))
+        .map_err(MetaStoreError::storage)?;
+
+    let encrypted_connection =
+        Connection::open(encrypted_temp_path).map_err(MetaStoreError::storage)?;
+    apply_sqlcipher_key(&encrypted_connection, key)?;
+    verify_sqlcipher_key(&encrypted_connection)?;
+    encrypted_connection
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    drop(encrypted_connection);
+
+    Ok(())
+}
+
+fn replace_plaintext_metadata_store(
+    db_path: &Path,
+    encrypted_temp_path: &Path,
+    plaintext_backup_path: &Path,
+) -> io::Result<()> {
+    fs::rename(db_path, plaintext_backup_path)?;
+    remove_sqlite_sidecars(db_path);
+
+    if let Err(error) = fs::rename(encrypted_temp_path, db_path) {
+        let _ = fs::rename(plaintext_backup_path, db_path);
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+fn remove_sqlite_sidecars(path: &Path) {
+    let _ = fs::remove_file(path.with_extension(format!(
+        "{}-wal",
+        path.extension().and_then(|value| value.to_str()).unwrap_or("")
+    )));
+    let _ = fs::remove_file(path.with_extension(format!(
+        "{}-shm",
+        path.extension().and_then(|value| value.to_str()).unwrap_or("")
+    )));
+    let _ = fs::remove_file(format!("{}-wal", path.display()));
+    let _ = fs::remove_file(format!("{}-shm", path.display()));
+}
+
+fn sql_string_literal(path: &Path) -> Result<String> {
+    let value = path
+        .to_str()
+        .ok_or_else(|| MetaStoreError::invalid_value("metadata.store_path"))?;
+    Ok(format!("'{}'", value.replace('\'', "''")))
+}
+
 fn replace_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temp_path = private_replacement_path(path)?;
     write_new_private_file(&temp_path, bytes)?;
@@ -580,8 +686,13 @@ pub struct MetaStore {
 impl MetaStore {
     pub fn open_data_dir(data_dir: &Path) -> Result<Self> {
         fs::create_dir_all(data_dir).map_err(MetaStoreError::io_storage)?;
+        let db_path = metadata_store_path(data_dir);
         let key = load_or_create_metadata_encryption_key(data_dir)?;
-        Self::open_encrypted(metadata_store_path(data_dir), &key)
+        if metadata_store_has_plaintext_header(&db_path)? {
+            migrate_plaintext_metadata_store_to_encrypted(&db_path, &key)?;
+        }
+
+        Self::open_encrypted(db_path, &key)
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -614,9 +725,14 @@ impl MetaStore {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(MetaStoreError::storage)?;
         if file_backed {
-            connection
-                .pragma_update(None, "journal_mode", "WAL")
+            let journal_mode = connection
+                .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
                 .map_err(MetaStoreError::storage)?;
+            if !journal_mode.eq_ignore_ascii_case("wal") {
+                connection
+                    .pragma_update(None, "journal_mode", "WAL")
+                    .map_err(MetaStoreError::storage)?;
+            }
         }
 
         Ok(Self {
