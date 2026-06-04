@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
@@ -11,6 +12,7 @@ use meta_store::{
 
 #[test]
 fn delete_soft_tombstones_document_and_removes_it_from_default_search() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("delete-search-data");
     let fixture_root = fixture_root();
     import_fixtures(&data_dir, &fixture_root);
@@ -67,6 +69,7 @@ fn delete_soft_tombstones_document_and_removes_it_from_default_search() {
 
 #[test]
 fn reimport_marks_missing_files_deleted_and_default_search_hides_stale_hits() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("reimport-delete-data");
     let fixture_root = temp_dir("reimport-fixtures");
     copy_fixture_tree(&fixture_root);
@@ -97,6 +100,7 @@ fn reimport_marks_missing_files_deleted_and_default_search_hides_stale_hits() {
 
 #[test]
 fn budgeted_reimport_does_not_mark_unscanned_missing_files_deleted() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("budgeted-reimport-delete-data");
     let fixture_root = temp_dir("budgeted-reimport-fixtures");
     copy_fixture_tree(&fixture_root);
@@ -141,6 +145,7 @@ fn budgeted_reimport_does_not_mark_unscanned_missing_files_deleted() {
 
 #[test]
 fn multi_root_reimport_marks_missing_files_deleted_per_root() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("multi-root-reimport-delete-data");
     let first_root = temp_dir("multi-root-delete-a");
     let second_root = temp_dir("multi-root-delete-b");
@@ -174,6 +179,7 @@ fn multi_root_reimport_marks_missing_files_deleted_per_root() {
 
 #[test]
 fn discovery_profile_reuses_root_scan_without_deleting_skipped_directories() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("discovery-reimport-data");
     let fixture_root = temp_dir("discovery-reimport-fixtures");
     fs::create_dir_all(fixture_root.join("Documents")).unwrap();
@@ -262,6 +268,7 @@ fn discovery_profile_reuses_root_scan_without_deleting_skipped_directories() {
 
 #[test]
 fn default_search_hydrates_metadata_to_hide_deleted_stale_index_hits() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("stale-index-delete-data");
     let fixture_root = fixture_root();
     import_fixtures(&data_dir, &fixture_root);
@@ -289,6 +296,7 @@ fn default_search_hydrates_metadata_to_hide_deleted_stale_index_hits() {
 
 #[test]
 fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("purge-deleted-data");
     let fixture_root = fixture_root();
     import_fixtures(&data_dir, &fixture_root);
@@ -474,6 +482,14 @@ fn import_multi_root_fixtures(data_dir: &Path, first_root: &Path, second_root: &
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn s14_test_lock() -> MutexGuard<'static, ()> {
+    static S14_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    S14_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn copy_fixture_tree(target_root: &Path) {
