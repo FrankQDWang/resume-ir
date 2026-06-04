@@ -29,14 +29,14 @@ use index_vector::{
     VectorSearchBackend,
 };
 use meta_store::{
-    backup_metadata_encryption_key, restore_metadata_encryption_key, Document, DocumentId,
-    DocumentStatus, EntityMention, EntityType, FileExtension,
-    ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
-    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanProfile as StoreImportScanProfile,
-    ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus,
-    IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState,
-    OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion, ResumeVersionId, ResumeVisibility,
-    UnixTimestamp, WorkerTaskKind,
+    backup_metadata_encryption_key, restore_metadata_encryption_key,
+    rotate_metadata_encryption_key, Document, DocumentId, DocumentStatus, EntityMention,
+    EntityType, FileExtension, ImportRootKind as StoreImportRootKind,
+    ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
+    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
+    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion,
+    ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -207,6 +207,14 @@ fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
             println!("metadata encryption key restore: restored");
             Ok(())
         }
+        "rotate-metadata-key" => {
+            if args.len() != 1 {
+                return Err(CliError::usage(privacy_usage()));
+            }
+            rotate_metadata_encryption_key(data_dir).map_err(CliError::store)?;
+            println!("metadata encryption key rotation: rotated");
+            Ok(())
+        }
         _ => Err(CliError::usage(privacy_usage())),
     }
 }
@@ -272,7 +280,7 @@ fn read_privacy_passphrase_file(path: &Path) -> Result<Vec<u8>> {
 }
 
 fn privacy_usage() -> &'static str {
-    "usage: resume-cli privacy backup-contact-key --output <path> --passphrase-file <path> | resume-cli privacy restore-contact-key --input <path> --passphrase-file <path> | resume-cli privacy backup-metadata-key --output <path> --passphrase-file <path> | resume-cli privacy restore-metadata-key --input <path> --passphrase-file <path>"
+    "usage: resume-cli privacy backup-contact-key --output <path> --passphrase-file <path> | resume-cli privacy restore-contact-key --input <path> --passphrase-file <path> | resume-cli privacy backup-metadata-key --output <path> --passphrase-file <path> | resume-cli privacy restore-metadata-key --input <path> --passphrase-file <path> | resume-cli privacy rotate-metadata-key"
 }
 
 fn model_validate_manifest_command(args: &[String]) -> Result<()> {

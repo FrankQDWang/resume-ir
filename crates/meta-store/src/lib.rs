@@ -164,6 +164,26 @@ pub fn restore_metadata_encryption_key(
     Ok(MetadataEncryptionKeyRestore { _private: () })
 }
 
+pub fn rotate_metadata_encryption_key(data_dir: &Path) -> Result<MetadataEncryptionKeyRotation> {
+    let key_path = metadata_encryption_key_path(data_dir);
+    let old_key = read_metadata_encryption_key(&key_path)?;
+    let db_path = metadata_store_path(data_dir);
+
+    let connection = Connection::open(&db_path).map_err(MetaStoreError::storage)?;
+    apply_sqlcipher_key(&connection, &old_key)?;
+    verify_sqlcipher_key(&connection)?;
+
+    let new_key = random_metadata_encryption_key()?;
+    apply_sqlcipher_rekey(&connection, &new_key)?;
+    verify_sqlcipher_key(&connection)?;
+
+    replace_private_file(&key_path, encode_hex(&new_key).as_bytes())
+        .map_err(MetaStoreError::io_storage)?;
+    restrict_private_file_permissions(&key_path)?;
+
+    Ok(MetadataEncryptionKeyRotation { _private: () })
+}
+
 fn validate_metadata_encryption_key(key: &[u8]) -> Result<()> {
     if key.len() != METADATA_ENCRYPTION_KEY_LEN {
         return Err(MetaStoreError::invalid_value("metadata.encryption_key"));
@@ -176,6 +196,13 @@ fn apply_sqlcipher_key(connection: &Connection, key: &[u8]) -> Result<()> {
     let key_hex = encode_hex(key);
     connection
         .execute_batch(&format!("PRAGMA key = \"x'{key_hex}'\";"))
+        .map_err(MetaStoreError::storage)
+}
+
+fn apply_sqlcipher_rekey(connection: &Connection, key: &[u8]) -> Result<()> {
+    let key_hex = encode_hex(key);
+    connection
+        .execute_batch(&format!("PRAGMA rekey = \"x'{key_hex}'\";"))
         .map_err(MetaStoreError::storage)
 }
 
@@ -225,8 +252,7 @@ fn load_or_create_metadata_encryption_key(
         .ok_or_else(|| MetaStoreError::invalid_value("metadata.encryption_key_path"))?;
     fs::create_dir_all(parent).map_err(MetaStoreError::io_storage)?;
 
-    let mut key = [0_u8; METADATA_ENCRYPTION_KEY_LEN];
-    getrandom::getrandom(&mut key).map_err(|_| MetaStoreError::random())?;
+    let key = random_metadata_encryption_key()?;
     match write_new_private_file(&key_path, encode_hex(&key).as_bytes()) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -236,6 +262,12 @@ fn load_or_create_metadata_encryption_key(
     }
     restrict_private_file_permissions(&key_path)?;
 
+    Ok(key)
+}
+
+fn random_metadata_encryption_key() -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
+    let mut key = [0_u8; METADATA_ENCRYPTION_KEY_LEN];
+    getrandom::getrandom(&mut key).map_err(|_| MetaStoreError::random())?;
     Ok(key)
 }
 
@@ -425,6 +457,38 @@ fn decode_backup_hex(value: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn replace_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let temp_path = private_replacement_path(path)?;
+    write_new_private_file(&temp_path, bytes)?;
+    let replacement = replace_existing_file(&temp_path, path);
+    if replacement.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    replacement
+}
+
+fn private_replacement_path(path: &Path) -> io::Result<PathBuf> {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid private file path"))?;
+    let mut suffix = [0_u8; 8];
+    getrandom::getrandom(&mut suffix)
+        .map_err(|error| io::Error::other(format!("private replacement random failed: {error}")))?;
+
+    Ok(parent.join(format!(".{file_name}.tmp-{}", encode_hex(&suffix))))
+}
+
+fn replace_existing_file(source: &Path, target: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    if target.exists() {
+        fs::remove_file(target)?;
+    }
+
+    fs::rename(source, target)
+}
+
 fn write_new_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -489,6 +553,20 @@ impl fmt::Debug for MetadataEncryptionKeyRestore {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MetadataEncryptionKeyRestore")
+            .field("key", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct MetadataEncryptionKeyRotation {
+    _private: (),
+}
+
+impl fmt::Debug for MetadataEncryptionKeyRotation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MetadataEncryptionKeyRotation")
             .field("key", &"<redacted>")
             .finish()
     }
