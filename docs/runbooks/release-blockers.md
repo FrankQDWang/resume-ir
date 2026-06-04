@@ -90,7 +90,7 @@ On Windows only, generate an unsigned MSI dry-run artifact after release
 binaries have been built and the WiX .NET tool is installed:
 
 ```powershell
-dotnet tool install --global wix --version 7.0.0
+dotnet tool install --global wix --version 6.0.2
 scripts/release/create-windows-package.ps1 `
   -Version v0.1.0 `
   -TargetDir target/release `

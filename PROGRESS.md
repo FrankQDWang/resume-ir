@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, and S132 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, and S133 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -176,8 +176,10 @@ obsolete preliminary files and checklists are not product scope.
   not sign, notarize, create a GitHub Release, install, upgrade, uninstall, or
   validate Gatekeeper behavior. A Windows PowerShell MSI dry-run script,
   local non-Windows guard, release runbook wiring, and Release workflow hosted
-  Windows package job are now present, but the hosted Windows MSI dry-run still
-  must run after push before it can be counted as hosted evidence.
+  Windows package job are now present. The hosted Windows MSI dry-run exposed
+  that WiX `7.0.0` requires OSMF EULA acceptance on GitHub-hosted runners, so
+  the dry-run tool pin was moved to WiX `6.0.2`; the hosted Windows MSI dry-run
+  still must rerun after push before it can be counted as hosted evidence.
   Signing, notarization, Windows service validation, real upgrade/uninstall runs,
   GitHub Release upload, and platform installer/service
   validation remain absent, not complete, or externally blocked by platform
@@ -346,8 +348,70 @@ obsolete preliminary files and checklists are not product scope.
 | S130 | Product hosted macOS package dry-run evidence slice complete | PR #9 checks for commit `a7dc1c0` passed: dependency tree, license policy, public repository guard, runbook policy, Rust workspace, hosted macOS Platform CI, and hosted Windows Platform CI. Release workflow run `26942549866` executed on the same commit and passed both jobs: `macOS package dry run` and `release dry run`. The run produced non-expired `macos-package-dry-run` and `release-dry-run` artifacts; the macOS job log confirmed dmg checksum verification and unsigned/not-notarized manifest status, and the release job logs did not contain the Node.js 20 action warning or v4 checkout/upload-artifact references. | None for this hosted dry-run evidence slice; it does not sign, notarize, create a GitHub Release, validate install/upgrade/uninstall/rollback behavior, prove Gatekeeper behavior, build Windows MSI, or complete release readiness. |
 | S131 | Product Windows MSI dry-run wiring slice complete | `./scripts/ci/check-workflows.sh` first failed because `verify-local` and the Release workflow did not include Windows package dry-run wiring. After implementation, `scripts/release/create-windows-package.ps1` can build an unsigned MSI dry-run through the WiX .NET tool on Windows, writes a redacted `windows-package.json`, rejects invalid versions and missing binaries, and keeps signing/release upload/service lifecycle gated. The Release workflow includes a hosted `windows-latest` job that installs WiX `7.0.0`, builds release binaries, runs the Windows package script, checks artifact boundaries, and uploads `windows-package-dry-run`. Focused workflow, Windows package, runbook, workflow YAML, diff, public guard checks, and `./scripts/ci/verify-local.sh` passed locally, with the Windows package guard explicitly skipped on this non-Windows host. | None for this wiring/local-guard slice; the updated hosted Release workflow still must run after push to prove MSI creation, and signing, service install/start/stop validation, installer lifecycle validation, GitHub Release upload, and production release readiness remain absent or gated. |
 | S132 | Product hosted Windows daemon IPC wait-budget fix complete locally | Hosted Windows Platform CI for commit `cd26a04` failed in `daemon_serves_status_while_import_worker_processes_late_queued_task` because the late-queued import worker test did not observe `searchable_documents: 2` inside the previous short polling budget. The fix keeps the same daemon behavior and assertions, but raises this test's max request budget to match the adjacent command-IPC import-worker test. Focused local exact, full `s20_ipc`, diff, public guard, and `./scripts/ci/verify-local.sh` passed. | Hosted PR checks still must rerun after push; this is a CI stability/test-budget fix only and does not prove Windows MSI creation, service lifecycle, installer lifecycle, signing, GitHub Release upload, or production release readiness. |
+| S133 | Product WiX package-tool pin slice complete locally | Hosted Release run `26944149485` passed the Ubuntu release dry-run and macOS package dry-run jobs, but the Windows MSI job failed at `Create unsigned Windows MSI dry run` because WiX `7.0.0` required OSMF EULA acceptance. The fix avoids accepting legal/fee terms in CI by pinning the Release workflow and runbook to WiX `6.0.2` and updating the workflow policy guard to reject a missing version pin. Focused workflow, Windows package, runbook, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` checks passed locally. | Hosted Release must rerun after push to prove Windows MSI creation; this does not sign artifacts, create/upload a GitHub Release, validate installer lifecycle, validate Windows service lifecycle, accept WiX v7 terms, or complete production release readiness. |
 
 ## Command Log
+
+### S133
+
+Design target:
+
+- Do not accept WiX `7.0.0` OSMF EULA or fee terms in CI.
+- Keep the hosted unsigned MSI dry-run path, but pin the WiX .NET tool to a
+  version that can run unattended for this public dry-run workflow.
+- Strengthen the workflow guard so future changes must keep an explicit WiX
+  version pin.
+
+Observed hosted RED:
+
+```bash
+gh run watch 26944149485 --exit-status --interval 10
+gh run view 26944149485 --job 79492784081 --log
+```
+
+Output summary:
+
+- Release run `26944149485` passed `release dry run` in 1m25s and
+  `macOS package dry run` in 2m58s.
+- `Windows package dry run` failed in 6m0s at `Create unsigned Windows MSI dry
+  run`.
+- The Windows job built release binaries successfully, then `wix build` failed
+  with `WIX7015` because WiX Toolset v7 required OSMF EULA acceptance.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-workflows.sh
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-windows-package.sh
+ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].sort.each { |f| YAML.load_file(f); puts f }'
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Workflow guard: exit 0; Release workflow now requires
+  `dotnet tool install --global wix --version 6.0.2`.
+- Runbook guard: exit 0.
+- Windows package guard: exit 0 on this macOS host by validating wiring, then
+  explicitly skipping actual MSI creation on non-Windows.
+- Workflow YAML parse: exit 0 for all tracked workflow files.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, release
+  artifact check, release SBOM check, macOS package check, Windows package
+  wiring check, and public repository guard passed.
+
+Scope note:
+
+- S133 is a toolchain pin and hosted Release failure response only. It does not
+  prove the hosted Windows MSI build until the branch is pushed and Release is
+  rerun, and it does not sign artifacts, create/upload a GitHub Release, validate
+  install/upgrade/uninstall/rollback behavior, install/register/start/stop a
+  Windows service, or complete release readiness.
 
 ### S132
 

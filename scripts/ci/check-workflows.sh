@@ -87,7 +87,7 @@ require_text "$release_workflow" "hdiutil verify"
 require_text "$release_workflow" "windows-package.json"
 require_text "$release_workflow" "windows-package-dry-run"
 require_text "$release_workflow" "windows-latest"
-require_text "$release_workflow" "dotnet tool install --global wix"
+require_text "$release_workflow" "dotnet tool install --global wix --version 6.0.2"
 require_text "$release_workflow" 'resume-ir-${{ inputs.version }}-windows.msi'
 require_text "$release_workflow" "actions/upload-artifact"
 require_text "$release_workflow" "actions/checkout@v6"
