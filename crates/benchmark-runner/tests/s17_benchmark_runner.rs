@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use benchmark_runner::{
-    evaluate_benchmark_gate_json, evaluate_field_quality_gate_json, run_field_quality_jsonl,
-    run_synthetic_query_benchmark, BenchmarkGateConfig, FieldQualityGateConfig,
-    SyntheticBenchmarkConfig,
+    evaluate_benchmark_gate_json, evaluate_field_quality_gate_json,
+    evaluate_ocr_throughput_gate_json, run_field_quality_jsonl,
+    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark, BenchmarkGateConfig,
+    FieldQualityGateConfig, OcrThroughputGateConfig, SyntheticBenchmarkConfig,
+    SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine,
 };
 
 #[test]
@@ -172,6 +174,68 @@ fn field_quality_gate_accepts_labeled_report() {
     assert!(evaluation.f1() >= 0.99);
 }
 
+#[test]
+fn synthetic_ocr_throughput_reports_page_latency_without_payload_or_path_leakage() {
+    let command = ocr_fixture_script("ocr-throughput-private-command");
+    let config = SyntheticOcrBenchmarkConfig::new(3, 5_000).unwrap();
+    let engine = SyntheticOcrBenchmarkEngine::local_command(&command).unwrap();
+
+    let report = run_synthetic_ocr_throughput_benchmark(engine, config).unwrap();
+
+    assert_eq!(report.dataset_kind(), "synthetic");
+    assert_eq!(report.engine_kind(), "local-command");
+    assert_eq!(report.page_count(), 3);
+    assert_eq!(report.latency().samples(), 3);
+    assert!(report.latency().p95_ms() >= report.latency().p50_ms());
+    assert!(report.pages_per_second() > 0.0);
+    assert!(report.total_page_bytes() > 0);
+    assert!(report.total_text_bytes() > 0);
+
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"schema_version\":\"ocr-throughput.v1\""));
+    assert!(json.contains("\"dataset_kind\":\"synthetic\""));
+    assert!(json.contains("\"engine_kind\":\"local-command\""));
+    assert!(json.contains("\"page_count\":3"));
+    assert!(json.contains("\"pages_per_second\":"));
+    assert!(json.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("Synthetic OCR Candidate"));
+    assert!(!json.contains("PRIVATE OCR PAYLOAD"));
+
+    let _ = fs::remove_file(&command);
+}
+
+#[test]
+fn synthetic_ocr_throughput_rejects_empty_workloads() {
+    assert!(SyntheticOcrBenchmarkConfig::new(0, 5_000).is_err());
+    assert!(SyntheticOcrBenchmarkConfig::new(1, 0).is_err());
+}
+
+#[test]
+fn ocr_throughput_gate_rejects_synthetic_report_without_explicit_scope() {
+    let report = minimal_ocr_throughput_json("synthetic", 25, 12.0, 8.5, "not_evaluated");
+    let config = OcrThroughputGateConfig::new(25, 50.0, 1.0);
+
+    let error = evaluate_ocr_throughput_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("synthetic OCR benchmark requires explicit allowance"));
+}
+
+#[test]
+fn ocr_throughput_gate_accepts_explicit_synthetic_smoke_without_scale_claim() {
+    let report = minimal_ocr_throughput_json("synthetic", 25, 12.0, 8.5, "not_evaluated");
+    let config = OcrThroughputGateConfig::new(25, 50.0, 1.0).allow_synthetic();
+
+    let evaluation = evaluate_ocr_throughput_gate_json(&report, config).unwrap();
+
+    assert_eq!(evaluation.dataset_kind(), "synthetic");
+    assert_eq!(evaluation.page_count(), 25);
+    assert_eq!(evaluation.p95_ms(), 12.0);
+    assert_eq!(evaluation.pages_per_second(), 8.5);
+}
+
 fn minimal_benchmark_json(
     dataset_kind: &str,
     document_count: usize,
@@ -221,6 +285,68 @@ fn minimal_benchmark_json(
         zero_result_queries,
         million_scale_verified,
     )
+}
+
+fn minimal_ocr_throughput_json(
+    dataset_kind: &str,
+    page_count: usize,
+    p95_ms: f64,
+    pages_per_second: f64,
+    target_claim: &str,
+) -> String {
+    format!(
+        concat!(
+            "{{",
+            "\"schema_version\":\"ocr-throughput.v1\",",
+            "\"run_id\":\"bench_test\",",
+            "\"platform\":\"test/test\",",
+            "\"dataset_kind\":\"{}\",",
+            "\"engine_kind\":\"local-command\",",
+            "\"page_count\":{},",
+            "\"total_ms\":100.0,",
+            "\"pages_per_second\":{},",
+            "\"total_page_bytes\":1000,",
+            "\"total_text_bytes\":100,",
+            "\"mean_confidence\":0.95,",
+            "\"page_latency_ms\":{{",
+            "\"samples\":{},",
+            "\"min\":1.0,",
+            "\"mean\":2.0,",
+            "\"p50\":2.0,",
+            "\"p95\":{},",
+            "\"p99\":{},",
+            "\"max\":{}",
+            "}},",
+            "\"target_claim\":\"{}\",",
+            "\"scope\":\"synthetic OCR throughput benchmark; no raw OCR text, page bytes, command paths, or resume paths included\"",
+            "}}"
+        ),
+        dataset_kind,
+        page_count,
+        pages_per_second,
+        page_count,
+        p95_ms,
+        p95_ms,
+        p95_ms,
+        target_claim,
+    )
+}
+
+fn ocr_fixture_script(label: &str) -> PathBuf {
+    let path = temp_dir(label).join("ocr-fixture.sh");
+    fs::write(
+        &path,
+        "#!/bin/sh\nprintf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s PRIVATE OCR PAYLOAD\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
 }
 
 fn temp_dir(label: &str) -> PathBuf {

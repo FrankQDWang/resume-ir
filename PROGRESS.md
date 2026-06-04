@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S105, and S106 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S105, S106, and S107 used synthetic fixtures only.
   S97, S99, S100, S105, and S106 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -110,12 +110,15 @@ obsolete preliminary files and checklists are not product scope.
   cache entries for each page, index combined OCR text with page count, honor
   persistent pause state, keep serving status IPC while OCR runs, and exercise
   OCR from the local PDF/Word witness command with redacted completed or blocked
-  aggregate output.
+  aggregate output. The benchmark runner can now exercise synthetic OCR page
+  throughput through the existing local command or Tesseract OCR clients and
+  gate redacted page-latency/pages-per-second reports with explicit synthetic
+  opt-in.
   Deleted-document purge now removes
   current OCR jobs and current OCR page-cache entries that are no longer shared
   by visible documents. Missing or BLOCKED work includes final OCR/renderer
   distribution policy, non-English language pack policy, full-library scanned
-  resume OCR proof beyond bounded local witness budgets, large-corpus OCR
+  resume OCR proof beyond bounded local witness budgets, real large-corpus OCR
   throughput proof, and Windows/macOS
   validation.
 - P5 packaging/platform: not production-ready. A local CLI service lifecycle
@@ -134,7 +137,8 @@ obsolete preliminary files and checklists are not product scope.
   scratch databases, daemon-kill/restart probes against configured daemon
   binaries, OCR command crash probes, model-checksum probes against controlled
   local model artifacts, local model-pack manifest validation, targeted fault
-  tests, local-only production runbooks, and a runbook CI policy guard exist.
+  tests, local-only production runbooks, a runbook CI policy guard, and a
+  synthetic OCR throughput benchmark/gate exist.
   The benchmark runner
   now has an explicit synthetic benchmark
   gate wired into PR and nightly smoke workflows; synthetic runs must opt in
@@ -254,8 +258,74 @@ obsolete preliminary files and checklists are not product scope.
 | S104 | Product metadata migration fault-injection slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s71_fault_injection fault_simulate_metadata_migration_failure_reproduces_without_path_or_schema_leak --locked -- --exact` first failed because `migration-failure` was unsupported; `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_skeleton_without_paths --locked -- --exact` first failed because diagnostics did not list `metadata_migration`. After implementation, focused fault/diagnostics tests, related suites, focused clippy, fmt, diff, runbook, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this safe synthetic migration-failure probe; it does not perform destructive migration rollback drills against real user metadata, backup/restore workflow proof, cross-platform filesystem fault proof, or upgrade rehearsal. |
 | S105 | Product local OCR witness-budget slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_can_budget_documents_after_full_private_scan_without_path_leak --locked -- --exact` first failed because `witness` rejected `--ocr-max-documents`; after implementation, focused witness exact, full import-search witness suite, OCR handoff suite, focused clippy, fmt, diff, runbook, public guard, marker scans, `./scripts/ci/verify-local.sh`, and a private local-only full-directory witness with a bounded OCR document budget passed. | None for this redacted local OCR witness-budget control; it does not prove full-library OCR completion, OCR throughput, OCR quality, non-English OCR behavior, packaged OCR runtime distribution, Windows/Linux behavior, or large-corpus performance. |
 | S106 | Product local-discovery witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_local_discovery_preset_uses_discovery_profile_without_path_leak --locked -- --exact` first failed because `witness` rejected `--root-preset local-discovery`; after implementation, focused local-discovery witness exact, full import-search witness suite, fs-crawler suite, focused clippy, fmt, diff, runbook, public guard, marker scans, `./scripts/ci/verify-local.sh`, and a private local-only local-discovery witness using the user-authorized sample directory override passed. | None for this redacted local-discovery witness path; it does not prove default whole-machine scans from `/`, Windows drive scanning, full-library OCR completion, large-corpus performance, or cross-platform watcher behavior. |
+| S107 | Product synthetic OCR throughput gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner synthetic_ocr_throughput_reports_page_latency_without_payload_or_path_leakage --locked -- --exact` first failed because the OCR throughput API did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_throughput_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` rejected `ocr-throughput`; after implementation, focused OCR throughput tests, full benchmark-runner tests, focused clippy, fmt, diff, runbook, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this synthetic OCR throughput benchmark/gate; it does not prove real scanned-resume OCR quality, full-library OCR completion, non-English OCR behavior, packaged OCR runtime distribution, 100k/1M corpus performance, or Windows/Linux behavior. |
 
 ## Command Log
+
+### S107
+
+Design target:
+
+- Add `resume-benchmark ocr-throughput` so the benchmark runner can measure
+  synthetic OCR page throughput through the existing local OCR command protocol
+  or Tesseract adapter without touching real resumes.
+- Add `resume-benchmark ocr-gate` so synthetic OCR reports require explicit
+  `--allow-synthetic` before they can pass a gate.
+- Keep reports redacted: no raw OCR text, page bytes, command paths, resume
+  paths, sample IDs, or private data.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner synthetic_ocr_throughput_reports_page_latency_without_payload_or_path_leakage --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_throughput_outputs_redacted_report_and_gate --locked -- --exact
+```
+
+Output summary:
+
+- The library test failed because OCR throughput API symbols did not exist.
+- The CLI test failed because `resume-benchmark` rejected `ocr-throughput` as
+  unsupported usage.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner synthetic_ocr_throughput_reports_page_latency_without_payload_or_path_leakage -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_throughput_outputs_redacted_report_and_gate -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n --hidden --glob '!target/**' --glob '!.git/**' '[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension|[p]rivate-sample-path-marker' .; then exit 1; else echo "no private witness markers"; fi
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused OCR throughput library exact: exit 0.
+- Focused OCR throughput CLI exact: exit 0.
+- `benchmark-runner`: exit 0; 19 integration tests plus doc-tests passed.
+- Focused benchmark-runner clippy: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- Runbook guard: exit 0.
+- Public repository guard: exit 0.
+- Private witness marker scan: exit 0.
+- Obsolete reference marker guard: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, and public repo guard.
+
+Scope note:
+
+- S107 proves only a synthetic OCR throughput report/gate path that exercises
+  existing local OCR clients without leaking payloads or paths.
+- It does not prove real scanned-resume OCR quality, full-library OCR
+  completion, non-English language behavior, packaged OCR runtime distribution,
+  100k/1M corpus performance, or Windows/Linux validation.
+- Full product is still not complete.
 
 ### S106
 

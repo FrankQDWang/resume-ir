@@ -232,6 +232,134 @@ fn resume_benchmark_field_quality_outputs_redacted_report_and_gate() {
     remove_dir(&dataset_dir);
 }
 
+#[test]
+fn resume_benchmark_ocr_throughput_outputs_redacted_report_and_gate() {
+    let command = ocr_fixture_script("ocr-throughput-cli-private-command");
+    let report_dir = temp_dir("ocr-throughput-cli-report");
+    let report_path = report_dir.join("ocr-report.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "ocr-throughput",
+            "--command",
+            path_str(&command),
+            "--pages",
+            "3",
+            "--page-timeout-ms",
+            "5000",
+            "--json",
+        ])
+        .output()
+        .expect("run OCR throughput benchmark");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\":\"ocr-throughput.v1\""));
+    assert!(stdout.contains("\"dataset_kind\":\"synthetic\""));
+    assert!(stdout.contains("\"engine_kind\":\"local-command\""));
+    assert!(stdout.contains("\"page_count\":3"));
+    assert!(stdout.contains("\"pages_per_second\":"));
+    assert!(stdout.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains("Synthetic OCR Candidate"));
+    assert!(!stdout.contains("PRIVATE OCR PAYLOAD"));
+    fs::write(&report_path, &output.stdout).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "ocr-gate",
+            "--report",
+            path_str(&report_path),
+            "--allow-synthetic",
+            "--min-pages",
+            "3",
+            "--max-p95-ms",
+            "5000",
+            "--min-pages-per-second",
+            "0.001",
+        ])
+        .output()
+        .expect("run OCR throughput gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "OCR throughput gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    let _ = fs::remove_file(&command);
+    remove_dir(command.parent().unwrap());
+    remove_dir(&report_dir);
+}
+
+#[test]
+fn resume_benchmark_ocr_gate_rejects_synthetic_without_explicit_allowance() {
+    let report_dir = temp_dir("ocr-throughput-cli-gate-reject");
+    let report_path = report_dir.join("ocr-report.json");
+    fs::write(
+        &report_path,
+        concat!(
+            "{\"schema_version\":\"ocr-throughput.v1\",",
+            "\"dataset_kind\":\"synthetic\",",
+            "\"page_count\":10,",
+            "\"pages_per_second\":5.0,",
+            "\"page_latency_ms\":{\"samples\":10,\"p95\":10},",
+            "\"target_claim\":\"not_evaluated\"}"
+        ),
+    )
+    .unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "ocr-gate",
+            "--report",
+            path_str(&report_path),
+            "--min-pages",
+            "10",
+            "--max-p95-ms",
+            "50",
+            "--min-pages-per-second",
+            "1",
+        ])
+        .output()
+        .expect("run OCR throughput gate");
+
+    assert!(!gate.status.success());
+    assert!(String::from_utf8_lossy(&gate.stderr)
+        .contains("synthetic OCR benchmark requires explicit allowance"));
+
+    remove_dir(&report_dir);
+}
+
+fn ocr_fixture_script(label: &str) -> PathBuf {
+    let path = temp_dir(label).join("ocr-fixture.sh");
+    fs::write(
+        &path,
+        "#!/bin/sh\nprintf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s PRIVATE OCR PAYLOAD\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
 fn temp_dir(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

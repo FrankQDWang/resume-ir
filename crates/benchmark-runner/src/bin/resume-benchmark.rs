@@ -2,9 +2,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use benchmark_runner::{
-    evaluate_benchmark_gate_json, evaluate_field_quality_gate_json, run_field_quality_jsonl,
-    run_synthetic_query_benchmark, BenchmarkError, BenchmarkGateConfig, BenchmarkGateError,
-    FieldQualityGateConfig, SyntheticBenchmarkConfig,
+    evaluate_benchmark_gate_json, evaluate_field_quality_gate_json,
+    evaluate_ocr_throughput_gate_json, run_field_quality_jsonl,
+    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark, BenchmarkError,
+    BenchmarkGateConfig, BenchmarkGateError, FieldQualityGateConfig, OcrThroughputGateConfig,
+    SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine,
 };
 
 fn main() {
@@ -20,6 +22,8 @@ fn run() -> Result<(), CliError> {
         CliCommand::Gate(args) => run_gate(args),
         CliCommand::FieldQuality(args) => run_field_quality(args),
         CliCommand::FieldGate(args) => run_field_gate(args),
+        CliCommand::OcrThroughput(args) => run_ocr_throughput(args),
+        CliCommand::OcrGate(args) => run_ocr_gate(args),
     }
 }
 
@@ -80,6 +84,39 @@ fn run_field_gate(args: FieldGateArgs) -> Result<(), CliError> {
     Ok(())
 }
 
+fn run_ocr_throughput(args: OcrThroughputArgs) -> Result<(), CliError> {
+    let config = SyntheticOcrBenchmarkConfig::new(args.pages, args.page_timeout_ms)
+        .map_err(CliError::benchmark)?
+        .with_render_dpi(args.render_dpi)
+        .map_err(CliError::benchmark)?;
+    let engine = match (args.command, args.tesseract_command) {
+        (Some(command), None) => {
+            SyntheticOcrBenchmarkEngine::local_command(command).map_err(CliError::benchmark)?
+        }
+        (None, Some(command)) => {
+            SyntheticOcrBenchmarkEngine::tesseract(command).map_err(CliError::benchmark)?
+        }
+        _ => return Err(CliError::usage()),
+    };
+    let report =
+        run_synthetic_ocr_throughput_benchmark(engine, config).map_err(CliError::benchmark)?;
+    println!("{}", report.to_redacted_json());
+    Ok(())
+}
+
+fn run_ocr_gate(args: OcrGateArgs) -> Result<(), CliError> {
+    let report_json = fs::read_to_string(&args.report)
+        .map_err(|_| CliError::user("unable to read OCR throughput report"))?;
+    let mut config =
+        OcrThroughputGateConfig::new(args.min_pages, args.max_p95_ms, args.min_pages_per_second);
+    if args.allow_synthetic {
+        config = config.allow_synthetic();
+    }
+    evaluate_ocr_throughput_gate_json(&report_json, config).map_err(CliError::gate)?;
+    println!("OCR throughput gate passed");
+    Ok(())
+}
+
 fn parse_command<I>(args: I) -> Result<CliCommand, CliError>
 where
     I: IntoIterator<Item = String>,
@@ -88,6 +125,10 @@ where
     match args.first().map(String::as_str) {
         Some("field-quality") => parse_field_quality_args(&args[1..]).map(CliCommand::FieldQuality),
         Some("field-gate") => parse_field_gate_args(&args[1..]).map(CliCommand::FieldGate),
+        Some("ocr-throughput") => {
+            parse_ocr_throughput_args(&args[1..]).map(CliCommand::OcrThroughput)
+        }
+        Some("ocr-gate") => parse_ocr_gate_args(&args[1..]).map(CliCommand::OcrGate),
         Some("gate") => parse_gate_args(&args[1..]).map(CliCommand::Gate),
         _ => parse_synthetic_query_args(&args).map(CliCommand::SyntheticQuery),
     }
@@ -281,9 +322,137 @@ fn parse_field_gate_args(args: &[String]) -> Result<FieldGateArgs, CliError> {
     })
 }
 
+fn parse_ocr_throughput_args(args: &[String]) -> Result<OcrThroughputArgs, CliError> {
+    let mut command = None;
+    let mut tesseract_command = None;
+    let mut pages = 10_usize;
+    let mut page_timeout_ms = 30_000_u64;
+    let mut render_dpi = 150_u32;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                if command.is_some() {
+                    return Err(CliError::usage());
+                }
+                command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--tesseract-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                if tesseract_command.is_some() {
+                    return Err(CliError::usage());
+                }
+                tesseract_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--pages" => {
+                pages = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--page-timeout-ms" => {
+                page_timeout_ms = parse_positive_u64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--render-dpi" => {
+                render_dpi = parse_positive_u32(args.get(index + 1))?;
+                index += 2;
+            }
+            "--json" => {
+                index += 1;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    if command.is_some() == tesseract_command.is_some() {
+        return Err(CliError::usage());
+    }
+
+    Ok(OcrThroughputArgs {
+        command,
+        tesseract_command,
+        pages,
+        page_timeout_ms,
+        render_dpi,
+    })
+}
+
+fn parse_ocr_gate_args(args: &[String]) -> Result<OcrGateArgs, CliError> {
+    let mut report = None;
+    let mut allow_synthetic = false;
+    let mut min_pages = 200_usize;
+    let mut max_p95_ms = 30_000.0_f64;
+    let mut min_pages_per_second = 0.1_f64;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--report" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                report = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--allow-synthetic" => {
+                allow_synthetic = true;
+                index += 1;
+            }
+            "--min-pages" => {
+                min_pages = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--max-p95-ms" => {
+                max_p95_ms = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-pages-per-second" => {
+                min_pages_per_second = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    Ok(OcrGateArgs {
+        report: report.ok_or_else(CliError::usage)?,
+        allow_synthetic,
+        min_pages,
+        max_p95_ms,
+        min_pages_per_second,
+    })
+}
+
 fn parse_positive_usize(value: Option<&String>) -> Result<usize, CliError> {
     value
         .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(CliError::usage)
+}
+
+fn parse_positive_u64(value: Option<&String>) -> Result<u64, CliError> {
+    value
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(CliError::usage)
+}
+
+fn parse_positive_u32(value: Option<&String>) -> Result<u32, CliError> {
+    value
+        .and_then(|value| value.parse::<u32>().ok())
         .filter(|value| *value > 0)
         .ok_or_else(CliError::usage)
 }
@@ -302,7 +471,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -311,6 +480,8 @@ enum CliCommand {
     Gate(GateArgs),
     FieldQuality(FieldQualityArgs),
     FieldGate(FieldGateArgs),
+    OcrThroughput(OcrThroughputArgs),
+    OcrGate(OcrGateArgs),
 }
 
 #[derive(Clone, Debug)]
@@ -345,6 +516,24 @@ struct FieldGateArgs {
     min_precision: f64,
     min_recall: f64,
     min_f1: f64,
+}
+
+#[derive(Clone, Debug)]
+struct OcrThroughputArgs {
+    command: Option<PathBuf>,
+    tesseract_command: Option<PathBuf>,
+    pages: usize,
+    page_timeout_ms: u64,
+    render_dpi: u32,
+}
+
+#[derive(Clone, Debug)]
+struct OcrGateArgs {
+    report: PathBuf,
+    allow_synthetic: bool,
+    min_pages: usize,
+    max_p95_ms: f64,
+    min_pages_per_second: f64,
 }
 
 #[derive(Clone, Debug)]

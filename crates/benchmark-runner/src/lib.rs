@@ -1,11 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use extractor_rules::{extract_strong_fields, FieldType};
 use index_fulltext::{FullTextIndex, IndexDocument, IndexSection, SearchQuery};
+use ocr_client::{
+    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
+    OcrPageRequest, OcrWorkerBudget, RenderedPage, TesseractOcrClient, TesseractOcrSpec,
+};
 
 pub fn crate_name() -> &'static str {
     "benchmark-runner"
@@ -13,6 +17,7 @@ pub fn crate_name() -> &'static str {
 
 const DEFAULT_TOP_K: usize = 10;
 const MAX_TOP_K: usize = 100;
+const DEFAULT_SYNTHETIC_OCR_RENDER_DPI: u32 = 150;
 
 pub type Result<T> = std::result::Result<T, BenchmarkError>;
 
@@ -64,6 +69,102 @@ impl fmt::Debug for SyntheticBenchmarkConfig {
             .field("document_count", &self.document_count)
             .field("query_count", &self.query_count)
             .field("top_k", &self.top_k)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct SyntheticOcrBenchmarkConfig {
+    page_count: usize,
+    page_timeout_ms: u64,
+    render_dpi: u32,
+}
+
+impl SyntheticOcrBenchmarkConfig {
+    pub fn new(page_count: usize, page_timeout_ms: u64) -> Result<Self> {
+        if page_count == 0 || page_count > u32::MAX as usize {
+            return Err(BenchmarkError::invalid_config("ocr_page_count"));
+        }
+        if page_timeout_ms == 0 {
+            return Err(BenchmarkError::invalid_config("ocr_page_timeout_ms"));
+        }
+
+        Ok(Self {
+            page_count,
+            page_timeout_ms,
+            render_dpi: DEFAULT_SYNTHETIC_OCR_RENDER_DPI,
+        })
+    }
+
+    pub fn with_render_dpi(mut self, render_dpi: u32) -> Result<Self> {
+        if render_dpi == 0 {
+            return Err(BenchmarkError::invalid_config("ocr_render_dpi"));
+        }
+        self.render_dpi = render_dpi;
+        Ok(self)
+    }
+
+    pub fn page_count(self) -> usize {
+        self.page_count
+    }
+
+    pub fn page_timeout_ms(self) -> u64 {
+        self.page_timeout_ms
+    }
+
+    pub fn render_dpi(self) -> u32 {
+        self.render_dpi
+    }
+}
+
+impl fmt::Debug for SyntheticOcrBenchmarkConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SyntheticOcrBenchmarkConfig")
+            .field("page_count", &self.page_count)
+            .field("page_timeout_ms", &self.page_timeout_ms)
+            .field("render_dpi", &self.render_dpi)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum SyntheticOcrBenchmarkEngine {
+    LocalCommand { command: PathBuf },
+    Tesseract { command: PathBuf },
+}
+
+impl SyntheticOcrBenchmarkEngine {
+    pub fn local_command(command: impl AsRef<Path>) -> Result<Self> {
+        let command = command.as_ref().to_path_buf();
+        if command.as_os_str().is_empty() {
+            return Err(BenchmarkError::invalid_config("ocr_command"));
+        }
+        Ok(Self::LocalCommand { command })
+    }
+
+    pub fn tesseract(command: impl AsRef<Path>) -> Result<Self> {
+        let command = command.as_ref().to_path_buf();
+        if command.as_os_str().is_empty() {
+            return Err(BenchmarkError::invalid_config("ocr_tesseract_command"));
+        }
+        Ok(Self::Tesseract { command })
+    }
+
+    fn engine_kind(&self) -> &'static str {
+        match self {
+            Self::LocalCommand { .. } => "local-command",
+            Self::Tesseract { .. } => "tesseract",
+        }
+    }
+}
+
+impl fmt::Debug for SyntheticOcrBenchmarkEngine {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SyntheticOcrBenchmarkEngine")
+            .field("engine_kind", &self.engine_kind())
+            .field("command", &"<redacted>")
             .finish()
     }
 }
@@ -209,6 +310,123 @@ impl fmt::Debug for BenchmarkReport {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub struct OcrThroughputReport {
+    run_id: String,
+    platform: String,
+    dataset_kind: &'static str,
+    engine_kind: &'static str,
+    page_count: usize,
+    total_ms: f64,
+    total_page_bytes: usize,
+    total_text_bytes: usize,
+    mean_confidence: f32,
+    latency: LatencySummary,
+    target_claim: &'static str,
+}
+
+impl OcrThroughputReport {
+    pub fn dataset_kind(&self) -> &'static str {
+        self.dataset_kind
+    }
+
+    pub fn engine_kind(&self) -> &'static str {
+        self.engine_kind
+    }
+
+    pub fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    pub fn total_page_bytes(&self) -> usize {
+        self.total_page_bytes
+    }
+
+    pub fn total_text_bytes(&self) -> usize {
+        self.total_text_bytes
+    }
+
+    pub fn latency(&self) -> &LatencySummary {
+        &self.latency
+    }
+
+    pub fn pages_per_second(&self) -> f64 {
+        if self.total_ms <= 0.0 {
+            return 0.0;
+        }
+
+        self.page_count as f64 / (self.total_ms / 1000.0)
+    }
+
+    pub fn to_redacted_json(&self) -> String {
+        format!(
+            concat!(
+                "{{",
+                "\"schema_version\":\"ocr-throughput.v1\",",
+                "\"run_id\":\"{}\",",
+                "\"platform\":\"{}\",",
+                "\"dataset_kind\":\"{}\",",
+                "\"engine_kind\":\"{}\",",
+                "\"page_count\":{},",
+                "\"total_ms\":{},",
+                "\"pages_per_second\":{},",
+                "\"total_page_bytes\":{},",
+                "\"total_text_bytes\":{},",
+                "\"mean_confidence\":{},",
+                "\"page_latency_ms\":{{",
+                "\"samples\":{},",
+                "\"min\":{},",
+                "\"mean\":{},",
+                "\"p50\":{},",
+                "\"p95\":{},",
+                "\"p99\":{},",
+                "\"max\":{}",
+                "}},",
+                "\"target_claim\":\"{}\",",
+                "\"scope\":\"synthetic OCR throughput benchmark; no raw OCR text, page bytes, command paths, or resume paths included\"",
+                "}}"
+            ),
+            self.run_id,
+            self.platform,
+            self.dataset_kind,
+            self.engine_kind,
+            self.page_count,
+            format_ms(self.total_ms),
+            format_ms(self.pages_per_second()),
+            self.total_page_bytes,
+            self.total_text_bytes,
+            format_ms(self.mean_confidence as f64),
+            self.latency.samples,
+            format_ms(self.latency.min_ms),
+            format_ms(self.latency.mean_ms),
+            format_ms(self.latency.p50_ms),
+            format_ms(self.latency.p95_ms),
+            format_ms(self.latency.p99_ms),
+            format_ms(self.latency.max_ms),
+            self.target_claim,
+        )
+    }
+}
+
+impl fmt::Debug for OcrThroughputReport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OcrThroughputReport")
+            .field("run_id", &self.run_id)
+            .field("platform", &self.platform)
+            .field("dataset_kind", &self.dataset_kind)
+            .field("engine_kind", &self.engine_kind)
+            .field("page_count", &self.page_count)
+            .field("total_ms", &self.total_ms)
+            .field("total_page_bytes", &self.total_page_bytes)
+            .field("total_text_bytes", &self.total_text_bytes)
+            .field("mean_confidence", &self.mean_confidence)
+            .field("latency", &self.latency)
+            .field("target_claim", &self.target_claim)
+            .finish()
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub struct LatencySummary {
     samples: usize,
@@ -301,6 +519,67 @@ pub fn run_synthetic_query_benchmark(
     })
 }
 
+pub fn run_synthetic_ocr_throughput_benchmark(
+    engine: SyntheticOcrBenchmarkEngine,
+    config: SyntheticOcrBenchmarkConfig,
+) -> Result<OcrThroughputReport> {
+    let engine_kind = engine.engine_kind();
+    let client: Box<dyn OcrClient> = match engine {
+        SyntheticOcrBenchmarkEngine::LocalCommand { command } => {
+            let spec =
+                LocalOcrCommandSpec::new(command, Vec::<String>::new(), "synthetic-benchmark")
+                    .map_err(BenchmarkError::ocr)?;
+            Box::new(LocalOcrCommandClient::new(spec))
+        }
+        SyntheticOcrBenchmarkEngine::Tesseract { command } => {
+            let spec = TesseractOcrSpec::new(command, "synthetic-benchmark")
+                .map_err(BenchmarkError::ocr)?;
+            Box::new(TesseractOcrClient::new(spec))
+        }
+    };
+    let budget = OcrWorkerBudget::new(config.page_timeout_ms).map_err(BenchmarkError::ocr)?;
+    let options = OcrOptions::new("eng", "synthetic-benchmark").map_err(BenchmarkError::ocr)?;
+    let cancellation = CancellationToken::new();
+    let mut latencies = Vec::with_capacity(config.page_count);
+    let mut total_page_bytes = 0_usize;
+    let mut total_text_bytes = 0_usize;
+    let mut confidence_sum = 0.0_f32;
+    let run_started = Instant::now();
+
+    for index in 0..config.page_count {
+        let page_no = u32::try_from(index + 1)
+            .map_err(|_| BenchmarkError::invalid_config("ocr_page_count"))?;
+        let page_bytes = synthetic_ocr_page_bytes(index);
+        total_page_bytes += page_bytes.len();
+        let rendered_page = RenderedPage::new(page_no, config.render_dpi, page_bytes)
+            .map_err(BenchmarkError::ocr)?;
+        let request =
+            OcrPageRequest::new(rendered_page, options.clone()).map_err(BenchmarkError::ocr)?;
+        let page_started = Instant::now();
+        let page = client
+            .recognize_page(request, budget, &cancellation)
+            .map_err(BenchmarkError::ocr)?;
+        latencies.push(elapsed_ms(page_started));
+        total_text_bytes += page.text().len();
+        confidence_sum += page.confidence();
+    }
+
+    let total_ms = elapsed_ms(run_started);
+    Ok(OcrThroughputReport {
+        run_id: generate_run_id(),
+        platform: platform_label(),
+        dataset_kind: "synthetic",
+        engine_kind,
+        page_count: config.page_count,
+        total_ms,
+        total_page_bytes,
+        total_text_bytes,
+        mean_confidence: confidence_sum / config.page_count as f32,
+        latency: LatencySummary::from_samples(latencies)?,
+        target_claim: "not_evaluated",
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BenchmarkGateConfig {
     min_documents: usize,
@@ -355,6 +634,56 @@ impl BenchmarkGateEvaluation {
 
     pub fn p95_ms(&self) -> f64 {
         self.p95_ms
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OcrThroughputGateConfig {
+    min_pages: usize,
+    max_p95_ms: f64,
+    min_pages_per_second: f64,
+    allow_synthetic: bool,
+}
+
+impl OcrThroughputGateConfig {
+    pub fn new(min_pages: usize, max_p95_ms: f64, min_pages_per_second: f64) -> Self {
+        Self {
+            min_pages,
+            max_p95_ms,
+            min_pages_per_second,
+            allow_synthetic: false,
+        }
+    }
+
+    pub fn allow_synthetic(mut self) -> Self {
+        self.allow_synthetic = true;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OcrThroughputGateEvaluation {
+    dataset_kind: String,
+    page_count: usize,
+    p95_ms: f64,
+    pages_per_second: f64,
+}
+
+impl OcrThroughputGateEvaluation {
+    pub fn dataset_kind(&self) -> &str {
+        &self.dataset_kind
+    }
+
+    pub fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    pub fn p95_ms(&self) -> f64 {
+        self.p95_ms
+    }
+
+    pub fn pages_per_second(&self) -> f64 {
+        self.pages_per_second
     }
 }
 
@@ -891,6 +1220,64 @@ pub fn evaluate_benchmark_gate_json(
     })
 }
 
+pub fn evaluate_ocr_throughput_gate_json(
+    report_json: &str,
+    config: OcrThroughputGateConfig,
+) -> std::result::Result<OcrThroughputGateEvaluation, BenchmarkGateError> {
+    let report: serde_json::Value =
+        serde_json::from_str(report_json).map_err(|_| BenchmarkGateError::invalid_json())?;
+
+    let schema_version = required_str(&report, "schema_version")?;
+    if schema_version != "ocr-throughput.v1" {
+        return Err(BenchmarkGateError::failed(
+            "unsupported OCR throughput schema",
+        ));
+    }
+
+    let dataset_kind = required_str(&report, "dataset_kind")?;
+    let page_count = required_usize(&report, "page_count")?;
+    let latency = report
+        .get("page_latency_ms")
+        .ok_or_else(|| BenchmarkGateError::missing_field("page_latency_ms"))?;
+    let samples = required_usize(latency, "samples")?;
+    let p95_ms = required_f64(latency, "p95")?;
+    let pages_per_second = required_f64(&report, "pages_per_second")?;
+    let target_claim = required_str(&report, "target_claim")?;
+
+    if dataset_kind == "synthetic" && !config.allow_synthetic {
+        return Err(BenchmarkGateError::failed(
+            "synthetic OCR benchmark requires explicit allowance",
+        ));
+    }
+    if page_count < config.min_pages || samples < config.min_pages {
+        return Err(BenchmarkGateError::failed(
+            "OCR page sample count below gate minimum",
+        ));
+    }
+    if p95_ms > config.max_p95_ms {
+        return Err(BenchmarkGateError::failed(
+            "OCR page p95 exceeded threshold",
+        ));
+    }
+    if pages_per_second < config.min_pages_per_second {
+        return Err(BenchmarkGateError::failed(
+            "OCR pages-per-second below threshold",
+        ));
+    }
+    if target_claim != "not_evaluated" {
+        return Err(BenchmarkGateError::failed(
+            "OCR throughput target claim is not proven",
+        ));
+    }
+
+    Ok(OcrThroughputGateEvaluation {
+        dataset_kind: dataset_kind.to_string(),
+        page_count,
+        p95_ms,
+        pages_per_second,
+    })
+}
+
 fn required_str<'a>(
     value: &'a serde_json::Value,
     field: &'static str,
@@ -1001,6 +1388,24 @@ fn synthetic_query(index: usize) -> &'static str {
     ][index % 5]
 }
 
+fn synthetic_ocr_page_bytes(index: usize) -> Vec<u8> {
+    let width = 32_usize;
+    let height = 32_usize;
+    let mut bytes = format!("P6\n{width} {height}\n255\n").into_bytes();
+    bytes.reserve(width * height * 3);
+    for y in 0..height {
+        for x in 0..width {
+            let shade = if (x + y + index).is_multiple_of(11) {
+                0
+            } else {
+                255
+            };
+            bytes.extend_from_slice(&[shade, shade, shade]);
+        }
+    }
+    bytes
+}
+
 fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
 }
@@ -1072,6 +1477,12 @@ impl BenchmarkError {
             kind: BenchmarkErrorKind::Io,
         }
     }
+
+    fn ocr(_error: ocr_client::OcrError) -> Self {
+        Self {
+            kind: BenchmarkErrorKind::Ocr,
+        }
+    }
 }
 
 impl fmt::Display for BenchmarkError {
@@ -1082,6 +1493,7 @@ impl fmt::Display for BenchmarkError {
             }
             BenchmarkErrorKind::FullText => formatter.write_str("benchmark full-text index failed"),
             BenchmarkErrorKind::Io => formatter.write_str("benchmark filesystem operation failed"),
+            BenchmarkErrorKind::Ocr => formatter.write_str("benchmark OCR operation failed"),
         }
     }
 }
@@ -1093,6 +1505,7 @@ enum BenchmarkErrorKind {
     InvalidConfig { field: &'static str },
     FullText,
     Io,
+    Ocr,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1124,8 +1537,11 @@ impl fmt::Display for BenchmarkGateError {
             | "document_count"
             | "query_count"
             | "query_latency_ms"
+            | "page_count"
+            | "page_latency_ms"
             | "samples"
             | "p95"
+            | "pages_per_second"
             | "zero_result_queries"
             | "million_scale_verified"
             | "target_claim" => {
