@@ -327,8 +327,8 @@ fn published_snapshot_becomes_active_without_reading_staging_orphans() {
     )
     .unwrap();
     fs::create_dir_all(index_root.join("staging").join("orphan-bad")).unwrap();
-    fs::write(
-        index_root
+    write_snapshot_test_file_with_retry(
+        &index_root
             .join("staging")
             .join("orphan-bad")
             .join("meta.json"),

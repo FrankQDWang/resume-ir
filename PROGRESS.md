@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, and S170 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, and S172 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -286,6 +286,9 @@ obsolete preliminary files and checklists are not product scope.
   restarted worker can explicitly lower stale-running recovery and retry-backoff
   thresholds for local drills, recover the interrupted task, complete import,
   and produce searchable full-text results without printing local paths.
+  Hosted Windows full-text snapshot tests now also route staging-orphan fixture
+  writes through the existing transient Windows lock retry helper, covering the
+  observed `os error 33` setup race in synthetic snapshot tests.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, labeled vector-quality, and private real-corpus release-evidence
   benchmark gates; query, OCR, and vector smoke gates are wired into PR and
@@ -475,8 +478,54 @@ obsolete preliminary files and checklists are not product scope.
 | S169 | Product hardware fault-drill simulation coverage complete locally | A focused CLI fault test first failed because `fault-simulate` did not accept `battery-mode`. After implementation, the safe local fault-simulation CLI accepts `battery-mode --battery-state <battery|ac>` and `external-drive-disconnect --drive-state <disconnected|mounted>`, prints redacted degradation/recovery guidance, does not touch private paths, and explicitly marks the real hardware drill as blocked. Doctor and `export-diagnostics --redact` advertise the two new hooks, `release-readiness` plus its CI guard include a `hardware fault drills` blocker, and the fault-injection runbook/guard document the safe probes so safe simulation cannot be mistaken for release evidence. Focused RED/GREEN, full fault-injection tests, diagnostics tests, release-readiness tests, release-readiness guard, runbook guard, fmt, focused clippy, diff check, full local verification, and public repo guard passed locally. | This slice covers safe local synthetic drill surfaces only. It does not perform real battery-mode switching, physically disconnect external drives, prove platform-specific power/storage behavior, clear destructive ENOSPC/service-level fault drills, or clear Windows/macOS validation, signing, notarization, installer lifecycle, real benchmark, OCR/model licensing, or stable release readiness blockers. |
 | S170 | Product active import daemon kill/restart recovery complete locally | A focused daemon scheduler test first failed because restart drills could not lower stale-running recovery or retry-backoff thresholds, so a freshly killed running import task could not be recovered and reprocessed deterministically. After implementation, `resume-daemon run --work-imports` accepts `--stale-import-task-seconds <n>` and `--import-retry-backoff-seconds <n>` with production defaults unchanged at 15 minutes and 60 seconds. The regression starts a foreground import over 1,024 synthetic files, waits until the task is `Running`, kills the daemon, restarts with zero-second drill thresholds, proves one stale task recovered, one import processed, 1,024 searchable documents indexed, full-text search succeeds, and stdout/stderr omit data paths. Focused RED/GREEN, full S4 daemon scheduler tests, fmt, full local verification, and public repo guard passed locally. | This slice covers synthetic active-import kill/restart recovery only. It does not prove destructive service-level chaos, real external storage interruption, 100k/1M import recovery latency, cross-platform service lifecycle, installer validation, signing, notarization, OCR/model licensing, or stable release readiness. |
 | S171 | Product private local PDF/Word witness rerun complete locally | The explicit-root witness was rerun against the user-authorized local resume sample directory for PDF/Word import plus redacted search and field probes. A second bounded OCR witness used local `tesseract` and `pdftoppm` with document/page limits. Both runs completed locally, printed only redacted aggregate status, removed private temporary witness data, and did not emit source paths, filenames, raw text, private queries, diagnostics, or committed counts. | This slice is private local witness evidence only. It does not upload evidence, commit sample counts, prove full-library OCR completion, prove real-corpus quality/latency targets, clear platform installer/service validation, signing, notarization, OCR/model licensing, or stable release readiness. |
+| S172 | Product hosted Windows full-text staging-orphan test stability complete locally | PR #9 hosted Windows Platform CI failed in `published_snapshot_becomes_active_without_reading_staging_orphans` during the synthetic staging-orphan fixture write with Windows `os error 33`. Root cause: the test used direct `fs::write` immediately after publishing a snapshot, while the same test file already has a bounded retry helper for transient Windows file locks. After implementation, the fixture write uses `write_snapshot_test_file_with_retry`, preserving the test's behavior while tolerating transient setup locks. The hosted-failing exact test, full `index-fulltext`, fmt, diff check, public repo guard, and full local verification passed locally. | This slice covers hosted Windows synthetic test harness stability only. It does not change production full-text behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear large-corpus, installer/service, signing, notarization, OCR/model licensing, or stable release blockers. |
 
 ## Command Log
+
+### S172
+
+Debug target:
+
+- Investigate PR #9 hosted Windows Platform CI failure after S171.
+- Fix root cause, not the symptom, and keep the change limited to the failing
+  test harness path.
+
+Observed failure:
+
+- Hosted Windows `Test workspace` failed in
+  `published_snapshot_becomes_active_without_reading_staging_orphans`.
+- The failure was a direct synthetic fixture `fs::write` returning Windows
+  `os error 33` while preparing an orphan staging file after publishing a
+  snapshot.
+
+Root cause:
+
+- The test was bypassing the existing
+  `write_snapshot_test_file_with_retry` helper that already handles transient
+  Windows file-lock diagnostics for synthetic snapshot fixture writes.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --test s8_fulltext published_snapshot_becomes_active_without_reading_staging_orphans -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The hosted-failing exact test passed locally after the fixture write was moved
+  to the retry helper.
+- Full `index-fulltext`, formatting, diff check, public repo guard, and full
+  local verification passed.
+
+Scope note:
+
+- S172 is a synthetic hosted-Windows test harness stability fix only. It does
+  not change production full-text behavior or clear stable release blockers.
 
 ### S171
 
