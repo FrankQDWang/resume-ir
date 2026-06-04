@@ -4,10 +4,11 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    EntityType, ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanErrorKind,
-    ImportScanErrorOperation, ImportScanProfile, ImportTask, ImportTaskId, ImportTaskStatus,
-    MetaStore, UnixTimestamp,
+    EntityType, ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile,
+    ImportTask, ImportTaskId, ImportTaskStatus, MetaStore, UnixTimestamp,
 };
+#[cfg(unix)]
+use meta_store::{ImportScanErrorKind, ImportScanErrorOperation};
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 
@@ -236,7 +237,6 @@ fn witness_local_discovery_preset_uses_discovery_profile_without_path_leak() {
     remove_dir(&private_root);
 }
 
-#[cfg(unix)]
 #[test]
 fn witness_run_ocr_executes_local_command_without_output_or_path_leak() {
     let data_dir = temp_dir("witness-ocr-unused-data-dir");
@@ -1497,4 +1497,78 @@ fn write_fixture_executable(name: &str, body: &str) -> PathBuf {
     permissions.set_mode(0o700);
     fs::set_permissions(&path, permissions).unwrap();
     path
+}
+
+#[cfg(windows)]
+fn write_fixture_executable(name: &str, body: &str) -> PathBuf {
+    let directory = temp_dir("witness-ocr-command-bin");
+    let path = directory.join(format!("{name}.cmd"));
+    fs::write(&path, windows_fixture_command_body(body)).unwrap();
+    path
+}
+
+#[cfg(windows)]
+fn windows_fixture_command_body(body: &str) -> String {
+    if body.contains("WitnessOCRPartialSecret") {
+        let counter_file = body
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("counter_file=\"")
+                    .and_then(|value| value.strip_suffix('"'))
+            })
+            .expect("partial OCR fixture should define counter_file");
+        return format!(
+            concat!(
+                "@echo off\r\n",
+                "setlocal\r\n",
+                "set \"counter_file={}\"\r\n",
+                "set \"count=0\"\r\n",
+                "if exist \"%counter_file%\" set /p count=<\"%counter_file%\"\r\n",
+                "set /a count=count+1\r\n",
+                ">\"%counter_file%\" <nul set /p \"=%count%\"\r\n",
+                "if \"%count%\"==\"2\" (\r\n",
+                "  1>&2 echo fixture OCR failure without private data\r\n",
+                "  exit /b 17\r\n",
+                ")\r\n",
+                "echo resume-ir-ocr-v1\r\n",
+                "echo confidence=0.77\r\n",
+                "echo text:\r\n",
+                "echo WitnessOCRPartialSecret local OCR text\r\n",
+                "exit /b 0\r\n"
+            ),
+            counter_file
+        );
+    }
+
+    let mut script = String::from("@echo off\r\n");
+    for line in body.lines().map(str::trim) {
+        if line.is_empty() || line == "#!/bin/sh" {
+            continue;
+        }
+        let Some(literal) = line
+            .strip_prefix("printf '")
+            .and_then(|value| value.strip_suffix("'"))
+        else {
+            panic!("unsupported Windows OCR fixture shell line: {line}");
+        };
+        let literal = literal
+            .strip_suffix("\\n")
+            .expect("Windows OCR fixture printf lines should end with newline");
+        script.push_str("echo ");
+        script.push_str(&escape_batch_echo_literal(literal));
+        script.push_str("\r\n");
+    }
+    script.push_str("exit /b 0\r\n");
+    script
+}
+
+#[cfg(windows)]
+fn escape_batch_echo_literal(literal: &str) -> String {
+    literal
+        .replace('^', "^^")
+        .replace('&', "^&")
+        .replace('|', "^|")
+        .replace('<', "^<")
+        .replace('>', "^>")
 }
