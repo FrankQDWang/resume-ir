@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, and S116 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, and S117 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, and S110 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -139,9 +139,14 @@ obsolete preliminary files and checklists are not product scope.
   throughput proof, and Windows/macOS
   validation.
 - P5 packaging/platform: not production-ready. A local CLI service lifecycle
-  now writes, reports, removes, and dry-run starts/stops a macOS user
-  LaunchAgent plist without CLI path disclosure. Hosted macOS and Windows
-  workspace build/test checks now run for pull requests through Platform CI.
+  now writes, reports, removes, starts, stops, and reports runtime state for a
+  macOS user LaunchAgent without CLI path disclosure. A local-only macOS
+  LaunchAgent witness has installed a temporary daemon, observed `not_loaded`
+  before start, observed `running` after start, read daemon status through
+  authenticated IPC auto-discovery, stopped the daemon, observed `not_loaded`
+  after stop, uninstalled the LaunchAgent, and removed temporary local data.
+  Hosted macOS and Windows workspace build/test checks now run for pull
+  requests through Platform CI.
   Installer packaging, signing, notarization, Windows service/MSI, real upgrade/
   uninstall runs, hosted release workflow execution, and platform installer/
   service validation remain absent, not complete, or externally blocked by
@@ -158,8 +163,9 @@ obsolete preliminary files and checklists are not product scope.
   local model artifacts, local model-pack manifest validation, targeted fault
   tests, persistent vector snapshot writer-lock protection against stale
   concurrent writers, hosted-Windows full-text snapshot read-open retry,
-  local-only production runbooks, a runbook CI policy guard, a workflow policy
-  guard, and a synthetic OCR throughput benchmark/gate exist.
+  local-only macOS LaunchAgent start/stop witness evidence, local-only
+  production runbooks, a runbook CI policy guard, a workflow policy guard, and a
+  synthetic OCR throughput benchmark/gate exist.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, and labeled vector-quality benchmark gates; query, OCR, and
   vector smoke gates are wired into PR and nightly workflows. Synthetic runs
@@ -291,8 +297,80 @@ obsolete preliminary files and checklists are not product scope.
 | S114 | Product persistent vector ANN slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_uses_hnsw_ann_backend_after_reopen_and_keeps_model_scope --locked -- --exact` first failed because `VectorSearchBackend` and `VectorSnapshot::search_backend()` did not exist. The CLI diagnostics exact tests first failed because vector status still reported `available (vector snapshot)`. After implementation, focused index-vector and CLI diagnostics tests, fmt, diff, focused clippy, license policy, and `./scripts/ci/verify-local.sh` passed. | None for this HNSW ANN backend slice; it does not choose/license/package a production embedding model, prove real semantic quality, prove ANN recall/latency on 100k/1M corpora, add durable serialized HNSW graph artifacts separate from the existing vector snapshot, or validate hosted Windows/macOS for the new dependency. |
 | S115 | Product persistent vector writer-lock slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_merges_writes_from_stale_concurrent_openers --locked -- --exact` first failed because a second stale `PersistentVectorIndex` opener rewrote the snapshot from old in-memory state and dropped the first opener's vector. After implementation, `cargo test -p index-vector --locked`, focused clippy, fmt, diff, license policy, and `./scripts/ci/verify-local.sh` passed. | None for this vector writer-lock slice; it uses cooperative local file locking and does not prove network filesystem locking semantics, durable serialized ANN graph artifacts, real large-corpus vector performance, production embedding model selection, or hosted Windows/macOS validation for this specific change. |
 | S116 | Product Windows full-text read-open retry slice complete | Hosted Windows Platform CI for `f15ce1e` first failed in `published_snapshot_becomes_active_without_reading_staging_orphans` because immediate read-open of a just-inspected Tantivy snapshot returned `Access is denied. (os error 5)`. After implementation, the retry unit test, the hosted-failing full-text test, `cargo test -p index-fulltext --locked`, focused clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this hosted-Windows transient read-open retry; it does not prove installer/service behavior, real full-library scans, network filesystem semantics, or large-corpus full-text latency. |
+| S117 | Product macOS service runtime witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli tests::launchctl_status_success_with_running_state_reports_running --locked -- --exact` first failed because service runtime state parsing did not exist. After implementation, the launchctl parser tests, service lifecycle integration tests, focused clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and a local-only temporary macOS LaunchAgent install/start/status IPC/stop/uninstall witness passed. | None for this local macOS LaunchAgent runtime witness; it does not prove signed pkg/dmg packaging, notarization, upgrade/rollback behavior, Windows service/MSI behavior, or hosted release workflow execution. |
 
 ## Command Log
+
+### S117
+
+Design target:
+
+- Make `resume-cli service status` report runtime state, not only plist
+  presence, while preserving redacted CLI output.
+- Query `launchctl print` for installed macOS LaunchAgents and map results to
+  `running`, `loaded`, `not_loaded`, or `unknown` without printing launchctl
+  diagnostics, local paths, logs, or data directories.
+- Prove a local-only temporary LaunchAgent can install, start, serve status
+  through authenticated IPC auto-discovery, stop, and uninstall without reading
+  or persisting real resume data.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli tests::launchctl_status_success_with_running_state_reports_running --locked -- --exact
+```
+
+Output summary:
+
+- The test failed before implementation because
+  `service_runtime_state_from_launchctl_result` and `ServiceRuntimeState` did
+  not exist.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli launchctl_status --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s66_service_lifecycle --locked
+/Users/frankqdwang/.cargo/bin/cargo build -p resume-cli -p resume-daemon --locked
+target/debug/resume-cli --data-dir "$data_dir" service install --launch-agent-dir "$launch_dir" --label "$label" --daemon-binary "$PWD/target/debug/resume-daemon"
+target/debug/resume-cli --data-dir "$data_dir" service status --launch-agent-dir "$launch_dir" --label "$label"
+target/debug/resume-cli --data-dir "$data_dir" service start --launch-agent-dir "$launch_dir" --label "$label"
+target/debug/resume-cli --data-dir "$data_dir" status --ipc auto
+target/debug/resume-cli --data-dir "$data_dir" service stop --launch-agent-dir "$launch_dir" --label "$label"
+target/debug/resume-cli --data-dir "$data_dir" service uninstall --launch-agent-dir "$launch_dir" --label "$label"
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Launchctl status parser tests: exit 0; 4 tests passed for running, loaded,
+  not-loaded, and unknown states.
+- Service lifecycle integration tests: exit 0; install/status/uninstall and
+  dry-run start/stop output remained redacted.
+- Local macOS LaunchAgent witness: exit 0; install reported configured,
+  pre-start status reported `runtime: not_loaded`, start reported started,
+  post-start status reported `runtime: running`, `status --ipc auto` returned a
+  redacted empty-store daemon status, stop reported stopped, post-stop status
+  reported `runtime: not_loaded`, uninstall reported user data preserved, and
+  temporary local data was removed.
+- Focused clippy: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, and public
+  repository guard passed.
+
+Scope note:
+
+- S117 proves a local temporary macOS LaunchAgent start/stop/status path on the
+  current host only. It does not prove signed macOS pkg/dmg packaging,
+  notarization, upgrade/rollback, Windows service/MSI install/uninstall, or
+  release workflow execution.
 
 ### S116
 

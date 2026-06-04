@@ -474,13 +474,20 @@ fn service_uninstall_command(args: &[String]) -> Result<()> {
 fn service_status_command(args: &[String]) -> Result<()> {
     let common = parse_service_common_args(args, false)?;
     let plist_path = service_plist_path(&common);
-    if plist_path.exists() {
+    let installed = plist_path.exists();
+    if installed {
         println!("service: installed");
     } else {
         println!("service: not installed");
     }
+    let runtime_state = if installed {
+        query_service_runtime_state(&common.label)?
+    } else {
+        ServiceRuntimeState::NotLoaded
+    };
     println!("label: {}", common.label);
     println!("platform: macos-launch-agent");
+    println!("runtime: {}", runtime_state.label());
     println!("paths: <redacted>");
     Ok(())
 }
@@ -946,6 +953,67 @@ fn run_launchctl(args: &[&str]) -> Result<()> {
         Ok(())
     } else {
         Err(CliError::user("launchctl reported a service error"))
+    }
+}
+
+fn query_service_runtime_state(label: &str) -> Result<ServiceRuntimeState> {
+    let domain = current_user_launchctl_domain()?;
+    let target = format!("{domain}/{label}");
+    let output = Command::new("/bin/launchctl")
+        .args(["print", target.as_str()])
+        .output();
+
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Ok(service_runtime_state_from_launchctl_result(
+                output.status.success(),
+                &stdout,
+                &stderr,
+            ))
+        }
+        Err(_) => Ok(ServiceRuntimeState::Unknown),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServiceRuntimeState {
+    Running,
+    Loaded,
+    NotLoaded,
+    Unknown,
+}
+
+impl ServiceRuntimeState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Loaded => "loaded",
+            Self::NotLoaded => "not_loaded",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+fn service_runtime_state_from_launchctl_result(
+    success: bool,
+    stdout: &str,
+    stderr: &str,
+) -> ServiceRuntimeState {
+    if success {
+        if stdout
+            .lines()
+            .any(|line| line.trim().eq_ignore_ascii_case("state = running"))
+        {
+            ServiceRuntimeState::Running
+        } else {
+            ServiceRuntimeState::Loaded
+        }
+    } else if stderr.contains("Could not find service") || stderr.contains("No such process") {
+        ServiceRuntimeState::NotLoaded
+    } else {
+        ServiceRuntimeState::Unknown
     }
 }
 
@@ -7272,6 +7340,54 @@ impl fmt::Display for CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launchctl_status_success_with_running_state_reports_running() {
+        let status = service_runtime_state_from_launchctl_result(
+            true,
+            "service = com.resume-ir.daemon\nstate = running\npid = 123\n",
+            "",
+        );
+
+        assert_eq!(status, ServiceRuntimeState::Running);
+        assert_eq!(status.label(), "running");
+    }
+
+    #[test]
+    fn launchctl_status_success_without_running_state_reports_loaded() {
+        let status = service_runtime_state_from_launchctl_result(
+            true,
+            "service = com.resume-ir.daemon\nstate = waiting\n",
+            "",
+        );
+
+        assert_eq!(status, ServiceRuntimeState::Loaded);
+        assert_eq!(status.label(), "loaded");
+    }
+
+    #[test]
+    fn launchctl_status_missing_service_reports_not_loaded_without_path_leak() {
+        let status = service_runtime_state_from_launchctl_result(
+            false,
+            "",
+            "Could not find service \"com.resume-ir.daemon\" in domain gui/501\n",
+        );
+
+        assert_eq!(status, ServiceRuntimeState::NotLoaded);
+        assert_eq!(status.label(), "not_loaded");
+    }
+
+    #[test]
+    fn launchctl_status_unexpected_error_reports_unknown_without_diagnostics() {
+        let status = service_runtime_state_from_launchctl_result(
+            false,
+            "",
+            "Input/output error while reading /Users/private/Library/LaunchAgents/service.plist\n",
+        );
+
+        assert_eq!(status, ServiceRuntimeState::Unknown);
+        assert_eq!(status.label(), "unknown");
+    }
 
     #[test]
     fn embed_worker_debug_output_redacts_candidate_text_and_command_path() {
