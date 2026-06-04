@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, and S134 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, and S135 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -182,9 +182,9 @@ obsolete preliminary files and checklists are not product scope.
   proved the Windows MSI dry-run and artifact upload path. The same later run
   exposed a transient hosted macOS `hdiutil verify` resource-unavailable race
   immediately after DMG creation, so the macOS DMG verification path now uses a
-  bounded retry helper; the full hosted Release workflow still must rerun after
-  push before the combined macOS/Windows/manifest dry-run can be counted as
-  final hosted evidence for this branch tip.
+  bounded retry helper. The full hosted Release workflow has now executed
+  successfully with release manifest/SBOM, macOS package dry-run, and Windows
+  MSI dry-run artifacts uploaded as non-expired workflow artifacts.
   Signing, notarization, Windows service validation, real upgrade/uninstall runs,
   GitHub Release upload, and platform installer/service
   validation remain absent, not complete, or externally blocked by platform
@@ -355,8 +355,60 @@ obsolete preliminary files and checklists are not product scope.
 | S132 | Product hosted Windows daemon IPC wait-budget fix complete locally | Hosted Windows Platform CI for commit `cd26a04` failed in `daemon_serves_status_while_import_worker_processes_late_queued_task` because the late-queued import worker test did not observe `searchable_documents: 2` inside the previous short polling budget. The fix keeps the same daemon behavior and assertions, but raises this test's max request budget to match the adjacent command-IPC import-worker test. Focused local exact, full `s20_ipc`, diff, public guard, and `./scripts/ci/verify-local.sh` passed. | Hosted PR checks still must rerun after push; this is a CI stability/test-budget fix only and does not prove Windows MSI creation, service lifecycle, installer lifecycle, signing, GitHub Release upload, or production release readiness. |
 | S133 | Product WiX package-tool pin slice complete locally | Hosted Release run `26944149485` passed the Ubuntu release dry-run and macOS package dry-run jobs, but the Windows MSI job failed at `Create unsigned Windows MSI dry run` because WiX `7.0.0` required OSMF EULA acceptance. The fix avoids accepting legal/fee terms in CI by pinning the Release workflow and runbook to WiX `6.0.2` and updating the workflow policy guard to reject a missing version pin. Focused workflow, Windows package, runbook, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` checks passed locally. | Hosted Release must rerun after push to prove Windows MSI creation; this does not sign artifacts, create/upload a GitHub Release, validate installer lifecycle, validate Windows service lifecycle, accept WiX v7 terms, or complete production release readiness. |
 | S134 | Product macOS DMG verify retry slice complete locally | Hosted Release run `26944923353` proved the WiX `6.0.2` fix by passing the Windows package dry-run job, including MSI creation, boundary check, artifact upload, and release gate. The same run failed the macOS package dry-run boundary step because `hdiutil verify` immediately after DMG creation reported `Resource temporarily unavailable`. The fix adds a shared bounded `scripts/release/verify-macos-dmg.sh` helper and wires the Release workflow plus local macOS package guard to use it without skipping checksum verification. Focused workflow, macOS package, shell syntax, workflow YAML parse, diff, public guard, and `./scripts/ci/verify-local.sh` checks passed locally. | Hosted Release must rerun after push to prove the combined release dry-run, macOS package dry-run, and Windows package dry-run all pass on the same branch tip; this does not sign artifacts, create/upload a GitHub Release, validate installer lifecycle, validate Windows service lifecycle, or complete production release readiness. |
+| S135 | Product hosted cross-platform Release dry-run evidence slice complete | PR #9 checks for commit `13f35a7` passed: dependency tree, license policy, public repository guard, runbook policy, Rust workspace, hosted macOS Platform CI, and hosted Windows Platform CI. Release workflow run `26945622774` executed successfully on the same commit and passed all three jobs: `release dry run`, `macOS package dry run`, and `Windows package dry run`. The run produced non-expired `release-dry-run`, `macos-package-dry-run`, and `windows-package-dry-run` artifacts without downloading or exposing artifact contents. | None for this hosted dry-run evidence slice; it still does not sign or notarize artifacts, create/upload a GitHub Release, validate install/upgrade/uninstall/rollback behavior, prove Gatekeeper behavior, install/register/start/stop a Windows service, or complete production release readiness. |
 
 ## Command Log
+
+### S135
+
+Design target:
+
+- Prove the latest Release workflow wiring on hosted GitHub runners after the
+  WiX pin and macOS DMG retry fixes were pushed.
+- Confirm the Ubuntu manifest/SBOM dry-run, hosted macOS pkg/dmg dry-run, and
+  hosted Windows MSI dry-run all complete in one workflow run.
+- Record only public workflow metadata and artifact names/sizes, without
+  downloading artifacts or exposing local/private runtime data.
+
+Implementation checks:
+
+```bash
+gh pr checks 9 --watch --interval 10
+gh workflow run Release --ref codex/fault-injection-diagnostics -f version=v0.0.0
+gh run watch 26945622774 --exit-status --interval 10
+gh run view 26945622774 --json status,conclusion,workflowName,event,headBranch,headSha,url,jobs
+gh api repos/FrankQDWang/resume-ir/actions/runs/26945622774/artifacts --jq '.artifacts[] | {name: .name, expired: .expired, size_in_bytes: .size_in_bytes, created_at: .created_at, expires_at: .expires_at}'
+```
+
+Output summary:
+
+- PR #9 checks passed on commit `13f35a7`: dependency tree, license policy,
+  public repository guard, runbook policy, Rust workspace, hosted macOS Platform
+  CI, and hosted Windows Platform CI. Sourcery review remained skipped.
+- Release workflow run `26945622774`: conclusion `success`, event
+  `workflow_dispatch`, branch `codex/fault-injection-diagnostics`, head SHA
+  `13f35a70d525486dc3ee5a72f21024a66b18718e`.
+- `release dry run` job `79497737161`: exit 0; completed in 1m26s; workspace
+  verification, release binary build, artifact manifest creation, SBOM creation,
+  public artifact boundary check, artifact upload, and release gate all passed.
+- `macOS package dry run` job `79497737062`: exit 0; completed in 2m42s;
+  release binary build, unsigned macOS package dry-run creation, DMG boundary
+  verification through the retry helper, artifact upload, and release gate all
+  passed.
+- `Windows package dry run` job `79497737003`: exit 0; completed in 5m24s;
+  WiX `6.0.2` installation, release binary build, unsigned MSI dry-run
+  creation, Windows package boundary check, artifact upload, and release gate
+  all passed.
+- Artifact metadata listed three non-expired artifacts: `release-dry-run`,
+  `macos-package-dry-run`, and `windows-package-dry-run`.
+
+Scope note:
+
+- S135 proves hosted dry-run execution and workflow artifact publication only.
+  It does not sign or notarize artifacts, create/upload a GitHub Release,
+  validate install/upgrade/uninstall/rollback behavior, prove Gatekeeper
+  behavior, install/register/start/stop a Windows service, or complete
+  production release readiness.
 
 ### S134
 
