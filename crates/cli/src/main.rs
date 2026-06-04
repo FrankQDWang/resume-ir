@@ -178,8 +178,38 @@ fn run() -> Result<()> {
 }
 
 fn release_readiness_command(args: &[String]) -> Result<()> {
-    if !args.is_empty() {
-        return Err(CliError::usage(release_readiness_usage()));
+    let json = match args {
+        [] => false,
+        [arg] if arg == "--json" => true,
+        _ => {
+            return Err(CliError::usage(release_readiness_usage()));
+        }
+    };
+
+    if json {
+        let blockers = RELEASE_READINESS_BLOCKERS
+            .iter()
+            .map(|(label, detail)| {
+                serde_json::json!({
+                    "label": label,
+                    "status": "blocked",
+                    "detail": detail,
+                })
+            })
+            .collect::<Vec<_>>();
+        let report = serde_json::json!({
+            "schema_version": "release-readiness.v1",
+            "stable_release": "blocked",
+            "local_dry_run_artifacts": "evidence_only",
+            "blockers": blockers,
+            "next_gate": "keep release blocked until every item has current local evidence",
+        });
+        let report = serde_json::to_string_pretty(&report)
+            .map_err(|_| CliError::user("release readiness report unavailable"))?;
+        println!("{report}");
+        return Err(CliError::user(
+            "release readiness blocked: stable release criteria are not met",
+        ));
     }
 
     println!("resume-ir release readiness");
@@ -197,7 +227,7 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness"
+    "usage: resume-cli release-readiness [--json]"
 }
 
 fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {

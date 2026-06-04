@@ -30,6 +30,58 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(!stdout.contains("PRIVATE"));
 }
 
+#[test]
+fn release_readiness_json_reports_blockers_without_local_path_leaks() {
+    let data_dir = temp_path("release-readiness-json-private-data");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+        ])
+        .output()
+        .expect("run release readiness json gate");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("release readiness json report");
+
+    assert_eq!(report["schema_version"], "release-readiness.v1");
+    assert_eq!(report["stable_release"], "blocked");
+    assert_eq!(report["local_dry_run_artifacts"], "evidence_only");
+    assert_eq!(
+        report["next_gate"],
+        "keep release blocked until every item has current local evidence"
+    );
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    assert_eq!(blockers.len(), 8);
+    let labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"signing certificates"));
+    assert!(labels.contains(&"macOS notarization"));
+    assert!(labels.contains(&"Windows installer lifecycle"));
+    assert!(labels.contains(&"macOS installer lifecycle"));
+    assert!(labels.contains(&"100k/1M real-corpus benchmarks"));
+    assert!(labels.contains(&"OCR engine license/distribution"));
+    assert!(labels.contains(&"embedding model license/distribution"));
+    assert!(labels.contains(&"cross-platform release validation"));
+    for blocker in blockers {
+        assert_eq!(blocker["status"], "blocked");
+        assert!(blocker["detail"].as_str().expect("blocker detail").len() > 12);
+    }
+
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+}
+
 fn temp_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

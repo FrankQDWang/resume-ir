@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, and S161 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, and S162 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -446,8 +446,58 @@ obsolete preliminary files and checklists are not product scope.
 | S159 | Product hosted Ubuntu OCR process-test harness stability complete locally | The pushed S158 run cleared hosted macOS and Windows Platform CI, but hosted Ubuntu `rust workspace` failed in `local_command_worker_times_out_and_does_not_report_late_output`: the slow synthetic OCR command occasionally returned `EngineFailed` instead of `Timeout`. Local focused and full `s12_ocr_client` baseline passed, matching a CI-only process-test concurrency flake rather than a new product branch. After implementation, the Unix OCR/PDF command tests in `s12_ocr_client` take a local process-test mutex so timeout/cancel/process-group tests do not run concurrently inside the same test binary. Focused timeout test, full `s12_ocr_client`, fmt, focused clippy, diff check, and full local verification passed. | This slice covers hosted Ubuntu OCR command test harness stability only. It does not change production OCR/runtime behavior, prove hosted Rust Workspace CI has passed until the pushed branch check completes, or clear large-corpus, model, installer, signing, notarization, or release blockers. |
 | S160 | Product hosted Windows import/search test harness stability complete locally | The pushed S159 run made hosted Ubuntu `rust workspace` and macOS Platform CI pass, but hosted Windows Platform CI failed in `local_discovery_root_preset_allows_explicit_file_budget_override_without_path_leak` with the same redacted `resume-cli: search index update failed` seen in prior Windows full-text/import flakes. After implementation, all `s9_import_search` tests take a Windows-only mutex so their CLI import/search subprocesses do not rebuild encrypted full-text snapshots concurrently inside that test binary; macOS/Linux test concurrency is unchanged. Focused `s9_import_search`, fmt, focused clippy, diff check, and full local verification passed. | This slice covers hosted Windows `s9_import_search` test harness stability only. It does not change production import/search behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear large-corpus, model, installer, signing, notarization, or release blockers. |
 | S161 | Product release-readiness blocker gate complete locally | A focused CLI test first failed because `resume-cli` had no `release-readiness` command. After implementation, `resume-cli release-readiness` prints `stable release: blocked`, enumerates signing, notarization, platform installer lifecycle, real 100k/1M benchmark, OCR/model license/distribution, and cross-platform validation blockers without local path leaks, and exits nonzero so dry-run artifacts or green checks cannot be mistaken for stable release readiness. Focused release-readiness test, fmt, focused clippy, diff check, full local verification, and public repo guard passed. | This slice adds a fail-closed release-readiness blocker gate only. It does not clear signing certificates, notarization, real-corpus benchmark, licensed OCR/model distribution, platform installer/service lifecycle, or cross-platform validation blockers, so the complete production goal remains not complete. |
+| S162 | Product machine-readable release-readiness evidence complete locally | A focused CLI test first failed because `resume-cli release-readiness --json` produced no JSON report. After implementation, `release-readiness --json` prints a stable `release-readiness.v1` JSON schema with `stable_release: "blocked"`, dry-run evidence status, eight blocked release criteria, details for each blocker, and the next gate, then exits nonzero without printing local data-dir paths. The focused release-readiness suite, fmt, focused clippy, diff check, full local verification, and public repo guard passed. | This slice makes the existing fail-closed release-readiness gate automation-readable only. It does not clear signing certificates, notarization, real-corpus benchmark, licensed OCR/model distribution, platform installer/service lifecycle, or cross-platform validation blockers, so the complete production goal remains not complete. |
 
 ## Command Log
+
+### S162
+
+Design target:
+
+- Make the fail-closed release-readiness gate machine-readable for CI, release
+  automation, and future local evidence collectors.
+- Preserve the text mode and nonzero exit behavior; JSON mode must still mean
+  stable release is blocked, not complete.
+- Keep the output aggregate and redacted: no local data-dir paths, resume text,
+  diagnostics, tokens, model cache paths, or private corpus details.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+```
+
+Output summary:
+
+- The existing text release-readiness test still passed.
+- The new JSON release-readiness test failed because stdout was empty for
+  `release-readiness --json`, so the JSON parser hit EOF.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --test s161_release_readiness --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused `s161_release_readiness` passed with 2 tests after implementation.
+- Fmt, focused clippy, diff check, full local verification, and public-repo
+  guard passed. Full local verification included workspace tests/doc-tests,
+  license/runbook/workflow checks, release artifact/SBOM checks, macOS package
+  check, and the public repository guard; Windows package check was skipped on
+  non-Windows by the guard script.
+
+Scope note:
+
+- S162 adds machine-readable blocked release evidence only. It does not clear
+  signing/notarization, real 100k/1M private benchmark, licensed OCR/model
+  distribution, platform installer/service lifecycle, or cross-platform release
+  validation blockers.
 
 ### S161
 
