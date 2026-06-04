@@ -8,8 +8,32 @@ databases, indexes, or local data directories. Synthetic fixtures are required
 for public reproduction.
 
 The product does not bundle a licensed OCR engine or embedding model yet. Those
-remain BLOCKED until model and engine licenses are reviewed and distribution is
-approved.
+remain BLOCKED until OCR runtime, model, and language-pack licenses are reviewed
+and distribution is approved.
+
+## OCR Runtime Manifest Validation
+
+Canonical local command form:
+`resume-cli ocr validate-manifest --manifest <path>`.
+
+Validate a reviewed local OCR runtime pack before wiring it into OCR workers:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr validate-manifest \
+  --manifest <local-ocr-runtime-manifest.json>
+```
+
+The manifest schema is `resume-ir.ocr-runtime-manifest.v1` with a
+`runtime_pack_id` and one or more `components`. Each component entry must
+include `id`, `kind`, `engine`, `version`, `artifact.path`, `artifact.sha256`,
+and a `license` object with `id` and `reviewed: true`. Supported component
+kinds are `ocr-engine`, `pdf-renderer`, and `ocr-language-pack`. Optional
+`languages` entries must include `id`, `artifact.path`, `artifact.sha256`, and
+a reviewed license.
+
+The validator reads only local files, verifies artifact checksums, and blocks
+unreviewed licenses. It must not print local paths, runtime bytes, language pack
+bytes, or complete digests.
 
 ## Model Manifest Validation
 
@@ -111,9 +135,12 @@ command paths, OCR text, or vector values.
 
 ## Known Blockers
 
-- real PDF page rendering for OCR is not complete
-- multi-page scanned PDF OCR is not complete
-- OCR bounding boxes are not persisted
+- licensed OCR runtime and language-pack distribution is BLOCKED until reviewed
+  runtime manifests are available and approved
 - licensed model distribution is BLOCKED
+- full non-English OCR quality validation is not complete
+- full-library scanned resume OCR proof beyond bounded witness budgets is not
+  complete
+- real large-corpus OCR throughput proof is not complete
 - Windows command process-tree validation is not complete
 - macOS and Windows service-level worker validation is not complete

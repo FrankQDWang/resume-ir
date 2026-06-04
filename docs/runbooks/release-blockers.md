@@ -174,6 +174,18 @@ This command is governance evidence only. A valid manifest does not by itself
 complete licensed model selection, model quality evaluation, distribution
 approval, or production performance proof.
 
+Validate any proposed local OCR runtime pack before worker configuration:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr validate-manifest \
+  --manifest <local-ocr-runtime-manifest.json>
+```
+
+This command is governance evidence only. A valid OCR runtime manifest does not
+by itself complete OCR engine distribution approval, language-pack distribution
+approval, non-English OCR quality validation, platform installer validation, or
+production OCR throughput proof.
+
 ## Stable Release Exit Criteria
 
 Stable release requires current evidence for:
@@ -187,6 +199,7 @@ Stable release requires current evidence for:
   and notarization
 - 100k and 1M benchmark runs on representative hardware
 - OCR and embedding model license review
+- OCR runtime manifest checksum validation
 - model pack manifest checksum validation
 
 If any item is missing, keep the release blocked and update `PROGRESS.md` with

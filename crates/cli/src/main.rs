@@ -75,6 +75,7 @@ const OCR_LANGUAGE_REMEDIATION: &str =
 const METADATA_ENCRYPTION_REMEDIATION: &str =
     "enable SQLCipher metadata encryption before production release";
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
+const OCR_RUNTIME_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.ocr-runtime-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
 const WITNESS_DEFAULT_MAX_FILES: usize = 10_000;
 const WITNESS_CLEANUP_RETRY_ATTEMPTS: usize = 6;
@@ -97,7 +98,7 @@ const WITNESS_FIELD_LABELS: &[&str] = &[
     "years_experience",
     "location",
 ];
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     (
         "signing certificates",
@@ -125,7 +126,7 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "OCR engine license/distribution",
-        "reviewed OCR engine and language-pack distribution evidence is not complete",
+        "reviewed OCR runtime manifest, engine distribution, and language-pack distribution evidence is not complete",
     ),
     (
         "embedding model license/distribution",
@@ -174,6 +175,7 @@ fn run() -> Result<()> {
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
         "embed-worker" => embed_worker_command(&data_dir, &args[1..]),
         "model" => model_command(&args[1..]),
+        "ocr" => ocr_command(&args[1..]),
         "privacy" => privacy_command(&data_dir, &args[1..]),
         "service" => service_command(&data_dir, &args[1..]),
         "fault-simulate" => fault_simulate_command(&data_dir, &args[1..]),
@@ -262,6 +264,17 @@ fn model_command(args: &[String]) -> Result<()> {
     match action {
         "validate-manifest" => model_validate_manifest_command(&args[1..]),
         _ => Err(CliError::usage(model_usage())),
+    }
+}
+
+fn ocr_command(args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(ocr_usage()));
+    };
+
+    match action {
+        "validate-manifest" => ocr_validate_manifest_command(&args[1..]),
+        _ => Err(CliError::usage(ocr_usage())),
     }
 }
 
@@ -612,6 +625,294 @@ fn valid_model_manifest_identifier(value: &str) -> bool {
 
 fn model_usage() -> &'static str {
     "usage: resume-cli model validate-manifest --manifest <path>"
+}
+
+fn ocr_validate_manifest_command(args: &[String]) -> Result<()> {
+    let manifest_path = parse_ocr_validate_manifest_args(args)?;
+    let validation = validate_ocr_runtime_manifest(&manifest_path)?;
+
+    println!("ocr runtime manifest: valid");
+    println!("runtime pack: {}", validation.runtime_pack_id);
+    println!("components: {}", validation.components.len());
+    for component in &validation.components {
+        println!("component id: {}", component.component_id);
+        println!("kind: {}", component.kind);
+        println!("engine: {}", component.engine);
+        println!("version: {}", component.version);
+        println!("license reviewed: yes");
+        println!("checksum match: yes");
+        println!("sha256 prefix: {}", checksum_prefix(&component.sha256));
+    }
+    println!("languages: {}", validation.languages.len());
+    for language in &validation.languages {
+        println!("language id: {}", language.language_id);
+        println!("license reviewed: yes");
+        println!("checksum match: yes");
+        println!("sha256 prefix: {}", checksum_prefix(&language.sha256));
+    }
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn parse_ocr_validate_manifest_args(args: &[String]) -> Result<PathBuf> {
+    let mut manifest = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--manifest" => {
+                if manifest.is_some() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(ocr_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                manifest = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(ocr_usage())),
+        }
+    }
+
+    manifest.ok_or_else(|| CliError::usage(ocr_usage()))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OcrRuntimeManifestValidation {
+    runtime_pack_id: String,
+    components: Vec<OcrRuntimeComponentValidation>,
+    languages: Vec<OcrRuntimeLanguageValidation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OcrRuntimeComponentValidation {
+    component_id: String,
+    kind: String,
+    engine: String,
+    version: String,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OcrRuntimeLanguageValidation {
+    language_id: String,
+    sha256: String,
+}
+
+fn validate_ocr_runtime_manifest(manifest_path: &Path) -> Result<OcrRuntimeManifestValidation> {
+    let manifest_text = fs::read_to_string(manifest_path)
+        .map_err(|_| CliError::user("ocr runtime manifest blocked: manifest is unavailable"))?;
+    let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
+        .map_err(|_| CliError::user("ocr runtime manifest blocked: invalid manifest"))?;
+
+    let schema_version = ocr_manifest_string(&manifest_json, "schema_version")?;
+    if schema_version != OCR_RUNTIME_MANIFEST_SCHEMA_VERSION {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: unsupported schema version",
+        ));
+    }
+
+    let runtime_pack_id = ocr_manifest_string(&manifest_json, "runtime_pack_id")?;
+    if !valid_model_manifest_identifier(runtime_pack_id) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid runtime pack id",
+        ));
+    }
+
+    let components = ocr_manifest_array(&manifest_json, "components")?
+        .iter()
+        .map(|component| validate_ocr_runtime_component(manifest_path, component))
+        .collect::<Result<Vec<_>>>()?;
+    let languages = match manifest_json.get("languages") {
+        Some(value) => ocr_manifest_array_value(value)?
+            .iter()
+            .map(|language| validate_ocr_runtime_language(manifest_path, language))
+            .collect::<Result<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+
+    Ok(OcrRuntimeManifestValidation {
+        runtime_pack_id: runtime_pack_id.to_string(),
+        components,
+        languages,
+    })
+}
+
+fn validate_ocr_runtime_component(
+    manifest_path: &Path,
+    component: &serde_json::Value,
+) -> Result<OcrRuntimeComponentValidation> {
+    if !component.is_object() {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid manifest",
+        ));
+    }
+
+    let component_id = ocr_manifest_string(component, "id")?;
+    if !valid_model_manifest_identifier(component_id) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid component id",
+        ));
+    }
+
+    let kind = ocr_manifest_string(component, "kind")?;
+    if !matches!(kind, "ocr-engine" | "pdf-renderer" | "ocr-language-pack") {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: unsupported component kind",
+        ));
+    }
+    let engine = ocr_manifest_string(component, "engine")?;
+    if !valid_model_manifest_identifier(engine) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid engine id",
+        ));
+    }
+    let version = ocr_manifest_string(component, "version")?;
+    if !valid_model_manifest_identifier(version) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid version",
+        ));
+    }
+    let sha256 = validate_ocr_runtime_artifact(manifest_path, component)?;
+    validate_ocr_manifest_license(component)?;
+
+    Ok(OcrRuntimeComponentValidation {
+        component_id: component_id.to_string(),
+        kind: kind.to_string(),
+        engine: engine.to_string(),
+        version: version.to_string(),
+        sha256,
+    })
+}
+
+fn validate_ocr_runtime_language(
+    manifest_path: &Path,
+    language: &serde_json::Value,
+) -> Result<OcrRuntimeLanguageValidation> {
+    if !language.is_object() {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid manifest",
+        ));
+    }
+    let language_id = ocr_manifest_string(language, "id")?;
+    if !valid_model_manifest_identifier(language_id) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid language id",
+        ));
+    }
+    let sha256 = validate_ocr_runtime_artifact(manifest_path, language)?;
+    validate_ocr_manifest_license(language)?;
+
+    Ok(OcrRuntimeLanguageValidation {
+        language_id: language_id.to_string(),
+        sha256,
+    })
+}
+
+fn validate_ocr_runtime_artifact(
+    manifest_path: &Path,
+    value: &serde_json::Value,
+) -> Result<String> {
+    let artifact = ocr_manifest_object(value, "artifact")?;
+    let artifact_path = ocr_manifest_string(artifact, "path")?;
+    if artifact_path.trim().is_empty()
+        || artifact_path.contains('\n')
+        || artifact_path.contains('\r')
+    {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid artifact",
+        ));
+    }
+    let expected_sha256 = ocr_manifest_sha256(ocr_manifest_string(artifact, "sha256")?)?;
+    let artifact_path = model_manifest_artifact_path(manifest_path, artifact_path);
+    let actual_sha256 = file_sha256_hex(&artifact_path)
+        .map_err(|_| CliError::user("ocr runtime manifest blocked: artifact is unavailable"))?;
+    if actual_sha256 != expected_sha256 {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: checksum mismatch",
+        ));
+    }
+
+    Ok(actual_sha256)
+}
+
+fn validate_ocr_manifest_license(value: &serde_json::Value) -> Result<()> {
+    let license = ocr_manifest_object(value, "license")?;
+    let license_id = ocr_manifest_string(license, "id")?;
+    if !valid_model_manifest_identifier(license_id) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid license",
+        ));
+    }
+    let reviewed = license
+        .get("reviewed")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| CliError::user("ocr runtime manifest blocked: invalid license"))?;
+    if !reviewed {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: license has not been reviewed",
+        ));
+    }
+
+    Ok(())
+}
+
+fn ocr_manifest_object<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a serde_json::Value> {
+    value
+        .get(key)
+        .filter(|field| field.is_object())
+        .ok_or_else(|| CliError::user("ocr runtime manifest blocked: invalid manifest"))
+}
+
+fn ocr_manifest_array<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a [serde_json::Value]> {
+    let Some(array) = value.get(key) else {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid manifest",
+        ));
+    };
+    ocr_manifest_array_value(array)
+}
+
+fn ocr_manifest_array_value(value: &serde_json::Value) -> Result<&[serde_json::Value]> {
+    let array = value
+        .as_array()
+        .ok_or_else(|| CliError::user("ocr runtime manifest blocked: invalid manifest"))?;
+    if array.is_empty() {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid manifest",
+        ));
+    }
+    Ok(array)
+}
+
+fn ocr_manifest_string<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|field| !field.trim().is_empty())
+        .ok_or_else(|| CliError::user("ocr runtime manifest blocked: invalid manifest"))
+}
+
+fn ocr_manifest_sha256(value: &str) -> Result<String> {
+    let value = value.to_ascii_lowercase();
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid checksum",
+        ));
+    }
+    Ok(value)
+}
+
+fn ocr_usage() -> &'static str {
+    "usage: resume-cli ocr validate-manifest --manifest <path>"
 }
 
 fn service_command(data_dir: &Path, args: &[String]) -> Result<()> {
