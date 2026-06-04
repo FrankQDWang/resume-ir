@@ -4958,7 +4958,7 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
     deleted_content_hashes.retain(|content_hash| !live_content_hashes.contains(content_hash));
 
     let vector_documents_purged = purge_vector_documents(data_dir, &deleted_doc_id_set)?;
-    let ingest_jobs_purged = store
+    let ingest_job_purge = store
         .purge_ingest_jobs_for_documents(&deleted_document_ids)
         .map_err(CliError::store)?;
     let ocr_cache_hashes = deleted_content_hashes.into_iter().collect::<Vec<_>>();
@@ -4995,7 +4995,11 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
         snapshot_purge.removed_staging()
     );
     println!("vector documents purged: {vector_documents_purged}");
-    println!("ingest jobs purged: {ingest_jobs_purged}");
+    println!("ingest jobs purged: {}", ingest_job_purge.jobs());
+    println!(
+        "embedding job specs purged: {}",
+        ingest_job_purge.embedding_specs()
+    );
     println!("ocr cache entries purged: {}", ocr_cache_purge.entries());
     println!("ocr word boxes purged: {}", ocr_cache_purge.word_boxes());
     println!("metadata vacuum: yes");

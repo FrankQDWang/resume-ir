@@ -1039,25 +1039,52 @@ impl MetaStore {
         Ok(deleted)
     }
 
-    pub fn purge_ingest_jobs_for_documents(&self, document_ids: &[DocumentId]) -> Result<usize> {
+    pub fn purge_ingest_jobs_for_documents(
+        &self,
+        document_ids: &[DocumentId],
+    ) -> Result<IngestJobPurge> {
         if document_ids.is_empty() {
-            return Ok(0);
+            return Ok(IngestJobPurge::empty());
         }
 
         let placeholders = (0..document_ids.len())
             .map(|index| format!("?{}", index + 1))
             .collect::<Vec<_>>()
             .join(", ");
+        let connection = self.connection.borrow();
+        let embedding_specs = {
+            let count_sql = format!(
+                "\
+                SELECT COUNT(*)
+                FROM embedding_job_spec AS spec
+                JOIN ingest_job AS job ON job.id = spec.ingest_job_id
+                WHERE job.document_id IN ({placeholders})"
+            );
+            let count_params = document_ids
+                .iter()
+                .map(|document_id| Value::Text(document_id.as_str().to_string()))
+                .collect::<Vec<_>>();
+            let count = connection
+                .query_row(&count_sql, params_from_iter(count_params), |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(MetaStoreError::storage)?;
+            i64_to_usize(count, "embedding_job_spec.count")?
+        };
         let delete_sql = format!("DELETE FROM ingest_job WHERE document_id IN ({placeholders})");
         let delete_params = document_ids
             .iter()
             .map(|document_id| Value::Text(document_id.as_str().to_string()))
             .collect::<Vec<_>>();
-        let connection = self.connection.borrow();
 
-        connection
+        let jobs = connection
             .execute(&delete_sql, params_from_iter(delete_params))
-            .map_err(MetaStoreError::storage)
+            .map_err(MetaStoreError::storage)?;
+
+        Ok(IngestJobPurge {
+            jobs,
+            embedding_specs,
+        })
     }
 
     pub fn purge_ocr_page_cache_by_content_hashes(
@@ -3448,6 +3475,29 @@ pub enum OcrPageCacheStatus {
     Succeeded,
     FailedRetryable,
     FailedPermanent,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IngestJobPurge {
+    jobs: usize,
+    embedding_specs: usize,
+}
+
+impl IngestJobPurge {
+    fn empty() -> Self {
+        Self {
+            jobs: 0,
+            embedding_specs: 0,
+        }
+    }
+
+    pub fn jobs(self) -> usize {
+        self.jobs
+    }
+
+    pub fn embedding_specs(self) -> usize {
+        self.embedding_specs
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

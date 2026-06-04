@@ -320,13 +320,19 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     assert_eq!(vector_index.snapshot().unwrap().vector_count(), 2);
 
     let deleted_document_id = DocumentId::from_str(&deleted_doc_id).unwrap();
-    let (ocr_cache_key, ocr_job_id) = {
+    let (ocr_cache_key, ocr_job_id, embedding_job_id) = {
         let store = MetaStore::open_data_dir(&data_dir).unwrap();
         store.run_migrations().unwrap();
         let deleted_document = store
             .document_by_id(&deleted_document_id)
             .unwrap()
             .expect("deleted candidate document before tombstone");
+        let deleted_version = store
+            .resume_versions_for_document(&deleted_document.id)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("deleted candidate version before tombstone");
         let content_hash = deleted_document.content_hash.clone().expect("content hash");
         let ocr_cache_key = OcrPageCacheKey::new(content_hash, 1, 300, "eng", "balanced").unwrap();
         let ocr_cache_entry = OcrPageCacheEntry::succeeded_with_word_boxes(
@@ -348,7 +354,17 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
             )
             .unwrap()
             .job;
-        (ocr_cache_key, ocr_job.id)
+        let embedding_job = store
+            .enqueue_embedding_job_for_resume_version(
+                &deleted_document.id,
+                &deleted_version.id,
+                "fixture-purge-model",
+                4,
+                UnixTimestamp::from_unix_seconds(1_800_014_002),
+            )
+            .unwrap()
+            .job;
+        (ocr_cache_key, ocr_job.id, embedding_job.id)
     };
 
     let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -382,7 +398,8 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     assert!(stdout.contains("purged documents: 1"));
     assert!(stdout.contains("index rebuilt: true"));
     assert!(stdout.contains("vector documents purged: 1"));
-    assert!(stdout.contains("ingest jobs purged: 1"));
+    assert!(stdout.contains("ingest jobs purged: 2"));
+    assert!(stdout.contains("embedding job specs purged: 1"));
     assert!(stdout.contains("ocr cache entries purged: 1"));
     assert!(stdout.contains("ocr word boxes purged: 1"));
     assert!(stdout.contains("metadata vacuum: yes"));
@@ -406,6 +423,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
         .unwrap()
         .is_none());
     assert!(store.ingest_job_by_id(&ocr_job_id).unwrap().is_none());
+    assert!(store.ingest_job_by_id(&embedding_job_id).unwrap().is_none());
     assert_eq!(snapshot_dir_count(&data_dir), 1);
     let reopened_vector = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
     assert_eq!(reopened_vector.snapshot().unwrap().vector_count(), 1);
