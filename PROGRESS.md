@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S105, S106, and S107 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S105, S106, S107, and S108 used synthetic fixtures only.
   S97, S99, S100, S105, and S106 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -137,12 +137,11 @@ obsolete preliminary files and checklists are not product scope.
   scratch databases, daemon-kill/restart probes against configured daemon
   binaries, OCR command crash probes, model-checksum probes against controlled
   local model artifacts, local model-pack manifest validation, targeted fault
-  tests, local-only production runbooks, a runbook CI policy guard, and a
-  synthetic OCR throughput benchmark/gate exist.
-  The benchmark runner
-  now has an explicit synthetic benchmark
-  gate wired into PR and nightly smoke workflows; synthetic runs must opt in
-  with `--allow-synthetic` and cannot prove 100k/1M production performance.
+  tests, local-only production runbooks, a runbook CI policy guard, a workflow
+  policy guard, and a synthetic OCR throughput benchmark/gate exist.
+  The benchmark runner now has explicit synthetic query and OCR benchmark gates
+  wired into PR and nightly smoke workflows; synthetic runs must opt in with
+  `--allow-synthetic` and cannot prove 100k/1M production performance.
   Missing or BLOCKED work includes 100k/1M real-corpus benchmarks,
   real-corpus nightly/release performance gates, licensed model selection/
   distribution, semantic/vector quality gates, destructive service-level kill/
@@ -259,8 +258,63 @@ obsolete preliminary files and checklists are not product scope.
 | S105 | Product local OCR witness-budget slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_can_budget_documents_after_full_private_scan_without_path_leak --locked -- --exact` first failed because `witness` rejected `--ocr-max-documents`; after implementation, focused witness exact, full import-search witness suite, OCR handoff suite, focused clippy, fmt, diff, runbook, public guard, marker scans, `./scripts/ci/verify-local.sh`, and a private local-only full-directory witness with a bounded OCR document budget passed. | None for this redacted local OCR witness-budget control; it does not prove full-library OCR completion, OCR throughput, OCR quality, non-English OCR behavior, packaged OCR runtime distribution, Windows/Linux behavior, or large-corpus performance. |
 | S106 | Product local-discovery witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_local_discovery_preset_uses_discovery_profile_without_path_leak --locked -- --exact` first failed because `witness` rejected `--root-preset local-discovery`; after implementation, focused local-discovery witness exact, full import-search witness suite, fs-crawler suite, focused clippy, fmt, diff, runbook, public guard, marker scans, `./scripts/ci/verify-local.sh`, and a private local-only local-discovery witness using the user-authorized sample directory override passed. | None for this redacted local-discovery witness path; it does not prove default whole-machine scans from `/`, Windows drive scanning, full-library OCR completion, large-corpus performance, or cross-platform watcher behavior. |
 | S107 | Product synthetic OCR throughput gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner synthetic_ocr_throughput_reports_page_latency_without_payload_or_path_leakage --locked -- --exact` first failed because the OCR throughput API did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_throughput_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` rejected `ocr-throughput`; after implementation, focused OCR throughput tests, full benchmark-runner tests, focused clippy, fmt, diff, runbook, public guard, marker scans, and `./scripts/ci/verify-local.sh` passed. | None for this synthetic OCR throughput benchmark/gate; it does not prove real scanned-resume OCR quality, full-library OCR completion, non-English OCR behavior, packaged OCR runtime distribution, 100k/1M corpus performance, or Windows/Linux behavior. |
+| S108 | Product workflow-gate slice complete | `sh scripts/ci/check-workflows.sh` first failed because PR/nightly workflows did not include `ocr-throughput`; after implementation, workflow guard, synthetic local OCR benchmark smoke plus redaction scan, shell syntax checks, fmt, diff, and `./scripts/ci/verify-local.sh` passed. | None for this OCR benchmark workflow wiring slice; it does not prove real scanned-resume OCR quality, full-library OCR completion, non-English OCR behavior, packaged OCR runtime distribution, 100k/1M corpus performance, or Windows/Linux behavior. |
 
 ## Command Log
+
+### S108
+
+Design target:
+
+- Wire the synthetic OCR throughput benchmark/gate from S107 into PR and nightly
+  benchmark smoke workflows.
+- Add a workflow policy guard so required query and OCR benchmark smoke gates
+  cannot silently disappear from workflows or local verification.
+- Keep workflow artifacts redacted; no real resume paths, raw resume text,
+  diagnostics, or local data are uploaded.
+
+Observed RED:
+
+```bash
+sh scripts/ci/check-workflows.sh
+```
+
+Output summary:
+
+- The new workflow policy guard failed because `.github/workflows/pr.yml` did
+  not include `resume-benchmark --locked -- ocr-throughput`.
+
+Implementation checks:
+
+```bash
+sh scripts/ci/check-workflows.sh
+tmpdir=$(mktemp -d); trap 'rm -rf "$tmpdir"' EXIT; printf '%s\n' '#!/usr/bin/env sh' 'printf "resume-ir-ocr-v1\nconfidence=0.97\ntext:\nSynthetic OCR smoke page %s\n" "$RESUME_IR_OCR_PAGE_NO"' > "$tmpdir/ocr-fixture.sh"; chmod 700 "$tmpdir/ocr-fixture.sh"; /Users/frankqdwang/.cargo/bin/cargo run -p benchmark-runner --bin resume-benchmark --locked -- ocr-throughput --command "$tmpdir/ocr-fixture.sh" --pages 3 --page-timeout-ms 5000 --json > "$tmpdir/ocr-benchmark-smoke.json"; /Users/frankqdwang/.cargo/bin/cargo run -p benchmark-runner --bin resume-benchmark --locked -- ocr-gate --report "$tmpdir/ocr-benchmark-smoke.json" --allow-synthetic --min-pages 3 --max-p95-ms 5000 --min-pages-per-second 0.001; if rg -n 'Synthetic OCR smoke|resume-ir-ocr-v1|RESUME_IR_OCR|/tmp/' "$tmpdir/ocr-benchmark-smoke.json"; then exit 1; fi
+sh -n scripts/ci/check-workflows.sh scripts/ci/verify-local.sh scripts/ci/check-runbooks.sh scripts/ci/guard-public-repo.sh
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Workflow policy guard: exit 0.
+- Synthetic local OCR benchmark smoke and gate: exit 0; redacted report did not
+  include synthetic OCR text, OCR protocol text, OCR environment names, or temp
+  paths.
+- Shell syntax checks: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, workflow check, and
+  public repo guard.
+
+Scope note:
+
+- S108 adds workflow enforcement for synthetic OCR smoke only. It does not
+  prove real scanned-resume OCR quality, full-library OCR completion,
+  non-English language behavior, packaged OCR runtime distribution, 100k/1M
+  corpus performance, or Windows/Linux validation.
+- Full product is still not complete.
 
 ### S107
 

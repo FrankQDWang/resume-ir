@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  synthetic-query-smoke:
-    name: synthetic query benchmark smoke
+  synthetic-benchmark-smoke:
+    name: synthetic benchmark smoke
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -29,9 +29,22 @@ jobs:
       - name: Synthetic benchmark gate
         run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- gate --report benchmark-smoke.json --allow-synthetic --min-documents 1000 --min-queries 100 --max-p95-ms 500 --max-zero-result-queries 0
 
+      - name: Run synthetic OCR benchmark
+        run: |
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+          printf '%s\n' '#!/usr/bin/env sh' 'printf "resume-ir-ocr-v1\nconfidence=0.97\ntext:\nSynthetic OCR smoke page %s\n" "$RESUME_IR_OCR_PAGE_NO"' > "$tmpdir/ocr-fixture.sh"
+          chmod 700 "$tmpdir/ocr-fixture.sh"
+          cargo run -p benchmark-runner --bin resume-benchmark --locked -- ocr-throughput --command "$tmpdir/ocr-fixture.sh" --pages 25 --page-timeout-ms 5000 --json > ocr-benchmark-smoke.json
+
+      - name: Synthetic OCR benchmark gate
+        run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- ocr-gate --report ocr-benchmark-smoke.json --allow-synthetic --min-pages 25 --max-p95-ms 5000 --min-pages-per-second 0.001
+
       - name: Upload benchmark smoke artifact
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-smoke
-          path: benchmark-smoke.json
+          path: |
+            benchmark-smoke.json
+            ocr-benchmark-smoke.json
           if-no-files-found: error

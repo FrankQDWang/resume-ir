@@ -12,4 +12,5 @@ fi
 "$CARGO_BIN" test --workspace --locked
 ./scripts/ci/check-licenses.sh
 ./scripts/ci/check-runbooks.sh
+./scripts/ci/check-workflows.sh
 ./scripts/ci/guard-public-repo.sh
