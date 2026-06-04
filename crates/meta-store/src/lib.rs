@@ -2479,6 +2479,33 @@ impl MetaStore {
                 |row| row.get::<_, i64>(0),
             )
             .map_err(MetaStoreError::storage)?;
+        let ocr_language_unavailable = connection
+            .query_row(
+                "\
+                SELECT COUNT(DISTINCT job.id)
+                FROM ingest_job AS job
+                JOIN document AS document ON document.id = job.document_id
+                WHERE job.kind = ?1
+                    AND job.status = ?2
+                    AND document.is_deleted = 0
+                    AND document.status <> ?3
+                    AND EXISTS (
+                        SELECT 1
+                        FROM ocr_page_cache AS cache
+                        WHERE cache.file_content_hash = document.content_hash
+                            AND cache.status = ?4
+                            AND cache.error_kind = ?5
+                    )",
+                params![
+                    ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                    ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                    document_status_to_storage(DocumentStatus::Deleted),
+                    ocr_page_cache_status_to_storage(OcrPageCacheStatus::FailedRetryable),
+                    "LanguageUnavailable",
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?;
         let embedding_jobs_queued = connection
             .query_row(
                 "\
@@ -2632,6 +2659,10 @@ impl MetaStore {
             ocr_page_budget_blocked: i64_to_u64(
                 ocr_page_budget_blocked,
                 "status.ocr_page_budget_blocked",
+            )?,
+            ocr_language_unavailable: i64_to_u64(
+                ocr_language_unavailable,
+                "status.ocr_language_unavailable",
             )?,
             entity_mentions: i64_to_u64(entity_mentions, "status.entity_mentions")?,
             index_health,
@@ -3201,6 +3232,7 @@ pub struct StoreStatusSummary {
     pub import_scan_errors: u64,
     pub ocr_jobs_queued: u64,
     pub ocr_page_budget_blocked: u64,
+    pub ocr_language_unavailable: u64,
     pub entity_mentions: u64,
     pub index_health: IndexStateStatus,
     pub last_snapshot_id: Option<String>,

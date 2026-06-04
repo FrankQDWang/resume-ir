@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, and S138 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, and S139 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -154,7 +154,11 @@ obsolete preliminary files and checklists are not product scope.
   invoking the renderer or OCR engine, persist redacted retryable
   `LanguageUnavailable` page-cache failures when a requested pack is absent,
   and avoid printing command paths, requested language names, local language
-  lists, or OCR engine stderr in that blocked path.
+  lists, or OCR engine stderr in that blocked path. Local status, doctor,
+  export-diagnostics, daemon status IPC, and CLI status-over-IPC now surface a
+  redacted aggregate `ocr_language_unavailable` blocker count and remediation
+  message for these failed OCR jobs without exposing requested language names or
+  local runtime paths.
   Deleted-document purge now removes
   current OCR jobs and current OCR page-cache entries that are no longer shared
   by visible documents. Missing or BLOCKED work includes final OCR/renderer
@@ -372,8 +376,69 @@ obsolete preliminary files and checklists are not product scope.
 | S136 | Product private local PDF/Word witness refresh complete | PR #9 checks for commit `22e1adc` passed: dependency tree, license policy, public repository guard, runbook policy, Rust workspace, hosted macOS Platform CI, and hosted Windows Platform CI. A private local-only explicit-root PDF/Word witness then ran against the user-authorized sample directory with import, redacted search probe, redacted field probe, and bounded OCR through local `tesseract` plus `pdftoppm`. The witness completed without scan budget exhaustion or filesystem scan errors, kept unsupported formats out of scope, surfaced aggregate OCR outcomes under the local English-only OCR configuration, and removed private temporary data. | None for this local-only private sample witness; it does not prove full-library OCR completion, OCR quality, non-English OCR quality, production recall/precision, large-corpus latency/throughput, packaging/signing/installers, Windows/Linux real sample behavior, or production model/ANN readiness. |
 | S137 | Product combined OCR language diagnostics slice complete locally | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_check_combined_ocr_languages_without_language_dump --locked -- --exact` first failed because OCR diagnostics treated `eng+chi_sim` as one language pack name. After implementation, diagnostics split Tesseract combined language requests, require every requested language pack to be installed, reject empty or invalid language components, and keep redacted output from dumping unrelated installed languages. The focused exact test, full diagnostics suite, fmt, focused CLI clippy, local `eng+chi_sim` doctor check, and local Apache-2.0 `tesseract-lang` install verification passed. | None for this local OCR language diagnostics slice; it does not distribute language packs in installers, prove non-English OCR quality, complete full-library OCR, validate Windows/macOS installed OCR runtime behavior, or clear the broader OCR quality and packaging blockers. |
 | S138 | Product OCR missing-language worker preflight slice complete locally | Focused CLI and daemon OCR worker tests first failed because a Tesseract runtime missing one requested combined language pack could reach the OCR engine path and record a generic engine failure. After implementation, CLI and daemon OCR workers preflight requested Tesseract language packs after cache miss and before renderer/OCR invocation, persist retryable page-cache failures with `LanguageUnavailable`, keep document jobs retryable, and redact blocked-path output. Focused exact tests, full CLI OCR handoff tests, full daemon OCR worker tests, `ocr-client` tests, fmt, and focused clippy passed. | None for this missing-language preflight slice; it does not distribute language packs in installers, prove non-English OCR quality, complete full-library OCR, validate Windows/macOS installed OCR runtime behavior, or clear broader OCR quality and packaging blockers. |
+| S139 | Product OCR missing-language remediation visibility slice complete locally | A focused CLI OCR worker test first failed because status, doctor, and redacted diagnostics did not surface the `LanguageUnavailable` blocker created by S138. After implementation, `status_summary` counts retryable OCR jobs with a linked `LanguageUnavailable` OCR page-cache failure; local status, doctor, export-diagnostics, daemon status IPC, and CLI status-over-IPC print redacted aggregate blocker/remediation fields without leaking requested language names, runtime paths, or OCR stderr. Focused exact tests, full CLI OCR handoff, CLI status IPC, daemon status IPC, meta-store tests, fmt, focused clippy, and diff checks passed. | None for this remediation-visibility slice; it does not distribute language packs in installers, prove non-English OCR quality, complete full-library OCR, validate Windows/macOS installed OCR runtime behavior, or clear broader OCR quality and packaging blockers. |
 
 ## Command Log
+
+### S139
+
+Design target:
+
+- Surface missing OCR language-pack blockers in redacted operational status,
+  not only as a generic retryable OCR job.
+- Count current retryable OCR jobs that have a linked `LanguageUnavailable`
+  OCR page-cache failure.
+- Keep status, doctor, diagnostics, daemon status IPC, and CLI status-over-IPC
+  free of requested language names, runtime paths, private document paths, local
+  language-list dumps, or OCR engine stderr.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_blocks_missing_tesseract_language_before_invoking_engine_without_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The focused test failed because `status` did not contain
+  `ocr language unavailable: 1` after the OCR worker recorded a
+  `LanguageUnavailable` retryable cache failure.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff ocr_worker_blocks_missing_tesseract_language_before_invoking_engine_without_leaks --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc status_can_read_redacted_daemon_status_over_loopback_ipc --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc daemon_serves_redacted_status_over_loopback_ipc --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store status_summary_aggregates_documents_jobs_imports_and_index_state --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s15_ocr_handoff --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s20_ipc --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+git diff --check
+```
+
+Output summary:
+
+- Focused missing-language worker visibility test: exit 0; 1 test passed.
+- Focused CLI status-over-IPC test: exit 0; 1 test passed.
+- Focused daemon status IPC test: exit 0; 1 test passed.
+- Focused meta-store status summary test: exit 0; 1 test passed.
+- Full `meta-store` tests: exit 0; 43 tests passed.
+- Full CLI OCR handoff suite: exit 0; 13 tests passed.
+- Full CLI status IPC suite: exit 0; 6 tests passed.
+- Full daemon status IPC suite: exit 0; 18 tests passed.
+- `cargo fmt --check`, focused clippy, and `git diff --check`: exit 0.
+
+Scope note:
+
+- S139 completes redacted operational visibility for missing requested OCR
+  language packs. It does not install or distribute language packs, prove
+  non-English OCR quality, complete full-library OCR, validate installed
+  Windows/macOS OCR runtime behavior, or clear OCR quality and packaging
+  blockers.
 
 ### S138
 

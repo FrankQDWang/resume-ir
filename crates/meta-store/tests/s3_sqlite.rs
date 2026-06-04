@@ -1559,7 +1559,7 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
         partial,
         failed_retryable,
         failed_permanent,
-        ocr_required,
+        ocr_required.clone(),
         embedding_waiting.clone(),
         deleted,
     ] {
@@ -1576,6 +1576,29 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
             4,
             now,
         )
+        .unwrap();
+    let mut ocr_language_job = job(
+        "status-ocr-language-placeholder",
+        &ocr_required.id,
+        IngestJobStatus::FailedRetryable,
+        1,
+        3,
+    );
+    ocr_language_job.kind = IngestJobKind::OcrDocument;
+    store.insert_ingest_job(&ocr_language_job).unwrap();
+    let ocr_language_cache_key = OcrPageCacheKey::new(
+        ocr_required.content_hash.clone().unwrap(),
+        1,
+        300,
+        "eng+chi_sim",
+        "balanced",
+    )
+    .unwrap();
+    let ocr_language_cache_entry =
+        OcrPageCacheEntry::failed_retryable(ocr_language_cache_key, "LanguageUnavailable", now)
+            .unwrap();
+    store
+        .upsert_ocr_page_cache_entry(&ocr_language_cache_entry)
         .unwrap();
 
     let running = job(
@@ -1619,9 +1642,11 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
     assert_eq!(summary.failed_permanent, 1);
     assert_eq!(summary.ocr_queue_depth, 1);
     assert_eq!(summary.embedding_queue_depth, 1);
-    assert_eq!(summary.recovery_queue_depth, 1);
+    assert_eq!(summary.recovery_queue_depth, 2);
     assert_eq!(summary.import_tasks_queued, 1);
     assert_eq!(summary.import_tasks_recoverable, 0);
+    assert_eq!(summary.ocr_jobs_queued, 1);
+    assert_eq!(summary.ocr_language_unavailable, 1);
     assert_eq!(summary.index_health, IndexStateStatus::Building);
     assert_eq!(summary.last_snapshot_id.as_deref(), Some("snapshot-v1"));
 }

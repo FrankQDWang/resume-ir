@@ -80,6 +80,7 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     assert!(response.contains("\"index_health\":\"ready\""));
     assert!(response.contains("\"import_tasks_queued\":0"));
     assert!(response.contains("\"import_tasks_cancelled\":0"));
+    assert!(response.contains("\"ocr_language_unavailable\":0"));
     assert!(response.contains("\"snapshot_present\":true"));
     assert!(!response.contains(path_str(&data_dir)));
     assert!(!response.contains("PRIVATE_SNAPSHOT_TOKEN"));

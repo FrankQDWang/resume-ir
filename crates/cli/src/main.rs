@@ -69,6 +69,8 @@ const OCR_CRASH_PROBE_BYTES: &[u8] = b"SYNTHETIC OCR CRASH PROBE BYTES";
 const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
 const OCR_PAGE_BUDGET_REMEDIATION: &str =
     "raise OCR max pages per document or skip oversized scanned PDFs";
+const OCR_LANGUAGE_REMEDIATION: &str =
+    "install requested OCR language packs or choose an installed OCR language";
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
 const WITNESS_DEFAULT_MAX_FILES: usize = 10_000;
@@ -1878,6 +1880,13 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     if summary.ocr_page_budget_blocked > 0 {
         println!("ocr remediation: {}", OCR_PAGE_BUDGET_REMEDIATION);
     }
+    println!(
+        "ocr language unavailable: {}",
+        summary.ocr_language_unavailable
+    );
+    if summary.ocr_language_unavailable > 0 {
+        println!("ocr language remediation: {}", OCR_LANGUAGE_REMEDIATION);
+    }
     println!("ocr task: {}", worker_task_status_label(ocr_task.paused));
     println!("embedding queue: {}", summary.embedding_queue_depth);
     println!("entity mentions: {}", summary.entity_mentions);
@@ -2191,6 +2200,11 @@ fn render_ipc_status(body: &serde_json::Value) {
     println!("ocr page budget blocked: {ocr_page_budget_blocked}");
     if ocr_page_budget_blocked > 0 {
         println!("ocr remediation: {}", OCR_PAGE_BUDGET_REMEDIATION);
+    }
+    let ocr_language_unavailable = json_u64(body, "ocr_language_unavailable");
+    println!("ocr language unavailable: {ocr_language_unavailable}");
+    if ocr_language_unavailable > 0 {
+        println!("ocr language remediation: {}", OCR_LANGUAGE_REMEDIATION);
     }
     println!(
         "embedding queue: {}",
@@ -5984,6 +5998,13 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     if summary.ocr_page_budget_blocked > 0 {
         println!("ocr remediation: {}", OCR_PAGE_BUDGET_REMEDIATION);
     }
+    println!(
+        "ocr language unavailable: {}",
+        summary.ocr_language_unavailable
+    );
+    if summary.ocr_language_unavailable > 0 {
+        println!("ocr language remediation: {}", OCR_LANGUAGE_REMEDIATION);
+    }
     println!("entity mentions: {}", summary.entity_mentions);
     println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("import scan errors: {}", summary.import_scan_errors);
@@ -6078,6 +6099,18 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "    \"ocr_remediation\": \"{}\",",
         if summary.ocr_page_budget_blocked > 0 {
             OCR_PAGE_BUDGET_REMEDIATION
+        } else {
+            "none"
+        }
+    );
+    println!(
+        "    \"ocr_language_unavailable\": {},",
+        summary.ocr_language_unavailable
+    );
+    println!(
+        "    \"ocr_language_remediation\": \"{}\",",
+        if summary.ocr_language_unavailable > 0 {
+            OCR_LANGUAGE_REMEDIATION
         } else {
             "none"
         }

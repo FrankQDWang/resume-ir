@@ -995,6 +995,62 @@ exit 17
     assert_eq!(cache_entry.text(), None);
     assert_eq!(cache_entry.error_kind(), Some("LanguageUnavailable"));
 
+    let status = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "status"])
+        .output()
+        .expect("run status after missing OCR language pack");
+    assert!(status.status.success());
+    assert!(status.stderr.is_empty());
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    assert!(status_stdout.contains("ocr language unavailable: 1"));
+    assert!(status_stdout.contains(
+        "ocr language remediation: install requested OCR language packs or choose an installed OCR language"
+    ));
+    assert!(!status_stdout.contains("PRIVATE_TESSERACT_OCR_SHOULD_NOT_RUN"));
+    assert!(!status_stdout.contains("chi_sim"));
+    assert!(!status_stdout.contains(path_str(&data_dir)));
+    assert!(!status_stdout.contains(path_str(&fixture_root)));
+    assert!(!status_stdout.contains(path_str(&tesseract)));
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run doctor after missing OCR language pack");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let doctor_stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(doctor_stdout.contains("ocr language unavailable: 1"));
+    assert!(doctor_stdout.contains(
+        "ocr language remediation: install requested OCR language packs or choose an installed OCR language"
+    ));
+    assert!(!doctor_stdout.contains("PRIVATE_TESSERACT_OCR_SHOULD_NOT_RUN"));
+    assert!(!doctor_stdout.contains("chi_sim"));
+    assert!(!doctor_stdout.contains(path_str(&data_dir)));
+    assert!(!doctor_stdout.contains(path_str(&fixture_root)));
+    assert!(!doctor_stdout.contains(path_str(&tesseract)));
+
+    let diagnostics = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run diagnostics after missing OCR language pack");
+    assert!(diagnostics.status.success());
+    assert!(diagnostics.stderr.is_empty());
+    let diagnostics_stdout = String::from_utf8_lossy(&diagnostics.stdout);
+    assert!(diagnostics_stdout.contains("\"ocr_language_unavailable\": 1"));
+    assert!(diagnostics_stdout.contains(
+        "\"ocr_language_remediation\": \"install requested OCR language packs or choose an installed OCR language\""
+    ));
+    assert!(!diagnostics_stdout.contains("PRIVATE_TESSERACT_OCR_SHOULD_NOT_RUN"));
+    assert!(!diagnostics_stdout.contains("chi_sim"));
+    assert!(!diagnostics_stdout.contains(path_str(&data_dir)));
+    assert!(!diagnostics_stdout.contains(path_str(&fixture_root)));
+    assert!(!diagnostics_stdout.contains(path_str(&tesseract)));
+
     remove_dir(&data_dir);
 }
 

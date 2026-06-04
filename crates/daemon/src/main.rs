@@ -68,6 +68,8 @@ const DEFAULT_OCR_PAGE_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
 const OCR_PAGE_BUDGET_REMEDIATION: &str =
     "raise OCR max pages per document or skip oversized scanned PDFs";
+const OCR_LANGUAGE_REMEDIATION: &str =
+    "install requested OCR language packs or choose an installed OCR language";
 const DEFAULT_EMBEDDING_MAX_DOCS: usize = 64;
 const DEFAULT_EMBEDDING_MAX_TEXT_BYTES: usize = 1_000_000;
 const DEFAULT_EMBEDDING_TIMEOUT_MS: u64 = 30_000;
@@ -3530,6 +3532,12 @@ fn status_json(data_dir: &Path) -> Result<String> {
         "ocr_page_budget_blocked": summary.ocr_page_budget_blocked,
         "ocr_remediation": if summary.ocr_page_budget_blocked > 0 {
             OCR_PAGE_BUDGET_REMEDIATION
+        } else {
+            "none"
+        },
+        "ocr_language_unavailable": summary.ocr_language_unavailable,
+        "ocr_language_remediation": if summary.ocr_language_unavailable > 0 {
+            OCR_LANGUAGE_REMEDIATION
         } else {
             "none"
         },
