@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, and S118 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, and S119 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, and S110 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -298,9 +298,67 @@ obsolete preliminary files and checklists are not product scope.
 | S115 | Product persistent vector writer-lock slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p index-vector persistent_vector_index_merges_writes_from_stale_concurrent_openers --locked -- --exact` first failed because a second stale `PersistentVectorIndex` opener rewrote the snapshot from old in-memory state and dropped the first opener's vector. After implementation, `cargo test -p index-vector --locked`, focused clippy, fmt, diff, license policy, and `./scripts/ci/verify-local.sh` passed. | None for this vector writer-lock slice; it uses cooperative local file locking and does not prove network filesystem locking semantics, durable serialized ANN graph artifacts, real large-corpus vector performance, production embedding model selection, or hosted Windows/macOS validation for this specific change. |
 | S116 | Product Windows full-text read-open retry slice complete | Hosted Windows Platform CI for `f15ce1e` first failed in `published_snapshot_becomes_active_without_reading_staging_orphans` because immediate read-open of a just-inspected Tantivy snapshot returned `Access is denied. (os error 5)`. After implementation, the retry unit test, the hosted-failing full-text test, `cargo test -p index-fulltext --locked`, focused clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this hosted-Windows transient read-open retry; it does not prove installer/service behavior, real full-library scans, network filesystem semantics, or large-corpus full-text latency. |
 | S117 | Product macOS service runtime witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli tests::launchctl_status_success_with_running_state_reports_running --locked -- --exact` first failed because service runtime state parsing did not exist. After implementation, the launchctl parser tests, service lifecycle integration tests, focused clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and a local-only temporary macOS LaunchAgent install/start/status IPC/stop/uninstall witness passed. | None for this local macOS LaunchAgent runtime witness; it does not prove signed pkg/dmg packaging, notarization, upgrade/rollback behavior, Windows service/MSI behavior, or hosted release workflow execution. |
-| S118 | Product service status cross-platform portability slice complete | Hosted Windows Platform CI for `288a4c9` first failed in `service_status_and_uninstall_are_redacted_and_preserve_user_data` because `service status` tried to derive a macOS launchctl domain through `/usr/bin/id` on Windows. After implementation, service lifecycle integration tests, launchctl parser tests, focused clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this portability fix; Windows service/MSI install/start/stop behavior remains not implemented or proven, and non-macOS service runtime status intentionally reports `unknown` for the macOS LaunchAgent command surface. |
+| S118 | Product service status cross-platform portability slice complete | Hosted Windows Platform CI for `288a4c9` first failed in `service_status_and_uninstall_are_redacted_and_preserve_user_data` because `service status` tried to derive a macOS launchctl domain through `/usr/bin/id` on Windows. After implementation, service lifecycle integration tests, launchctl parser tests, focused clippy, fmt, diff, public guard, and `./scripts/ci/verify-local.sh` passed. Hosted Rust Workspace for `c56e966` then exposed a non-macOS clippy dead-code gap that is handled in S119. | None for this portability fix; Windows service/MSI install/start/stop behavior remains not implemented or proven, and non-macOS service runtime status intentionally reports `unknown` for the macOS LaunchAgent command surface. |
+| S119 | Product service runtime cfg portability slice complete | Hosted Rust Workspace for `c56e966` first failed on Ubuntu clippy because non-macOS binary builds treated macOS-only launchctl parser code and `running`/`loaded` runtime states as dead code, and newer clippy flagged a needless return in the non-macOS branch. After implementation, service lifecycle integration tests, launchctl parser tests, focused CLI clippy, fmt, diff, public guard, `./scripts/ci/verify-local.sh`, and final hosted PR checks passed. | None for this cfg portability fix; it proves the macOS LaunchAgent command surface remains portable across hosted clippy/builds, but it does not implement Windows services/MSI or prove Windows service lifecycle behavior. |
 
 ## Command Log
+
+### S119
+
+Design target:
+
+- Keep `service status` portable under non-macOS binary clippy while preserving
+  macOS launchctl parser coverage in tests.
+- Compile `running` and `loaded` service runtime states only for macOS or test
+  builds, where they are meaningful and exercised.
+- Keep non-macOS service status behavior at `runtime: unknown`.
+
+Observed RED:
+
+```bash
+gh run view 26935300792 --job 79463500481 --log
+```
+
+Output summary:
+
+- Hosted Rust Workspace for `c56e966` failed during Ubuntu clippy.
+- Clippy flagged a needless `return` in the non-macOS `service status` branch.
+- Clippy also flagged `Running`, `Loaded`, and the launchctl parser as dead code
+  in non-macOS binary builds.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli launchctl_status --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s66_service_lifecycle --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+gh pr checks 9 --watch
+```
+
+Output summary:
+
+- Focused CLI clippy: exit 0.
+- Launchctl parser tests: exit 0; 4 tests passed.
+- Service lifecycle integration tests: exit 0; 4 tests passed.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, and public
+  repository guard passed.
+- Hosted PR checks: final run passed macOS Platform CI, Windows Platform CI,
+  Rust workspace, dependency tree, license policy, runbook policy, and public
+  repository guard.
+
+Scope note:
+
+- A local Linux-target clippy reproduction was attempted, but the macOS host did
+  not have `x86_64-linux-gnu-gcc` for `zstd-sys`; hosted Ubuntu CI is the
+  cross-platform witness for this slice.
 
 ### S118
 
@@ -351,9 +409,8 @@ Output summary:
 - `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
   tests, doc-tests, license check, runbook check, workflow check, and public
   repository guard passed.
-- Hosted PR checks: final run passed macOS Platform CI, Windows Platform CI,
-  Rust workspace, dependency tree, license policy, runbook policy, and public
-  repository guard.
+- Hosted PR checks for `c56e966`: Windows Platform CI was addressed, but Rust
+  Workspace failed on Ubuntu clippy and is handled in S119.
 
 Scope note:
 

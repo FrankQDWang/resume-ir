@@ -960,7 +960,7 @@ fn query_service_runtime_state(label: &str) -> Result<ServiceRuntimeState> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = label;
-        return Ok(ServiceRuntimeState::Unknown);
+        Ok(ServiceRuntimeState::Unknown)
     }
 
     #[cfg(target_os = "macos")]
@@ -988,7 +988,9 @@ fn query_service_runtime_state(label: &str) -> Result<ServiceRuntimeState> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ServiceRuntimeState {
+    #[cfg(any(target_os = "macos", test))]
     Running,
+    #[cfg(any(target_os = "macos", test))]
     Loaded,
     NotLoaded,
     Unknown,
@@ -997,7 +999,9 @@ enum ServiceRuntimeState {
 impl ServiceRuntimeState {
     fn label(self) -> &'static str {
         match self {
+            #[cfg(any(target_os = "macos", test))]
             Self::Running => "running",
+            #[cfg(any(target_os = "macos", test))]
             Self::Loaded => "loaded",
             Self::NotLoaded => "not_loaded",
             Self::Unknown => "unknown",
@@ -1005,6 +1009,7 @@ impl ServiceRuntimeState {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn service_runtime_state_from_launchctl_result(
     success: bool,
     stdout: &str,
