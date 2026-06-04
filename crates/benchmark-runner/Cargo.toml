@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+extractor-rules = { path = "../extractor-rules" }
 index-fulltext = { path = "../index-fulltext" }
 serde_json = "1"
 

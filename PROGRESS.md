@@ -8,8 +8,8 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, and S101 used synthetic fixtures only. S97, S99,
-  and S100 also used private local-only witnesses against anonymized temporary copies from a
+- Data policy: S0-S96, S98, S101, and S102 used synthetic fixtures only. S97,
+  S99, and S100 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
@@ -67,10 +67,12 @@ obsolete preliminary files and checklists are not product scope.
   contact HMAC assignment, candidate folding, and explicit best-effort local
   purge of tombstoned documents across metadata, obsolete full-text snapshots,
   full-text staging directories, vector records, current ingest jobs, and
-  current OCR page-cache records exist. Missing production work includes
-  broader dictionaries, stronger normalization, soft-dedupe scoring, labeled
-  F1 metrics, encrypted local storage, future bbox/PII surface purge coverage,
-  and forensic erase proof.
+  current OCR page-cache records exist. A labeled field-quality evaluator and
+  gate now score precision/recall/F1 from JSONL samples without emitting raw
+  text, sample IDs, paths, or field values. Missing production work includes
+  broader dictionaries, stronger normalization, soft-dedupe scoring, real
+  business labeled F1 datasets/results, encrypted local storage, future
+  bbox/PII surface purge coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, linear KNN, RRF helpers, embedding worker, model/dimension-scoped
   durable per-version embedding jobs, model-scoped vector query isolation,
@@ -240,8 +242,83 @@ obsolete preliminary files and checklists are not product scope.
 | S99 | Product local witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_imports_only_pdf_and_word_samples_without_persisting_private_data --locked -- --exact` first failed because `resume-cli witness` was unsupported; after implementation, focused witness, full `s9_import_search`, fmt, focused clippy, guard checks, `./scripts/ci/verify-local.sh`, and a private local-only PDF/Word witness with redacted output passed. | None for this isolated local PDF/Word witness command slice; it is not a production benchmark, does not package converters/OCR/model runtimes, does not prove Windows/Linux behavior, and does not complete full real-library quality/performance validation. |
 | S100 | Product local OCR witness slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_executes_local_command_without_output_or_path_leak --locked -- --exact` and `/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_run_ocr_without_command_reports_blocked_without_persisting_private_data --locked -- --exact` first failed because `resume-cli witness` did not accept OCR options; after implementation, focused witness OCR tests, full import-search and OCR suites, fmt, focused clippy, guard checks, `./scripts/ci/verify-local.sh`, and bounded private local-only OCR witnesses passed. | None for this isolated local OCR witness option slice; it is not a full-library OCR proof, does not package OCR runtimes, does not prove non-English OCR quality, does not prove Windows/Linux behavior, and does not complete large-corpus OCR throughput validation. |
 | S101 | Product import watcher slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s4_daemon foreground_import_watcher_requeues_completed_root_after_file_change_without_path_leak --locked -- --exact` first failed because daemon did not accept `--watch-import-roots`; after implementation, focused watcher exact, full daemon import scheduler suite, daemon clippy, license guard, fmt, guard checks, and `./scripts/ci/verify-local.sh` passed. | None for this local OS watcher requeue slice; it does not prove Windows watcher behavior, long-running watcher soak stability, large-corpus event storms, or incremental index-update-only writes. |
+| S102 | Product field-quality gate slice complete | `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality --locked` first failed because the field-quality APIs did not exist, and `/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_quality_outputs_redacted_report_and_gate --locked -- --exact` first failed because `resume-benchmark` did not accept `field-quality`; after implementation, focused field-quality tests, full benchmark-runner tests, focused clippy, license guard, fmt, guard checks, and `./scripts/ci/verify-local.sh` passed. | None for this labeled field-quality evaluator/gate slice; it does not supply real business labeled datasets, prove production field F1, improve dictionaries, or complete soft-dedupe scoring. |
 
 ## Command Log
+
+### S102
+
+Design target:
+
+- Add `resume-benchmark field-quality --dataset <jsonl> --json` for labeled
+  field extraction quality evaluation.
+- Add `resume-benchmark field-gate --report <path>` with configurable minimum
+  sample count, precision, recall, and F1 thresholds.
+- Output only aggregate metrics; do not output raw resume text, sample IDs,
+  paths, expected values, predicted values, email addresses, or phone numbers.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_quality_outputs_redacted_report_and_gate --locked -- --exact
+```
+
+Output summary:
+
+- The library test failed because `evaluate_field_quality_gate_json`,
+  `run_field_quality_jsonl`, and `FieldQualityGateConfig` did not exist.
+- The CLI exact failed because `resume-benchmark` rejected `field-quality` as
+  unsupported usage.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_quality_outputs_redacted_report_and_gate --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+./scripts/ci/check-licenses.sh
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+if rg -n --hidden --glob '!target/**' --glob '!.git/**' '[r]esume-ir-real-witness|[s]elected_pdf|[s]elected_docx|[s]elected_doc|[d]ocument_status_by_extension|[p]rivate-sample-path-marker' .; then exit 1; else echo "no private witness markers"; fi
+if rg -n -i --hidden --glob '!target/**' --glob '!.git/**' '[s]uperpowers|docs/[s]uperpowers|2026-05-30-long-running-goal-[e]xecution' .; then exit 1; else echo "no obsolete reference markers"; fi
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s20_status_ipc status_ipc_connect_failure_does_not_fallback_to_sqlite --locked -- --exact --nocapture
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s21_import_candidate_assignment --locked
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused field-quality library tests: exit 0; 3 tests passed.
+- Focused field-quality CLI exact: exit 0.
+- `benchmark-runner`: exit 0; 13 tests passed plus doc-tests.
+- Focused benchmark-runner clippy: exit 0.
+- License guard: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- Runbook guard: exit 0.
+- Public repository guard: exit 0.
+- Private witness marker scan: exit 0.
+- Obsolete reference marker guard: exit 0.
+- An initial full verify attempt hit an existing IPC connect-failure test
+  failure; its exact rerun passed.
+- A later full verify attempt exposed an existing flaky contact-hash key test
+  assertion that rejected any random key containing the short digit fragment
+  `415`; the assertion was hardened to check full synthetic contact strings,
+  and `s21_import_candidate_assignment` then passed.
+- `./scripts/ci/verify-local.sh`: exit 0, including metadata, fmt, workspace
+  clippy/tests/doc-tests, license check, runbook check, and public repo guard.
+
+Scope note:
+
+- S102 adds the evaluator/gate needed to measure field precision/recall/F1. It
+  does not provide real business labeled datasets, does not prove production
+  field F1 targets, does not broaden dictionaries, and does not complete
+  soft-dedupe scoring.
+- Full product is still not complete.
 
 ### S101
 

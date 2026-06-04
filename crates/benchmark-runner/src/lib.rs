@@ -1,13 +1,15 @@
-pub fn crate_name() -> &'static str {
-    "benchmark-runner"
-}
-
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use extractor_rules::{extract_strong_fields, FieldType};
 use index_fulltext::{FullTextIndex, IndexDocument, IndexSection, SearchQuery};
+
+pub fn crate_name() -> &'static str {
+    "benchmark-runner"
+}
 
 const DEFAULT_TOP_K: usize = 10;
 const MAX_TOP_K: usize = 100;
@@ -354,6 +356,475 @@ impl BenchmarkGateEvaluation {
     pub fn p95_ms(&self) -> f64 {
         self.p95_ms
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FieldQualityGateConfig {
+    min_precision: f64,
+    min_recall: f64,
+    min_f1: f64,
+    min_samples: usize,
+}
+
+impl FieldQualityGateConfig {
+    pub fn new(min_precision: f64, min_recall: f64, min_f1: f64) -> Self {
+        Self {
+            min_precision,
+            min_recall,
+            min_f1,
+            min_samples: 1,
+        }
+    }
+
+    pub fn with_min_samples(mut self, min_samples: usize) -> Self {
+        self.min_samples = min_samples;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldQualityGateEvaluation {
+    dataset_kind: String,
+    sample_count: usize,
+    precision: f64,
+    recall: f64,
+    f1: f64,
+}
+
+impl FieldQualityGateEvaluation {
+    pub fn dataset_kind(&self) -> &str {
+        &self.dataset_kind
+    }
+
+    pub fn sample_count(&self) -> usize {
+        self.sample_count
+    }
+
+    pub fn f1(&self) -> f64 {
+        self.f1
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FieldCounts {
+    true_positive: usize,
+    false_positive: usize,
+    false_negative: usize,
+}
+
+impl FieldCounts {
+    fn record_true_positive(&mut self) {
+        self.true_positive += 1;
+    }
+
+    fn record_false_positive(&mut self) {
+        self.false_positive += 1;
+    }
+
+    fn record_false_negative(&mut self) {
+        self.false_negative += 1;
+    }
+
+    fn extend(self, other: Self) -> Self {
+        Self {
+            true_positive: self.true_positive + other.true_positive,
+            false_positive: self.false_positive + other.false_positive,
+            false_negative: self.false_negative + other.false_negative,
+        }
+    }
+
+    fn metric(self) -> FieldQualityMetric {
+        let precision_denominator = self.true_positive + self.false_positive;
+        let recall_denominator = self.true_positive + self.false_negative;
+        let precision = if precision_denominator == 0 {
+            0.0
+        } else {
+            self.true_positive as f64 / precision_denominator as f64
+        };
+        let recall = if recall_denominator == 0 {
+            0.0
+        } else {
+            self.true_positive as f64 / recall_denominator as f64
+        };
+        let f1 = if precision + recall == 0.0 {
+            0.0
+        } else {
+            2.0 * precision * recall / (precision + recall)
+        };
+
+        FieldQualityMetric {
+            true_positive: self.true_positive,
+            false_positive: self.false_positive,
+            false_negative: self.false_negative,
+            precision,
+            recall,
+            f1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FieldQualityMetric {
+    true_positive: usize,
+    false_positive: usize,
+    false_negative: usize,
+    precision: f64,
+    recall: f64,
+    f1: f64,
+}
+
+impl FieldQualityMetric {
+    pub fn precision(&self) -> f64 {
+        self.precision
+    }
+
+    pub fn recall(&self) -> f64 {
+        self.recall
+    }
+
+    pub fn f1(&self) -> f64 {
+        self.f1
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldQualityReport {
+    run_id: String,
+    platform: String,
+    dataset_kind: &'static str,
+    sample_count: usize,
+    expected_mentions: usize,
+    predicted_mentions: usize,
+    overall: FieldQualityMetric,
+    fields: BTreeMap<String, FieldQualityMetric>,
+    target_claim: &'static str,
+}
+
+impl FieldQualityReport {
+    pub fn dataset_kind(&self) -> &'static str {
+        self.dataset_kind
+    }
+
+    pub fn sample_count(&self) -> usize {
+        self.sample_count
+    }
+
+    pub fn expected_mentions(&self) -> usize {
+        self.expected_mentions
+    }
+
+    pub fn overall(&self) -> &FieldQualityMetric {
+        &self.overall
+    }
+
+    pub fn field_metric(&self, field_type: &str) -> Option<&FieldQualityMetric> {
+        self.fields.get(field_type)
+    }
+
+    pub fn to_redacted_json(&self) -> String {
+        let fields_json = self
+            .fields
+            .iter()
+            .map(|(field_type, metric)| format!("\"{field_type}\":{}", field_metric_json(*metric)))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            concat!(
+                "{{",
+                "\"schema_version\":\"field-quality.v1\",",
+                "\"run_id\":\"{}\",",
+                "\"platform\":\"{}\",",
+                "\"dataset_kind\":\"{}\",",
+                "\"sample_count\":{},",
+                "\"expected_mentions\":{},",
+                "\"predicted_mentions\":{},",
+                "\"overall\":{},",
+                "\"fields\":{{{}}},",
+                "\"target_claim\":\"{}\",",
+                "\"scope\":\"labeled field extraction quality; no raw resume text, paths, sample ids, or field values included\"",
+                "}}"
+            ),
+            self.run_id,
+            self.platform,
+            self.dataset_kind,
+            self.sample_count,
+            self.expected_mentions,
+            self.predicted_mentions,
+            field_metric_json(self.overall),
+            fields_json,
+            self.target_claim,
+        )
+    }
+}
+
+pub fn run_field_quality_jsonl(dataset_jsonl: &str) -> Result<FieldQualityReport> {
+    let mut sample_count = 0_usize;
+    let mut expected_mentions = 0_usize;
+    let mut predicted_mentions = 0_usize;
+    let mut field_counts = BTreeMap::<String, FieldCounts>::new();
+
+    for line in dataset_jsonl
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let sample = parse_field_quality_sample(line)?;
+        sample_count += 1;
+        expected_mentions += sample.expected.len();
+        let predictions = field_quality_predictions(&sample.text);
+        predicted_mentions += predictions.len();
+        score_field_quality_sample(&sample.expected, &predictions, &mut field_counts);
+    }
+
+    if sample_count == 0 {
+        return Err(BenchmarkError::invalid_config("field_quality_samples"));
+    }
+
+    let all_counts = field_counts
+        .values()
+        .copied()
+        .fold(FieldCounts::default(), FieldCounts::extend);
+    let fields = field_counts
+        .into_iter()
+        .map(|(field_type, counts)| (field_type, counts.metric()))
+        .collect::<BTreeMap<_, _>>();
+
+    Ok(FieldQualityReport {
+        run_id: generate_run_id(),
+        platform: platform_label(),
+        dataset_kind: "labeled",
+        sample_count,
+        expected_mentions,
+        predicted_mentions,
+        overall: all_counts.metric(),
+        fields,
+        target_claim: "not_evaluated",
+    })
+}
+
+pub fn evaluate_field_quality_gate_json(
+    report_json: &str,
+    config: FieldQualityGateConfig,
+) -> std::result::Result<FieldQualityGateEvaluation, BenchmarkGateError> {
+    let report: serde_json::Value =
+        serde_json::from_str(report_json).map_err(|_| BenchmarkGateError::invalid_json())?;
+
+    let schema_version = required_str(&report, "schema_version")?;
+    if schema_version != "field-quality.v1" {
+        return Err(BenchmarkGateError::failed(
+            "unsupported field quality schema",
+        ));
+    }
+    let dataset_kind = required_str(&report, "dataset_kind")?;
+    if dataset_kind != "labeled" {
+        return Err(BenchmarkGateError::failed(
+            "field quality requires labeled dataset",
+        ));
+    }
+    let sample_count = required_usize(&report, "sample_count")?;
+    let overall = report
+        .get("overall")
+        .ok_or_else(|| BenchmarkGateError::missing_field("overall"))?;
+    let precision = required_f64(overall, "precision")?;
+    let recall = required_f64(overall, "recall")?;
+    let f1 = required_f64(overall, "f1")?;
+    let target_claim = required_str(&report, "target_claim")?;
+
+    if sample_count < config.min_samples {
+        return Err(BenchmarkGateError::failed(
+            "field sample count below gate minimum",
+        ));
+    }
+    if precision < config.min_precision {
+        return Err(BenchmarkGateError::failed(
+            "field precision below threshold",
+        ));
+    }
+    if recall < config.min_recall {
+        return Err(BenchmarkGateError::failed("field recall below threshold"));
+    }
+    if f1 < config.min_f1 {
+        return Err(BenchmarkGateError::failed("field f1 below threshold"));
+    }
+    if target_claim != "not_evaluated" {
+        return Err(BenchmarkGateError::failed(
+            "field target claim is not proven",
+        ));
+    }
+
+    Ok(FieldQualityGateEvaluation {
+        dataset_kind: dataset_kind.to_string(),
+        sample_count,
+        precision,
+        recall,
+        f1,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FieldQualitySample {
+    text: String,
+    expected: Vec<FieldQualityMention>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct FieldQualityMention {
+    field_type: String,
+    normalized_value: String,
+}
+
+fn parse_field_quality_sample(line: &str) -> Result<FieldQualitySample> {
+    let value = serde_json::from_str::<serde_json::Value>(line)
+        .map_err(|_| BenchmarkError::invalid_config("field_quality_jsonl"))?;
+    let text = value
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| BenchmarkError::invalid_config("field_quality.text"))?
+        .to_string();
+    let expected_values = value
+        .get("expected")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| BenchmarkError::invalid_config("field_quality.expected"))?;
+    if expected_values.is_empty() {
+        return Err(BenchmarkError::invalid_config("field_quality.expected"));
+    }
+    let mut expected = Vec::with_capacity(expected_values.len());
+    for expected_value in expected_values {
+        let field_type = expected_value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .and_then(canonical_field_type)
+            .ok_or_else(|| BenchmarkError::invalid_config("field_quality.expected.type"))?;
+        let normalized_value = expected_value
+            .get("normalized")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| BenchmarkError::invalid_config("field_quality.expected.normalized"))?;
+        expected.push(FieldQualityMention {
+            field_type: field_type.to_string(),
+            normalized_value: normalized_value.to_string(),
+        });
+    }
+
+    Ok(FieldQualitySample { text, expected })
+}
+
+fn field_quality_predictions(text: &str) -> Vec<FieldQualityMention> {
+    extract_strong_fields(text)
+        .into_iter()
+        .filter_map(|rule_match| {
+            let field_type = field_type_label(&rule_match.field_type);
+            let normalized_value = rule_match
+                .normalized_value
+                .unwrap_or(rule_match.raw_value)
+                .trim()
+                .to_string();
+            (!normalized_value.is_empty()).then_some(FieldQualityMention {
+                field_type: field_type.to_string(),
+                normalized_value,
+            })
+        })
+        .collect()
+}
+
+fn score_field_quality_sample(
+    expected: &[FieldQualityMention],
+    predictions: &[FieldQualityMention],
+    field_counts: &mut BTreeMap<String, FieldCounts>,
+) {
+    let mut expected_counts = mention_multiset(expected);
+    let known_fields = expected
+        .iter()
+        .chain(predictions.iter())
+        .map(|mention| mention.field_type.clone())
+        .collect::<BTreeSet<_>>();
+    for field_type in known_fields {
+        field_counts.entry(field_type).or_default();
+    }
+
+    for prediction in predictions {
+        let counts = field_counts
+            .entry(prediction.field_type.clone())
+            .or_default();
+        match expected_counts.get_mut(prediction) {
+            Some(remaining) if *remaining > 0 => {
+                *remaining -= 1;
+                counts.record_true_positive();
+            }
+            _ => counts.record_false_positive(),
+        }
+    }
+
+    for (mention, remaining) in expected_counts {
+        let counts = field_counts.entry(mention.field_type).or_default();
+        for _ in 0..remaining {
+            counts.record_false_negative();
+        }
+    }
+}
+
+fn mention_multiset(mentions: &[FieldQualityMention]) -> BTreeMap<FieldQualityMention, usize> {
+    let mut counts = BTreeMap::<FieldQualityMention, usize>::new();
+    for mention in mentions {
+        *counts.entry(mention.clone()).or_default() += 1;
+    }
+    counts
+}
+
+fn canonical_field_type(value: &str) -> Option<&'static str> {
+    match value {
+        "name" => Some("name"),
+        "email" => Some("email"),
+        "phone" => Some("phone"),
+        "date_range" => Some("date_range"),
+        "school" => Some("school"),
+        "degree" => Some("degree"),
+        "company" => Some("company"),
+        "title" => Some("title"),
+        "skill" => Some("skill"),
+        "certificate" => Some("certificate"),
+        "years_experience" => Some("years_experience"),
+        _ => None,
+    }
+}
+
+fn field_type_label(field_type: &FieldType) -> &'static str {
+    match field_type {
+        FieldType::Name => "name",
+        FieldType::Email => "email",
+        FieldType::Phone => "phone",
+        FieldType::DateRange => "date_range",
+        FieldType::School => "school",
+        FieldType::Degree => "degree",
+        FieldType::Company => "company",
+        FieldType::Title => "title",
+        FieldType::Skill => "skill",
+        FieldType::Certificate => "certificate",
+        FieldType::YearsExperience => "years_experience",
+    }
+}
+
+fn field_metric_json(metric: FieldQualityMetric) -> String {
+    format!(
+        concat!(
+            "{{",
+            "\"true_positive\":{},",
+            "\"false_positive\":{},",
+            "\"false_negative\":{},",
+            "\"precision\":{},",
+            "\"recall\":{},",
+            "\"f1\":{}",
+            "}}"
+        ),
+        metric.true_positive,
+        metric.false_positive,
+        metric.false_negative,
+        format_ms(metric.precision),
+        format_ms(metric.recall),
+        format_ms(metric.f1),
+    )
 }
 
 pub fn evaluate_benchmark_gate_json(

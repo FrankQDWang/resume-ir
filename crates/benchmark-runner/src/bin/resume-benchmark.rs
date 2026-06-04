@@ -2,8 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use benchmark_runner::{
-    evaluate_benchmark_gate_json, run_synthetic_query_benchmark, BenchmarkError,
-    BenchmarkGateConfig, BenchmarkGateError, SyntheticBenchmarkConfig,
+    evaluate_benchmark_gate_json, evaluate_field_quality_gate_json, run_field_quality_jsonl,
+    run_synthetic_query_benchmark, BenchmarkError, BenchmarkGateConfig, BenchmarkGateError,
+    FieldQualityGateConfig, SyntheticBenchmarkConfig,
 };
 
 fn main() {
@@ -17,6 +18,8 @@ fn run() -> Result<(), CliError> {
     match parse_command(std::env::args().skip(1))? {
         CliCommand::SyntheticQuery(args) => run_synthetic_query(args),
         CliCommand::Gate(args) => run_gate(args),
+        CliCommand::FieldQuality(args) => run_field_quality(args),
+        CliCommand::FieldGate(args) => run_field_gate(args),
     }
 }
 
@@ -59,12 +62,32 @@ fn run_gate(args: GateArgs) -> Result<(), CliError> {
     Ok(())
 }
 
+fn run_field_quality(args: FieldQualityArgs) -> Result<(), CliError> {
+    let dataset_jsonl = fs::read_to_string(&args.dataset)
+        .map_err(|_| CliError::user("unable to read field quality dataset"))?;
+    let report = run_field_quality_jsonl(&dataset_jsonl).map_err(CliError::benchmark)?;
+    println!("{}", report.to_redacted_json());
+    Ok(())
+}
+
+fn run_field_gate(args: FieldGateArgs) -> Result<(), CliError> {
+    let report_json = fs::read_to_string(&args.report)
+        .map_err(|_| CliError::user("unable to read field quality report"))?;
+    let config = FieldQualityGateConfig::new(args.min_precision, args.min_recall, args.min_f1)
+        .with_min_samples(args.min_samples);
+    evaluate_field_quality_gate_json(&report_json, config).map_err(CliError::gate)?;
+    println!("field quality gate passed");
+    Ok(())
+}
+
 fn parse_command<I>(args: I) -> Result<CliCommand, CliError>
 where
     I: IntoIterator<Item = String>,
 {
     let args = args.into_iter().collect::<Vec<_>>();
     match args.first().map(String::as_str) {
+        Some("field-quality") => parse_field_quality_args(&args[1..]).map(CliCommand::FieldQuality),
+        Some("field-gate") => parse_field_gate_args(&args[1..]).map(CliCommand::FieldGate),
         Some("gate") => parse_gate_args(&args[1..]).map(CliCommand::Gate),
         _ => parse_synthetic_query_args(&args).map(CliCommand::SyntheticQuery),
     }
@@ -181,6 +204,83 @@ fn parse_gate_args(args: &[String]) -> Result<GateArgs, CliError> {
     })
 }
 
+fn parse_field_quality_args(args: &[String]) -> Result<FieldQualityArgs, CliError> {
+    let mut dataset = None;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--dataset" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                dataset = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--json" => {
+                index += 1;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    Ok(FieldQualityArgs {
+        dataset: dataset.ok_or_else(CliError::usage)?,
+    })
+}
+
+fn parse_field_gate_args(args: &[String]) -> Result<FieldGateArgs, CliError> {
+    let mut report = None;
+    let mut min_samples = 1_usize;
+    let mut min_precision = 0.95_f64;
+    let mut min_recall = 0.95_f64;
+    let mut min_f1 = 0.95_f64;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--report" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                report = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--min-samples" => {
+                min_samples = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-precision" => {
+                min_precision = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-recall" => {
+                min_recall = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--min-f1" => {
+                min_f1 = parse_positive_f64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    Ok(FieldGateArgs {
+        report: report.ok_or_else(CliError::usage)?,
+        min_samples,
+        min_precision,
+        min_recall,
+        min_f1,
+    })
+}
+
 fn parse_positive_usize(value: Option<&String>) -> Result<usize, CliError> {
     value
         .and_then(|value| value.parse::<usize>().ok())
@@ -202,13 +302,15 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>]"
 }
 
 #[derive(Clone, Debug)]
 enum CliCommand {
     SyntheticQuery(SyntheticQueryArgs),
     Gate(GateArgs),
+    FieldQuality(FieldQualityArgs),
+    FieldGate(FieldGateArgs),
 }
 
 #[derive(Clone, Debug)]
@@ -229,6 +331,20 @@ struct GateArgs {
     min_queries: usize,
     max_p95_ms: f64,
     max_zero_result_queries: usize,
+}
+
+#[derive(Clone, Debug)]
+struct FieldQualityArgs {
+    dataset: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct FieldGateArgs {
+    report: PathBuf,
+    min_samples: usize,
+    min_precision: f64,
+    min_recall: f64,
+    min_f1: f64,
 }
 
 #[derive(Clone, Debug)]

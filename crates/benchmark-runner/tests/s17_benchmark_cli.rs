@@ -153,6 +153,85 @@ fn resume_benchmark_gate_rejects_synthetic_without_explicit_allowance() {
     remove_dir(&report_dir);
 }
 
+#[test]
+fn resume_benchmark_field_quality_outputs_redacted_report_and_gate() {
+    let dataset_dir = temp_dir("field-quality-dataset");
+    let dataset_path = dataset_dir.join("field-quality.jsonl");
+    let report_path = dataset_dir.join("field-report.json");
+    fs::write(
+        &dataset_path,
+        concat!(
+            "{\"sample_id\":\"private-case-1\",\"text\":\"Name: Synthetic Candidate\\nEmail: candidate@example.test\\nPhone: (415) 555-0132\",",
+            "\"expected\":[",
+            "{\"type\":\"name\",\"normalized\":\"synthetic candidate\"},",
+            "{\"type\":\"email\",\"normalized\":\"candidate@example.test\"},",
+            "{\"type\":\"phone\",\"normalized\":\"+14155550132\"}",
+            "]}\n",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "field-quality",
+            "--dataset",
+            path_str(&dataset_path),
+            "--json",
+        ])
+        .output()
+        .expect("run field-quality benchmark");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\":\"field-quality.v1\""));
+    assert!(stdout.contains("\"dataset_kind\":\"labeled\""));
+    assert!(stdout.contains("\"sample_count\":1"));
+    assert!(stdout.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!stdout.contains(path_str(&dataset_path)));
+    assert!(!stdout.contains("private-case-1"));
+    assert!(!stdout.contains("Synthetic Candidate"));
+    assert!(!stdout.contains("candidate@example.test"));
+    assert!(!stdout.contains("+14155550132"));
+    fs::write(&report_path, &output.stdout).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "field-gate",
+            "--report",
+            path_str(&report_path),
+            "--min-samples",
+            "1",
+            "--min-precision",
+            "0.99",
+            "--min-recall",
+            "0.99",
+            "--min-f1",
+            "0.99",
+        ])
+        .output()
+        .expect("run field quality gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "field quality gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(&dataset_dir);
+}
+
 fn temp_dir(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

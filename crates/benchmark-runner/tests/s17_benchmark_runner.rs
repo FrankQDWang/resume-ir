@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use benchmark_runner::{
-    evaluate_benchmark_gate_json, run_synthetic_query_benchmark, BenchmarkGateConfig,
+    evaluate_benchmark_gate_json, evaluate_field_quality_gate_json, run_field_quality_jsonl,
+    run_synthetic_query_benchmark, BenchmarkGateConfig, FieldQualityGateConfig,
     SyntheticBenchmarkConfig,
 };
 
@@ -93,6 +94,82 @@ fn benchmark_gate_rejects_unproven_million_scale_claims() {
     assert!(error
         .to_string()
         .contains("million-scale claim is not proven"));
+}
+
+#[test]
+fn field_quality_report_scores_labeled_samples_without_raw_value_leakage() {
+    let dataset = concat!(
+        "{\"sample_id\":\"case-a\",\"text\":\"Name: Synthetic Candidate\\nEmail: candidate@example.test\\nPhone: +1 (415) 555-0132\\nSkills: Rust, Java\\nBachelor of Science\",",
+        "\"expected\":[",
+        "{\"type\":\"name\",\"normalized\":\"synthetic candidate\"},",
+        "{\"type\":\"email\",\"normalized\":\"candidate@example.test\"},",
+        "{\"type\":\"phone\",\"normalized\":\"+14155550132\"},",
+        "{\"type\":\"skill\",\"normalized\":\"Rust\"},",
+        "{\"type\":\"skill\",\"normalized\":\"Java\"},",
+        "{\"type\":\"degree\",\"normalized\":\"bachelor\"}",
+        "]}\n",
+        "{\"sample_id\":\"case-b\",\"text\":\"Education\\nSynthetic University\\nSkills: SQLite\",",
+        "\"expected\":[",
+        "{\"type\":\"school\",\"normalized\":\"synthetic university\"},",
+        "{\"type\":\"skill\",\"normalized\":\"SQLite\"}",
+        "]}\n",
+    );
+
+    let report = run_field_quality_jsonl(dataset).unwrap();
+
+    assert_eq!(report.dataset_kind(), "labeled");
+    assert_eq!(report.sample_count(), 2);
+    assert_eq!(report.expected_mentions(), 8);
+    assert!(report.overall().f1() >= 0.95);
+    assert!(report.field_metric("email").unwrap().f1() >= 0.99);
+    assert!(report.field_metric("phone").unwrap().f1() >= 0.99);
+    assert!(report.field_metric("skill").unwrap().f1() >= 0.99);
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"schema_version\":\"field-quality.v1\""));
+    assert!(json.contains("\"dataset_kind\":\"labeled\""));
+    assert!(json.contains("\"sample_count\":2"));
+    assert!(json.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!json.contains("Synthetic Candidate"));
+    assert!(!json.contains("candidate@example.test"));
+    assert!(!json.contains("+1 (415) 555-0132"));
+    assert!(!json.contains("+14155550132"));
+    assert!(!json.contains("case-a"));
+}
+
+#[test]
+fn field_quality_gate_rejects_low_recall_reports() {
+    let dataset = concat!(
+        "{\"text\":\"Skills: Rust\",",
+        "\"expected\":[",
+        "{\"type\":\"skill\",\"normalized\":\"Rust\"},",
+        "{\"type\":\"skill\",\"normalized\":\"Kubernetes\"}",
+        "]}\n",
+    );
+    let report = run_field_quality_jsonl(dataset).unwrap();
+    let config = FieldQualityGateConfig::new(0.95, 0.95, 0.95).with_min_samples(1);
+
+    let error = evaluate_field_quality_gate_json(&report.to_redacted_json(), config).unwrap_err();
+
+    assert!(error.to_string().contains("field recall below threshold"));
+}
+
+#[test]
+fn field_quality_gate_accepts_labeled_report() {
+    let dataset = concat!(
+        "{\"text\":\"Email: candidate@example.test\\nPhone: (415) 555-0132\",",
+        "\"expected\":[",
+        "{\"type\":\"email\",\"normalized\":\"candidate@example.test\"},",
+        "{\"type\":\"phone\",\"normalized\":\"+14155550132\"}",
+        "]}\n",
+    );
+    let report = run_field_quality_jsonl(dataset).unwrap();
+    let config = FieldQualityGateConfig::new(0.99, 0.99, 0.99).with_min_samples(1);
+
+    let evaluation = evaluate_field_quality_gate_json(&report.to_redacted_json(), config).unwrap();
+
+    assert_eq!(evaluation.dataset_kind(), "labeled");
+    assert_eq!(evaluation.sample_count(), 1);
+    assert!(evaluation.f1() >= 0.99);
 }
 
 fn minimal_benchmark_json(
