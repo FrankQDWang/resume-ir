@@ -10,13 +10,25 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, MutexGuard, OnceLock,
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(unix)]
+fn local_process_test_lock() -> MutexGuard<'static, ()> {
+    static LOCAL_PROCESS_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCAL_PROCESS_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[test]
 fn exposes_ocr_client_crate_identity() {
@@ -76,6 +88,7 @@ fn disabled_worker_never_runs_heavy_ocr_and_honors_cancellation() {
 #[cfg(unix)]
 #[test]
 fn local_command_worker_runs_configured_binary_and_parses_structured_output() {
+    let _guard = local_process_test_lock();
     let command = write_fixture_executable(
         "fixture-ocr",
         r#"#!/bin/sh
@@ -116,6 +129,7 @@ printf 'page=%s dpi=%s lang=%s profile=%s bytes=%s\n' \
 #[cfg(unix)]
 #[test]
 fn local_pdf_render_command_returns_page_bytes_without_payload_debug_leaks() {
+    let _guard = local_process_test_lock();
     let command = write_fixture_executable(
         "fixture-pdf-render",
         r#"#!/bin/sh
@@ -150,6 +164,7 @@ printf 'rendered-page=%s dpi=%s pdf-bytes=%s' \
 #[cfg(unix)]
 #[test]
 fn pdftoppm_renderer_renders_valid_pdf_page_to_ppm_without_payload_debug_leaks() {
+    let _guard = local_process_test_lock();
     let Some(pdftoppm) = find_command("pdftoppm") else {
         eprintln!("skipping pdftoppm renderer witness because pdftoppm is not installed");
         return;
@@ -182,6 +197,7 @@ fn pdftoppm_renderer_renders_valid_pdf_page_to_ppm_without_payload_debug_leaks()
 #[cfg(unix)]
 #[test]
 fn tesseract_worker_recognizes_synthetic_image_without_payload_debug_leaks() {
+    let _guard = local_process_test_lock();
     let Some(tesseract) = find_command("tesseract") else {
         eprintln!("skipping tesseract OCR witness because tesseract is not installed");
         return;
@@ -260,6 +276,7 @@ fn local_command_worker_reports_missing_binary_as_worker_unavailable_without_pay
 #[cfg(unix)]
 #[test]
 fn local_command_worker_times_out_and_does_not_report_late_output() {
+    let _guard = local_process_test_lock();
     let command = write_fixture_executable(
         "slow-ocr",
         r#"#!/bin/sh
@@ -286,6 +303,7 @@ printf 'resume-ir-ocr-v1\nconfidence=0.99\ntext:\nlate output\n'
 #[cfg(unix)]
 #[test]
 fn local_command_worker_terminates_descendants_that_keep_output_pipes_open() {
+    let _guard = local_process_test_lock();
     let command = write_fixture_executable(
         "descendant-ocr",
         r#"#!/bin/sh
@@ -316,6 +334,7 @@ sleep 2
 #[cfg(unix)]
 #[test]
 fn local_command_worker_can_cancel_a_running_process() {
+    let _guard = local_process_test_lock();
     let command = write_fixture_executable(
         "cancellable-ocr",
         r#"#!/bin/sh
@@ -349,6 +368,7 @@ printf 'resume-ir-ocr-v1\nconfidence=0.99\ntext:\nlate output\n'
 #[cfg(unix)]
 #[test]
 fn local_command_worker_creates_owner_only_input_file() {
+    let _guard = local_process_test_lock();
     let command = write_fixture_executable(
         "stat-input-mode-ocr",
         r#"#!/bin/sh
@@ -377,6 +397,7 @@ printf 'mode=%s\n' "$mode"
 #[cfg(unix)]
 #[test]
 fn local_command_worker_accepts_crlf_structured_output() {
+    let _guard = local_process_test_lock();
     let command = write_fixture_executable(
         "crlf-ocr",
         r#"#!/bin/sh
@@ -402,6 +423,7 @@ printf 'resume-ir-ocr-v1\r\nconfidence=0.77\r\ntext:\r\ncrlf text\r\n'
 #[cfg(unix)]
 #[test]
 fn local_command_worker_rejects_unstructured_success_output() {
+    let _guard = local_process_test_lock();
     let command = write_fixture_executable(
         "plain-output-ocr",
         r#"#!/bin/sh
@@ -426,6 +448,7 @@ printf 'plain text from wrong binary\n'
 #[cfg(unix)]
 #[test]
 fn local_command_worker_rejects_out_of_range_confidence() {
+    let _guard = local_process_test_lock();
     let command = write_fixture_executable(
         "bad-confidence-ocr",
         r#"#!/bin/sh
@@ -450,6 +473,7 @@ printf 'resume-ir-ocr-v1\nconfidence=1.5\ntext:\ntext\n'
 #[cfg(unix)]
 #[test]
 fn local_command_worker_rejects_malformed_structured_output_as_engine_failure() {
+    let _guard = local_process_test_lock();
     let command = write_fixture_executable(
         "malformed-ocr",
         r#"#!/bin/sh

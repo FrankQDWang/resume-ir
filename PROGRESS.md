@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, and S158 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, and S159 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -443,8 +443,51 @@ obsolete preliminary files and checklists are not product scope.
 | S156 | Product Windows delete-triggered full-text rebuild stability complete locally | Hosted Windows PR #9 failed after S155 in `delete_soft_tombstones_document_and_removes_it_from_default_search` with `resume-cli delete` returning `search index update failed`, pointing at encrypted full-text snapshot rebuild under transient Windows file locks. Focused regressions first failed because full-text index open did not retry Windows share violations (`os error 32`) and snapshot filesystem retry exhausted before a longer lock-release window. After implementation, full-text read-open and snapshot publish/cleanup retry the Windows 5/32/33 lock diagnostics for a bounded 1-second window. Focused RED/GREEN tests, full `index-fulltext`, the failing delete test, fmt, focused clippy, diff check, and full local verification passed. | This slice covers Windows transient file-lock stability for full-text snapshot rebuilds only. It does not prove hosted Windows CI has passed until the pushed branch check completes, nor does it clear large-corpus, model, installer, signing, notarization, or release blockers. |
 | S157 | Product Windows full-text directory cleanup retry complete locally | The pushed S156 run moved the hosted Windows failure from the delete test to `multi_root_reimport_marks_missing_files_deleted_per_root`; the original delete test passed, but multi-root reimport still failed with `search index update failed`, consistent with Windows staging-directory cleanup returning `ERROR_DIR_NOT_EMPTY` / `os error 145` after partial recursive removal. A focused regression first failed because snapshot filesystem retry did not treat `DirectoryNotEmpty` as transient. After implementation, snapshot filesystem retry includes `DirectoryNotEmpty` / `os error 145` diagnostics and allows up to a bounded 5-second cleanup window while keeping full-text open retries unchanged. Focused RED/GREEN tests, full `index-fulltext`, full `s14_delete_search`, fmt, focused clippy, diff check, and full local verification passed. | This slice covers Windows transient full-text directory cleanup only. It does not prove hosted Windows CI has passed until the pushed branch check completes, nor does it clear large-corpus, model, installer, signing, notarization, or release blockers. |
 | S158 | Product hosted Windows delete/search test harness stability complete locally | The pushed S157 run moved the hosted Windows failure again inside `s14_delete_search`: delete and multi-root tests passed, but purge failed during initial import with the same redacted `search index update failed`. This repeated movement across independent tests points to hosted Windows test-binary parallelism amplifying full-text CLI subprocess file-lock pressure, not a single remaining production branch. After implementation, the seven heavy delete/search integration tests in `s14_delete_search` take a local test-process mutex so their full-text rebuild/purge CLI subprocesses run serially within that test binary. Focused `s14_delete_search`, fmt, focused clippy, diff check, and full local verification passed. | This slice covers hosted Windows test harness stability only. It does not change production full-text behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear large-corpus, model, installer, signing, notarization, or release blockers. |
+| S159 | Product hosted Ubuntu OCR process-test harness stability complete locally | The pushed S158 run cleared hosted macOS and Windows Platform CI, but hosted Ubuntu `rust workspace` failed in `local_command_worker_times_out_and_does_not_report_late_output`: the slow synthetic OCR command occasionally returned `EngineFailed` instead of `Timeout`. Local focused and full `s12_ocr_client` baseline passed, matching a CI-only process-test concurrency flake rather than a new product branch. After implementation, the Unix OCR/PDF command tests in `s12_ocr_client` take a local process-test mutex so timeout/cancel/process-group tests do not run concurrently inside the same test binary. Focused timeout test, full `s12_ocr_client`, fmt, focused clippy, diff check, and full local verification passed. | This slice covers hosted Ubuntu OCR command test harness stability only. It does not change production OCR/runtime behavior, prove hosted Rust Workspace CI has passed until the pushed branch check completes, or clear large-corpus, model, installer, signing, notarization, or release blockers. |
 
 ## Command Log
+
+### S159
+
+Design target:
+
+- Stabilize hosted Ubuntu `s12_ocr_client` after S158 made Platform CI green but
+  Rust Workspace failed in the slow local OCR command timeout test with
+  `EngineFailed` instead of `Timeout`.
+- Avoid changing OCR runtime error classification for externally terminated
+  commands; serialize the Unix process-spawning tests inside the OCR client test
+  binary so timeout/cancel/process-group cleanup cases do not run concurrently.
+- Keep the change synthetic-only and local-test-only, without exposing paths,
+  resume text, diagnostics, or local data.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p ocr-client --test s12_ocr_client local_command_worker_times_out_and_does_not_report_late_output --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p ocr-client --test s12_ocr_client --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p ocr-client --test s12_ocr_client --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- Focused slow-command timeout test passed.
+- Full `s12_ocr_client` passed all 17 tests under the default test harness.
+- Fmt, focused clippy, diff check, full local verification, and public-repo
+  guard passed. Full local verification included workspace tests/doc-tests,
+  license/runbook/workflow checks, release artifact/SBOM checks, macOS package
+  check, and the public repository guard; Windows package check was skipped on
+  non-Windows by the guard script.
+
+Scope note:
+
+- S159 serializes OCR client Unix process-spawning tests only. It does not
+  change production OCR process cleanup behavior, prove hosted Rust Workspace
+  CI passes until PR #9 reruns, or clear large-corpus performance, OCR/model
+  quality, installer/service, signing, notarization, or release blockers.
 
 ### S158
 
