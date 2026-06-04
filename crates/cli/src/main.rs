@@ -2791,6 +2791,7 @@ fn run_witness_ocr_jobs(
         return Ok(WitnessOcrStatus::Blocked {
             reason: "local OCR command not configured",
             documents_processed: 0,
+            documents_failed: 0,
             cache_writes: 0,
             cache_hits: 0,
             budget_exhausted: false,
@@ -2798,14 +2799,17 @@ fn run_witness_ocr_jobs(
     }
 
     let mut documents_processed = 0_usize;
+    let mut documents_failed = 0_usize;
     let mut cache_writes = 0_usize;
     let mut cache_hits = 0_usize;
 
     loop {
-        if max_documents.is_some_and(|limit| documents_processed >= limit) {
+        let documents_attempted = documents_processed + documents_failed;
+        if max_documents.is_some_and(|limit| documents_attempted >= limit) {
             let summary = store.status_summary().map_err(CliError::store)?;
             return Ok(WitnessOcrStatus::Completed {
                 documents_processed,
+                documents_failed,
                 cache_writes,
                 cache_hits,
                 budget_exhausted: summary.ocr_jobs_queued > 0,
@@ -2818,6 +2822,7 @@ fn run_witness_ocr_jobs(
         else {
             return Ok(WitnessOcrStatus::Completed {
                 documents_processed,
+                documents_failed,
                 cache_writes,
                 cache_hits,
                 budget_exhausted: false,
@@ -2831,19 +2836,23 @@ fn run_witness_ocr_jobs(
                 cache_hits += summary.cache_hits;
             }
             Err(_) => {
+                documents_failed += 1;
                 if let Ok(Some(current_job)) = store.ingest_job_by_id(&job.id) {
                     if current_job.status == IngestJobStatus::Running {
                         let _ =
                             store.update_job_status(&job.id, IngestJobStatus::FailedRetryable, now);
                     }
                 }
+                if max_documents.is_some() {
+                    continue;
+                }
                 return Ok(WitnessOcrStatus::Blocked {
                     reason: "local OCR command failed or unavailable",
                     documents_processed,
+                    documents_failed,
                     cache_writes,
                     cache_hits,
-                    budget_exhausted: max_documents
-                        .is_some_and(|limit| documents_processed >= limit),
+                    budget_exhausted: false,
                 });
             }
         }
@@ -2855,18 +2864,21 @@ fn print_witness_ocr_status(status: &WitnessOcrStatus) {
         WitnessOcrStatus::NotRequested => {
             println!("witness ocr status: not_requested");
             println!("ocr documents processed: 0");
+            println!("ocr documents failed: 0");
             println!("ocr cache writes: 0");
             println!("ocr cache hits: 0");
             println!("ocr document budget exhausted: no");
         }
         WitnessOcrStatus::Completed {
             documents_processed,
+            documents_failed,
             cache_writes,
             cache_hits,
             budget_exhausted,
         } => {
             println!("witness ocr status: completed");
             println!("ocr documents processed: {documents_processed}");
+            println!("ocr documents failed: {documents_failed}");
             println!("ocr cache writes: {cache_writes}");
             println!("ocr cache hits: {cache_hits}");
             println!(
@@ -2877,6 +2889,7 @@ fn print_witness_ocr_status(status: &WitnessOcrStatus) {
         WitnessOcrStatus::Blocked {
             reason,
             documents_processed,
+            documents_failed,
             cache_writes,
             cache_hits,
             budget_exhausted,
@@ -2884,6 +2897,7 @@ fn print_witness_ocr_status(status: &WitnessOcrStatus) {
             println!("witness ocr status: blocked");
             println!("ocr block reason: {reason}");
             println!("ocr documents processed: {documents_processed}");
+            println!("ocr documents failed: {documents_failed}");
             println!("ocr cache writes: {cache_writes}");
             println!("ocr cache hits: {cache_hits}");
             println!(
@@ -3036,6 +3050,7 @@ enum WitnessOcrStatus {
     NotRequested,
     Completed {
         documents_processed: usize,
+        documents_failed: usize,
         cache_writes: usize,
         cache_hits: usize,
         budget_exhausted: bool,
@@ -3043,6 +3058,7 @@ enum WitnessOcrStatus {
     Blocked {
         reason: &'static str,
         documents_processed: usize,
+        documents_failed: usize,
         cache_writes: usize,
         cache_hits: usize,
         budget_exhausted: bool,

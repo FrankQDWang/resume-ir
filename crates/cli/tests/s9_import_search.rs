@@ -362,6 +362,89 @@ printf 'WitnessOCRBudgetSecret local OCR text\n'
 }
 
 #[test]
+fn witness_run_ocr_budget_reports_failed_documents_without_stopping_or_leaking_paths() {
+    let data_dir = temp_dir("witness-ocr-partial-unused-data-dir");
+    let private_root = temp_dir("witness-ocr-partial-private-root");
+    fs::copy(
+        fixture_root().join("synthetic-scanned-resume.pdf"),
+        private_root.join("real-person-scanned-a.pdf"),
+    )
+    .unwrap();
+    let mut second_pdf = fs::read(fixture_root().join("synthetic-scanned-resume.pdf")).unwrap();
+    second_pdf.extend_from_slice(b"\n% second private fixture variant\n");
+    fs::write(private_root.join("real-person-scanned-b.pdf"), second_pdf).unwrap();
+    let counter_dir = temp_dir("witness-ocr-partial-counter");
+    let counter_file = counter_dir.join("calls");
+    let command = write_fixture_executable(
+        "fixture-witness-ocr-partial",
+        &format!(
+            r#"#!/bin/sh
+counter_file="{}"
+count=0
+if [ -f "$counter_file" ]; then
+  count=$(cat "$counter_file")
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$counter_file"
+if [ "$count" -eq 2 ]; then
+  printf 'fixture OCR failure without private data\n' >&2
+  exit 17
+fi
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.77\n'
+printf 'text:\n'
+printf 'WitnessOCRPartialSecret local OCR text\n'
+"#,
+            path_str(&counter_file)
+        ),
+    );
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+
+    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "witness",
+            "--root",
+            path_str(&private_root),
+            "--run-ocr",
+            "--ocr-command",
+            path_str(&command),
+            "--ocr-max-documents",
+            "2",
+        ])
+        .output()
+        .expect("run resume-cli local witness with partial OCR failures");
+
+    assert!(
+        witness.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&witness.stdout),
+        String::from_utf8_lossy(&witness.stderr)
+    );
+    assert!(witness.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&witness.stdout);
+    assert!(stdout.contains("witness ocr status: completed"));
+    assert!(stdout.contains("ocr documents processed: 1"));
+    assert!(stdout.contains("ocr documents failed: 1"));
+    assert!(stdout.contains("ocr cache writes: 1"));
+    assert!(stdout.contains("ocr document budget exhausted: yes"));
+    assert!(!stdout.contains("WitnessOCRPartialSecret"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&canonical_private_root)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains(path_str(&counter_file)));
+    assert!(!stdout.contains("real-person"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+    remove_dir(command.parent().unwrap());
+    remove_dir(&counter_dir);
+}
+
+#[test]
 fn witness_run_ocr_without_command_reports_blocked_without_persisting_private_data() {
     let data_dir = temp_dir("witness-ocr-blocked-unused-data-dir");
     let private_root = temp_dir("witness-ocr-blocked-private-root");
