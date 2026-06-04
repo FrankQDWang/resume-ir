@@ -71,3 +71,54 @@ jobs:
       - name: Release gate
         run: |
           echo "Packaging, signing, notarization, and GitHub Release upload are gated until explicit release approval."
+
+  macos-package-dry-run:
+    name: macOS package dry run
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate version input
+        run: |
+          case "${{ inputs.version }}" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "version must look like vX.Y.Z" >&2; exit 1 ;;
+          esac
+
+      - name: Build release binaries
+        run: cargo build --workspace --release --locked
+
+      - name: Create unsigned macOS package dry run
+        run: |
+          scripts/release/create-macos-package.sh \
+            --version "${{ inputs.version }}" \
+            --target-dir target/release \
+            --out-dir macos-package-dry-run
+
+      - name: Check macOS package boundary
+        run: |
+          test ! -d local-data
+          test ! -d diagnostics
+          test ! -d model-cache
+          test -f macos-package-dry-run/macos-package.json
+          test -f macos-package-dry-run/resume-ir-${{ inputs.version }}-macos.pkg
+          test -f macos-package-dry-run/resume-ir-${{ inputs.version }}-macos.dmg
+          hdiutil verify macos-package-dry-run/resume-ir-${{ inputs.version }}-macos.dmg
+          grep -F '"packaging_status": "unsigned_dry_run"' macos-package-dry-run/macos-package.json
+          grep -F '"signing_status": "unsigned"' macos-package-dry-run/macos-package.json
+          grep -F '"notarization_status": "not_requested"' macos-package-dry-run/macos-package.json
+
+      - name: Upload unsigned macOS package dry run
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-package-dry-run
+          path: macos-package-dry-run/*
+
+      - name: Release gate
+        run: |
+          echo "Signing, notarization, installer lifecycle validation, Windows MSI, and GitHub Release upload are gated until explicit release approval."

@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, and S128 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, and S129 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -167,8 +167,11 @@ obsolete preliminary files and checklists are not product scope.
   executed successfully on the feature branch and produced the redacted
   `release-dry-run` artifact. A local macOS-only unsigned pkg/dmg dry-run script
   and guard now generate and validate synthetic pkg/dmg artifacts plus a redacted
-  package manifest, but do not sign, notarize, upload, install, upgrade,
-  uninstall, or validate Gatekeeper behavior.
+  package manifest. The Release workflow is now wired to build release binaries
+  on hosted macOS, run the unsigned macOS package dry-run, verify the dmg with
+  `hdiutil`, enforce the public artifact boundary, and upload a
+  `macos-package-dry-run` artifact. These dry-runs do not sign, notarize,
+  upload, install, upgrade, uninstall, or validate Gatekeeper behavior.
   Signing, notarization, Windows service/MSI, real upgrade/uninstall runs,
   GitHub Release upload, and platform installer/service
   validation remain absent, not complete, or externally blocked by platform
@@ -333,8 +336,70 @@ obsolete preliminary files and checklists are not product scope.
 | S126 | Product hosted release dry-run evidence slice complete | Updated Release workflow run `26940230718` executed on commit `ea043fc`, passed in hosted GitHub Actions, produced a non-expired `release-dry-run` artifact, and its job log no longer contained the Node.js 20 action warning or v4 checkout/upload-artifact references. PR #9 hosted checks for the same commit also passed: Rust workspace, macOS Platform CI, Windows Platform CI, dependency tree, license policy, runbook policy, and public repository guard. | None for this hosted release dry-run evidence slice; it does not build MSI/pkg/dmg installers, sign, notarize, create/upload a GitHub Release, validate installer lifecycle behavior, prove release readiness, or clear the separate `Swatinem/rust-cache@v2`/Node `punycode` warning observed in the cache step logs. |
 | S127 | Product local PDF/Word witness validation slice complete | Authorized local-only PDF/Word witnesses over the private sample root completed without uploading or committing real resume data. The import/search/field witness completed with redacted aggregate output and removed private temporary data. A second bounded OCR witness used local `tesseract` and `pdftoppm`, completed the configured OCR document budget without OCR failures, kept the remaining OCR queue budgeted rather than pretending full completion, and removed private temporary data. | None for this local-only private sample witness; it does not prove full-library OCR completion, OCR quality, non-English OCR quality, large-corpus latency/throughput, packaging/signing/installers, Windows/Linux real sample behavior, or production model/ANN readiness. |
 | S128 | Product macOS package dry-run slice complete | `./scripts/ci/check-macos-package.sh` first failed because the guard did not exist. After implementation, the macOS package guard generated unsigned synthetic pkg/dmg dry-run artifacts with `pkgbuild`, `productbuild`, and `hdiutil`, validated the pkg/dmg, verified the redacted `macos-package.json` manifest, rejected invalid versions and missing binaries, and `./scripts/ci/verify-local.sh` passed with the new guard wired in. | None for this unsigned local macOS package dry-run slice; it does not sign, notarize, upload a GitHub Release, run install/upgrade/uninstall/rollback, prove Gatekeeper behavior, build Windows MSI, or prove production release readiness. |
+| S129 | Product hosted macOS package workflow wiring slice complete | `./scripts/ci/check-workflows.sh` first failed because the Release workflow did not include the macOS package dry-run. After implementation, the Release workflow includes a hosted `macos-latest` job that builds release binaries, runs the unsigned macOS package dry-run, verifies the dmg with `hdiutil`, checks the public artifact boundary, uploads `macos-package-dry-run`, and keeps signing/notarization/release upload gated. Workflow guard, workflow YAML parsing, release artifact guard, release SBOM guard, macOS package guard, diff check, public repository guard, and `./scripts/ci/verify-local.sh` passed. | None for this workflow wiring slice; the updated hosted Release workflow still must run after push, and signing, notarization, installer lifecycle validation, Windows MSI, GitHub Release upload, and production release readiness remain absent or gated. |
 
 ## Command Log
+
+### S129
+
+Design target:
+
+- Add a hosted macOS Release workflow dry-run job that builds the workspace
+  release binaries and runs the existing unsigned pkg/dmg package dry-run.
+- Verify the generated dmg on the hosted macOS runner with `hdiutil`, keep the
+  artifact boundary redacted, and upload only dry-run package outputs.
+- Preserve explicit release gates for signing, notarization, installer
+  lifecycle validation, Windows MSI, and GitHub Release upload.
+
+Observed RED:
+
+```bash
+./scripts/ci/check-workflows.sh
+```
+
+Output summary:
+
+- The workflow guard failed because `.github/workflows/release.yml` did not
+  include `scripts/release/create-macos-package.sh` or the hosted macOS package
+  dry-run evidence path.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-workflows.sh
+ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].sort.each { |f| YAML.load_file(f); puts f }'
+./scripts/ci/check-release-artifacts.sh
+./scripts/ci/check-release-sbom.sh
+./scripts/ci/check-macos-package.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Workflow guard: exit 0; Release workflow now requires the macOS package
+  dry-run script, `macos-package.json`, `macos-package-dry-run`,
+  `macos-latest`, `hdiutil verify`, and current checkout/upload action majors.
+- Workflow YAML parse: exit 0 for all tracked workflow files.
+- Release artifact guard: exit 0.
+- Release SBOM guard: exit 0.
+- macOS package guard: exit 0; generated and validated synthetic unsigned
+  pkg/dmg dry-run artifacts and redacted package metadata.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace metadata, fmt, clippy,
+  tests, doc-tests, license check, runbook check, workflow check, release
+  artifact check, release SBOM check, macOS package check, and public repository
+  guard passed.
+
+Scope note:
+
+- S129 wires hosted macOS package dry-run execution into Release workflow only.
+  It does not prove the hosted run until the branch is pushed and rerun, and it
+  does not sign or notarize artifacts, create/upload a GitHub Release, validate
+  install/upgrade/uninstall/rollback behavior, prove Gatekeeper behavior, build
+  Windows MSI, or complete release readiness.
 
 ### S128
 
