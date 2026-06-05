@@ -685,6 +685,18 @@ fn retry_transient_snapshot_fs_operation<T>(
     ))
 }
 
+fn read_snapshot_file(path: &Path) -> Result<Vec<u8>> {
+    read_snapshot_file_with_retry(path, |path| fs::read(path))
+}
+
+fn read_snapshot_file_with_retry(
+    path: &Path,
+    mut read: impl FnMut(&Path) -> std::io::Result<Vec<u8>>,
+) -> Result<Vec<u8>> {
+    retry_transient_snapshot_fs_operation(SNAPSHOT_PUBLISH_RETRY_DELAY, || read(path))
+        .map_err(FullTextError::io)
+}
+
 fn is_transient_snapshot_publish_error(error: &std::io::Error) -> bool {
     if matches!(
         error.kind(),
@@ -775,7 +787,7 @@ fn write_encrypted_snapshot(path: &Path, key_path: &Path, plaintext: &[u8]) -> R
 }
 
 fn read_encrypted_snapshot(path: &Path, key_path: &Path) -> Result<Vec<u8>> {
-    let envelope = fs::read(path).map_err(FullTextError::io)?;
+    let envelope = read_snapshot_file(path)?;
     let first_newline = envelope
         .iter()
         .position(|byte| *byte == b'\n')
@@ -852,7 +864,7 @@ fn collect_snapshot_archive_entries(
             collect_snapshot_archive_entries(root, &path, entries)?;
         } else if file_type.is_file() {
             let relative_path = archive_relative_path(root, &path)?;
-            let bytes = fs::read(&path).map_err(FullTextError::io)?;
+            let bytes = read_snapshot_file(&path)?;
             entries.push((relative_path, bytes));
         }
     }
@@ -1541,7 +1553,7 @@ fn snapshot_metadata_looks_valid(snapshot_dir: &Path) -> bool {
 }
 
 fn encrypted_snapshot_header_looks_valid(snapshot_dir: &Path) -> bool {
-    let Ok(envelope) = fs::read(snapshot_dir.join(ENCRYPTED_SNAPSHOT_FILE)) else {
+    let Ok(envelope) = read_snapshot_file(&snapshot_dir.join(ENCRYPTED_SNAPSHOT_FILE)) else {
         return false;
     };
     envelope
@@ -1815,6 +1827,30 @@ mod tests {
 
         assert_eq!(publisher.attempts(), 1);
         assert!(matches!(error, FullTextError::Io { .. }));
+
+        remove_dir(&index_root);
+    }
+
+    #[test]
+    fn snapshot_file_read_retries_transient_windows_lock_violation() {
+        let index_root = temp_dir("retry-snapshot-file-read");
+        let payload_path = index_root.join("payload.bin");
+        fs::write(&payload_path, b"snapshot payload").unwrap();
+
+        let mut attempts = 0_usize;
+        let bytes = read_snapshot_file_with_retry(&payload_path, |path| {
+            attempts += 1;
+            if attempts < 3 {
+                return Err(std::io::Error::other(
+                    "The process cannot access the file because another process has locked a portion of the file. (os error 33)",
+                ));
+            }
+            fs::read(path)
+        })
+        .unwrap();
+
+        assert_eq!(bytes, b"snapshot payload");
+        assert_eq!(attempts, 3);
 
         remove_dir(&index_root);
     }

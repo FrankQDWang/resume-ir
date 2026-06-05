@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, and S179 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, and S180 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -317,6 +317,10 @@ obsolete preliminary files and checklists are not product scope.
   Hosted Windows full-text snapshot tests now also route staging-orphan fixture
   writes through the existing transient Windows lock retry helper, covering the
   observed `os error 33` setup race in synthetic snapshot tests.
+  Hosted Windows full-text snapshot publishing now also routes snapshot archive
+  file reads, encrypted snapshot envelope reads, and encrypted-header probes
+  through the same bounded transient Windows lock retry policy, covering the
+  observed `os error 33` read race during incremental snapshot tests.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, labeled vector-quality, private real-corpus query release-
   evidence, private business field-quality release-evidence, and private
@@ -525,8 +529,73 @@ obsolete preliminary files and checklists are not product scope.
 | S177 | Product dedupe-quality evaluator and release gate complete locally | A focused dedupe-quality test first failed because `benchmark-runner` had no `run_dedupe_quality_jsonl`, `DedupeQualityGateConfig`, or `evaluate_dedupe_quality_gate_json` API. After implementation, `resume-benchmark dedupe-quality` scores labeled profile pairs through the existing `rank-fusion` soft-dedupe algorithm, emits only aggregate precision/recall/F1 and pair counts, and omits names, schools, companies, skills, sample IDs, document IDs, paths, and raw resume text. `resume-benchmark dedupe-gate --require-private-business-labeled` now rejects ordinary labeled reports and accepts only strict `private-business-labeled` redacted local aggregate reports with dataset and annotation manifest digests, false raw-data/path/profile-value/sample-ID/document-ID booleans, the `resume-ir.dedupe.v1` taxonomy, and aggregate dedupe metrics. Release-readiness plus its CI guard now include a `dedupe quality` blocker, and the release blocker runbook documents the private dedupe-quality evidence gate. Focused RED/GREEN dedupe-quality tests, full benchmark-runner tests, release-readiness tests, readiness/runbook guards, fmt, and focused clippy passed locally. | This slice adds quality evaluation and tightens release evidence validation only. It does not create or upload private labels, run real business dedupe-quality evaluation, prove production dedupe precision/recall on representative resumes, implement candidate merge review workflows, clear OCR/model licensing, clear platform validation, or clear stable release readiness. |
 | S178 | Product local candidate-review workflow complete locally | A focused CLI test first failed because `resume-cli` did not recognize `candidate-review`. After implementation, `resume-cli candidate-review list` computes bounded same-name soft-dedupe suggestions from persisted metadata and prints only redacted version IDs, counts, confidence, and `paths: <redacted>`; `candidate-review merge` creates a manual local candidate for two or more unassigned searchable versions and default search folds them; `candidate-review split` clears those assignments and restores independent default search results. `MetaStore::unassign_candidate_versions` clears assignments transactionally and refreshes candidate version counts. Focused RED/GREEN CLI, full candidate-folding CLI, import candidate assignment, full meta-store, rank-fusion, fmt/diff/runbook/public guards, focused clippy, and full local verification passed locally. | This slice adds local manual review/merge/split workflow only. It does not prove dedupe precision/recall, create private business labels, resolve conflicting multi-contact candidates, add a UI, prove million-corpus review-list latency, clear dedupe-quality evidence, clear OCR/model licensing, clear platform validation, or clear stable release readiness. |
 | S179 | Product scan-error breakdown diagnostics complete locally | Focused tests first failed because `MetaStore::import_scan_error_breakdown` and CLI scan-error breakdown output did not exist. After implementation, metadata can aggregate persisted import scan errors by redacted kind and filesystem operation, and local `status`, `doctor`, and `export-diagnostics --redact` report those aggregates without paths, path digests, filenames, or raw resume text. Focused RED/GREEN meta-store and CLI tests, full meta-store, full S9 import/search, S13 diagnostics, fmt/diff/public guards, focused clippy, and full local verification passed locally. | This slice improves scan-error observability only. It does not change scan retry policy, prove whole-machine discovery coverage, validate real external-drive disconnects, clear cross-platform watcher proof, clear large-corpus import evidence, clear OCR/model licensing, or clear stable release readiness. |
+| S180 | Product hosted Windows full-text snapshot read-lock stability complete locally | PR #9 hosted Windows Platform CI failed in `s8_fulltext::incremental_snapshot_inherits_replaces_and_excludes_documents`: the first `publish_snapshot` returned Windows `os error 33` while reading freshly written snapshot files. A focused regression first failed because `read_snapshot_file_with_retry` did not exist. After implementation, snapshot archive file reads, encrypted snapshot envelope reads, and encrypted-header probes use the existing bounded transient Windows lock retry policy. Focused RED/GREEN, the hosted-failing exact test, full `index-fulltext`, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice covers hosted Windows full-text snapshot file-read stability only. It does not prove hosted Windows CI has passed until the pushed branch check completes, nor does it clear large-corpus, installer/service, signing, notarization, OCR/model licensing, or stable release blockers. |
 
 ## Command Log
+
+### S180
+
+Remote red evidence:
+
+```bash
+gh run view 26988681026 --job 79643880780 --repo FrankQDWang/resume-ir --log-failed
+```
+
+Output summary:
+
+- PR #9 hosted Windows Platform CI failed in `cargo test --workspace --locked`.
+- The failing test was
+  `s8_fulltext::incremental_snapshot_inherits_replaces_and_excludes_documents`.
+- The failure happened at the first `publish_snapshot(...).unwrap()` and
+  returned `Io { diagnostic: "The process cannot access the file because
+  another process has locked a portion of the file. (os error 33)" }`.
+- Other PR checks for that pushed S179 commit had passed except
+  `windows-latest`.
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext snapshot_file_read_retries_transient_windows_lock_violation -- --exact
+```
+
+Output summary:
+
+- Failed before implementation because `read_snapshot_file_with_retry` did not
+  exist.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext tests::snapshot_file_read_retries_transient_windows_lock_violation -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --test s8_fulltext incremental_snapshot_inherits_replaces_and_excludes_documents -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext
+/Users/frankqdwang/.cargo/bin/cargo clippy -p index-fulltext --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The snapshot file-read retry regression passed after implementation.
+- The hosted-failing exact `s8_fulltext` test passed locally.
+- Full `index-fulltext` passed: 9 unit tests, 14 integration tests, and
+  doc-tests.
+- Focused clippy for `index-fulltext` passed.
+- `cargo fmt --all --check`, `git diff --check`, and
+  `guard-public-repo.sh` passed.
+- Full `verify-local.sh` passed, including workspace tests and doc-tests,
+  license/runbook/workflow/release-readiness guards, release artifact/SBOM
+  checks, macOS package check, Windows package skip on non-Windows, and public
+  repo guard.
+
+Scope note:
+
+- S180 extends the existing bounded transient Windows snapshot filesystem retry
+  policy to snapshot file-read paths used during publish, fallback, and header
+  probes. It does not change snapshot contents, expose local paths, upload real
+  data, or clear production release blockers.
 
 ### S179
 
