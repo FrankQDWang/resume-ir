@@ -27,6 +27,7 @@ fn daemon_search_ipc_authenticates_filters_and_redacts_results() {
         degree: "master",
         skill: "Kubernetes",
         years: 7.0,
+        school_tier: "985",
     });
     seed_searchable_resume(SeedResume {
         data_dir: &data_dir,
@@ -37,6 +38,7 @@ fn daemon_search_ipc_authenticates_filters_and_redacts_results() {
         degree: "bachelor",
         skill: "Rust",
         years: 2.0,
+        school_tier: "overseas",
     });
     seed_fulltext_index(
         &data_dir,
@@ -97,7 +99,8 @@ fn daemon_search_ipc_authenticates_filters_and_redacts_results() {
             "filters": {
                 "degree_min": "master",
                 "skills_any": ["kubernetes"],
-                "years_experience_min": 5.0
+                "years_experience_min": 5.0,
+                "school_tiers_any": ["985"]
             }
         }),
     );
@@ -445,6 +448,7 @@ struct SeedResume<'a> {
     degree: &'a str,
     skill: &'a str,
     years: f32,
+    school_tier: &'a str,
 }
 
 fn seed_searchable_resume(seed: SeedResume<'_>) {
@@ -506,6 +510,13 @@ fn seed_searchable_resume(seed: SeedResume<'_>) {
                     "years",
                     EntityType::YearsExperience,
                     &seed.years.to_string(),
+                    0.95,
+                ),
+                entity_mention(
+                    seed.version_id,
+                    "school-tier",
+                    EntityType::SchoolTier,
+                    seed.school_tier,
                     0.95,
                 ),
             ],

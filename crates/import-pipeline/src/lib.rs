@@ -1024,6 +1024,7 @@ fn entity_type_from_field_type(field_type: &FieldType) -> EntityType {
         FieldType::Phone => EntityType::Phone,
         FieldType::DateRange => EntityType::DateRange,
         FieldType::School => EntityType::School,
+        FieldType::SchoolTier => EntityType::SchoolTier,
         FieldType::Degree => EntityType::Degree,
         FieldType::Company => EntityType::Company,
         FieldType::Title => EntityType::Title,

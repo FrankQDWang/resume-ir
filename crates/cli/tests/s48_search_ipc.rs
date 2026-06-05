@@ -36,6 +36,10 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             serde_json::json!(["java", "rust"])
         );
         assert_eq!(payload["filters"]["years_experience_min"], 5.0);
+        assert_eq!(
+            payload["filters"]["school_tiers_any"],
+            serde_json::json!(["985", "double_first_class"])
+        );
 
         let response = serde_json::json!({
             "schema_version": "daemon.search.v1",
@@ -79,6 +83,8 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             "Rust,Java",
             "--years-experience-min",
             "5",
+            "--school-tier",
+            "985,双一流",
         ])
         .output()
         .expect("run resume-cli search --ipc");

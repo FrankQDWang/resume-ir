@@ -88,7 +88,7 @@ obsolete preliminary files and checklists are not product scope.
   proof, cross-platform watcher behavior proof, and large-corpus incremental
   update performance proof.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
-  education/company/title/skills/certs/years, persisted entity mentions,
+  education/school-tier/company/title/skills/certs/years, persisted entity mentions,
   metadata-indexed field prefiltering before the full-text TopDocs cutoff,
   contact HMAC assignment, candidate folding, and explicit best-effort local
   purge of tombstoned documents across metadata, obsolete full-text snapshots,
@@ -205,11 +205,15 @@ obsolete preliminary files and checklists are not product scope.
   while still accepting explicitly labeled degree lines anywhere, preventing
   skill/product phrases such as `MS SQL` from being persisted as a master's
   degree.
+  School tier extraction now recognizes explicit `985`, `211`, `双一流`,
+  overseas, and regular-school evidence inside bounded education/school
+  context, persists canonical `school_tier` mentions, and supports
+  `--school-tier` search filtering through direct CLI and daemon IPC paths.
   Missing production work
   includes broader dictionaries and normalization beyond the current
   high-signal certificate/skill/title aliases, labeled school/degree forms and
-  degree aliases, Chinese explicit/open-ended date ranges, China mobile phone
-  formats, and labeled company/title forms, real
+  degree aliases, explicit school-tier aliases, Chinese explicit/open-ended
+  date ranges, China mobile phone formats, and labeled company/title forms, real
   business labeled field and dedupe quality datasets/results, remaining future
   non-cache PII surface purge coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
@@ -638,8 +642,81 @@ obsolete preliminary files and checklists are not product scope.
 | S197 | Product release-readiness vector-quality blocker complete locally | Focused release-readiness tests first failed because stable-release blockers did not include `vector quality`: text output omitted `vector quality: blocked`, and JSON still reported 12 blockers. After implementation, `release-readiness` reports a separate `vector quality` blocker, the release-readiness CI check asserts the label and detail, and the release blockers runbook plus runbook policy guard document the private business `vector-gate` evidence boundary with dataset/annotation/model manifest digests and no raw query/candidate/path/id/vector payloads. Focused RED/GREEN, full release-readiness CLI tests, focused clippy, fmt, diff check, public guard, policy scripts, and full local verification passed locally. | This slice wires vector-quality evidence into release readiness only. It does not create private labels, run real semantic evaluation, select/license/distribute a model, prove real vector quality or ANN latency, clear field/dedupe/benchmark/platform blockers, or make stable release ready. |
 | S198 | Product private real-corpus OCR throughput release evidence gate complete locally | Focused OCR gate tests first failed because `OcrThroughputGateConfig` had no private-real-corpus release mode and `resume-benchmark ocr-gate` did not accept `--require-private-real-corpus`. After implementation, OCR throughput gates can reject synthetic reports for release evidence, accept only strict `private-real-corpus` redacted local aggregate reports with dataset/OCR-runtime/renderer/language-pack manifest digests, aggregate latency/throughput metrics, target claim `ocr_throughput_target_met`, and explicit false raw OCR text/page image/resume-path/document-ID/page-ID/command-path booleans. Release-readiness now reports an `OCR throughput` blocker, and the release blockers runbook plus policy guards document the private OCR evidence boundary. Focused RED/GREEN, full `benchmark-runner`, release-readiness tests, runbook/readiness checks, focused clippy, fmt/diff checks, public guard, and full local verification passed locally. | This slice adds the release-evidence validator and blocker only. It does not run a real OCR benchmark, upload or sanitize private OCR reports, choose/license/distribute OCR runtimes or language packs, prove full-library scanned OCR throughput, validate platforms, sign/release, or make stable release ready. |
 | S199 | Product synthetic query benchmark streaming complete locally | A focused CLI regression first failed because redacted synthetic benchmark reports did not include `generation_mode: "streaming"`. After implementation, `run_synthetic_query_benchmark` streams generated synthetic documents directly into the full-text index instead of collecting the full document set into a `Vec`, and synthetic benchmark reports expose the streaming generation mode for runbook audit. The release blockers runbook and runbook policy guard now require that boundary. Focused RED/GREEN, full `benchmark-runner`, runbook guard, focused clippy, fmt/diff checks, public guard, and full local verification passed locally. | This slice improves scalable synthetic pressure-run feasibility only. It does not run a real 100k/1M private benchmark, prove production P95, produce representative real-corpus evidence, clear OCR/model licensing, validate platforms, or make stable release ready. |
+| S200 | Product school-tier extraction and filtering complete locally | Focused tests first failed because `FieldType::SchoolTier`, rank-fusion `SchoolTier` filters, and import mapping for the new field did not exist. After implementation, extractor-rules recognizes explicit `985`, `211`, `双一流`, overseas, and regular-school evidence inside bounded education/school context, persists canonical `school_tier` entity mentions, wires the SQLite entity whitelist and benchmark field labels, and supports `--school-tier` filtering through direct CLI search plus CLI/daemon IPC search payloads. Focused RED/GREEN, full extractor/rank/import/meta-store/benchmark tests, persisted-field and search-IPC CLI tests, daemon search-IPC tests, focused clippy, and fmt passed locally. | This slice uses synthetic/temp fixtures only. It does not infer school tier from broad school dictionaries, prove real business field-quality metrics, evaluate private resume corpora, clear broad multilingual education coverage, or make stable release ready. |
 
 ## Command Log
+
+### S200
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_school_tier_values_inside_education_context -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_any_school_tier -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_school_tier_mentions_and_filters_search_without_output_leaks -- --exact
+```
+
+Output summary:
+
+- The extractor regression failed before implementation because
+  `FieldType::SchoolTier` did not exist.
+- The rank-fusion regression failed before implementation because
+  `SchoolTier`, `with_school_tiers`, and `with_school_tiers_any` did not exist.
+- The CLI persisted-field regression failed before full implementation because
+  import-pipeline did not map `FieldType::SchoolTier` to an entity type.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_school_tier_values_inside_education_context -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_any_school_tier -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_school_tier_mentions_and_filters_search_without_output_leaks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_authenticates_filters_and_redacts_results -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules -p rank-fusion -p import-pipeline -p meta-store -p benchmark-runner
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p rank-fusion -p import-pipeline -p meta-store -p benchmark-runner -p resume-cli -p resume-daemon --all-targets -- -D warnings
+```
+
+Output summary:
+
+- Extractor-rules produced canonical `school_tier` values for synthetic
+  `985/211/双一流` and overseas education evidence while ignoring a later
+  non-education `985` skill sentence.
+- Import persisted `school_tier` mentions with spans and redacted debug output,
+  and direct `resume-cli search --school-tier 985` returned the synthetic Java
+  candidate while `--school-tier overseas` returned zero results.
+- CLI IPC emits `school_tiers_any` with canonical values, and daemon IPC parses
+  that filter and applies it to persisted `SchoolTier` mentions.
+- The related crate/test files, focused clippy, and formatter passed locally.
+
+Final checkpoint verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Formatter check, whitespace diff check, and public repo guard passed.
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S200 uses synthetic/temp data only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, local diagnostics, tokens,
+  model caches, private labels, OCR text, page images, command paths, or
+  vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S199
 

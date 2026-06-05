@@ -1,6 +1,6 @@
 use rank_fusion::{
     fold_by_candidate, reciprocal_rank_fusion, soft_dedupe_score, DedupeProfile, DegreeLevel,
-    RankedHit, ResumeProfile, SearchFilters,
+    RankedHit, ResumeProfile, SchoolTier, SearchFilters,
 };
 
 #[test]
@@ -36,6 +36,24 @@ fn field_filters_require_degree_skill_and_year_thresholds() {
     assert!(!filters.matches(&low_degree));
     assert!(!filters.matches(&missing_skill));
     assert!(!filters.matches(&junior));
+}
+
+#[test]
+fn field_filters_match_any_school_tier() {
+    let filters = SearchFilters::default().with_school_tiers_any([SchoolTier::Tier985]);
+    let matching = ResumeProfile::new("doc_elite")
+        .with_school_tiers([SchoolTier::Tier211, SchoolTier::Tier985]);
+    let other_tier = ResumeProfile::new("doc_other").with_school_tiers([SchoolTier::Overseas]);
+    let missing_tier = ResumeProfile::new("doc_missing");
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&other_tier));
+    assert!(!filters.matches(&missing_tier));
+    assert_eq!(filters.school_tiers_any()[0].canonical(), "985");
+    assert_eq!(
+        SchoolTier::parse("双一流").unwrap(),
+        SchoolTier::DoubleFirstClass
+    );
 }
 
 #[test]

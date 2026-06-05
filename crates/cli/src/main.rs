@@ -49,7 +49,7 @@ use ocr_client::{
 use privacy::{backup_contact_hash_key, inspect_contact_hash_key, restore_contact_hash_key};
 use rank_fusion::{
     fuse_hybrid_rrf, soft_dedupe_score, DedupeProfile, DegreeLevel, HybridRecall, RankedHit,
-    ResumeProfile, SearchFilters,
+    ResumeProfile, SchoolTier, SearchFilters,
 };
 use rusqlite::Connection;
 use search_planner::plan_search;
@@ -4400,6 +4400,7 @@ fn witness_field_label(entity_type: &EntityType) -> Option<&'static str> {
         EntityType::Email => Some("email"),
         EntityType::Phone => Some("phone"),
         EntityType::School => Some("school"),
+        EntityType::SchoolTier => Some("school_tier"),
         EntityType::Degree => Some("degree"),
         EntityType::Company => Some("company"),
         EntityType::Title => Some("title"),
@@ -5598,6 +5599,11 @@ fn search_ipc_request_body(search_args: &SearchArgs) -> String {
 fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
     serde_json::json!({
         "degree_min": filters.degree_min().map(DegreeLevel::canonical),
+        "school_tiers_any": filters
+            .school_tiers_any()
+            .iter()
+            .map(|school_tier| school_tier.canonical())
+            .collect::<Vec<_>>(),
         "skills_any": filters.skills_any(),
         "years_experience_min": filters.years_experience_min(),
     })
@@ -5696,6 +5702,24 @@ fn field_filter_doc_id_prefilter(
                 .searchable_document_ids_with_entity_values(
                     EntityType::Degree,
                     &degree_filter_values(degree_min),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    false,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.school_tiers_any().is_empty() {
+        let school_tier_values = filters
+            .school_tiers_any()
+            .iter()
+            .map(|school_tier| school_tier.canonical().to_string())
+            .collect::<Vec<_>>();
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::SchoolTier,
+                    &school_tier_values,
                     FIELD_FILTER_CONFIDENCE_THRESHOLD,
                     false,
                 )
@@ -8052,6 +8076,28 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
                 filters = filters.with_degree_min(degree);
                 index += 2;
             }
+            "--school-tier" | "--school-tier-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let mut school_tiers = Vec::new();
+                for school_tier in value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|school_tier| !school_tier.is_empty())
+                {
+                    school_tiers.push(
+                        SchoolTier::parse(school_tier).ok_or_else(|| {
+                            CliError::user("search school tier filter is invalid")
+                        })?,
+                    );
+                }
+                if school_tiers.is_empty() {
+                    return Err(CliError::user("search school tier filter is invalid"));
+                }
+                filters = filters.with_school_tiers_any(school_tiers);
+                index += 2;
+            }
             "--skills-any" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -8115,7 +8161,7 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
 }
 
 fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
@@ -8657,6 +8703,11 @@ fn persisted_profile(
         .filter(|field| field.entity_type == EntityType::Skill && field.confidence >= 0.75)
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let school_tiers = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::SchoolTier && field.confidence >= 0.75)
+        .filter_map(|field| SchoolTier::parse(field.normalized_value.as_deref()?))
+        .collect::<Vec<_>>();
     let years_experience = fields
         .iter()
         .filter(|field| {
@@ -8665,7 +8716,9 @@ fn persisted_profile(
         .filter_map(|field| field.normalized_value.as_deref()?.parse::<f32>().ok())
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut profile = ResumeProfile::new(doc_id).with_skills(skills);
+    let mut profile = ResumeProfile::new(doc_id)
+        .with_school_tiers(school_tiers)
+        .with_skills(skills);
     if let Some(degree) = degree {
         profile = profile.with_degree(degree);
     }
@@ -9128,6 +9181,7 @@ fn entity_type_label(entity_type: &EntityType) -> String {
         EntityType::Email => "email".to_string(),
         EntityType::Phone => "phone".to_string(),
         EntityType::School => "school".to_string(),
+        EntityType::SchoolTier => "school_tier".to_string(),
         EntityType::Degree => "degree".to_string(),
         EntityType::Company => "company".to_string(),
         EntityType::Title => "title".to_string(),

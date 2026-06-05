@@ -39,10 +39,50 @@ impl DegreeLevel {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SchoolTier {
+    Tier985,
+    Tier211,
+    DoubleFirstClass,
+    Overseas,
+    Regular,
+    Unknown,
+}
+
+impl SchoolTier {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "985" => Some(Self::Tier985),
+            "211" => Some(Self::Tier211),
+            "double_first_class" | "double-first-class" | "double first class"
+            | "doublefirstclass" => Some(Self::DoubleFirstClass),
+            "overseas" | "oversea" | "foreign" | "international" => Some(Self::Overseas),
+            "regular" | "ordinary" | "normal" => Some(Self::Regular),
+            "unknown" => Some(Self::Unknown),
+            "双一流" => Some(Self::DoubleFirstClass),
+            "海外" | "国外" | "海外高校" | "海外院校" => Some(Self::Overseas),
+            "普通" | "普通高校" | "普通院校" | "普通本科" => Some(Self::Regular),
+            _ => None,
+        }
+    }
+
+    pub fn canonical(self) -> &'static str {
+        match self {
+            Self::Tier985 => "985",
+            Self::Tier211 => "211",
+            Self::DoubleFirstClass => "double_first_class",
+            Self::Overseas => "overseas",
+            Self::Regular => "regular",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub struct ResumeProfile {
     doc_id: String,
     degree: Option<DegreeLevel>,
+    school_tiers: Vec<SchoolTier>,
     skills: Vec<String>,
     years_experience: Option<f32>,
 }
@@ -52,6 +92,7 @@ impl ResumeProfile {
         Self {
             doc_id: doc_id.into(),
             degree: None,
+            school_tiers: Vec::new(),
             skills: Vec::new(),
             years_experience: None,
         }
@@ -59,6 +100,18 @@ impl ResumeProfile {
 
     pub fn with_degree(mut self, degree: DegreeLevel) -> Self {
         self.degree = Some(degree);
+        self
+    }
+
+    pub fn with_school_tiers<I>(mut self, school_tiers: I) -> Self
+    where
+        I: IntoIterator<Item = SchoolTier>,
+    {
+        self.school_tiers = school_tiers
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         self
     }
 
@@ -86,6 +139,10 @@ impl ResumeProfile {
         self.degree
     }
 
+    pub fn school_tiers(&self) -> &[SchoolTier] {
+        &self.school_tiers
+    }
+
     pub fn skills(&self) -> &[String] {
         &self.skills
     }
@@ -101,6 +158,7 @@ impl fmt::Debug for ResumeProfile {
             .debug_struct("ResumeProfile")
             .field("doc_id", &self.doc_id)
             .field("degree", &self.degree)
+            .field("school_tier_count", &self.school_tiers.len())
             .field("skill_count", &self.skills.len())
             .field("years_experience", &self.years_experience)
             .finish()
@@ -110,6 +168,7 @@ impl fmt::Debug for ResumeProfile {
 #[derive(Clone, Default, PartialEq)]
 pub struct SearchFilters {
     degree_min: Option<DegreeLevel>,
+    school_tiers_any: Vec<SchoolTier>,
     skills_any: Vec<String>,
     years_experience_min: Option<f32>,
 }
@@ -117,6 +176,18 @@ pub struct SearchFilters {
 impl SearchFilters {
     pub fn with_degree_min(mut self, degree: DegreeLevel) -> Self {
         self.degree_min = Some(degree);
+        self
+    }
+
+    pub fn with_school_tiers_any<I>(mut self, school_tiers: I) -> Self
+    where
+        I: IntoIterator<Item = SchoolTier>,
+    {
+        self.school_tiers_any = school_tiers
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         self
     }
 
@@ -142,6 +213,7 @@ impl SearchFilters {
 
     pub fn is_empty(&self) -> bool {
         self.degree_min.is_none()
+            && self.school_tiers_any.is_empty()
             && self.skills_any.is_empty()
             && self.years_experience_min.is_none()
     }
@@ -154,6 +226,10 @@ impl SearchFilters {
         &self.skills_any
     }
 
+    pub fn school_tiers_any(&self) -> &[SchoolTier] {
+        &self.school_tiers_any
+    }
+
     pub fn years_experience_min(&self) -> Option<f32> {
         self.years_experience_min
     }
@@ -161,6 +237,17 @@ impl SearchFilters {
     pub fn matches(&self, profile: &ResumeProfile) -> bool {
         if let Some(min_degree) = self.degree_min {
             if profile.degree().is_none_or(|degree| degree < min_degree) {
+                return false;
+            }
+        }
+
+        if !self.school_tiers_any.is_empty() {
+            let profile_tiers = profile.school_tiers().iter().collect::<BTreeSet<_>>();
+            if !self
+                .school_tiers_any
+                .iter()
+                .any(|school_tier| profile_tiers.contains(school_tier))
+            {
                 return false;
             }
         }
@@ -194,6 +281,7 @@ impl fmt::Debug for SearchFilters {
         formatter
             .debug_struct("SearchFilters")
             .field("degree_min", &self.degree_min)
+            .field("school_tiers_any_count", &self.school_tiers_any.len())
             .field("skills_any_count", &self.skills_any.len())
             .field("years_experience_min", &self.years_experience_min)
             .finish()

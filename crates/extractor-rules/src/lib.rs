@@ -15,6 +15,7 @@ pub enum FieldType {
     Phone,
     DateRange,
     School,
+    SchoolTier,
     Degree,
     Company,
     Title,
@@ -63,6 +64,7 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     extract_named_month_present_date_ranges(text, &mut matches);
     derive_years_experience(text, &mut matches);
     extract_schools(text, &mut matches);
+    extract_school_tiers(text, &mut matches);
     extract_degrees(text, &mut matches);
     extract_companies(text, &mut matches);
     extract_titles(text, &mut matches);
@@ -678,6 +680,144 @@ fn normalize_school(value: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+}
+
+fn extract_school_tiers(text: &str, matches: &mut Vec<RuleMatch>) {
+    let mut education_context_lines = 0_usize;
+    let mut seen = BTreeSet::new();
+
+    for (line_start, line) in indexed_lines(text) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            education_context_lines = education_context_lines.saturating_sub(1);
+            continue;
+        }
+
+        if is_education_section_header(trimmed) {
+            education_context_lines = 8;
+            continue;
+        }
+
+        if education_context_lines > 0 && looks_like_section_header(trimmed) {
+            education_context_lines = 0;
+            continue;
+        }
+
+        if trimmed.len() > 160 {
+            education_context_lines = education_context_lines.saturating_sub(1);
+            continue;
+        }
+
+        let leading = line.len() - line.trim_start().len();
+        let trimmed_span_start = line_start + leading;
+        if let Some(segment) =
+            school_tier_segment(trimmed, trimmed_span_start, education_context_lines > 0)
+        {
+            push_school_tier_matches(segment, matches, &mut seen);
+        }
+
+        education_context_lines = education_context_lines.saturating_sub(1);
+    }
+}
+
+fn school_tier_segment<'a>(
+    trimmed_line: &'a str,
+    trimmed_span_start: usize,
+    in_education_context: bool,
+) -> Option<LabeledSegment<'a>> {
+    if let Some((label, value, delimiter_len)) =
+        split_labeled_value_line(trimmed_line, is_school_tier_label)
+    {
+        let value_leading = value.len() - value.trim_start().len();
+        let value = value.trim();
+        return (!value.is_empty()).then_some(LabeledSegment {
+            text: value,
+            span_start: trimmed_span_start + label.len() + delimiter_len + value_leading,
+        });
+    }
+
+    if let Some(segment) = school_segment(trimmed_line, trimmed_span_start) {
+        return Some(segment);
+    }
+
+    in_education_context.then_some(LabeledSegment {
+        text: trimmed_line,
+        span_start: trimmed_span_start,
+    })
+}
+
+fn is_school_tier_label(label: &str) -> bool {
+    matches!(
+        label.to_lowercase().as_str(),
+        "school tier"
+            | "school_tier"
+            | "university tier"
+            | "institution tier"
+            | "tier"
+            | "学校层次"
+            | "院校层次"
+            | "高校层次"
+            | "学校类型"
+            | "院校类型"
+            | "高校类型"
+    )
+}
+
+fn push_school_tier_matches(
+    segment: LabeledSegment<'_>,
+    matches: &mut Vec<RuleMatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    for (normalized, confidence, pattern) in school_tier_alias_patterns() {
+        let regex = Regex::new(pattern).unwrap();
+        for found in regex.find_iter(segment.text) {
+            if school_tier_digit_has_adjacent_digit(segment.text, found.start(), found.end()) {
+                continue;
+            }
+            if !seen.insert(normalized.to_string()) {
+                continue;
+            }
+            matches.push(RuleMatch {
+                field_type: FieldType::SchoolTier,
+                raw_value: found.as_str().to_string(),
+                normalized_value: Some(normalized.to_string()),
+                span_start: segment.span_start + found.start(),
+                span_end: segment.span_start + found.end(),
+                confidence,
+            });
+        }
+    }
+}
+
+fn school_tier_alias_patterns() -> [(&'static str, f32, &'static str); 5] {
+    [
+        ("985", 0.92, r"985"),
+        ("211", 0.9, r"211"),
+        (
+            "double_first_class",
+            0.9,
+            r"(?i)double[-\s_]*first[-\s_]*class|双一流",
+        ),
+        (
+            "overseas",
+            0.86,
+            r"(?i)overseas|foreign\s+university|international\s+university|海外高校|海外院校|海外学校|海外|国外",
+        ),
+        (
+            "regular",
+            0.82,
+            r"(?i)regular\s+university|ordinary\s+university|普通高校|普通院校|普通本科|普通大学",
+        ),
+    ]
+}
+
+fn school_tier_digit_has_adjacent_digit(value: &str, start: usize, end: usize) -> bool {
+    let previous_is_digit = start > 0
+        && value
+            .as_bytes()
+            .get(start - 1)
+            .is_some_and(u8::is_ascii_digit);
+    previous_is_digit || value.as_bytes().get(end).is_some_and(u8::is_ascii_digit)
 }
 
 fn extract_degrees(text: &str, matches: &mut Vec<RuleMatch>) {

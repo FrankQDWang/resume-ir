@@ -331,6 +331,121 @@ Skills: Java
 }
 
 #[test]
+fn import_persists_school_tier_mentions_and_filters_search_without_output_leaks() {
+    let data_dir = temp_dir("persisted-school-tier-data");
+    let resume_root = temp_dir("persisted-school-tier-resumes");
+    fs::write(
+        resume_root.join("synthetic-school-tier-candidate.txt"),
+        "\
+Synthetic School Tier Candidate
+Email: school-tier-candidate@example.test
+Education
+School: Synthetic 985 University (985/211/双一流)
+Degree: Bachelor of Engineering
+Skills: Java
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import school tier fields");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("Synthetic 985 University"));
+    assert!(!stdout.contains("school-tier-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-school-tier-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+    let tiers = mentions
+        .iter()
+        .filter(|mention| mention.entity_type == EntityType::SchoolTier)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("985"));
+            mention.normalized_value.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(tiers, vec!["985", "211", "double_first_class"]);
+
+    let tier_filtered = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "Java",
+            "--school-tier",
+            "985",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run school-tier filtered search");
+    assert!(
+        tier_filtered.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&tier_filtered.stdout),
+        String::from_utf8_lossy(&tier_filtered.stderr)
+    );
+    assert!(tier_filtered.stderr.is_empty());
+    let tier_stdout = String::from_utf8_lossy(&tier_filtered.stdout);
+    assert!(tier_stdout.contains("results: 1"));
+    assert!(tier_stdout.contains("synthetic-school-tier-candidate.txt"));
+    assert!(!tier_stdout.contains(path_str(&data_dir)));
+    assert!(!tier_stdout.contains(path_str(&resume_root)));
+    assert!(!tier_stdout.contains("school-tier-candidate@example.test"));
+
+    let overseas_filtered = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "Java",
+            "--school-tier",
+            "overseas",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run non-matching school-tier filtered search");
+    assert!(overseas_filtered.status.success());
+    let overseas_stdout = String::from_utf8_lossy(&overseas_filtered.stdout);
+    assert!(overseas_stdout.contains("results: 0"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_does_not_persist_degree_aliases_from_skill_lines() {
     let data_dir = temp_dir("persisted-degree-context-data");
     let resume_root = temp_dir("persisted-degree-context-resumes");

@@ -45,7 +45,9 @@ use ocr_client::{
     OcrOptions, OcrPageRequest, OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec,
     RenderedPage, TesseractLanguageAvailability, TesseractOcrClient, TesseractOcrSpec,
 };
-use rank_fusion::{soft_dedupe_score, DedupeProfile, DegreeLevel, ResumeProfile, SearchFilters};
+use rank_fusion::{
+    soft_dedupe_score, DedupeProfile, DegreeLevel, ResumeProfile, SchoolTier, SearchFilters,
+};
 use search_planner::plan_search;
 use sectionizer::Sectionizer;
 
@@ -2581,6 +2583,25 @@ fn parse_search_filters(
             parsed = parsed.with_skills_any(skills);
         }
     }
+    if let Some(value) = object.get("school_tiers_any") {
+        if !value.is_null() {
+            let school_tiers = value.as_array().ok_or(IpcCommandError::BadRequest(
+                "school_tiers_any must be an array",
+            ))?;
+            if school_tiers.len() > 16 {
+                return Err(IpcCommandError::BadRequest("too many school tiers"));
+            }
+            let school_tiers = school_tiers
+                .iter()
+                .map(|school_tier| {
+                    school_tier.as_str().and_then(SchoolTier::parse).ok_or(
+                        IpcCommandError::BadRequest("school_tiers_any values are invalid"),
+                    )
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_school_tiers_any(school_tiers);
+        }
+    }
     if let Some(value) = object.get("years_experience_min") {
         if !value.is_null() {
             let years = value
@@ -2884,6 +2905,14 @@ fn daemon_persisted_profile(
         })
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let school_tiers = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::SchoolTier
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| SchoolTier::parse(field.normalized_value.as_deref()?))
+        .collect::<Vec<_>>();
     let years_experience = fields
         .iter()
         .filter(|field| {
@@ -2893,7 +2922,9 @@ fn daemon_persisted_profile(
         .filter_map(|field| field.normalized_value.as_deref()?.parse::<f32>().ok())
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut profile = ResumeProfile::new(doc_id).with_skills(skills);
+    let mut profile = ResumeProfile::new(doc_id)
+        .with_school_tiers(school_tiers)
+        .with_skills(skills);
     if let Some(degree) = degree {
         profile = profile.with_degree(degree);
     }
@@ -4078,6 +4109,7 @@ fn entity_type_label(entity_type: &EntityType) -> String {
         EntityType::Email => "email".to_string(),
         EntityType::Phone => "phone".to_string(),
         EntityType::School => "school".to_string(),
+        EntityType::SchoolTier => "school_tier".to_string(),
         EntityType::Degree => "degree".to_string(),
         EntityType::Company => "company".to_string(),
         EntityType::Title => "title".to_string(),

@@ -163,6 +163,47 @@ Degree: MSc Computer Science
 }
 
 #[test]
+fn extracts_school_tier_values_inside_education_context() {
+    let text = "\
+Education
+School: Synthetic 985 University (985/211/双一流)
+Degree: Bachelor of Engineering
+教育经历
+学校层次：海外高校
+Skills
+Built 985 telemetry dashboards";
+
+    let matches = extract_strong_fields(text);
+
+    let school_tiers = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::SchoolTier)
+        .collect::<Vec<_>>();
+    let normalized = school_tiers
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        normalized,
+        vec!["985", "211", "double_first_class", "overseas"]
+    );
+    assert_eq!(
+        &text[school_tiers[0].span_start..school_tiers[0].span_end],
+        "985"
+    );
+    assert_eq!(
+        &text[school_tiers[2].span_start..school_tiers[2].span_end],
+        "双一流"
+    );
+    assert!(school_tiers.iter().all(|field| field.confidence >= 0.82));
+    assert!(!school_tiers
+        .iter()
+        .any(|field| field.span_start > text.find("Skills").unwrap()));
+    assert!(!format!("{:?}", school_tiers[0]).contains("985"));
+}
+
+#[test]
 fn avoids_degree_aliases_outside_education_context() {
     let text = "\
 Skills
