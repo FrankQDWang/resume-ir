@@ -391,7 +391,12 @@ Skills: Java
         .map(|mention| {
             assert!(mention.span_start.is_some());
             assert!(mention.span_end.is_some());
-            assert!(!format!("{mention:?}").contains("985"));
+            let debug = format!("{mention:?}");
+            assert!(debug.contains("raw_value: \"<redacted>\""), "{debug}");
+            assert!(
+                debug.contains("normalized_value: Some(\"<redacted>\")"),
+                "{debug}"
+            );
             mention.normalized_value.as_deref().unwrap()
         })
         .collect::<Vec<_>>();

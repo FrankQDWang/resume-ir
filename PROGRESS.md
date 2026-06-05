@@ -646,8 +646,65 @@ obsolete preliminary files and checklists are not product scope.
 | S201 | Product field-quality school-tier release gate complete locally | Focused RED tests first failed because private-business field-quality reports without `school_tier` metrics were accepted by both the library gate and CLI gate. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `school_tier` metrics for private business release evidence, complete strict reports include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, full `benchmark-runner`, and runbook guard passed locally. | This slice tightens release-evidence validation only. It does not create private labels, run real business field-quality evaluation, prove production `school_tier` F1 on representative resumes, infer tier from broad school dictionaries, or make stable release ready. |
 | S202 | Product unknown school-tier filtering complete locally | Focused tests first failed because `SchoolTier::Unknown` did not match profiles with no school-tier evidence, CLI `--school-tier unknown` returned no target when known-tier decoys consumed the full-text top-k window, `MetaStore` had no missing-entity prefilter helper, and daemon IPC had the same post-filter-only top-k gap. After implementation, `unknown` means no high-confidence persisted `school_tier` mention on a searchable visible version, known and unknown tier filters are unioned before intersecting with other field filters, and both CLI and daemon full-text search apply the prefilter before top-k truncation. Focused RED/GREEN and related rank/meta-store/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not infer unknown as an extracted entity, read real resumes, prove broad school dictionaries, produce private field-quality evidence, or make stable release ready. |
 | S203 | Product certificate search filtering complete locally | Focused tests first failed because rank-fusion had no certificate profile/filter API, CLI `--certificate` was rejected by search usage, CLI IPC did not emit `certificates_any`, and daemon IPC ignored certificate filters until after full-text top-k retrieval. After implementation, certificate filters normalize common certificate aliases to extractor canonical values, CLI supports `--certificate` and `--certificates-any`, CLI/daemon IPC carry `certificates_any`, persisted profiles hydrate certificate mentions, and both CLI and daemon prefilter certificate doc IDs before full-text top-k truncation. Focused RED/GREEN and related rank/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden certificate extraction beyond existing aliases, implement certificate level/date filters, produce private field-quality evidence, or make stable release ready. |
+| S204 | Product hosted Rust workspace school-tier debug assertion stability complete locally | PR #9 hosted Rust workspace failed in `import_persists_school_tier_mentions_and_filters_search_without_output_leaks` because the test checked that the entire `EntityMention` Debug string did not contain `985`; the Debug string already redacts raw and normalized values, but opaque hex IDs can legitimately contain that digit sequence. The test now asserts the `raw_value` and `normalized_value` Debug fields are redacted while keeping the normalized school-tier value and filtered-search assertions. Focused persisted-field tests, fmt, focused clippy, diff check, public guard, and full local verification passed. | This slice stabilizes a flaky privacy assertion only. It does not change production search/filter behavior, read private resumes, broaden school-tier extraction, prove hosted CI has passed until PR #9 reruns, or make stable release ready. |
 
 ## Command Log
+
+### S204
+
+Hosted CI failure evidence:
+
+```bash
+gh run view 27004152277 --job 79691476659 --log
+git fetch origin pull/9/merge:refs/remotes/origin/pr/9/merge
+git worktree add /tmp/resume-ir-pr9-merge refs/remotes/origin/pr/9/merge
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_school_tier_mentions_and_filters_search_without_output_leaks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields
+```
+
+Output summary:
+
+- Hosted PR #9 Rust workspace failed on Ubuntu in
+  `import_persists_school_tier_mentions_and_filters_search_without_output_leaks`
+  at the assertion that the whole `EntityMention` Debug string did not contain
+  `985`.
+- The PR merge worktree exact test and full local `s16_persisted_fields` test
+  passed on macOS, pointing at a flaky assertion rather than a deterministic
+  production behavior failure.
+- Root cause: `EntityMention` Debug already redacts `raw_value` and
+  `normalized_value`, but it also prints opaque hex IDs; those IDs can
+  legitimately include the digit sequence `985`.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `s16_persisted_fields` passed with 11 tests, including the school-tier import
+  and filter regression.
+- Formatter check, whitespace diff check, public repo guard, and focused
+  `resume-cli` clippy passed.
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness, release artifact check,
+  release SBOM check, macOS package check, Windows package skip on non-Windows,
+  and final public repo guard.
+
+Scope note:
+
+- S204 uses synthetic test data and hosted CI logs only. It does not read,
+  print, commit, or upload private resumes, filenames, paths, raw text, local
+  diagnostics, tokens, model caches, private labels, OCR text, page images,
+  command paths, or vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S203
 
