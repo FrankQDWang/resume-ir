@@ -155,7 +155,7 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "hardware fault drills",
-        "real battery-mode and external-drive disconnect drills are not proven on release platforms",
+        "actual ENOSPC, service-level daemon kill, battery-mode, and external-drive disconnect drills are not proven on release platforms",
     ),
 ];
 

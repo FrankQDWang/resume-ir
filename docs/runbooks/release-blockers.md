@@ -25,6 +25,9 @@ unresolved.
 - a reviewed licensed OCR engine is not selected or distributed
 - a reviewed licensed embedding model is not selected or distributed
 - Windows and macOS cross-platform validation are not complete
+- hardware fault drills for actual ENOSPC, service-level daemon kill,
+  battery-mode, and external-drive disconnect are not proven on release
+  platforms
 
 ## Pre-Release Local Gate
 

@@ -85,6 +85,8 @@ require_text "$stdout_file" '"label": "OCR engine license/distribution"'
 require_text "$stdout_file" '"label": "embedding model license/distribution"'
 require_text "$stdout_file" '"label": "cross-platform release validation"'
 require_text "$stdout_file" '"label": "hardware fault drills"'
+require_text "$stdout_file" "actual ENOSPC"
+require_text "$stdout_file" "service-level daemon kill"
 require_text "$stdout_file" '"status": "blocked"'
 require_text "$stdout_file" '"next_gate": "keep release blocked until every item has current local evidence"'
 require_text "$stderr_file" "release readiness blocked: stable release criteria are not met"
@@ -106,6 +108,9 @@ require_text "$verify_script" "./scripts/ci/check-release-readiness.sh"
 require_text "$workflow_guard" "check-release-readiness.sh"
 require_text "$release_workflow" "./scripts/ci/check-release-readiness.sh"
 require_text "$runbook" "resume-cli --data-dir <local-data-dir> release-readiness --json"
+require_text "$runbook" "hardware fault drills"
+require_text "$runbook" "actual ENOSPC"
+require_text "$runbook" "service-level daemon kill"
 require_text "$runbook" "vector-gate --report private-vector-quality.json"
 require_text "$runbook" "ocr-gate --report private-ocr-throughput.json"
 

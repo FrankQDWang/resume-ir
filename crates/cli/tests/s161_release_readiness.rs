@@ -30,6 +30,8 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("embedding model license/distribution: blocked"));
     assert!(stdout.contains("cross-platform release validation: blocked"));
     assert!(stdout.contains("hardware fault drills: blocked"));
+    assert!(stdout.contains("actual ENOSPC"));
+    assert!(stdout.contains("service-level daemon kill"));
     assert!(stderr.contains("release readiness blocked"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stderr.contains(path_str(&data_dir)));
@@ -88,6 +90,13 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
         assert_eq!(blocker["status"], "blocked");
         assert!(blocker["detail"].as_str().expect("blocker detail").len() > 12);
     }
+    let fault_drill_blocker = blockers
+        .iter()
+        .find(|blocker| blocker["label"] == "hardware fault drills")
+        .expect("hardware fault drills blocker");
+    let fault_drill_detail = fault_drill_blocker["detail"].as_str().unwrap();
+    assert!(fault_drill_detail.contains("actual ENOSPC"));
+    assert!(fault_drill_detail.contains("service-level daemon kill"));
 
     assert!(stderr.contains("release readiness blocked"));
     assert!(!stdout.contains(path_str(&data_dir)));

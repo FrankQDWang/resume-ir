@@ -648,8 +648,62 @@ obsolete preliminary files and checklists are not product scope.
 | S203 | Product certificate search filtering complete locally | Focused tests first failed because rank-fusion had no certificate profile/filter API, CLI `--certificate` was rejected by search usage, CLI IPC did not emit `certificates_any`, and daemon IPC ignored certificate filters until after full-text top-k retrieval. After implementation, certificate filters normalize common certificate aliases to extractor canonical values, CLI supports `--certificate` and `--certificates-any`, CLI/daemon IPC carry `certificates_any`, persisted profiles hydrate certificate mentions, and both CLI and daemon prefilter certificate doc IDs before full-text top-k truncation. Focused RED/GREEN and related rank/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden certificate extraction beyond existing aliases, implement certificate level/date filters, produce private field-quality evidence, or make stable release ready. |
 | S204 | Product hosted Rust workspace school-tier debug assertion stability complete locally | PR #9 hosted Rust workspace failed in `import_persists_school_tier_mentions_and_filters_search_without_output_leaks` because the test checked that the entire `EntityMention` Debug string did not contain `985`; the Debug string already redacts raw and normalized values, but opaque hex IDs can legitimately contain that digit sequence. The test now asserts the `raw_value` and `normalized_value` Debug fields are redacted while keeping the normalized school-tier value and filtered-search assertions. Focused persisted-field tests, fmt, focused clippy, diff check, public guard, and full local verification passed. | This slice stabilizes a flaky privacy assertion only. It does not change production search/filter behavior, read private resumes, broaden school-tier extraction, prove hosted CI has passed until PR #9 reruns, or make stable release ready. |
 | S205 | Product company/title search filtering complete locally | Focused tests first failed because rank-fusion had no company/title profile filter API, CLI search rejected `--company` and `--title`, CLI IPC did not emit `companies_any` or `titles_any`, and daemon IPC ignored those filters until after full-text top-k retrieval. After implementation, company filters normalize common legal suffixes, title filters normalize common English and Chinese aliases, CLI supports `--company`/`--companies-any` and `--title`/`--titles-any`, CLI/daemon IPC carry `companies_any` and `titles_any`, persisted profiles hydrate company/title entity mentions, and both CLI and daemon prefilter matching document IDs before full-text top-k truncation. Focused RED/GREEN and related rank/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden company or title extraction beyond currently persisted entity evidence, prove real business field-quality metrics, evaluate private resume corpora, clear multilingual coverage, or make stable release ready. |
+| S206 | Product release-readiness fault-drill blocker coverage complete locally | Focused release-readiness tests and the release-readiness CI guard first failed because the current blocker detail did not explicitly include actual ENOSPC and service-level daemon kill drills, and the release blockers runbook did not list hardware fault drills in the current blocked items. After implementation, `release-readiness` text/JSON and the runbook consistently keep hardware fault drills blocked until actual ENOSPC, service-level daemon kill, battery-mode, and external-drive disconnect drills are proven on release platforms. Focused RED/GREEN, release-readiness guard, runbook guard, fmt, and focused clippy passed locally. | This slice tightens fail-closed release readiness evidence only. It does not run destructive ENOSPC tests, install or kill a real platform service, switch real battery state, disconnect external drives, clear platform validation, signing, notarization, benchmark, OCR/model licensing, or make stable release ready. |
 
 ## Command Log
+
+### S206
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+```
+
+Output summary:
+
+- The focused release-readiness suite failed before implementation because the
+  hardware fault-drill blocker detail did not contain `actual ENOSPC`.
+- The release-readiness CI guard failed before implementation because the JSON
+  output also lacked `actual ENOSPC`.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets -- -D warnings
+```
+
+Output summary:
+
+- Release-readiness text and JSON now explicitly list actual ENOSPC,
+  service-level daemon kill, battery-mode, and external-drive disconnect drills
+  as unproven release-platform blockers.
+- The release blockers runbook now lists the same hardware fault-drill blocker
+  in `Current BLOCKED Items`.
+- The release-readiness guard and runbook guard passed without local path or
+  private data marker leaks.
+
+Final checkpoint verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Scope note:
+
+- S206 uses synthetic/temp release-readiness data only. It does not read, print,
+  commit, or upload private resumes, filenames, paths, raw text, diagnostics,
+  tokens, model caches, OCR text, page images, command paths, or vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S205
 
