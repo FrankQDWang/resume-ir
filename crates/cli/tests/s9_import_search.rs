@@ -1476,7 +1476,45 @@ fn import_persists_scan_errors_without_path_leak() {
     assert!(status.stderr.is_empty());
     let status_stdout = String::from_utf8_lossy(&status.stdout);
     assert!(status_stdout.contains("import scan errors: 1"));
+    assert!(
+        status_stdout.contains("import scan error breakdown: permission_denied/read_directory=1")
+    );
     assert!(!status_stdout.contains(path_str(&private_root)));
+    assert!(!status_stdout.contains("unreadable-synthetic-subdir"));
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run doctor after scan-error import");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let doctor_stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(doctor_stdout.contains("import scan errors: 1"));
+    assert!(
+        doctor_stdout.contains("import scan error breakdown: permission_denied/read_directory=1")
+    );
+    assert!(!doctor_stdout.contains(path_str(&private_root)));
+    assert!(!doctor_stdout.contains("unreadable-synthetic-subdir"));
+
+    let diagnostics = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run diagnostics after scan-error import");
+    assert!(diagnostics.status.success());
+    assert!(diagnostics.stderr.is_empty());
+    let diagnostics_stdout = String::from_utf8_lossy(&diagnostics.stdout);
+    assert!(diagnostics_stdout.contains("\"import_scan_error_breakdown\": ["));
+    assert!(diagnostics_stdout.contains("\"kind\": \"permission_denied\""));
+    assert!(diagnostics_stdout.contains("\"operation\": \"read_directory\""));
+    assert!(diagnostics_stdout.contains("\"count\": 1"));
+    assert!(!diagnostics_stdout.contains(path_str(&private_root)));
+    assert!(!diagnostics_stdout.contains("unreadable-synthetic-subdir"));
+    assert!(!diagnostics_stdout.contains("sha256:"));
 
     let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();

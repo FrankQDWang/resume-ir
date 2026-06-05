@@ -7,11 +7,11 @@ use meta_store::{
     Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
     EntityMentionId, EntityType, FileExtension, ImportRootKind, ImportRootPreset,
     ImportScanBudgetKind, ImportScanError, ImportScanErrorKind, ImportScanErrorOperation,
-    ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
-    IndexStateStatus, IngestJob, IngestJobFailureKind, IngestJobId, IngestJobKind, IngestJobStatus,
-    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus,
-    OcrWordBox, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskControl,
-    WorkerTaskKind,
+    ImportScanErrorSummary, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexState, IndexStateStatus, IngestJob, IngestJobFailureKind, IngestJobId,
+    IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState, OcrPageCacheEntry,
+    OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
 };
 use rusqlite::{params, Connection};
 
@@ -419,6 +419,21 @@ fn import_scan_errors_replace_and_query_without_exposing_path_digest() {
         first_errors
     );
     assert_eq!(store.status_summary().unwrap().import_scan_errors, 2);
+    assert_eq!(
+        store.import_scan_error_breakdown().unwrap(),
+        vec![
+            ImportScanErrorSummary {
+                kind: ImportScanErrorKind::PermissionDenied,
+                operation: ImportScanErrorOperation::ReadDirectory,
+                count: 1,
+            },
+            ImportScanErrorSummary {
+                kind: ImportScanErrorKind::LockedOrUnreadable,
+                operation: ImportScanErrorOperation::Fingerprint,
+                count: 1,
+            },
+        ]
+    );
 
     let debug = format!(
         "{:?}",
@@ -436,6 +451,14 @@ fn import_scan_errors_replace_and_query_without_exposing_path_digest() {
         replacement
     );
     assert_eq!(store.status_summary().unwrap().import_scan_errors, 1);
+    assert_eq!(
+        store.import_scan_error_breakdown().unwrap(),
+        vec![ImportScanErrorSummary {
+            kind: ImportScanErrorKind::Io,
+            operation: ImportScanErrorOperation::NormalizePath,
+            count: 1,
+        }]
+    );
 }
 
 #[test]

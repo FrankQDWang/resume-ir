@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, and S178 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, and S179 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -80,7 +80,9 @@ obsolete preliminary files and checklists are not product scope.
   PDF/Word witness against the user-authorized local sample directory for import/
   search/field probes plus bounded OCR witnesses using local `tesseract` and
   `pdftoppm`; these runs removed private temporary data and no private evidence
-  was committed or uploaded. Missing production work includes
+  was committed or uploaded. Import scan errors are persisted and now surfaced
+  as redacted kind/operation aggregate breakdowns through local status, doctor,
+  and redacted diagnostics without path or path-digest disclosure. Missing production work includes
   production-grade PDF coverage, full
   legacy Word converter distribution and cross-platform proof, large-corpus
   proof, cross-platform watcher behavior proof, and large-corpus incremental
@@ -522,8 +524,62 @@ obsolete preliminary files and checklists are not product scope.
 | S176 | Product private business field-quality release gate complete locally | A focused field-quality gate test first failed because `FieldQualityGateConfig` had no `require_private_business_labeled` mode. After implementation, `resume-benchmark field-gate --require-private-business-labeled` rejects ordinary labeled reports, accepts only strict `private-business-labeled` redacted local aggregate reports, requires dataset and annotation manifest digests, false raw-data/path/field-value/sample-ID booleans, the `resume-ir.fields.v1` taxonomy, and production field metrics for email, phone, school, degree, company, title, skill, and date ranges. Release-readiness plus its CI guard now include a `field extraction quality` blocker, and the release blocker runbook documents the private field-quality evidence gate. Focused RED/GREEN field-quality tests, full benchmark-runner tests, release-readiness tests, readiness/runbook guards, fmt, diff check, focused clippy, public repo guard, and full local verification passed locally. | This slice tightens release evidence validation only. It does not create or upload private labels, run real business field-quality evaluation, prove production field F1 on representative resumes, improve extraction rules/models, clear OCR/model licensing, clear platform validation, or clear stable release readiness. |
 | S177 | Product dedupe-quality evaluator and release gate complete locally | A focused dedupe-quality test first failed because `benchmark-runner` had no `run_dedupe_quality_jsonl`, `DedupeQualityGateConfig`, or `evaluate_dedupe_quality_gate_json` API. After implementation, `resume-benchmark dedupe-quality` scores labeled profile pairs through the existing `rank-fusion` soft-dedupe algorithm, emits only aggregate precision/recall/F1 and pair counts, and omits names, schools, companies, skills, sample IDs, document IDs, paths, and raw resume text. `resume-benchmark dedupe-gate --require-private-business-labeled` now rejects ordinary labeled reports and accepts only strict `private-business-labeled` redacted local aggregate reports with dataset and annotation manifest digests, false raw-data/path/profile-value/sample-ID/document-ID booleans, the `resume-ir.dedupe.v1` taxonomy, and aggregate dedupe metrics. Release-readiness plus its CI guard now include a `dedupe quality` blocker, and the release blocker runbook documents the private dedupe-quality evidence gate. Focused RED/GREEN dedupe-quality tests, full benchmark-runner tests, release-readiness tests, readiness/runbook guards, fmt, and focused clippy passed locally. | This slice adds quality evaluation and tightens release evidence validation only. It does not create or upload private labels, run real business dedupe-quality evaluation, prove production dedupe precision/recall on representative resumes, implement candidate merge review workflows, clear OCR/model licensing, clear platform validation, or clear stable release readiness. |
 | S178 | Product local candidate-review workflow complete locally | A focused CLI test first failed because `resume-cli` did not recognize `candidate-review`. After implementation, `resume-cli candidate-review list` computes bounded same-name soft-dedupe suggestions from persisted metadata and prints only redacted version IDs, counts, confidence, and `paths: <redacted>`; `candidate-review merge` creates a manual local candidate for two or more unassigned searchable versions and default search folds them; `candidate-review split` clears those assignments and restores independent default search results. `MetaStore::unassign_candidate_versions` clears assignments transactionally and refreshes candidate version counts. Focused RED/GREEN CLI, full candidate-folding CLI, import candidate assignment, full meta-store, rank-fusion, fmt/diff/runbook/public guards, focused clippy, and full local verification passed locally. | This slice adds local manual review/merge/split workflow only. It does not prove dedupe precision/recall, create private business labels, resolve conflicting multi-contact candidates, add a UI, prove million-corpus review-list latency, clear dedupe-quality evidence, clear OCR/model licensing, clear platform validation, or clear stable release readiness. |
+| S179 | Product scan-error breakdown diagnostics complete locally | Focused tests first failed because `MetaStore::import_scan_error_breakdown` and CLI scan-error breakdown output did not exist. After implementation, metadata can aggregate persisted import scan errors by redacted kind and filesystem operation, and local `status`, `doctor`, and `export-diagnostics --redact` report those aggregates without paths, path digests, filenames, or raw resume text. Focused RED/GREEN meta-store and CLI tests, full meta-store, full S9 import/search, S13 diagnostics, fmt/diff/public guards, focused clippy, and full local verification passed locally. | This slice improves scan-error observability only. It does not change scan retry policy, prove whole-machine discovery coverage, validate real external-drive disconnects, clear cross-platform watcher proof, clear large-corpus import evidence, clear OCR/model licensing, or clear stable release readiness. |
 
 ## Command Log
+
+### S179
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store import_scan_errors_replace_and_query_without_exposing_path_digest -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search import_persists_scan_errors_without_path_leak -- --exact
+```
+
+Output summary:
+
+- The meta-store test failed before implementation because
+  `ImportScanErrorSummary` and `MetaStore::import_scan_error_breakdown` did not
+  exist.
+- The CLI test failed before implementation because `status` did not print
+  `import scan error breakdown: permission_denied/read_directory=1`.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store import_scan_errors_replace_and_query_without_exposing_path_digest -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search import_persists_scan_errors_without_path_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s13_diagnostics
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused meta-store and CLI RED/GREEN tests passed after implementation.
+- Full `meta-store` passed: 48 tests.
+- Full `s9_import_search` passed: 26 tests.
+- Full `s13_diagnostics` passed: 14 tests.
+- Focused clippy for `meta-store` and `resume-cli` passed.
+- `cargo fmt --all --check`, `git diff --check`, and
+  `guard-public-repo.sh` passed.
+- Full `verify-local.sh` passed, including workspace tests and doc-tests,
+  license/runbook/workflow/release-readiness guards, release artifact/SBOM
+  checks, macOS package check, Windows package skip on non-Windows, and public
+  repo guard.
+
+Scope note:
+
+- S179 makes persisted scan errors actionable through redacted aggregates only.
+  It does not prove whole-machine discovery coverage, real external-drive
+  recovery, real cross-platform watcher behavior, or release readiness.
 
 ### S178
 

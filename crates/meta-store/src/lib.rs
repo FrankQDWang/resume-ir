@@ -3040,6 +3040,45 @@ impl MetaStore {
         Ok(errors)
     }
 
+    pub fn import_scan_error_breakdown(&self) -> Result<Vec<ImportScanErrorSummary>> {
+        let connection = self.connection.borrow();
+        let mut statement = connection
+            .prepare(
+                "\
+                SELECT kind, operation, COUNT(*)
+                FROM import_scan_error
+                GROUP BY kind, operation
+                ORDER BY
+                    CASE kind
+                        WHEN 'permission_denied' THEN 0
+                        WHEN 'source_unavailable' THEN 1
+                        WHEN 'locked_or_unreadable' THEN 2
+                        WHEN 'io' THEN 3
+                        ELSE 4
+                    END,
+                    CASE operation
+                        WHEN 'normalize_path' THEN 0
+                        WHEN 'read_directory' THEN 1
+                        WHEN 'read_metadata' THEN 2
+                        WHEN 'fingerprint' THEN 3
+                        ELSE 4
+                    END",
+            )
+            .map_err(MetaStoreError::storage)?;
+        let mut rows = statement.query([]).map_err(MetaStoreError::storage)?;
+        let mut summaries = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            summaries.push(ImportScanErrorSummary {
+                kind: import_scan_error_kind_from_storage(&read_string(row, 0)?)?,
+                operation: import_scan_error_operation_from_storage(&read_string(row, 1)?)?,
+                count: i64_to_u64(read_i64(row, 2)?, "import_scan_error.count")?,
+            });
+        }
+
+        Ok(summaries)
+    }
+
     pub fn update_import_task_status(
         &self,
         id: &ImportTaskId,
@@ -3984,6 +4023,13 @@ impl fmt::Debug for ImportScanError {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportScanErrorSummary {
+    pub kind: ImportScanErrorKind,
+    pub operation: ImportScanErrorOperation,
+    pub count: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportScanErrorKind {
     PermissionDenied,
@@ -3992,12 +4038,24 @@ pub enum ImportScanErrorKind {
     Io,
 }
 
+impl ImportScanErrorKind {
+    pub fn label(self) -> &'static str {
+        import_scan_error_kind_to_storage(self)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportScanErrorOperation {
     NormalizePath,
     ReadDirectory,
     ReadMetadata,
     Fingerprint,
+}
+
+impl ImportScanErrorOperation {
+    pub fn label(self) -> &'static str {
+        import_scan_error_operation_to_storage(self)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

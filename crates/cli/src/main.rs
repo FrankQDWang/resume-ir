@@ -33,10 +33,11 @@ use meta_store::{
     rotate_metadata_encryption_key, Candidate, CandidateId, Document, DocumentId, DocumentStatus,
     EntityMention, EntityType, FileExtension, ImportRootKind as StoreImportRootKind,
     ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
-    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
-    ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
-    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, QueryLatencySummary,
-    ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
+    ImportScanErrorSummary, ImportScanProfile as StoreImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobFailureKind,
+    IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState, OcrPageCacheEntry,
+    OcrPageCacheKey, QueryLatencySummary, ResumeVersion, ResumeVersionId, ResumeVisibility,
+    UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -3017,6 +3018,9 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
     let latest_import_scan = store.latest_import_scan_scope().map_err(CliError::store)?;
+    let scan_error_breakdown = store
+        .import_scan_error_breakdown()
+        .map_err(CliError::store)?;
     let ocr_task = store
         .worker_task_control(WorkerTaskKind::Ocr)
         .map_err(CliError::store)?;
@@ -3057,6 +3061,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("import tasks cancelled: {}", summary.import_tasks_cancelled);
     println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("import scan errors: {}", summary.import_scan_errors);
+    print_import_scan_error_breakdown(&scan_error_breakdown);
     print_query_latency_summary(&summary.query_latency);
     if let Some(scope) = latest_import_scan.as_ref() {
         print_import_scan_progress(scope);
@@ -3114,6 +3119,48 @@ fn print_import_scan_progress(scope: &ImportScanScope) {
         "latest import scan budget: {}",
         import_scan_budget_progress_label(scope)
     );
+}
+
+fn import_scan_error_breakdown_label(breakdown: &[ImportScanErrorSummary]) -> String {
+    if breakdown.is_empty() {
+        return "none".to_string();
+    }
+
+    breakdown
+        .iter()
+        .map(|summary| {
+            format!(
+                "{}/{}={}",
+                summary.kind.label(),
+                summary.operation.label(),
+                summary.count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn print_import_scan_error_breakdown(breakdown: &[ImportScanErrorSummary]) {
+    println!(
+        "import scan error breakdown: {}",
+        import_scan_error_breakdown_label(breakdown)
+    );
+}
+
+fn print_import_scan_error_breakdown_json(breakdown: &[ImportScanErrorSummary], indent: &str) {
+    for (index, summary) in breakdown.iter().enumerate() {
+        let comma = if index + 1 == breakdown.len() {
+            ""
+        } else {
+            ","
+        };
+        println!(
+            "{indent}{{\"kind\": \"{}\", \"operation\": \"{}\", \"count\": {}}}{comma}",
+            summary.kind.label(),
+            summary.operation.label(),
+            summary.count
+        );
+    }
 }
 
 fn print_query_latency_summary(summary: &QueryLatencySummary) {
@@ -7239,6 +7286,9 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let diagnostic_args = parse_doctor_args(args)?;
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
+    let scan_error_breakdown = store
+        .import_scan_error_breakdown()
+        .map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
@@ -7275,6 +7325,7 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("entity mentions: {}", summary.entity_mentions);
     println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("import scan errors: {}", summary.import_scan_errors);
+    print_import_scan_error_breakdown(&scan_error_breakdown);
     print_query_latency_summary(&summary.query_latency);
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("index health: {}", index_health_label(summary.index_health));
@@ -7339,6 +7390,9 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
+    let scan_error_breakdown = store
+        .import_scan_error_breakdown()
+        .map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
@@ -7405,6 +7459,9 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "    \"import_scan_errors\": {},",
         summary.import_scan_errors
     );
+    println!("    \"import_scan_error_breakdown\": [");
+    print_import_scan_error_breakdown_json(&scan_error_breakdown, "      ");
+    println!("    ],");
     println!(
         "    \"recovery_queue_depth\": {}",
         summary.recovery_queue_depth
