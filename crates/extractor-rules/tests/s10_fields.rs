@@ -296,6 +296,65 @@ AWS Certified Solutions Architect
 }
 
 #[test]
+fn extracts_labeled_company_and_title_values_with_exact_spans() {
+    let text = "\
+Experience
+Company: Synthetic Commerce Inc.
+Title: Product Manager
+工作经历
+公司：合成科技有限公司
+职位：高级后端工程师";
+
+    let matches = extract_strong_fields(text);
+    let companies = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Company)
+        .collect::<Vec<_>>();
+    let company_normalized = companies
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(company_normalized, vec!["synthetic commerce", "合成科技"]);
+    assert_eq!(
+        &text[companies[0].span_start..companies[0].span_end],
+        "Synthetic Commerce Inc."
+    );
+    assert_eq!(
+        &text[companies[1].span_start..companies[1].span_end],
+        "合成科技有限公司"
+    );
+    assert!(companies
+        .iter()
+        .all(|field| !field.raw_value.contains('：')));
+    assert!(companies.iter().all(|field| !field.raw_value.contains(':')));
+
+    let titles = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Title)
+        .collect::<Vec<_>>();
+    let title_normalized = titles
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        title_normalized,
+        vec!["product_manager", "backend_engineer"]
+    );
+    assert_eq!(
+        &text[titles[0].span_start..titles[0].span_end],
+        "Product Manager"
+    );
+    assert_eq!(
+        &text[titles[1].span_start..titles[1].span_end],
+        "高级后端工程师"
+    );
+    assert!(titles.iter().all(|field| !field.raw_value.contains('：')));
+    assert!(titles.iter().all(|field| !field.raw_value.contains(':')));
+    assert!(!format!("{:?}", companies[0]).contains("Synthetic Commerce"));
+    assert!(!format!("{:?}", titles[1]).contains("高级后端"));
+}
+
+#[test]
 fn extracts_sectioned_certificate_aliases_without_header_noise() {
     let text = "\
 Certifications

@@ -235,6 +235,101 @@ Java island migration
 }
 
 #[test]
+fn import_persists_labeled_company_and_title_mentions_without_output_leaks() {
+    let data_dir = temp_dir("persisted-labeled-role-data");
+    let resume_root = temp_dir("persisted-labeled-role-resumes");
+    fs::write(
+        resume_root.join("synthetic-labeled-role-candidate.txt"),
+        "\
+Synthetic Labeled Role Candidate
+Email: labeled-role-candidate@example.test
+Experience
+Company: Synthetic Commerce Inc.
+Title: Product Manager
+工作经历
+公司：合成科技有限公司
+职位：高级后端工程师
+Skills: Java
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import labeled company and title");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("Synthetic Commerce"));
+    assert!(!stdout.contains("合成科技"));
+    assert!(!stdout.contains("高级后端"));
+    assert!(!stdout.contains("labeled-role-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-labeled-role-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+    let company_normalized = mentions
+        .iter()
+        .filter(|mention| mention.entity_type == EntityType::Company)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!mention.raw_value.contains(':'));
+            assert!(!mention.raw_value.contains('：'));
+            assert!(!format!("{mention:?}").contains("Synthetic Commerce"));
+            mention.normalized_value.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(company_normalized, vec!["synthetic commerce", "合成科技"]);
+
+    let title_normalized = mentions
+        .iter()
+        .filter(|mention| mention.entity_type == EntityType::Title)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!mention.raw_value.contains(':'));
+            assert!(!mention.raw_value.contains('：'));
+            assert!(!format!("{mention:?}").contains("高级后端"));
+            mention.normalized_value.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        title_normalized,
+        vec!["product_manager", "backend_engineer"]
+    );
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_chinese_date_range_and_years_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-chinese-date-data");
     let resume_root = temp_dir("persisted-chinese-date-resumes");

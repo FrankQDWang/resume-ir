@@ -807,25 +807,79 @@ fn skill_alias_patterns() -> [(&'static str, &'static str); 17] {
 fn extract_companies(text: &str, matches: &mut Vec<RuleMatch>) {
     for (line_start, line) in indexed_lines(text) {
         let trimmed = line.trim();
-        if trimmed.len() > 100 || !looks_like_company(trimmed) {
+        if trimmed.len() > 120 {
             continue;
         }
 
-        let Some(normalized) = normalize_company(trimmed) else {
+        let leading = line.len() - line.trim_start().len();
+        let trimmed_span_start = line_start + leading;
+        let Some(segment) = company_segment(trimmed, trimmed_span_start) else {
             continue;
         };
-        let leading = line.len() - line.trim_start().len();
-        let span_start = line_start + leading;
-        let span_end = span_start + trimmed.len();
+        let Some(normalized) = normalize_company(segment.text) else {
+            continue;
+        };
         matches.push(RuleMatch {
             field_type: FieldType::Company,
-            raw_value: trimmed.to_string(),
+            raw_value: segment.text.to_string(),
             normalized_value: Some(normalized),
-            span_start,
-            span_end,
+            span_start: segment.span_start,
+            span_end: segment.span_start + segment.text.len(),
             confidence: 0.78,
         });
     }
+}
+
+struct LabeledSegment<'a> {
+    text: &'a str,
+    span_start: usize,
+}
+
+fn company_segment<'a>(
+    trimmed_line: &'a str,
+    trimmed_span_start: usize,
+) -> Option<LabeledSegment<'a>> {
+    if let Some((label, value, delimiter_len)) =
+        split_labeled_value_line(trimmed_line, is_company_label)
+    {
+        let value_leading = value.len() - value.trim_start().len();
+        let value = value.trim();
+        if value.is_empty() || !looks_like_company(value) {
+            return None;
+        }
+        return Some(LabeledSegment {
+            text: value,
+            span_start: trimmed_span_start + label.len() + delimiter_len + value_leading,
+        });
+    }
+
+    looks_like_company(trimmed_line).then_some(LabeledSegment {
+        text: trimmed_line,
+        span_start: trimmed_span_start,
+    })
+}
+
+fn split_labeled_value_line(line: &str, is_label: fn(&str) -> bool) -> Option<(&str, &str, usize)> {
+    let delimiter_start = line.find([':', '：'])?;
+    let delimiter_len = line[delimiter_start..].chars().next()?.len_utf8();
+    let label = &line[..delimiter_start];
+    let value = &line[delimiter_start + delimiter_len..];
+    is_label(label.trim()).then_some((label, value, delimiter_len))
+}
+
+fn is_company_label(label: &str) -> bool {
+    matches!(
+        label.to_lowercase().as_str(),
+        "company"
+            | "employer"
+            | "organization"
+            | "organisation"
+            | "workplace"
+            | "公司"
+            | "单位"
+            | "雇主"
+            | "组织"
+    )
 }
 
 fn looks_like_company(line: &str) -> bool {
@@ -842,6 +896,8 @@ fn looks_like_company(line: &str) -> bool {
         " labs",
         " group",
         " bank",
+        "有限责任公司",
+        "股份有限公司",
         "有限公司",
         "公司",
         "集团",
@@ -871,9 +927,16 @@ fn normalize_company(value: &str) -> Option<String> {
         " ltd",
         " corp",
         " bank",
+        " 有限责任公司",
+        " 股份有限公司",
         " 有限公司",
         " 公司",
         " 集团",
+        "有限责任公司",
+        "股份有限公司",
+        "有限公司",
+        "公司",
+        "集团",
     ] {
         if normalized.ends_with(suffix) {
             normalized.truncate(normalized.len() - suffix.len());
@@ -888,25 +951,58 @@ fn normalize_company(value: &str) -> Option<String> {
 fn extract_titles(text: &str, matches: &mut Vec<RuleMatch>) {
     for (line_start, line) in indexed_lines(text) {
         let trimmed = line.trim();
-        if trimmed.len() > 100 {
+        if trimmed.len() > 120 {
             continue;
         }
 
-        let Some((normalized, confidence)) = normalize_title(trimmed) else {
+        let leading = line.len() - line.trim_start().len();
+        let trimmed_span_start = line_start + leading;
+        let Some(segment) = title_segment(trimmed, trimmed_span_start) else {
             continue;
         };
-        let leading = line.len() - line.trim_start().len();
-        let span_start = line_start + leading;
-        let span_end = span_start + trimmed.len();
+        let Some((normalized, confidence)) = normalize_title(segment.text) else {
+            continue;
+        };
         matches.push(RuleMatch {
             field_type: FieldType::Title,
-            raw_value: trimmed.to_string(),
+            raw_value: segment.text.to_string(),
             normalized_value: Some(normalized.to_string()),
-            span_start,
-            span_end,
+            span_start: segment.span_start,
+            span_end: segment.span_start + segment.text.len(),
             confidence,
         });
     }
+}
+
+fn title_segment<'a>(
+    trimmed_line: &'a str,
+    trimmed_span_start: usize,
+) -> Option<LabeledSegment<'a>> {
+    if let Some((label, value, delimiter_len)) =
+        split_labeled_value_line(trimmed_line, is_title_label)
+    {
+        let value_leading = value.len() - value.trim_start().len();
+        let value = value.trim();
+        if value.is_empty() {
+            return None;
+        }
+        return Some(LabeledSegment {
+            text: value,
+            span_start: trimmed_span_start + label.len() + delimiter_len + value_leading,
+        });
+    }
+
+    Some(LabeledSegment {
+        text: trimmed_line,
+        span_start: trimmed_span_start,
+    })
+}
+
+fn is_title_label(label: &str) -> bool {
+    matches!(
+        label.to_lowercase().as_str(),
+        "title" | "role" | "position" | "job title" | "职位" | "岗位" | "职务" | "角色"
+    )
 }
 
 fn normalize_title(value: &str) -> Option<(&'static str, f32)> {
