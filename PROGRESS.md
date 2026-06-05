@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, and S209 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, and S210 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -654,8 +654,58 @@ obsolete preliminary files and checklists are not product scope.
 | S207 | Product school search filtering complete locally | Focused tests first failed because rank-fusion lacked school profile/filter API, CLI search rejected `--school`, CLI IPC did not emit `schools_any`, and daemon IPC ignored school filters until after full-text top-k retrieval. After implementation, school filters normalize persisted school evidence, CLI supports `--school`/`--schools-any`, CLI/daemon IPC carry `schools_any`, persisted profiles hydrate school mentions, and both CLI and daemon prefilter school document IDs before full-text top-k truncation. Focused RED/GREEN, related rank/CLI/daemon suites, fmt, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden school extraction beyond currently persisted evidence, prove real business field-quality metrics, evaluate private resume corpora, clear broad school dictionaries, or make stable release ready. |
 | S208 | Product date-range search filtering complete locally | Focused tests first failed because rank-fusion had no date-range profile/filter API, metadata could not return searchable document IDs by overlapping `date_range` evidence, CLI search rejected `--date-range-overlaps`, CLI IPC did not emit `date_range_overlaps`, and daemon IPC ignored date ranges until after full-text top-k retrieval. After implementation, `DateRange` supports `YYYY-MM/YYYY-MM`, `YYYY-MM..YYYY-MM`, and `YYYY-MM/PRESENT`; metadata prefilters visible searchable documents by overlapping persisted `date_range` mentions; CLI supports `--date-range-overlaps`; CLI/daemon IPC carry and parse `date_range_overlaps`; persisted profiles hydrate date ranges; and both CLI and daemon prefilter date-range document IDs before full-text top-k truncation. Focused RED/GREEN, related meta/rank/CLI/daemon suites, fmt, and focused clippy passed locally. | This slice uses synthetic/temp fixtures only. It does not add separate `edu_start`/`edu_end`/`work_start`/`work_end`/`certificate_date` columns, infer certificate-specific dates, prove real business date-range F1, evaluate private resume corpora, clear broad multilingual date coverage, or make stable release ready. |
 | S209 | Product contact search filtering complete locally | Focused tests first failed because metadata could not return searchable document IDs from candidate contact hashes, CLI search rejected `--email`/`--phone`, CLI IPC could not hash contact filters before submitting a request, and daemon IPC ignored `contact_hashes_any` until after full-text top-k retrieval. After implementation, CLI contact filters normalize email/phone locally, hash them with the existing data-dir contact HMAC key, never put raw contacts in `SearchFilters` or IPC, CLI/daemon IPC carry only `contact_hashes_any`, metadata prefilters visible searchable candidate-assigned documents by email/phone hash, and full-text/semantic/hybrid local search plus daemon full-text IPC apply the metadata prefilter before result filtering. Focused RED/GREEN, related meta/rank/CLI/daemon suites, fmt, diff check, public guard, focused clippy, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not expose fuzzy contact matching, prove real business contact recall, evaluate private resume corpora, guarantee manual IPC against a different data-dir contact key, clear broader field-quality evidence blockers, or make stable release ready. |
+| S210 | Hosted Rust workspace contact IPC assertion stability complete locally | PR #9 hosted `rust workspace` failed in `search_ipc_hashes_contact_filters_before_submitting_request` because the test compared `contact_hashes_any` arrays in exact order. The filter is an ANY set, and production only requires raw contacts to be hashed locally and transmitted without raw contact leakage. After implementation, the test compares sorted actual and expected hashes while keeping the raw email/phone and hash output leak checks. Hosted-failing exact test, full CLI search IPC test file, fmt, diff check, public guard, and full local verification passed locally. | This is a test-only stability fix for S209's IPC assertion. It does not change production search behavior, prove hosted CI has passed until PR #9 reruns, read private resumes, evaluate real contact recall, clear field-quality blockers, or make stable release ready. |
 
 ## Command Log
+
+### S210
+
+Hosted RED check:
+
+```bash
+gh run view 27013854775 --log-failed
+```
+
+Output summary:
+
+- PR #9 hosted `rust workspace` failed in
+  `search_ipc_hashes_contact_filters_before_submitting_request`.
+- The fake daemon assertion received the two valid `contact_hashes_any` hashes
+  in a different order from the exact expected JSON array, then the test failed
+  while joining the fake daemon thread.
+- The failure was in the test assertion only: `contact_hashes_any` is an ANY
+  filter, raw email/phone values were still absent from the request, and no raw
+  contact or contact hash output leak was reported.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_hashes_contact_filters_before_submitting_request -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The hosted-failing exact test passed locally after comparing sorted actual
+  and expected contact hash arrays.
+- The full CLI search IPC test file passed locally with 8 tests.
+- `cargo fmt --all --check`, `git diff --check`, and
+  `guard-public-repo.sh` passed locally.
+- Full local verification passed locally, including workspace tests and
+  doc-tests, license/runbook/workflow/release-readiness checks, release
+  artifact and SBOM checks, macOS package check, and the final public
+  repository guard. Windows package check was skipped on this non-Windows host.
+
+Scope note:
+
+- S210 is test-only and uses synthetic/temp fixtures only. It does not read,
+  print, commit, or upload private resumes, filenames, paths, raw text,
+  diagnostics, tokens, model caches, OCR text, page images, command paths,
+  vectors, raw contact values, or contact hashes.
 
 ### S209
 

@@ -184,13 +184,24 @@ fn search_ipc_hashes_contact_filters_before_submitting_request() {
         let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
         let payload: serde_json::Value = serde_json::from_str(body).unwrap();
         assert_eq!(payload["query"], "private-contact-query");
-        assert_eq!(
-            payload["filters"]["contact_hashes_any"],
-            serde_json::json!([
-                expected_email_hash_for_request,
-                expected_phone_hash_for_request
-            ])
-        );
+        let mut actual_contact_hashes = payload["filters"]["contact_hashes_any"]
+            .as_array()
+            .expect("contact_hashes_any array")
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .expect("contact_hashes_any string")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        actual_contact_hashes.sort();
+        let mut expected_contact_hashes = vec![
+            expected_email_hash_for_request,
+            expected_phone_hash_for_request,
+        ];
+        expected_contact_hashes.sort();
+        assert_eq!(actual_contact_hashes, expected_contact_hashes);
 
         let response = serde_json::json!({
             "schema_version": "daemon.search.v1",
