@@ -220,6 +220,9 @@ fn looks_like_section_header(value: &str) -> bool {
             | "projects"
             | "skill"
             | "skills"
+            | "technical skills"
+            | "technical stack"
+            | "tech stack"
             | "certificate"
             | "certificates"
             | "certifications"
@@ -229,6 +232,8 @@ fn looks_like_section_header(value: &str) -> bool {
             | "工作经历"
             | "项目经历"
             | "技能"
+            | "专业技能"
+            | "技术栈"
             | "证书"
     )
 }
@@ -484,42 +489,138 @@ fn extract_degrees(text: &str, matches: &mut Vec<RuleMatch>) {
 }
 
 fn extract_skills(text: &str, matches: &mut Vec<RuleMatch>) {
+    let mut skill_context_lines = 0_usize;
     let mut seen = BTreeSet::new();
     for (line_start, line) in indexed_lines(text) {
-        if !looks_like_skill_line(line) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            skill_context_lines = skill_context_lines.saturating_sub(1);
             continue;
         }
 
-        for (canonical, pattern) in [
-            ("Spring Cloud", r"(?i)\bspring\s+cloud\b"),
-            ("JavaScript", r"(?i)\b(?:java\s*script|javascript|js)\b"),
-            ("SQLite", r"(?i)\bsqlite\b"),
-            ("Tantivy", r"(?i)\btantivy\b"),
-            ("MySQL", r"(?i)\bmysql\b"),
-            ("Kubernetes", r"(?i)\bkubernetes\b"),
-            ("Docker", r"(?i)\bdocker\b"),
-            ("Python", r"(?i)\bpython\b"),
-            ("Rust", r"(?i)\brust\b"),
-            ("Java", r"(?i)\bjava\b"),
-            ("SQL", r"(?i)\bsql\b"),
-        ] {
-            let regex = Regex::new(pattern).unwrap();
-            for found in regex.find_iter(line) {
-                if !seen.insert(canonical.to_string()) {
-                    continue;
-                }
+        if is_skill_section_header(trimmed) {
+            skill_context_lines = 8;
+            continue;
+        }
 
-                matches.push(RuleMatch {
-                    field_type: FieldType::Skill,
-                    raw_value: found.as_str().to_string(),
-                    normalized_value: Some(canonical.to_string()),
-                    span_start: line_start + found.start(),
-                    span_end: line_start + found.end(),
-                    confidence: 0.91,
-                });
+        if skill_context_lines > 0 && looks_like_section_header(trimmed) {
+            skill_context_lines = 0;
+            continue;
+        }
+
+        let leading = line.len() - line.trim_start().len();
+        let trimmed_span_start = line_start + leading;
+        let Some(segment) = skill_segment(trimmed, trimmed_span_start, skill_context_lines > 0)
+        else {
+            skill_context_lines = skill_context_lines.saturating_sub(1);
+            continue;
+        };
+
+        push_skill_alias_matches(segment.text, segment.span_start, matches, &mut seen);
+        skill_context_lines = skill_context_lines.saturating_sub(1);
+    }
+}
+
+struct SkillSegment<'a> {
+    text: &'a str,
+    span_start: usize,
+}
+
+fn skill_segment<'a>(
+    trimmed_line: &'a str,
+    trimmed_span_start: usize,
+    in_skill_context: bool,
+) -> Option<SkillSegment<'a>> {
+    if trimmed_line.len() > 180 {
+        return None;
+    }
+
+    if let Some((label, value, delimiter_len)) = split_labeled_skill_line(trimmed_line) {
+        let value_leading = value.len() - value.trim_start().len();
+        let value = value.trim();
+        if value.is_empty() {
+            return None;
+        }
+        return Some(SkillSegment {
+            text: value,
+            span_start: trimmed_span_start + label.len() + delimiter_len + value_leading,
+        });
+    }
+
+    if in_skill_context || looks_like_skill_line(trimmed_line) {
+        return Some(SkillSegment {
+            text: trimmed_line,
+            span_start: trimmed_span_start,
+        });
+    }
+
+    None
+}
+
+fn split_labeled_skill_line(line: &str) -> Option<(&str, &str, usize)> {
+    let delimiter_start = line.find([':', '：'])?;
+    let delimiter_len = line[delimiter_start..].chars().next()?.len_utf8();
+    let label = &line[..delimiter_start];
+    let value = &line[delimiter_start + delimiter_len..];
+    is_skill_section_header(label.trim()).then_some((label, value, delimiter_len))
+}
+
+fn push_skill_alias_matches(
+    text: &str,
+    span_start: usize,
+    matches: &mut Vec<RuleMatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    let mut claimed_spans = Vec::<(usize, usize)>::new();
+    for (canonical, pattern) in skill_alias_patterns() {
+        let regex = Regex::new(pattern).unwrap();
+        for found in regex.find_iter(text) {
+            let span = (found.start(), found.end());
+            if claimed_spans
+                .iter()
+                .any(|claimed| ranges_overlap(*claimed, span))
+            {
+                continue;
             }
+            if !seen.insert(canonical.to_string()) {
+                continue;
+            }
+            claimed_spans.push(span);
+            matches.push(RuleMatch {
+                field_type: FieldType::Skill,
+                raw_value: found.as_str().to_string(),
+                normalized_value: Some(canonical.to_string()),
+                span_start: span_start + found.start(),
+                span_end: span_start + found.end(),
+                confidence: 0.91,
+            });
         }
     }
+}
+
+fn skill_alias_patterns() -> [(&'static str, &'static str); 17] {
+    [
+        ("Spring Cloud", r"(?i)\bspring\s+cloud\b"),
+        ("JavaScript", r"(?i)\b(?:java\s*script|javascript|js)\b"),
+        ("TypeScript", r"(?i)\b(?:type\s*script|typescript|ts)\b"),
+        (
+            "PostgreSQL",
+            r"(?i)\b(?:postgre\s*sql|postgresql|postgres)\b",
+        ),
+        ("SQLite", r"(?i)\bsqlite\b"),
+        ("Tantivy", r"(?i)\btantivy\b"),
+        ("MySQL", r"(?i)\bmysql\b"),
+        ("Kubernetes", r"(?i)\b(?:kubernetes|k8s)\b"),
+        ("Docker", r"(?i)\bdocker\b"),
+        ("Python", r"(?i)\bpython\b"),
+        ("Rust", r"(?i)\brust\b"),
+        ("Java", r"(?i)\bjava\b"),
+        ("Go", r"(?i)\b(?:go|golang)\b"),
+        ("Redis", r"(?i)\bredis\b"),
+        ("React", r"(?i)\breact(?:\.js)?\b"),
+        ("Node.js", r"(?i)\bnode(?:\.js|js)?\b"),
+        ("SQL", r"(?i)\bsql\b"),
+    ]
 }
 
 fn extract_companies(text: &str, matches: &mut Vec<RuleMatch>) {
@@ -866,10 +967,28 @@ fn looks_like_certificate(line: &str) -> bool {
 
 fn looks_like_skill_line(line: &str) -> bool {
     let lower = line.to_lowercase();
-    lower.contains("skill")
+    is_skill_section_header(line)
+        || lower.contains("skill")
         || lower.contains("technical stack")
+        || lower.contains("tech stack")
         || lower.contains("技术栈")
         || lower.contains("技能")
+}
+
+fn is_skill_section_header(line: &str) -> bool {
+    let lower = line.trim().to_lowercase();
+    matches!(
+        lower.as_str(),
+        "skill"
+            | "skills"
+            | "technical skill"
+            | "technical skills"
+            | "technical stack"
+            | "tech stack"
+            | "技能"
+            | "专业技能"
+            | "技术栈"
+    )
 }
 
 fn indexed_lines(text: &str) -> Vec<(usize, &str)> {

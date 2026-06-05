@@ -108,6 +108,47 @@ Experience
 }
 
 #[test]
+fn extracts_sectioned_skill_aliases_without_header_or_context_noise() {
+    let text = "\
+Skills
+Python / TypeScript / PostgreSQL
+技术栈
+K8s, Golang, Redis
+Experience
+Java island migration";
+
+    let matches = extract_strong_fields(text);
+    let skills = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Skill)
+        .collect::<Vec<_>>();
+
+    let normalized = skills
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        normalized,
+        vec![
+            "Python",
+            "TypeScript",
+            "PostgreSQL",
+            "Kubernetes",
+            "Go",
+            "Redis"
+        ]
+    );
+    assert!(skills
+        .iter()
+        .all(|field| text[field.span_start..field.span_end] == field.raw_value));
+    assert!(!skills
+        .iter()
+        .any(|field| field.raw_value == "Skills" || field.raw_value == "技术栈"));
+    assert!(!skills.iter().any(|field| field.raw_value == "Java"));
+    assert!(!format!("{:?}", skills[0]).contains("Python"));
+}
+
+#[test]
 fn avoids_obvious_low_confidence_degree_and_skill_noise() {
     let text = "Mastercard project in Java island research. Timeline: 2020 and Java 8.";
     let matches = extract_strong_fields(text);

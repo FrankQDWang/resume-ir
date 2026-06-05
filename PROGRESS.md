@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, and S184 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, and S185 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -172,10 +172,15 @@ obsolete preliminary files and checklists are not product scope.
   ASCII or fullwidth colons, and extracts high-signal certificate aliases such
   as PMP, CKA, CISSP, CFA Level I, AWS/Azure/Kubernetes certifications, and CPA
   with canonical normalized values and span evidence that import persists.
+  Skill extraction now also treats skill section headers as bounded context,
+  suppresses header values, handles labeled skill lines with ASCII or fullwidth
+  colons, and extracts high-signal aliases such as TypeScript, PostgreSQL,
+  K8s/Kubernetes, Go/Golang, Redis, React, and Node.js with canonical normalized
+  values and span evidence that import persists.
   Missing production work
   includes broader dictionaries and normalization beyond the current
-  high-signal certificate aliases, real business labeled field and dedupe
-  quality datasets/results, remaining future non-cache PII surface purge
+  high-signal certificate and skill aliases, real business labeled field and
+  dedupe quality datasets/results, remaining future non-cache PII surface purge
   coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
@@ -550,8 +555,72 @@ obsolete preliminary files and checklists are not product scope.
 | S182 | Product deleted-document import-root path purge complete locally | Focused tests first failed because empty import roots retained `import_task` and `import_scan_scope` path metadata after document purge. After implementation, deleted-document purge removes import tasks whose roots contain deleted documents and no visible documents, cascading scan scope, scan error, and cancellation rows; roots with live documents are retained, and CLI purge reports only redacted counters. Focused RED/GREEN, full meta-store, full delete/search CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice covers empty-root import task path cleanup only. It does not prove forensic erase, all possible future non-cache PII surfaces, real corpus purge audits, or stable release blockers. |
 | S183 | Product hosted Windows import-root purge path matching complete locally | PR #9 hosted Windows Platform CI failed in `purge_deleted_removes_empty_import_root_task_paths_without_path_leak` because the purge output did not include `purged import tasks: 1`; the empty-root task was not matched when the import task root used a Windows canonical path shape and the document path used normalized slash/file-URI storage. A focused meta-store regression first failed for a `\\?\\C:\\...` root against `file://c:/...` / `c:/...` document paths. After implementation, import-root purge matching builds internal comparison keys that strip local file URI prefixes, remove Windows verbatim prefixes, normalize separators and dot segments, and compare Windows drive/UNC paths case-insensitively. Focused RED/GREEN, full meta-store, full delete/search CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice fixes Windows path-shape matching for the S182 purge only. It does not prove hosted Windows CI has passed until the pushed branch check completes, prove forensic erase, audit real corpus purge behavior, or clear stable release blockers. |
 | S184 | Product certificate alias extraction complete locally | Focused tests first failed because sectioned certificate aliases under `Certifications` / `认证` were missed while the Chinese header itself was persisted as a certificate. A follow-up focused test failed because fullwidth-colon labeled lines such as `认证：PMP` produced a span inside the delimiter byte sequence. After implementation, extractor-rules treats certificate headers as bounded context, extracts high-signal aliases such as PMP, CKA, CISSP, CFA Level I, AWS/Azure/Kubernetes certifications, and CPA with canonical normalized values and exact span evidence, suppresses section headers, and import persists those certificate mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves certificate dictionaries/normalization only. It does not prove real business field-quality metrics, broad certificate dictionaries, multilingual normalization coverage, real corpus results, or stable release readiness. |
+| S185 | Product skill alias extraction complete locally | Focused tests first failed because skill aliases under section headers such as `Skills` / `技术栈` were missed and therefore not persisted through import. After implementation, extractor-rules treats skill headers as bounded context, extracts high-signal aliases such as TypeScript, PostgreSQL, K8s/Kubernetes, Go/Golang, Redis, React, and Node.js with canonical normalized values and exact span evidence, suppresses section headers, and import persists those skill mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves skill dictionaries/normalization only. It does not prove real business field-quality metrics, broad skill dictionaries, multilingual normalization coverage, real corpus results, or stable release readiness. |
 
 ## Command Log
+
+### S185
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_sectioned_skill_aliases_without_header_or_context_noise -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_sectioned_skill_alias_mentions_without_output_leaks -- --exact
+```
+
+Output summary:
+
+- The sectioned extractor test failed before implementation with no skill
+  values instead of `["Python", "TypeScript", "PostgreSQL", "Kubernetes", "Go",
+  "Redis"]`, proving aliases under skill section headers were missed.
+- The CLI persisted-field regression failed before implementation with no skill
+  mentions instead of `["Go", "Kubernetes", "PostgreSQL", "Python", "Redis",
+  "TypeScript"]`, proving the import path persisted the same missing evidence.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_sectioned_skill_aliases_without_header_or_context_noise -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_sectioned_skill_alias_mentions_without_output_leaks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p import-pipeline -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+```
+
+Output summary:
+
+- The exact sectioned skill and exact CLI persisted-field regressions passed
+  after implementation.
+- Full `extractor-rules`, full persisted-field CLI tests, full
+  `import-pipeline`, focused clippy, `cargo fmt --all --check`, and
+  `git diff --check` passed locally before final guard/full-local verification.
+
+Final checkpoint verification:
+
+```bash
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `guard-public-repo.sh` passed.
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S185 uses synthetic data only. It does not read, print, commit, or upload
+  private resumes, filenames, paths, raw text, local diagnostics, tokens, or
+  model caches.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S184
 

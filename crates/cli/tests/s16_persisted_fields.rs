@@ -148,6 +148,92 @@ Skills: Java
     remove_dir(&resume_root);
 }
 
+#[test]
+fn import_persists_sectioned_skill_alias_mentions_without_output_leaks() {
+    let data_dir = temp_dir("persisted-skill-alias-data");
+    let resume_root = temp_dir("persisted-skill-alias-resumes");
+    fs::write(
+        resume_root.join("synthetic-skill-candidate.txt"),
+        "\
+Synthetic Skill Candidate
+Email: skill-candidate@example.test
+Skills
+Python / TypeScript / PostgreSQL
+技术栈
+K8s, Golang, Redis
+Experience
+Java island migration
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import skill aliases");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("Python"));
+    assert!(!stdout.contains("skill-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-skill-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mut normalized = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Skill)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("Python"));
+            mention.normalized_value.unwrap()
+        })
+        .collect::<Vec<_>>();
+    normalized.sort();
+
+    assert_eq!(
+        normalized,
+        vec![
+            "Go",
+            "Kubernetes",
+            "PostgreSQL",
+            "Python",
+            "Redis",
+            "TypeScript"
+        ]
+    );
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
 fn import_fixtures(data_dir: &Path) {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
