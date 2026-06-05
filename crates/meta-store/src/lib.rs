@@ -1670,6 +1670,68 @@ impl MetaStore {
         Ok(document_ids)
     }
 
+    pub fn searchable_document_ids_with_date_range_overlap(
+        &self,
+        start_month: i32,
+        end_month: Option<i32>,
+        min_confidence: f32,
+    ) -> Result<Vec<DocumentId>> {
+        validate_confidence_threshold(min_confidence, "entity_mention.confidence")?;
+        let end_month = end_month.unwrap_or(i32::MAX);
+        if start_month < 1900 * 12 + 1 || end_month < start_month {
+            return Err(MetaStoreError::invalid_value("date_range.filter"));
+        }
+
+        let connection = self.connection.borrow();
+        let mut statement = connection
+            .prepare(
+                "\
+                SELECT DISTINCT version.document_id
+                FROM entity_mention AS mention
+                JOIN resume_version AS version ON version.id = mention.resume_version_id
+                JOIN document AS document ON document.id = version.document_id
+                WHERE document.is_deleted = 0
+                    AND document.status IN ('indexed_partial', 'searchable')
+                    AND version.visibility = 'searchable'
+                    AND mention.entity_type = 'date_range'
+                    AND mention.confidence >= ?1
+                    AND mention.normalized_value IS NOT NULL
+                    AND (
+                        mention.normalized_value GLOB
+                            '[0-9][0-9][0-9][0-9]-[0-9][0-9]/[0-9][0-9][0-9][0-9]-[0-9][0-9]'
+                        OR mention.normalized_value GLOB
+                            '[0-9][0-9][0-9][0-9]-[0-9][0-9]/PRESENT'
+                    )
+                    AND (
+                        CAST(substr(mention.normalized_value, 1, 4) AS INTEGER) * 12
+                            + CAST(substr(mention.normalized_value, 6, 2) AS INTEGER)
+                    ) <= ?2
+                    AND (
+                        CASE
+                            WHEN substr(mention.normalized_value, 9) = 'PRESENT' THEN 2147483647
+                            ELSE CAST(substr(mention.normalized_value, 9, 4) AS INTEGER) * 12
+                                + CAST(substr(mention.normalized_value, 14, 2) AS INTEGER)
+                        END
+                    ) >= ?3
+                ORDER BY version.document_id",
+            )
+            .map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                f64::from(min_confidence),
+                i64::from(end_month),
+                i64::from(start_month),
+            ])
+            .map_err(MetaStoreError::storage)?;
+        let mut document_ids = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            document_ids.push(read_id::<DocumentId>(row, 0, "document.id")?);
+        }
+
+        Ok(document_ids)
+    }
+
     pub fn searchable_document_ids_without_entity_type(
         &self,
         entity_type: EntityType,

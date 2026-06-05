@@ -81,6 +81,25 @@ fn field_filters_match_any_certificate() {
 }
 
 #[test]
+fn field_filters_match_overlapping_date_range() {
+    let filters = SearchFilters::default().with_date_range_overlaps("2021-01/2021-12");
+    let matching =
+        ResumeProfile::new("doc_active").with_date_ranges(["2020-03/2022-06", "2024-01/PRESENT"]);
+    let before = ResumeProfile::new("doc_before").with_date_ranges(["2018-01/2019-12"]);
+    let after = ResumeProfile::new("doc_after").with_date_ranges(["2022-01/2023-12"]);
+    let missing_range = ResumeProfile::new("doc_missing_range");
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&before));
+    assert!(!filters.matches(&after));
+    assert!(!filters.matches(&missing_range));
+    assert_eq!(
+        filters.date_range_overlaps().unwrap().canonical(),
+        "2021-01/2021-12"
+    );
+}
+
+#[test]
 fn field_filters_match_any_school() {
     let filters = SearchFilters::default()
         .with_schools_any(["Synthetic Institute of Technology", "Other University"]);

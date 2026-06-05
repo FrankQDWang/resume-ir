@@ -1548,6 +1548,96 @@ fn searchable_document_ids_without_entity_type_matches_visible_versions_only() {
 }
 
 #[test]
+fn searchable_document_ids_with_date_range_overlap_matches_visible_versions_only() {
+    let store = migrated_store();
+    let overlapping_document = document("date-range-overlap", false, DocumentStatus::Searchable);
+    let open_ended_document = document("date-range-open-ended", false, DocumentStatus::Searchable);
+    let before_document = document("date-range-before", false, DocumentStatus::Searchable);
+    let low_confidence_document = document(
+        "date-range-low-confidence",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let hidden_version_document = document(
+        "date-range-hidden-version",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let deleted_document = document("date-range-deleted", true, DocumentStatus::Deleted);
+    for document in [
+        &overlapping_document,
+        &open_ended_document,
+        &before_document,
+        &low_confidence_document,
+        &hidden_version_document,
+        &deleted_document,
+    ] {
+        store.upsert_document(document).unwrap();
+    }
+
+    let overlapping_version = resume_version(
+        "date-range-overlap-version",
+        overlapping_document.id.clone(),
+    );
+    let open_ended_version = resume_version(
+        "date-range-open-ended-version",
+        open_ended_document.id.clone(),
+    );
+    let before_version = resume_version("date-range-before-version", before_document.id.clone());
+    let low_confidence_version = resume_version(
+        "date-range-low-confidence-version",
+        low_confidence_document.id.clone(),
+    );
+    let mut hidden_version = resume_version(
+        "date-range-hidden-version",
+        hidden_version_document.id.clone(),
+    );
+    hidden_version.visibility = ResumeVisibility::Hidden;
+    let deleted_version = resume_version("date-range-deleted-version", deleted_document.id.clone());
+    for version in [
+        &overlapping_version,
+        &open_ended_version,
+        &before_version,
+        &low_confidence_version,
+        &hidden_version,
+        &deleted_version,
+    ] {
+        store.upsert_resume_version(version).unwrap();
+    }
+
+    for (version, normalized_value, confidence) in [
+        (&overlapping_version, "2020-03/2022-06", 0.95),
+        (&open_ended_version, "2020-03/PRESENT", 0.95),
+        (&before_version, "2017-01/2018-12", 0.95),
+        (&low_confidence_version, "2020-03/2022-06", 0.40),
+        (&hidden_version, "2020-03/2022-06", 0.95),
+        (&deleted_version, "2020-03/2022-06", 0.95),
+    ] {
+        let mention = entity_mention(
+            normalized_value,
+            &version.id,
+            EntityType::DateRange,
+            normalized_value,
+            Some(normalized_value),
+            10..27,
+            confidence,
+        );
+        store
+            .replace_entity_mentions(&version.id, &[mention])
+            .unwrap();
+    }
+
+    let document_ids = store
+        .searchable_document_ids_with_date_range_overlap(2021 * 12 + 1, Some(2021 * 12 + 12), 0.75)
+        .unwrap();
+
+    assert_eq!(
+        document_ids,
+        vec![open_ended_document.id, overlapping_document.id]
+    );
+}
+
+#[test]
 fn contact_entity_mentions_do_not_persist_contact_values() {
     let db_path = temp_db_path("private-contact-mention");
     let store = MetaStore::open(&db_path).unwrap();

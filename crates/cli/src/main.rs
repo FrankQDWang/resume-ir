@@ -48,8 +48,8 @@ use ocr_client::{
 };
 use privacy::{backup_contact_hash_key, inspect_contact_hash_key, restore_contact_hash_key};
 use rank_fusion::{
-    fuse_hybrid_rrf, soft_dedupe_score, DedupeProfile, DegreeLevel, HybridRecall, RankedHit,
-    ResumeProfile, SchoolTier, SearchFilters,
+    fuse_hybrid_rrf, soft_dedupe_score, DateRange, DedupeProfile, DegreeLevel, HybridRecall,
+    RankedHit, ResumeProfile, SchoolTier, SearchFilters,
 };
 use rusqlite::Connection;
 use search_planner::plan_search;
@@ -5606,6 +5606,9 @@ fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
             .collect::<Vec<_>>(),
         "schools_any": filters.schools_any(),
         "certificates_any": filters.certificates_any(),
+        "date_range_overlaps": filters
+            .date_range_overlaps()
+            .map(|date_range| date_range.canonical()),
         "companies_any": filters.companies_any(),
         "titles_any": filters.titles_any(),
         "skills_any": filters.skills_any(),
@@ -5741,6 +5744,18 @@ fn field_filter_doc_id_prefilter(
                     filters.certificates_any(),
                     FIELD_FILTER_CONFIDENCE_THRESHOLD,
                     true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if let Some(date_range) = filters.date_range_overlaps() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_date_range_overlap(
+                    date_range.start_month(),
+                    date_range.end_month(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
                 )
                 .map_err(CliError::store)?,
         );
@@ -8200,6 +8215,16 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
                 filters = filters.with_certificates_any(certificates);
                 index += 2;
             }
+            "--date-range-overlaps" | "--date-range-overlap" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let Some(date_range) = DateRange::parse(value) else {
+                    return Err(CliError::user("search date range filter is invalid"));
+                };
+                filters = filters.with_date_range_overlaps(&date_range.canonical());
+                index += 2;
+            }
             "--company" | "--companies-any" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -8293,7 +8318,7 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
 }
 
 fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
@@ -8840,6 +8865,11 @@ fn persisted_profile(
         .filter(|field| field.entity_type == EntityType::Certificate && field.confidence >= 0.75)
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let date_ranges = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::DateRange && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let schools = fields
         .iter()
         .filter(|field| field.entity_type == EntityType::School && field.confidence >= 0.75)
@@ -8872,6 +8902,7 @@ fn persisted_profile(
         .with_school_tiers(school_tiers)
         .with_schools(schools)
         .with_certificates(certificates)
+        .with_date_ranges(date_ranges)
         .with_companies(companies)
         .with_titles(titles)
         .with_skills(skills);

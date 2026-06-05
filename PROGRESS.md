@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, and S207 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, and S208 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -650,8 +650,94 @@ obsolete preliminary files and checklists are not product scope.
 | S205 | Product company/title search filtering complete locally | Focused tests first failed because rank-fusion had no company/title profile filter API, CLI search rejected `--company` and `--title`, CLI IPC did not emit `companies_any` or `titles_any`, and daemon IPC ignored those filters until after full-text top-k retrieval. After implementation, company filters normalize common legal suffixes, title filters normalize common English and Chinese aliases, CLI supports `--company`/`--companies-any` and `--title`/`--titles-any`, CLI/daemon IPC carry `companies_any` and `titles_any`, persisted profiles hydrate company/title entity mentions, and both CLI and daemon prefilter matching document IDs before full-text top-k truncation. Focused RED/GREEN and related rank/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden company or title extraction beyond currently persisted entity evidence, prove real business field-quality metrics, evaluate private resume corpora, clear multilingual coverage, or make stable release ready. |
 | S206 | Product release-readiness fault-drill blocker coverage complete locally | Focused release-readiness tests and the release-readiness CI guard first failed because the current blocker detail did not explicitly include actual ENOSPC and service-level daemon kill drills, and the release blockers runbook did not list hardware fault drills in the current blocked items. After implementation, `release-readiness` text/JSON and the runbook consistently keep hardware fault drills blocked until actual ENOSPC, service-level daemon kill, battery-mode, and external-drive disconnect drills are proven on release platforms. Focused RED/GREEN, release-readiness guard, runbook guard, fmt, and focused clippy passed locally. | This slice tightens fail-closed release readiness evidence only. It does not run destructive ENOSPC tests, install or kill a real platform service, switch real battery state, disconnect external drives, clear platform validation, signing, notarization, benchmark, OCR/model licensing, or make stable release ready. |
 | S207 | Product school search filtering complete locally | Focused tests first failed because rank-fusion lacked school profile/filter API, CLI search rejected `--school`, CLI IPC did not emit `schools_any`, and daemon IPC ignored school filters until after full-text top-k retrieval. After implementation, school filters normalize persisted school evidence, CLI supports `--school`/`--schools-any`, CLI/daemon IPC carry `schools_any`, persisted profiles hydrate school mentions, and both CLI and daemon prefilter school document IDs before full-text top-k truncation. Focused RED/GREEN, related rank/CLI/daemon suites, fmt, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden school extraction beyond currently persisted evidence, prove real business field-quality metrics, evaluate private resume corpora, clear broad school dictionaries, or make stable release ready. |
+| S208 | Product date-range search filtering complete locally | Focused tests first failed because rank-fusion had no date-range profile/filter API, metadata could not return searchable document IDs by overlapping `date_range` evidence, CLI search rejected `--date-range-overlaps`, CLI IPC did not emit `date_range_overlaps`, and daemon IPC ignored date ranges until after full-text top-k retrieval. After implementation, `DateRange` supports `YYYY-MM/YYYY-MM`, `YYYY-MM..YYYY-MM`, and `YYYY-MM/PRESENT`; metadata prefilters visible searchable documents by overlapping persisted `date_range` mentions; CLI supports `--date-range-overlaps`; CLI/daemon IPC carry and parse `date_range_overlaps`; persisted profiles hydrate date ranges; and both CLI and daemon prefilter date-range document IDs before full-text top-k truncation. Focused RED/GREEN, related meta/rank/CLI/daemon suites, fmt, and focused clippy passed locally. | This slice uses synthetic/temp fixtures only. It does not add separate `edu_start`/`edu_end`/`work_start`/`work_end`/`certificate_date` columns, infer certificate-specific dates, prove real business date-range F1, evaluate private resume corpora, clear broad multilingual date coverage, or make stable release ready. |
 
 ## Command Log
+
+### S208
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store searchable_document_ids_with_date_range_overlap_matches_visible_versions_only -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_overlapping_date_range -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_date_range_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_date_range_before_fulltext_top_k_cutoff -- --exact
+```
+
+Output summary:
+
+- The meta-store focused test failed before implementation because
+  `searchable_document_ids_with_date_range_overlap` did not exist.
+- The rank-fusion focused test failed before implementation because
+  `SearchFilters::with_date_range_overlaps`, `SearchFilters::date_range_overlaps`,
+  and `ResumeProfile::with_date_ranges` did not exist.
+- The direct CLI focused test failed before implementation because `search`
+  rejected `--date-range-overlaps`.
+- The CLI IPC focused test failed before implementation because the rejected
+  date-range argument prevented the request from reaching the fake daemon.
+- The daemon IPC focused test failed before implementation because the daemon
+  applied no date-range prefilter before the full-text top-k cutoff and returned
+  a high-BM25 decoy instead of the matching synthetic target.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store searchable_document_ids_with_date_range_overlap_matches_visible_versions_only -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_overlapping_date_range -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_date_range_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_date_range_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p rank-fusion -p resume-cli -p resume-daemon --all-targets -- -D warnings
+```
+
+Output summary:
+
+- Rank-fusion now parses and matches overlapping date ranges, including
+  open-ended `PRESENT` ranges.
+- Meta-store now returns visible searchable document IDs whose high-confidence
+  persisted `date_range` mentions overlap a query range, excluding deleted,
+  hidden, low-confidence, and non-overlapping evidence.
+- Direct CLI search supports `--date-range-overlaps` and applies the metadata
+  document-ID prefilter before full-text top-k truncation.
+- CLI and daemon IPC search requests carry `date_range_overlaps`; daemon IPC
+  parsing, persisted profile hydration, and document-ID prefiltering now handle
+  date-range entity mentions before full-text retrieval.
+- Focused RED/GREEN tests, related meta-store, rank-fusion, CLI search-filter,
+  CLI IPC, and daemon IPC suites, and focused clippy passed locally.
+
+Final checkpoint verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0, public repo guard passed.
+- `verify-local.sh`: exit 0, including workspace tests/doc-tests,
+  license/runbook/workflow/release-readiness checks, release artifact/SBOM
+  checks, macOS package check, and final public repo guard.
+
+Scope note:
+
+- S208 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, or vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S207
 

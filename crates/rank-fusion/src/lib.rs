@@ -78,6 +78,69 @@ impl SchoolTier {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DateRange {
+    start_month: i32,
+    end_month: Option<i32>,
+}
+
+impl DateRange {
+    pub fn parse(value: &str) -> Option<Self> {
+        let trimmed = value.trim();
+        let (start, end) = trimmed
+            .split_once('/')
+            .or_else(|| trimmed.split_once(".."))?;
+        let start_month = parse_year_month(start.trim())?;
+        let end = end.trim();
+        let end_month = if matches!(
+            end.to_ascii_lowercase().as_str(),
+            "present" | "current" | "now" | "ongoing"
+        ) {
+            None
+        } else {
+            Some(parse_year_month(end)?)
+        };
+        Self::from_month_bounds(start_month, end_month)
+    }
+
+    pub fn from_month_bounds(start_month: i32, end_month: Option<i32>) -> Option<Self> {
+        if !is_supported_month_index(start_month) {
+            return None;
+        }
+        if let Some(end_month) = end_month {
+            if !is_supported_month_index(end_month) || end_month < start_month {
+                return None;
+            }
+        }
+        Some(Self {
+            start_month,
+            end_month,
+        })
+    }
+
+    pub fn start_month(self) -> i32 {
+        self.start_month
+    }
+
+    pub fn end_month(self) -> Option<i32> {
+        self.end_month
+    }
+
+    pub fn overlaps(self, other: Self) -> bool {
+        let self_end = self.end_month.unwrap_or(i32::MAX);
+        let other_end = other.end_month.unwrap_or(i32::MAX);
+        self.start_month <= other_end && other.start_month <= self_end
+    }
+
+    pub fn canonical(self) -> String {
+        let end = self
+            .end_month
+            .map(format_year_month)
+            .unwrap_or_else(|| "PRESENT".to_string());
+        format!("{}/{}", format_year_month(self.start_month), end)
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub struct ResumeProfile {
     doc_id: String,
@@ -85,6 +148,7 @@ pub struct ResumeProfile {
     schools: Vec<String>,
     school_tiers: Vec<SchoolTier>,
     certificates: Vec<String>,
+    date_ranges: Vec<DateRange>,
     companies: Vec<String>,
     titles: Vec<String>,
     skills: Vec<String>,
@@ -99,6 +163,7 @@ impl ResumeProfile {
             schools: Vec::new(),
             school_tiers: Vec::new(),
             certificates: Vec::new(),
+            date_ranges: Vec::new(),
             companies: Vec::new(),
             titles: Vec::new(),
             skills: Vec::new(),
@@ -147,6 +212,20 @@ impl ResumeProfile {
             .into_iter()
             .map(|certificate| normalize_certificate(certificate.as_ref()))
             .filter(|certificate| !certificate.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
+    pub fn with_date_ranges<I, S>(mut self, date_ranges: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.date_ranges = date_ranges
+            .into_iter()
+            .filter_map(|date_range| DateRange::parse(date_range.as_ref()))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -219,6 +298,10 @@ impl ResumeProfile {
         &self.certificates
     }
 
+    pub fn date_ranges(&self) -> &[DateRange] {
+        &self.date_ranges
+    }
+
     pub fn companies(&self) -> &[String] {
         &self.companies
     }
@@ -245,6 +328,7 @@ impl fmt::Debug for ResumeProfile {
             .field("school_count", &self.schools.len())
             .field("school_tier_count", &self.school_tiers.len())
             .field("certificate_count", &self.certificates.len())
+            .field("date_range_count", &self.date_ranges.len())
             .field("company_count", &self.companies.len())
             .field("title_count", &self.titles.len())
             .field("skill_count", &self.skills.len())
@@ -259,6 +343,7 @@ pub struct SearchFilters {
     schools_any: Vec<String>,
     school_tiers_any: Vec<SchoolTier>,
     certificates_any: Vec<String>,
+    date_range_overlaps: Option<DateRange>,
     companies_any: Vec<String>,
     titles_any: Vec<String>,
     skills_any: Vec<String>,
@@ -310,6 +395,11 @@ impl SearchFilters {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
+        self
+    }
+
+    pub fn with_date_range_overlaps(mut self, date_range: &str) -> Self {
+        self.date_range_overlaps = DateRange::parse(date_range);
         self
     }
 
@@ -368,6 +458,7 @@ impl SearchFilters {
             && self.schools_any.is_empty()
             && self.school_tiers_any.is_empty()
             && self.certificates_any.is_empty()
+            && self.date_range_overlaps.is_none()
             && self.companies_any.is_empty()
             && self.titles_any.is_empty()
             && self.skills_any.is_empty()
@@ -392,6 +483,10 @@ impl SearchFilters {
 
     pub fn certificates_any(&self) -> &[String] {
         &self.certificates_any
+    }
+
+    pub fn date_range_overlaps(&self) -> Option<DateRange> {
+        self.date_range_overlaps
     }
 
     pub fn companies_any(&self) -> &[String] {
@@ -436,6 +531,16 @@ impl SearchFilters {
                 .certificates_any
                 .iter()
                 .any(|certificate| profile_certificates.contains(certificate))
+            {
+                return false;
+            }
+        }
+
+        if let Some(filter_range) = self.date_range_overlaps {
+            if !profile
+                .date_ranges()
+                .iter()
+                .any(|profile_range| profile_range.overlaps(filter_range))
             {
                 return false;
             }
@@ -510,6 +615,10 @@ impl fmt::Debug for SearchFilters {
             .field("schools_any_count", &self.schools_any.len())
             .field("school_tiers_any_count", &self.school_tiers_any.len())
             .field("certificates_any_count", &self.certificates_any.len())
+            .field(
+                "date_range_overlaps",
+                &self.date_range_overlaps.map(DateRange::canonical),
+            )
             .field("companies_any_count", &self.companies_any.len())
             .field("titles_any_count", &self.titles_any.len())
             .field("skills_any_count", &self.skills_any.len())
@@ -890,6 +999,27 @@ pub fn fuse_hybrid_rrf(recall: HybridRecall, k: f32, limit: usize) -> Vec<Ranked
 
 fn normalize_skill(skill: &str) -> String {
     normalize_dedupe_value(skill)
+}
+
+fn parse_year_month(value: &str) -> Option<i32> {
+    let (year, month) = value.trim().split_once('-')?;
+    let year = year.parse::<i32>().ok()?;
+    let month = month.parse::<i32>().ok()?;
+    if !(1900..=2100).contains(&year) || !(1..=12).contains(&month) {
+        return None;
+    }
+    Some(year * 12 + month)
+}
+
+fn format_year_month(month_index: i32) -> String {
+    let zero_based = month_index - 1;
+    let year = zero_based.div_euclid(12);
+    let month = zero_based.rem_euclid(12) + 1;
+    format!("{year:04}-{month:02}")
+}
+
+fn is_supported_month_index(month_index: i32) -> bool {
+    (1900 * 12 + 1..=2100 * 12 + 12).contains(&month_index)
 }
 
 fn normalize_school(school: &str) -> String {

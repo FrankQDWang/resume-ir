@@ -46,7 +46,8 @@ use ocr_client::{
     RenderedPage, TesseractLanguageAvailability, TesseractOcrClient, TesseractOcrSpec,
 };
 use rank_fusion::{
-    soft_dedupe_score, DedupeProfile, DegreeLevel, ResumeProfile, SchoolTier, SearchFilters,
+    soft_dedupe_score, DateRange, DedupeProfile, DegreeLevel, ResumeProfile, SchoolTier,
+    SearchFilters,
 };
 use search_planner::plan_search;
 use sectionizer::Sectionizer;
@@ -2640,6 +2641,18 @@ fn parse_search_filters(
             parsed = parsed.with_certificates_any(certificates);
         }
     }
+    if let Some(value) = object.get("date_range_overlaps") {
+        if !value.is_null() {
+            let date_range =
+                value
+                    .as_str()
+                    .and_then(DateRange::parse)
+                    .ok_or(IpcCommandError::BadRequest(
+                        "date_range_overlaps is invalid",
+                    ))?;
+            parsed = parsed.with_date_range_overlaps(&date_range.canonical());
+        }
+    }
     if let Some(value) = object.get("companies_any") {
         if !value.is_null() {
             let companies = value.as_array().ok_or(IpcCommandError::BadRequest(
@@ -2765,6 +2778,19 @@ fn daemon_field_filter_doc_id_prefilter(
                     filters.certificates_any(),
                     FIELD_CONFIDENCE_THRESHOLD,
                     true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if let Some(date_range) = filters.date_range_overlaps() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_date_range_overlap(
+                    date_range.start_month(),
+                    date_range.end_month(),
+                    FIELD_CONFIDENCE_THRESHOLD,
                 )
                 .map_err(DaemonError::store)
                 .map_err(IpcCommandError::Internal)?,
@@ -3165,6 +3191,14 @@ fn daemon_persisted_profile(
         })
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let date_ranges = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::DateRange
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let schools = fields
         .iter()
         .filter(|field| {
@@ -3209,6 +3243,7 @@ fn daemon_persisted_profile(
         .with_school_tiers(school_tiers)
         .with_schools(schools)
         .with_certificates(certificates)
+        .with_date_ranges(date_ranges)
         .with_companies(companies)
         .with_titles(titles)
         .with_skills(skills);

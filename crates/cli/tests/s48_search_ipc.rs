@@ -49,6 +49,10 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             serde_json::json!(["cka", "pmp"])
         );
         assert_eq!(
+            payload["filters"]["date_range_overlaps"],
+            serde_json::json!("2021-01/2021-12")
+        );
+        assert_eq!(
             payload["filters"]["companies_any"],
             serde_json::json!(["synthetic payments"])
         );
@@ -105,6 +109,8 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             "Synthetic Institute of Technology",
             "--certificate",
             "PMP,CKA",
+            "--date-range-overlaps",
+            "2021-01/2021-12",
             "--company",
             "Synthetic Payments Inc.",
             "--title",
