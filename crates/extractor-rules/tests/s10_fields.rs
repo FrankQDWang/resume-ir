@@ -160,7 +160,7 @@ AWS Certified Solutions Architect
         .unwrap();
     assert_eq!(
         certificate.normalized_value.as_deref(),
-        Some("aws certified solutions architect")
+        Some("aws_solutions_architect")
     );
     assert_eq!(
         &text[certificate.span_start..certificate.span_end],
@@ -168,4 +168,51 @@ AWS Certified Solutions Architect
     );
     assert!(certificate.confidence >= 0.8);
     assert!(!format!("{certificate:?}").contains("AWS Certified"));
+}
+
+#[test]
+fn extracts_sectioned_certificate_aliases_without_header_noise() {
+    let text = "\
+Certifications
+PMP, CKA, CISSP
+认证
+CFA Level I
+Experience
+Senior Backend Engineer";
+
+    let matches = extract_strong_fields(text);
+    let certificates = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Certificate)
+        .collect::<Vec<_>>();
+
+    let normalized = certificates
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(normalized, vec!["pmp", "cka", "cissp", "cfa_level_1"]);
+    assert!(certificates
+        .iter()
+        .all(|field| text[field.span_start..field.span_end] == field.raw_value));
+    assert!(certificates.iter().all(|field| field.confidence >= 0.84));
+    assert!(!certificates
+        .iter()
+        .any(|field| field.raw_value == "Certifications" || field.raw_value == "认证"));
+    assert!(!format!("{:?}", certificates[0]).contains("PMP"));
+}
+
+#[test]
+fn extracts_fullwidth_labeled_certificate_alias_with_exact_span() {
+    let text = "认证：PMP";
+
+    let matches = extract_strong_fields(text);
+    let certificate = matches
+        .iter()
+        .find(|field| field.field_type == FieldType::Certificate)
+        .unwrap();
+
+    assert_eq!(certificate.raw_value, "PMP");
+    assert_eq!(certificate.normalized_value.as_deref(), Some("pmp"));
+    assert_eq!(&text[certificate.span_start..certificate.span_end], "PMP");
+    assert!(!format!("{certificate:?}").contains("PMP"));
 }

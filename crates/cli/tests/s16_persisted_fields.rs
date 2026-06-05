@@ -73,6 +73,81 @@ fn filtered_search_uses_persisted_field_mentions_without_reextracting_clean_text
     remove_dir(&data_dir);
 }
 
+#[test]
+fn import_persists_sectioned_certificate_alias_mentions_without_output_leaks() {
+    let data_dir = temp_dir("persisted-certificate-alias-data");
+    let resume_root = temp_dir("persisted-certificate-alias-resumes");
+    fs::write(
+        resume_root.join("synthetic-cert-candidate.txt"),
+        "\
+Synthetic Cert Candidate
+Email: cert-candidate@example.test
+Certifications
+PMP, CKA, CISSP
+认证
+CFA Level I
+Skills: Java
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import certificate aliases");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("PMP"));
+    assert!(!stdout.contains("cert-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-cert-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mut normalized = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Certificate)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("PMP"));
+            mention.normalized_value.unwrap()
+        })
+        .collect::<Vec<_>>();
+    normalized.sort();
+
+    assert_eq!(normalized, vec!["cfa_level_1", "cissp", "cka", "pmp"]);
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
 fn import_fixtures(data_dir: &Path) {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

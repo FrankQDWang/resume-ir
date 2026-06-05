@@ -649,32 +649,211 @@ fn normalize_title(value: &str) -> Option<(&'static str, f32)> {
 }
 
 fn extract_certificates(text: &str, matches: &mut Vec<RuleMatch>) {
+    let mut certificate_context_lines = 0_usize;
+    let mut seen = BTreeSet::new();
+
     for (line_start, line) in indexed_lines(text) {
         let trimmed = line.trim();
-        if trimmed.len() > 140 || !looks_like_certificate(trimmed) {
+        if trimmed.is_empty() {
+            certificate_context_lines = certificate_context_lines.saturating_sub(1);
+            continue;
+        }
+
+        if is_certificate_section_header(trimmed) {
+            certificate_context_lines = 6;
+            continue;
+        }
+
+        if certificate_context_lines > 0 && looks_like_section_header(trimmed) {
+            certificate_context_lines = 0;
             continue;
         }
 
         let leading = line.len() - line.trim_start().len();
-        let span_start = line_start + leading;
-        let span_end = span_start + trimmed.len();
-        matches.push(RuleMatch {
-            field_type: FieldType::Certificate,
-            raw_value: trimmed.to_string(),
-            normalized_value: Some(trimmed.to_lowercase()),
-            span_start,
-            span_end,
-            confidence: 0.86,
+        let trimmed_span_start = line_start + leading;
+        let Some(segment) =
+            certificate_segment(trimmed, trimmed_span_start, certificate_context_lines > 0)
+        else {
+            certificate_context_lines = certificate_context_lines.saturating_sub(1);
+            continue;
+        };
+
+        let pushed_alias =
+            push_certificate_alias_matches(segment.text, segment.span_start, matches, &mut seen);
+        if !pushed_alias && segment.allow_line_fallback {
+            let normalized = normalize_certificate_line(segment.text);
+            if seen.insert(normalized.clone()) {
+                matches.push(RuleMatch {
+                    field_type: FieldType::Certificate,
+                    raw_value: segment.text.to_string(),
+                    normalized_value: Some(normalized),
+                    span_start: segment.span_start,
+                    span_end: segment.span_start + segment.text.len(),
+                    confidence: 0.86,
+                });
+            }
+        }
+
+        certificate_context_lines = certificate_context_lines.saturating_sub(1);
+    }
+}
+
+struct CertificateSegment<'a> {
+    text: &'a str,
+    span_start: usize,
+    allow_line_fallback: bool,
+}
+
+fn certificate_segment<'a>(
+    trimmed_line: &'a str,
+    trimmed_span_start: usize,
+    in_certificate_context: bool,
+) -> Option<CertificateSegment<'a>> {
+    if trimmed_line.len() > 140 {
+        return None;
+    }
+
+    if let Some((label, value, delimiter_len)) = split_labeled_certificate_line(trimmed_line) {
+        let value_leading = value.len() - value.trim_start().len();
+        let value = value.trim();
+        if value.is_empty() {
+            return None;
+        }
+        let value_start = trimmed_span_start + label.len() + delimiter_len + value_leading;
+        return Some(CertificateSegment {
+            text: value,
+            span_start: value_start,
+            allow_line_fallback: true,
         });
     }
+
+    if in_certificate_context {
+        return Some(CertificateSegment {
+            text: trimmed_line,
+            span_start: trimmed_span_start,
+            allow_line_fallback: false,
+        });
+    }
+
+    if looks_like_certificate(trimmed_line) {
+        return Some(CertificateSegment {
+            text: trimmed_line,
+            span_start: trimmed_span_start,
+            allow_line_fallback: true,
+        });
+    }
+
+    None
+}
+
+fn split_labeled_certificate_line(line: &str) -> Option<(&str, &str, usize)> {
+    let delimiter_start = line.find([':', '：'])?;
+    let delimiter_len = line[delimiter_start..].chars().next()?.len_utf8();
+    let label = &line[..delimiter_start];
+    let value = &line[delimiter_start + delimiter_len..];
+    is_certificate_section_header(label.trim()).then_some((label, value, delimiter_len))
+}
+
+fn push_certificate_alias_matches(
+    text: &str,
+    span_start: usize,
+    matches: &mut Vec<RuleMatch>,
+    seen: &mut BTreeSet<String>,
+) -> bool {
+    let mut pushed = false;
+    let mut claimed_spans = Vec::<(usize, usize)>::new();
+    for (normalized, confidence, pattern) in certificate_alias_patterns() {
+        let regex = Regex::new(pattern).unwrap();
+        for found in regex.find_iter(text) {
+            let span = (found.start(), found.end());
+            if claimed_spans
+                .iter()
+                .any(|claimed| ranges_overlap(*claimed, span))
+            {
+                continue;
+            }
+            if !seen.insert(normalized.to_string()) {
+                continue;
+            }
+            claimed_spans.push(span);
+            matches.push(RuleMatch {
+                field_type: FieldType::Certificate,
+                raw_value: found.as_str().to_string(),
+                normalized_value: Some(normalized.to_string()),
+                span_start: span_start + found.start(),
+                span_end: span_start + found.end(),
+                confidence,
+            });
+            pushed = true;
+        }
+    }
+    pushed
+}
+
+fn ranges_overlap(left: (usize, usize), right: (usize, usize)) -> bool {
+    left.0 < right.1 && right.0 < left.1
+}
+
+fn certificate_alias_patterns() -> [(&'static str, f32, &'static str); 10] {
+    [
+        (
+            "aws_solutions_architect",
+            0.9,
+            r"(?i)\baws\s+(?:certified\s+)?solutions?\s+architect(?:\s+associate|\s+professional)?\b|\bsaa-c0[23]\b",
+        ),
+        (
+            "aws_developer",
+            0.9,
+            r"(?i)\baws\s+(?:certified\s+)?developer(?:\s+associate)?\b|\bdva-c0[12]\b",
+        ),
+        (
+            "azure_administrator",
+            0.88,
+            r"(?i)\bazure\s+administrator\b|\baz-104\b",
+        ),
+        (
+            "cka",
+            0.9,
+            r"(?i)\b(?:cka|certified\s+kubernetes\s+administrator)\b",
+        ),
+        (
+            "ckad",
+            0.9,
+            r"(?i)\b(?:ckad|certified\s+kubernetes\s+application\s+developer)\b",
+        ),
+        ("cissp", 0.9, r"(?i)\bcissp\b"),
+        ("pmp", 0.9, r"(?i)\bpmp\b"),
+        ("cfa_level_1", 0.88, r"(?i)\bcfa\s+level\s+(?:i|1)\b"),
+        ("cfa", 0.86, r"(?i)\bcfa\b"),
+        ("cpa", 0.86, r"(?i)\bcpa\b|注册会计师"),
+    ]
+}
+
+fn normalize_certificate_line(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn is_certificate_section_header(line: &str) -> bool {
+    let lower = line.trim().to_lowercase();
+    matches!(
+        lower.as_str(),
+        "certificate"
+            | "certificates"
+            | "certification"
+            | "certifications"
+            | "证书"
+            | "认证"
+            | "资格"
+    )
 }
 
 fn looks_like_certificate(line: &str) -> bool {
     let lower = line.to_lowercase();
-    if matches!(
-        lower.as_str(),
-        "certificate" | "certificates" | "certifications"
-    ) {
+    if is_certificate_section_header(line) {
         return false;
     }
 
