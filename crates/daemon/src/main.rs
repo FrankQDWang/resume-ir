@@ -2621,6 +2621,44 @@ fn parse_search_filters(
             parsed = parsed.with_certificates_any(certificates);
         }
     }
+    if let Some(value) = object.get("companies_any") {
+        if !value.is_null() {
+            let companies = value.as_array().ok_or(IpcCommandError::BadRequest(
+                "companies_any must be an array",
+            ))?;
+            if companies.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many companies"));
+            }
+            let companies = companies
+                .iter()
+                .map(|company| {
+                    company.as_str().ok_or(IpcCommandError::BadRequest(
+                        "companies_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_companies_any(companies);
+        }
+    }
+    if let Some(value) = object.get("titles_any") {
+        if !value.is_null() {
+            let titles = value
+                .as_array()
+                .ok_or(IpcCommandError::BadRequest("titles_any must be an array"))?;
+            if titles.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many titles"));
+            }
+            let titles = titles
+                .iter()
+                .map(|title| {
+                    title.as_str().ok_or(IpcCommandError::BadRequest(
+                        "titles_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_titles_any(titles);
+        }
+    }
     if let Some(value) = object.get("years_experience_min") {
         if !value.is_null() {
             let years = value
@@ -2692,6 +2730,34 @@ fn daemon_field_filter_doc_id_prefilter(
                 .searchable_document_ids_with_entity_values(
                     EntityType::Certificate,
                     filters.certificates_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.companies_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Company,
+                    filters.companies_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.titles_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Title,
+                    filters.titles_any(),
                     FIELD_CONFIDENCE_THRESHOLD,
                     true,
                 )
@@ -3066,6 +3132,21 @@ fn daemon_persisted_profile(
         })
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let companies = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::Company
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let titles = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::Title && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let school_tiers = fields
         .iter()
         .filter(|field| {
@@ -3086,6 +3167,8 @@ fn daemon_persisted_profile(
     let mut profile = ResumeProfile::new(doc_id)
         .with_school_tiers(school_tiers)
         .with_certificates(certificates)
+        .with_companies(companies)
+        .with_titles(titles)
         .with_skills(skills);
     if let Some(degree) = degree {
         profile = profile.with_degree(degree);

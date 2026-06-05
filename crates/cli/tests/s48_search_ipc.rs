@@ -44,6 +44,14 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             payload["filters"]["certificates_any"],
             serde_json::json!(["cka", "pmp"])
         );
+        assert_eq!(
+            payload["filters"]["companies_any"],
+            serde_json::json!(["synthetic payments"])
+        );
+        assert_eq!(
+            payload["filters"]["titles_any"],
+            serde_json::json!(["backend_engineer"])
+        );
 
         let response = serde_json::json!({
             "schema_version": "daemon.search.v1",
@@ -91,6 +99,10 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             "985,双一流",
             "--certificate",
             "PMP,CKA",
+            "--company",
+            "Synthetic Payments Inc.",
+            "--title",
+            "Backend Engineer",
         ])
         .output()
         .expect("run resume-cli search --ipc");

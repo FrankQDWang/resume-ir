@@ -647,8 +647,77 @@ obsolete preliminary files and checklists are not product scope.
 | S202 | Product unknown school-tier filtering complete locally | Focused tests first failed because `SchoolTier::Unknown` did not match profiles with no school-tier evidence, CLI `--school-tier unknown` returned no target when known-tier decoys consumed the full-text top-k window, `MetaStore` had no missing-entity prefilter helper, and daemon IPC had the same post-filter-only top-k gap. After implementation, `unknown` means no high-confidence persisted `school_tier` mention on a searchable visible version, known and unknown tier filters are unioned before intersecting with other field filters, and both CLI and daemon full-text search apply the prefilter before top-k truncation. Focused RED/GREEN and related rank/meta-store/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not infer unknown as an extracted entity, read real resumes, prove broad school dictionaries, produce private field-quality evidence, or make stable release ready. |
 | S203 | Product certificate search filtering complete locally | Focused tests first failed because rank-fusion had no certificate profile/filter API, CLI `--certificate` was rejected by search usage, CLI IPC did not emit `certificates_any`, and daemon IPC ignored certificate filters until after full-text top-k retrieval. After implementation, certificate filters normalize common certificate aliases to extractor canonical values, CLI supports `--certificate` and `--certificates-any`, CLI/daemon IPC carry `certificates_any`, persisted profiles hydrate certificate mentions, and both CLI and daemon prefilter certificate doc IDs before full-text top-k truncation. Focused RED/GREEN and related rank/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden certificate extraction beyond existing aliases, implement certificate level/date filters, produce private field-quality evidence, or make stable release ready. |
 | S204 | Product hosted Rust workspace school-tier debug assertion stability complete locally | PR #9 hosted Rust workspace failed in `import_persists_school_tier_mentions_and_filters_search_without_output_leaks` because the test checked that the entire `EntityMention` Debug string did not contain `985`; the Debug string already redacts raw and normalized values, but opaque hex IDs can legitimately contain that digit sequence. The test now asserts the `raw_value` and `normalized_value` Debug fields are redacted while keeping the normalized school-tier value and filtered-search assertions. Focused persisted-field tests, fmt, focused clippy, diff check, public guard, and full local verification passed. | This slice stabilizes a flaky privacy assertion only. It does not change production search/filter behavior, read private resumes, broaden school-tier extraction, prove hosted CI has passed until PR #9 reruns, or make stable release ready. |
+| S205 | Product company/title search filtering complete locally | Focused tests first failed because rank-fusion had no company/title profile filter API, CLI search rejected `--company` and `--title`, CLI IPC did not emit `companies_any` or `titles_any`, and daemon IPC ignored those filters until after full-text top-k retrieval. After implementation, company filters normalize common legal suffixes, title filters normalize common English and Chinese aliases, CLI supports `--company`/`--companies-any` and `--title`/`--titles-any`, CLI/daemon IPC carry `companies_any` and `titles_any`, persisted profiles hydrate company/title entity mentions, and both CLI and daemon prefilter matching document IDs before full-text top-k truncation. Focused RED/GREEN and related rank/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden company or title extraction beyond currently persisted entity evidence, prove real business field-quality metrics, evaluate private resume corpora, clear multilingual coverage, or make stable release ready. |
 
 ## Command Log
+
+### S205
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_company_and_title -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_company_and_title_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_company_and_title_before_fulltext_top_k_cutoff -- --exact
+```
+
+Output summary:
+
+- The rank-fusion regression failed before implementation because company and
+  title profile/filter APIs did not exist.
+- The direct CLI regression failed before implementation because search usage
+  rejected `--company` and `--title`.
+- The CLI IPC regression failed before implementation because the command did
+  not connect to the fake daemon after rejecting the new field filters.
+- The daemon IPC regression failed before implementation because company/title
+  filters were ignored and a decoy full-text hit won before post-filtering.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_company_and_title -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_company_and_title_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_company_and_title_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo clippy -p rank-fusion -p resume-cli -p resume-daemon --all-targets -- -D warnings
+```
+
+Output summary:
+
+- Rank-fusion now normalizes company suffixes and title aliases before matching
+  persisted profile evidence against field filters.
+- A post-review Chinese company suffix regression first failed for
+  `股份有限公司`, then passed after company normalization started stripping more
+  specific Chinese legal suffixes before shorter suffixes.
+- CLI direct search and daemon search IPC now prefilter `company` and `title`
+  evidence before full-text top-k truncation.
+- CLI search IPC serializes redacted filter payloads with `companies_any` and
+  `titles_any`, and persisted-profile hydration carries company/title mentions
+  into rank-fusion filtering.
+
+Final checkpoint verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Scope note:
+
+- S205 uses synthetic test fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, local diagnostics, tokens,
+  model caches, private labels, OCR text, page images, command paths, or
+  vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S204
 

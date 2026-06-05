@@ -308,6 +308,77 @@ needle
     remove_dir(&resume_root);
 }
 
+#[test]
+fn filtered_search_prefilters_company_and_title_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-company-title-data");
+    let resume_root = temp_dir("search-filter-company-title-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("role-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Role Decoy {index}
+Experience
+Synthetic Search Inc.
+Product Manager
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("role-target.txt"),
+        "\
+Candidate Role Target
+Experience
+Synthetic Payments Inc.
+Senior Backend Engineer
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--company",
+            "Synthetic Payments Inc.",
+            "--title",
+            "Backend Engineer",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run company-title filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("role-target.txt"));
+    assert!(!stdout.contains("role-decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
 fn import_fixtures(data_dir: &Path) {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

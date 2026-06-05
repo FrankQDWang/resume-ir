@@ -5605,6 +5605,8 @@ fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
             .map(|school_tier| school_tier.canonical())
             .collect::<Vec<_>>(),
         "certificates_any": filters.certificates_any(),
+        "companies_any": filters.companies_any(),
+        "titles_any": filters.titles_any(),
         "skills_any": filters.skills_any(),
         "years_experience_min": filters.years_experience_min(),
     })
@@ -5723,6 +5725,32 @@ fn field_filter_doc_id_prefilter(
                 .searchable_document_ids_with_entity_values(
                     EntityType::Certificate,
                     filters.certificates_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.companies_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Company,
+                    filters.companies_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.titles_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Title,
+                    filters.titles_any(),
                     FIELD_FILTER_CONFIDENCE_THRESHOLD,
                     true,
                 )
@@ -8143,6 +8171,36 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
                 filters = filters.with_certificates_any(certificates);
                 index += 2;
             }
+            "--company" | "--companies-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let companies = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|company| !company.is_empty())
+                    .collect::<Vec<_>>();
+                if companies.is_empty() {
+                    return Err(CliError::user("search company filter is invalid"));
+                }
+                filters = filters.with_companies_any(companies);
+                index += 2;
+            }
+            "--title" | "--titles-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let titles = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+                    .collect::<Vec<_>>();
+                if titles.is_empty() {
+                    return Err(CliError::user("search title filter is invalid"));
+                }
+                filters = filters.with_titles_any(titles);
+                index += 2;
+            }
             "--skills-any" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -8206,7 +8264,7 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
 }
 
 fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
@@ -8753,6 +8811,16 @@ fn persisted_profile(
         .filter(|field| field.entity_type == EntityType::Certificate && field.confidence >= 0.75)
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let companies = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Company && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let titles = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Title && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let school_tiers = fields
         .iter()
         .filter(|field| field.entity_type == EntityType::SchoolTier && field.confidence >= 0.75)
@@ -8769,6 +8837,8 @@ fn persisted_profile(
     let mut profile = ResumeProfile::new(doc_id)
         .with_school_tiers(school_tiers)
         .with_certificates(certificates)
+        .with_companies(companies)
+        .with_titles(titles)
         .with_skills(skills);
     if let Some(degree) = degree {
         profile = profile.with_degree(degree);

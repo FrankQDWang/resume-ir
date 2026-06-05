@@ -84,6 +84,8 @@ pub struct ResumeProfile {
     degree: Option<DegreeLevel>,
     school_tiers: Vec<SchoolTier>,
     certificates: Vec<String>,
+    companies: Vec<String>,
+    titles: Vec<String>,
     skills: Vec<String>,
     years_experience: Option<f32>,
 }
@@ -95,6 +97,8 @@ impl ResumeProfile {
             degree: None,
             school_tiers: Vec::new(),
             certificates: Vec::new(),
+            companies: Vec::new(),
+            titles: Vec::new(),
             skills: Vec::new(),
             years_experience: None,
         }
@@ -126,6 +130,36 @@ impl ResumeProfile {
             .into_iter()
             .map(|certificate| normalize_certificate(certificate.as_ref()))
             .filter(|certificate| !certificate.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
+    pub fn with_companies<I, S>(mut self, companies: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.companies = companies
+            .into_iter()
+            .map(|company| normalize_company(company.as_ref()))
+            .filter(|company| !company.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
+    pub fn with_titles<I, S>(mut self, titles: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.titles = titles
+            .into_iter()
+            .map(|title| normalize_title(title.as_ref()))
+            .filter(|title| !title.is_empty())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -164,6 +198,14 @@ impl ResumeProfile {
         &self.certificates
     }
 
+    pub fn companies(&self) -> &[String] {
+        &self.companies
+    }
+
+    pub fn titles(&self) -> &[String] {
+        &self.titles
+    }
+
     pub fn skills(&self) -> &[String] {
         &self.skills
     }
@@ -181,6 +223,8 @@ impl fmt::Debug for ResumeProfile {
             .field("degree", &self.degree)
             .field("school_tier_count", &self.school_tiers.len())
             .field("certificate_count", &self.certificates.len())
+            .field("company_count", &self.companies.len())
+            .field("title_count", &self.titles.len())
             .field("skill_count", &self.skills.len())
             .field("years_experience", &self.years_experience)
             .finish()
@@ -192,6 +236,8 @@ pub struct SearchFilters {
     degree_min: Option<DegreeLevel>,
     school_tiers_any: Vec<SchoolTier>,
     certificates_any: Vec<String>,
+    companies_any: Vec<String>,
+    titles_any: Vec<String>,
     skills_any: Vec<String>,
     years_experience_min: Option<f32>,
 }
@@ -229,6 +275,36 @@ impl SearchFilters {
         self
     }
 
+    pub fn with_companies_any<I, S>(mut self, companies: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.companies_any = companies
+            .into_iter()
+            .map(|company| normalize_company(company.as_ref()))
+            .filter(|company| !company.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
+    pub fn with_titles_any<I, S>(mut self, titles: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.titles_any = titles
+            .into_iter()
+            .map(|title| normalize_title(title.as_ref()))
+            .filter(|title| !title.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
     pub fn with_skills_any<I, S>(mut self, skills: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -253,6 +329,8 @@ impl SearchFilters {
         self.degree_min.is_none()
             && self.school_tiers_any.is_empty()
             && self.certificates_any.is_empty()
+            && self.companies_any.is_empty()
+            && self.titles_any.is_empty()
             && self.skills_any.is_empty()
             && self.years_experience_min.is_none()
     }
@@ -271,6 +349,14 @@ impl SearchFilters {
 
     pub fn certificates_any(&self) -> &[String] {
         &self.certificates_any
+    }
+
+    pub fn companies_any(&self) -> &[String] {
+        &self.companies_any
+    }
+
+    pub fn titles_any(&self) -> &[String] {
+        &self.titles_any
     }
 
     pub fn years_experience_min(&self) -> Option<f32> {
@@ -296,6 +382,28 @@ impl SearchFilters {
                 .certificates_any
                 .iter()
                 .any(|certificate| profile_certificates.contains(certificate))
+            {
+                return false;
+            }
+        }
+
+        if !self.companies_any.is_empty() {
+            let profile_companies = profile.companies().iter().collect::<BTreeSet<_>>();
+            if !self
+                .companies_any
+                .iter()
+                .any(|company| profile_companies.contains(company))
+            {
+                return false;
+            }
+        }
+
+        if !self.titles_any.is_empty() {
+            let profile_titles = profile.titles().iter().collect::<BTreeSet<_>>();
+            if !self
+                .titles_any
+                .iter()
+                .any(|title| profile_titles.contains(title))
             {
                 return false;
             }
@@ -347,6 +455,8 @@ impl fmt::Debug for SearchFilters {
             .field("degree_min", &self.degree_min)
             .field("school_tiers_any_count", &self.school_tiers_any.len())
             .field("certificates_any_count", &self.certificates_any.len())
+            .field("companies_any_count", &self.companies_any.len())
+            .field("titles_any_count", &self.titles_any.len())
             .field("skills_any_count", &self.skills_any.len())
             .field("years_experience_min", &self.years_experience_min)
             .finish()
@@ -725,6 +835,65 @@ pub fn fuse_hybrid_rrf(recall: HybridRecall, k: f32, limit: usize) -> Vec<Ranked
 
 fn normalize_skill(skill: &str) -> String {
     normalize_dedupe_value(skill)
+}
+
+fn normalize_company(company: &str) -> String {
+    let mut value = normalize_dedupe_value(company);
+    for suffix in [
+        " incorporated",
+        " corporation",
+        " company",
+        " limited",
+        " inc.",
+        " inc",
+        " corp.",
+        " corp",
+        " ltd.",
+        " ltd",
+        " llc",
+        " co.",
+        " co",
+    ] {
+        if value.ends_with(suffix) {
+            value.truncate(value.len() - suffix.len());
+            value = value.trim().to_string();
+            break;
+        }
+    }
+    for suffix in ["有限责任公司", "股份有限公司", "有限公司", "公司"] {
+        if value.ends_with(suffix) {
+            value.truncate(value.len() - suffix.len());
+            value = value.trim().to_string();
+            break;
+        }
+    }
+    value
+}
+
+fn normalize_title(title: &str) -> String {
+    let normalized = title
+        .trim()
+        .to_lowercase()
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    match normalized.as_str() {
+        "senior_backend_engineer"
+        | "staff_backend_engineer"
+        | "backend_developer"
+        | "backend_engineer"
+        | "后端工程师"
+        | "高级后端工程师" => "backend_engineer".to_string(),
+        "product_manager" | "产品经理" => "product_manager".to_string(),
+        "frontend_engineer" | "front_end_engineer" | "staff_frontend_engineer" | "前端工程师" => {
+            "frontend_engineer".to_string()
+        }
+        "data_scientist" | "数据科学家" => "data_scientist".to_string(),
+        "devops_engineer" | "dev_ops_engineer" => "devops_engineer".to_string(),
+        "engineering_manager" | "工程经理" => "engineering_manager".to_string(),
+        _ => normalized,
+    }
 }
 
 fn normalize_certificate(certificate: &str) -> String {

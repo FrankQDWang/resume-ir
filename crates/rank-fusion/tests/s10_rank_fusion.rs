@@ -81,6 +81,34 @@ fn field_filters_match_any_certificate() {
 }
 
 #[test]
+fn field_filters_match_company_and_title() {
+    let filters = SearchFilters::default()
+        .with_companies_any(["Synthetic Payments Inc.", "Other Co"])
+        .with_titles_any(["Backend Engineer"]);
+    let matching = ResumeProfile::new("doc_backend")
+        .with_companies(["synthetic payments"])
+        .with_titles(["backend_engineer"]);
+    let other_company = ResumeProfile::new("doc_other_company")
+        .with_companies(["synthetic search"])
+        .with_titles(["backend_engineer"]);
+    let other_title = ResumeProfile::new("doc_other_title")
+        .with_companies(["synthetic payments"])
+        .with_titles(["product_manager"]);
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&other_company));
+    assert!(!filters.matches(&other_title));
+    assert_eq!(filters.companies_any(), &["other", "synthetic payments"]);
+    assert_eq!(filters.titles_any(), &["backend_engineer"]);
+
+    let chinese_company_filter = SearchFilters::default().with_companies_any(["幻方股份有限公司"]);
+    let chinese_company_profile =
+        ResumeProfile::new("doc_chinese_company").with_companies(["幻方"]);
+    assert!(chinese_company_filter.matches(&chinese_company_profile));
+    assert_eq!(chinese_company_filter.companies_any(), &["幻方"]);
+}
+
+#[test]
 fn candidate_fold_keeps_best_ranked_version_per_candidate() {
     let hits = vec![
         RankedHit::new("doc_old", 1, 9.5).with_candidate_key("cand_same"),
