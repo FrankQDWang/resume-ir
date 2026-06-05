@@ -5,8 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{FullTextIndex, IndexDocument, IndexSection};
 use meta_store::{
-    CandidateId, Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
-    FileExtension, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
+    EntityMentionId, EntityType, FileExtension, MetaStore, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, UnixTimestamp,
 };
 
 #[test]
@@ -515,6 +516,109 @@ fn candidate_review_merge_and_split_control_default_search_folding_without_value
     remove_dir(&data_dir);
 }
 
+#[test]
+fn candidate_review_conflicts_lists_multi_contact_conflicts_without_contact_or_hash_leak() {
+    let data_dir = temp_dir("candidate-review-conflicts-data");
+    let document_id = DocumentId::from_non_secret_parts(&["s181", "conflict-doc"]);
+    let version_id = ResumeVersionId::from_non_secret_parts(&["s181", "conflict-ver"]);
+    let email_candidate_id = CandidateId::from_non_secret_parts(&["s181", "email-candidate"]);
+    let phone_candidate_id = CandidateId::from_non_secret_parts(&["s181", "phone-candidate"]);
+    let email_hash = contact_hash('8');
+    let phone_hash = contact_hash('9');
+    let private_email = "Sensitive.Conflict@Example.Test";
+    let private_phone = "+14155550100";
+
+    seed_document_with_mentions(
+        &data_dir,
+        document_id,
+        version_id.clone(),
+        None,
+        "synthetic-conflict.pdf",
+        "Java backend conflict fixture",
+        &[
+            SeedMention::new(
+                EntityType::Email,
+                private_email,
+                "sensitive.conflict@example.test",
+            ),
+            SeedMention::new(EntityType::Phone, private_phone, private_phone),
+            SeedMention::new(EntityType::Skill, "Java", "java"),
+        ],
+    );
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .upsert_candidate(&Candidate {
+            id: email_candidate_id.clone(),
+            primary_name: None,
+            phone_hash: None,
+            email_hash: Some(email_hash.clone()),
+            dedupe_key: None,
+            merge_confidence: Some(1.0),
+            version_count: 0,
+        })
+        .unwrap();
+    store
+        .upsert_candidate(&Candidate {
+            id: phone_candidate_id.clone(),
+            primary_name: None,
+            phone_hash: Some(phone_hash.clone()),
+            email_hash: None,
+            dedupe_key: None,
+            merge_confidence: Some(1.0),
+            version_count: 0,
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .assign_candidate_from_hashed_contacts(
+                &version_id,
+                Some(&email_hash),
+                Some(&phone_hash)
+            )
+            .unwrap(),
+        None
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "candidate-review",
+            "conflicts",
+            "--limit",
+            "5",
+        ])
+        .output()
+        .expect("run candidate-review conflicts");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("candidate contact conflicts: 1"));
+    assert!(stdout.contains("conflict: 1"));
+    assert!(stdout.contains(&format!("version_id: {version_id}")));
+    assert!(stdout.contains(&format!("email_candidate_id: {email_candidate_id}")));
+    assert!(stdout.contains(&format!("phone_candidate_id: {phone_candidate_id}")));
+    assert!(stdout.contains("contact_values: <redacted>"));
+    assert!(stdout.contains("contact_hashes: <redacted>"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains(private_email));
+    assert!(!stdout.contains("sensitive.conflict@example.test"));
+    assert!(!stdout.contains(private_phone));
+    assert!(!stdout.contains(email_hash.as_str()));
+    assert!(!stdout.contains(phone_hash.as_str()));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    remove_dir(&data_dir);
+}
+
 fn seed_document(
     data_dir: &Path,
     document_id: DocumentId,
@@ -715,6 +819,11 @@ fn temp_dir(label: &str) -> PathBuf {
 
 fn path_str(path: &Path) -> &str {
     path.to_str().unwrap()
+}
+
+fn contact_hash(hex: char) -> ContactHash {
+    let digest = std::iter::repeat_n(hex, 64).collect::<String>();
+    ContactHash::from_keyed_digest(digest).unwrap()
 }
 
 fn remove_dir(path: &Path) {

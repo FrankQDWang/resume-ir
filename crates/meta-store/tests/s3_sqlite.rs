@@ -24,9 +24,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,]
     );
-    assert_eq!(store.schema_version().unwrap(), 17);
+    assert_eq!(store.schema_version().unwrap(), 18);
 
     for table_name in [
         "candidate",
@@ -43,13 +43,14 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "embedding_job_spec",
         "import_task_cancellation",
         "query_observation",
+        "candidate_contact_conflict",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 17);
+    assert_eq!(store.schema_version().unwrap(), 18);
 }
 
 #[test]
@@ -83,7 +84,7 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 17);
+        assert_eq!(store.schema_version().unwrap(), 18);
     }
 
     let encrypted_bytes = fs::read(&db_path).unwrap();
@@ -130,7 +131,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         plaintext.run_migrations().unwrap();
         plaintext.upsert_document(&document).unwrap();
         plaintext.upsert_resume_version(&version).unwrap();
-        assert_eq!(plaintext.schema_version().unwrap(), 17);
+        assert_eq!(plaintext.schema_version().unwrap(), 18);
         assert_eq!(
             plaintext.metadata_encryption_state(),
             MetadataEncryptionState::Plaintext
@@ -145,7 +146,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         migrated.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(migrated.schema_version().unwrap(), 17);
+    assert_eq!(migrated.schema_version().unwrap(), 18);
     assert_eq!(
         migrated.document_by_id(&document.id).unwrap().unwrap().id,
         document.id
@@ -598,6 +599,75 @@ fn hashed_contact_assignment_reuses_candidate_and_updates_version_count() {
             .unwrap(),
         None
     );
+}
+
+#[test]
+fn contact_hash_assignment_records_conflict_without_hash_or_contact_leakage() {
+    let store = migrated_store();
+    let email_hash = contact_hash('8');
+    let phone_hash = contact_hash('9');
+    let email_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["s181", "email-candidate"]),
+        primary_name: None,
+        phone_hash: None,
+        email_hash: Some(email_hash.clone()),
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let phone_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["s181", "phone-candidate"]),
+        primary_name: None,
+        phone_hash: Some(phone_hash.clone()),
+        email_hash: None,
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let document = document(
+        "candidate-contact-conflict-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let version = resume_version("candidate-contact-conflict-version", document.id.clone());
+
+    store.upsert_candidate(&email_candidate).unwrap();
+    store.upsert_candidate(&phone_candidate).unwrap();
+    store.upsert_document(&document).unwrap();
+    store.upsert_resume_version(&version).unwrap();
+
+    assert_eq!(
+        store
+            .assign_candidate_from_hashed_contacts(
+                &version.id,
+                Some(&email_hash),
+                Some(&phone_hash)
+            )
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .resume_version_by_id(&version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        None
+    );
+
+    let conflicts = store.candidate_contact_conflicts().unwrap();
+    assert_eq!(conflicts.len(), 1);
+    let conflict = &conflicts[0];
+    assert_eq!(conflict.resume_version_id, version.id);
+    assert_eq!(conflict.email_candidate_id, email_candidate.id);
+    assert_eq!(conflict.phone_candidate_id, phone_candidate.id);
+    assert_eq!(conflict.updated_at, UnixTimestamp::from_unix_seconds(0));
+
+    let debug = format!("{conflict:?}");
+    assert!(!debug.contains(email_hash.as_str()));
+    assert!(!debug.contains(phone_hash.as_str()));
+    assert!(!debug.contains("candidate@example"));
+    assert!(!debug.contains("+14155550100"));
 }
 
 #[test]
@@ -1570,7 +1640,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7, 15]);
-        assert_eq!(reopened.schema_version().unwrap(), 17);
+        assert_eq!(reopened.schema_version().unwrap(), 18);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1974,7 +2044,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 17);
+        assert_eq!(reopened.schema_version().unwrap(), 18);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -2422,7 +2492,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             report.applied_versions(),
             &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 17);
+        assert_eq!(reopened.schema_version().unwrap(), 18);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -2454,7 +2524,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 17);
+        assert_eq!(reopened.schema_version().unwrap(), 18);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

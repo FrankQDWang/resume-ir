@@ -259,6 +259,7 @@ fn candidate_review_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     match action {
         "list" => candidate_review_list_command(&store, &args[1..]),
+        "conflicts" => candidate_review_conflicts_command(&store, &args[1..]),
         "merge" => candidate_review_merge_command(&store, &args[1..]),
         "split" => candidate_review_split_command(&store, &args[1..]),
         _ => Err(CliError::usage(candidate_review_usage())),
@@ -279,6 +280,27 @@ fn candidate_review_list_command(store: &MetaStore, args: &[String]) -> Result<(
         );
         println!("confidence: {:.2}", suggestion.confidence);
         println!("folded: false");
+        println!("paths: <redacted>");
+    }
+
+    Ok(())
+}
+
+fn candidate_review_conflicts_command(store: &MetaStore, args: &[String]) -> Result<()> {
+    let review_args = parse_candidate_review_list_args(args)?;
+    let mut conflicts = store
+        .candidate_contact_conflicts()
+        .map_err(CliError::store)?;
+    conflicts.truncate(review_args.limit);
+
+    println!("candidate contact conflicts: {}", conflicts.len());
+    for (index, conflict) in conflicts.iter().enumerate() {
+        println!("conflict: {}", index + 1);
+        println!("version_id: {}", conflict.resume_version_id);
+        println!("email_candidate_id: {}", conflict.email_candidate_id);
+        println!("phone_candidate_id: {}", conflict.phone_candidate_id);
+        println!("contact_values: <redacted>");
+        println!("contact_hashes: <redacted>");
         println!("paths: <redacted>");
     }
 
@@ -622,7 +644,7 @@ fn ordered_version_pair(
 }
 
 fn candidate_review_usage() -> &'static str {
-    "usage: resume-cli candidate-review <list --limit <count>|merge --version <id> --version <id> [--version <id> ...] --confidence <0..1>|split --candidate <id>>"
+    "usage: resume-cli candidate-review <list --limit <count>|conflicts --limit <count>|merge --version <id> --version <id> [--version <id> ...] --confidence <0..1>|split --candidate <id>>"
 }
 
 fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {

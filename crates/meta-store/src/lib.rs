@@ -37,6 +37,7 @@ const SCHEMA_VERSION_V14: u32 = 14;
 const SCHEMA_VERSION_V15: u32 = 15;
 const SCHEMA_VERSION_V16: u32 = 16;
 const SCHEMA_VERSION_V17: u32 = 17;
+const SCHEMA_VERSION_V18: u32 = 18;
 const QUERY_OBSERVATION_RETENTION_ROWS: i64 = 10_000;
 const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
@@ -775,6 +776,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V15, SCHEMA_V15),
             (SCHEMA_VERSION_V16, SCHEMA_V16),
             (SCHEMA_VERSION_V17, SCHEMA_V17),
+            (SCHEMA_VERSION_V18, SCHEMA_V18),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -1160,6 +1162,11 @@ impl MetaStore {
         candidate_by_contact_hash_from_connection(&connection, contact_hash)
     }
 
+    pub fn candidate_contact_conflicts(&self) -> Result<Vec<CandidateContactConflict>> {
+        let connection = self.connection.borrow();
+        candidate_contact_conflicts_from_connection(&connection)
+    }
+
     pub fn assign_candidate_to_version(
         &self,
         version_id: &ResumeVersionId,
@@ -1221,29 +1228,40 @@ impl MetaStore {
             return Ok(None);
         };
 
-        let candidate = match candidate_by_contact_hashes_from_connection(
-            &transaction,
-            email_hash,
-            phone_hash,
-        )? {
-            Some(candidate) => candidate,
-            None => {
-                let candidate = Candidate {
-                    id: CandidateId::from_non_secret_parts(&[
-                        "candidate-assignment-v1",
-                        version_id.as_str(),
-                    ]),
-                    primary_name: None,
-                    phone_hash: phone_hash.cloned(),
-                    email_hash: email_hash.cloned(),
-                    dedupe_key: None,
-                    merge_confidence: Some(1.0),
-                    version_count: 0,
-                };
-                upsert_candidate_in_connection(&transaction, &candidate)?;
-                candidate
-            }
-        };
+        let candidate =
+            match candidate_contact_match_from_connection(&transaction, email_hash, phone_hash)? {
+                CandidateContactMatch::Conflict {
+                    email_candidate,
+                    phone_candidate,
+                } => {
+                    upsert_candidate_contact_conflict_in_connection(
+                        &transaction,
+                        version_id,
+                        &email_candidate.id,
+                        &phone_candidate.id,
+                        UnixTimestamp::from_unix_seconds(0),
+                    )?;
+                    transaction.commit().map_err(MetaStoreError::storage)?;
+                    return Ok(None);
+                }
+                CandidateContactMatch::Single(candidate) => candidate,
+                CandidateContactMatch::None => {
+                    let candidate = Candidate {
+                        id: CandidateId::from_non_secret_parts(&[
+                            "candidate-assignment-v1",
+                            version_id.as_str(),
+                        ]),
+                        primary_name: None,
+                        phone_hash: phone_hash.cloned(),
+                        email_hash: email_hash.cloned(),
+                        dedupe_key: None,
+                        merge_confidence: Some(1.0),
+                        version_count: 0,
+                    };
+                    upsert_candidate_in_connection(&transaction, &candidate)?;
+                    candidate
+                }
+            };
 
         transaction
             .execute(
@@ -1251,6 +1269,7 @@ impl MetaStore {
                 params![candidate.id.as_str(), version_id.as_str()],
             )
             .map_err(MetaStoreError::storage)?;
+        clear_candidate_contact_conflict_in_connection(&transaction, version_id)?;
         refresh_candidate_version_count_in_connection(&transaction, &candidate.id)?;
         let assigned = candidate_by_id_from_connection(&transaction, &candidate.id)?;
 
@@ -4030,6 +4049,14 @@ pub struct ImportScanErrorSummary {
     pub count: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CandidateContactConflict {
+    pub resume_version_id: ResumeVersionId,
+    pub email_candidate_id: CandidateId,
+    pub phone_candidate_id: CandidateId,
+    pub updated_at: UnixTimestamp,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportScanErrorKind {
     PermissionDenied,
@@ -4782,6 +4809,22 @@ CREATE INDEX query_observation_duration_idx
     ON query_observation(duration_ms);
 "#;
 
+const SCHEMA_V18: &str = r#"
+CREATE TABLE candidate_contact_conflict (
+    resume_version_id TEXT PRIMARY KEY,
+    email_candidate_id TEXT NOT NULL,
+    phone_candidate_id TEXT NOT NULL,
+    updated_at_seconds INTEGER NOT NULL,
+    FOREIGN KEY (resume_version_id) REFERENCES resume_version(id) ON DELETE CASCADE,
+    FOREIGN KEY (email_candidate_id) REFERENCES candidate(id) ON DELETE CASCADE,
+    FOREIGN KEY (phone_candidate_id) REFERENCES candidate(id) ON DELETE CASCADE,
+    CHECK (email_candidate_id <> phone_candidate_id)
+);
+
+CREATE INDEX candidate_contact_conflict_updated_idx
+    ON candidate_contact_conflict(updated_at_seconds);
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -5083,28 +5126,151 @@ fn candidate_by_contact_hash_from_connection(
     }
 }
 
-fn candidate_by_contact_hashes_from_connection(
+enum CandidateContactMatch {
+    None,
+    Single(Candidate),
+    Conflict {
+        email_candidate: Candidate,
+        phone_candidate: Candidate,
+    },
+}
+
+fn candidate_contact_match_from_connection(
     connection: &Connection,
     email_hash: Option<&ContactHash>,
     phone_hash: Option<&ContactHash>,
-) -> Result<Option<Candidate>> {
-    let mut candidate: Option<Candidate> = None;
+) -> Result<CandidateContactMatch> {
+    let email_candidate = email_hash
+        .map(|contact_hash| candidate_by_email_hash_from_connection(connection, contact_hash))
+        .transpose()?
+        .flatten();
+    let phone_candidate = phone_hash
+        .map(|contact_hash| candidate_by_phone_hash_from_connection(connection, contact_hash))
+        .transpose()?
+        .flatten();
 
-    for contact_hash in [email_hash, phone_hash].into_iter().flatten() {
-        let Some(next) = candidate_by_contact_hash_from_connection(connection, contact_hash)?
-        else {
-            continue;
-        };
-        if let Some(current) = &candidate {
-            if current.id != next.id {
-                return Err(MetaStoreError::invalid_value("candidate.contact_hash"));
+    match (email_candidate, phone_candidate) {
+        (Some(email_candidate), Some(phone_candidate)) => {
+            if email_candidate.id == phone_candidate.id {
+                Ok(CandidateContactMatch::Single(email_candidate))
+            } else {
+                Ok(CandidateContactMatch::Conflict {
+                    email_candidate,
+                    phone_candidate,
+                })
             }
-        } else {
-            candidate = Some(next);
         }
+        (Some(candidate), None) | (None, Some(candidate)) => {
+            Ok(CandidateContactMatch::Single(candidate))
+        }
+        (None, None) => Ok(CandidateContactMatch::None),
+    }
+}
+
+fn candidate_by_email_hash_from_connection(
+    connection: &Connection,
+    contact_hash: &ContactHash,
+) -> Result<Option<Candidate>> {
+    candidate_by_exact_contact_hash_from_connection(connection, "email_hash", contact_hash)
+}
+
+fn candidate_by_phone_hash_from_connection(
+    connection: &Connection,
+    contact_hash: &ContactHash,
+) -> Result<Option<Candidate>> {
+    candidate_by_exact_contact_hash_from_connection(connection, "phone_hash", contact_hash)
+}
+
+fn candidate_by_exact_contact_hash_from_connection(
+    connection: &Connection,
+    column_name: &str,
+    contact_hash: &ContactHash,
+) -> Result<Option<Candidate>> {
+    let sql = format!(
+        "\
+        SELECT {CANDIDATE_COLUMNS}
+        FROM candidate
+        WHERE {column_name} = ?1"
+    );
+    let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+    let mut rows = statement
+        .query(params![contact_hash.as_str()])
+        .map_err(MetaStoreError::storage)?;
+
+    match rows.next().map_err(MetaStoreError::storage)? {
+        Some(row) => Ok(Some(read_candidate(row)?)),
+        None => Ok(None),
+    }
+}
+
+fn candidate_contact_conflicts_from_connection(
+    connection: &Connection,
+) -> Result<Vec<CandidateContactConflict>> {
+    let mut statement = connection
+        .prepare(
+            "\
+            SELECT resume_version_id, email_candidate_id, phone_candidate_id, updated_at_seconds
+            FROM candidate_contact_conflict
+            ORDER BY updated_at_seconds DESC, resume_version_id",
+        )
+        .map_err(MetaStoreError::storage)?;
+    let mut rows = statement.query([]).map_err(MetaStoreError::storage)?;
+    let mut conflicts = Vec::new();
+
+    while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+        conflicts.push(read_candidate_contact_conflict(row)?);
     }
 
-    Ok(candidate)
+    Ok(conflicts)
+}
+
+fn upsert_candidate_contact_conflict_in_connection(
+    connection: &Connection,
+    version_id: &ResumeVersionId,
+    email_candidate_id: &CandidateId,
+    phone_candidate_id: &CandidateId,
+    updated_at: UnixTimestamp,
+) -> Result<()> {
+    if email_candidate_id == phone_candidate_id {
+        return Err(MetaStoreError::invalid_value(
+            "candidate_contact_conflict.candidate_id",
+        ));
+    }
+
+    connection
+        .execute(
+            "\
+            INSERT INTO candidate_contact_conflict (
+                resume_version_id, email_candidate_id, phone_candidate_id, updated_at_seconds
+            )
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(resume_version_id) DO UPDATE SET
+                email_candidate_id = excluded.email_candidate_id,
+                phone_candidate_id = excluded.phone_candidate_id,
+                updated_at_seconds = excluded.updated_at_seconds",
+            params![
+                version_id.as_str(),
+                email_candidate_id.as_str(),
+                phone_candidate_id.as_str(),
+                updated_at.as_unix_seconds(),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+
+    Ok(())
+}
+
+fn clear_candidate_contact_conflict_in_connection(
+    connection: &Connection,
+    version_id: &ResumeVersionId,
+) -> Result<()> {
+    connection
+        .execute(
+            "DELETE FROM candidate_contact_conflict WHERE resume_version_id = ?1",
+            params![version_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(())
 }
 
 fn resume_version_by_id_from_connection(
@@ -5156,6 +5322,33 @@ fn read_candidate(row: &Row<'_>) -> Result<Candidate> {
         merge_confidence,
         version_count,
     })
+}
+
+fn read_candidate_contact_conflict(row: &Row<'_>) -> Result<CandidateContactConflict> {
+    let conflict = CandidateContactConflict {
+        resume_version_id: read_id::<ResumeVersionId>(
+            row,
+            0,
+            "candidate_contact_conflict.resume_version_id",
+        )?,
+        email_candidate_id: read_id::<CandidateId>(
+            row,
+            1,
+            "candidate_contact_conflict.email_candidate_id",
+        )?,
+        phone_candidate_id: read_id::<CandidateId>(
+            row,
+            2,
+            "candidate_contact_conflict.phone_candidate_id",
+        )?,
+        updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 3)?),
+    };
+    if conflict.email_candidate_id == conflict.phone_candidate_id {
+        return Err(MetaStoreError::invalid_value(
+            "candidate_contact_conflict.candidate_id",
+        ));
+    }
+    Ok(conflict)
 }
 
 fn deleted_document_ids_from_connection(connection: &Connection) -> Result<Vec<DocumentId>> {

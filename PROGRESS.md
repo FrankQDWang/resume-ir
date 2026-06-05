@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, and S180 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, and S181 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -118,8 +118,10 @@ obsolete preliminary files and checklists are not product scope.
   without low-confidence candidate folding. A local candidate-review CLI can
   now list redacted same-name soft-dedupe suggestions, explicitly merge two or
   more unassigned searchable versions into a manual candidate for default search
-  folding, and split that candidate back into independent searchable versions
-  without printing names, schools, companies, local paths, or resume text. A
+  folding, split that candidate back into independent searchable versions, and
+  list redacted multi-contact conflicts when email and phone hashes point at
+  different candidates without printing contact values, contact hashes, names,
+  schools, companies, local paths, or resume text. A
   labeled dedupe-quality evaluator
   and gate now score precision/recall/F1 from JSONL profile pairs without
   emitting names, schools, companies, skills, sample IDs, document IDs, paths,
@@ -159,8 +161,8 @@ obsolete preliminary files and checklists are not product scope.
   worker queue metadata auditable during cleanup.
   Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
-  field and dedupe quality datasets/results, multi-contact conflict review,
-  future non-cache PII surface purge coverage, and forensic erase proof.
+  field and dedupe quality datasets/results, future non-cache PII surface purge
+  coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
   helpers, embedding worker, model/dimension-scoped durable per-version
@@ -530,8 +532,67 @@ obsolete preliminary files and checklists are not product scope.
 | S178 | Product local candidate-review workflow complete locally | A focused CLI test first failed because `resume-cli` did not recognize `candidate-review`. After implementation, `resume-cli candidate-review list` computes bounded same-name soft-dedupe suggestions from persisted metadata and prints only redacted version IDs, counts, confidence, and `paths: <redacted>`; `candidate-review merge` creates a manual local candidate for two or more unassigned searchable versions and default search folds them; `candidate-review split` clears those assignments and restores independent default search results. `MetaStore::unassign_candidate_versions` clears assignments transactionally and refreshes candidate version counts. Focused RED/GREEN CLI, full candidate-folding CLI, import candidate assignment, full meta-store, rank-fusion, fmt/diff/runbook/public guards, focused clippy, and full local verification passed locally. | This slice adds local manual review/merge/split workflow only. It does not prove dedupe precision/recall, create private business labels, resolve conflicting multi-contact candidates, add a UI, prove million-corpus review-list latency, clear dedupe-quality evidence, clear OCR/model licensing, clear platform validation, or clear stable release readiness. |
 | S179 | Product scan-error breakdown diagnostics complete locally | Focused tests first failed because `MetaStore::import_scan_error_breakdown` and CLI scan-error breakdown output did not exist. After implementation, metadata can aggregate persisted import scan errors by redacted kind and filesystem operation, and local `status`, `doctor`, and `export-diagnostics --redact` report those aggregates without paths, path digests, filenames, or raw resume text. Focused RED/GREEN meta-store and CLI tests, full meta-store, full S9 import/search, S13 diagnostics, fmt/diff/public guards, focused clippy, and full local verification passed locally. | This slice improves scan-error observability only. It does not change scan retry policy, prove whole-machine discovery coverage, validate real external-drive disconnects, clear cross-platform watcher proof, clear large-corpus import evidence, clear OCR/model licensing, or clear stable release readiness. |
 | S180 | Product hosted Windows full-text snapshot read-lock stability complete locally | PR #9 hosted Windows Platform CI failed in `s8_fulltext::incremental_snapshot_inherits_replaces_and_excludes_documents`: the first `publish_snapshot` returned Windows `os error 33` while reading freshly written snapshot files. A focused regression first failed because `read_snapshot_file_with_retry` did not exist. After implementation, snapshot archive file reads, encrypted snapshot envelope reads, and encrypted-header probes use the existing bounded transient Windows lock retry policy. Focused RED/GREEN, the hosted-failing exact test, full `index-fulltext`, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice covers hosted Windows full-text snapshot file-read stability only. It does not prove hosted Windows CI has passed until the pushed branch check completes, nor does it clear large-corpus, installer/service, signing, notarization, OCR/model licensing, or stable release blockers. |
+| S181 | Product candidate contact conflict review complete locally | Focused tests first failed because `MetaStore::candidate_contact_conflicts` did not exist and automatic hashed-contact assignment still errored with `candidate.contact_hash` when email and phone matched different candidates. After implementation, schema V18 persists redacted `candidate_contact_conflict` rows with only version and candidate IDs, conflicting hashed-contact assignment returns `Ok(None)` without auto-folding, successful later assignment clears stale conflicts, and `resume-cli candidate-review conflicts --limit <count>` lists reviewable conflicts with contact values, contact hashes, and paths redacted. Focused RED/GREEN meta-store and CLI tests, full meta-store, full candidate-folding CLI tests, metadata key backup/rotation schema regression tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice adds local redacted conflict surfacing only. It does not auto-merge conflicting candidates, add a UI, prove real business dedupe-quality results, clear broader field normalization, clear future non-cache PII purge coverage, prove forensic erase, or clear stable release blockers. |
 
 ## Command Log
+
+### S181
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store contact_hash_assignment_records_conflict_without_hash_or_contact_leakage -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding candidate_review_conflicts_lists_multi_contact_conflicts_without_contact_or_hash_leak -- --exact
+```
+
+Output summary:
+
+- The meta-store focused test failed before implementation because
+  `MetaStore::candidate_contact_conflicts` did not exist.
+- The CLI focused test failed before implementation because conflicting email
+  and phone hashes still returned
+  `InvalidPersistedValue { field: "candidate.contact_hash" }` instead of a
+  reviewable conflict.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store contact_hash_assignment_records_conflict_without_hash_or_contact_leakage -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding candidate_review_conflicts_lists_multi_contact_conflicts_without_contact_or_hash_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s18_candidate_folding
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s146_metadata_key_cli
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s147_metadata_key_rotation_cli
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The redacted conflict persistence test passed after implementation.
+- The CLI conflict review test passed and proved output omitted raw contact
+  values, contact hashes, and local paths.
+- Full `meta-store` passed: 49 tests plus doc-tests.
+- Full `s18_candidate_folding` passed: 4 tests.
+- Focused clippy, `cargo fmt --all --check`, `git diff --check`, and
+  `guard-public-repo.sh` passed.
+- Full local verification first exposed stale V17 schema assertions in
+  metadata-key backup and rotation CLI tests; after updating those expectations
+  to V18, `s146_metadata_key_cli`, `s147_metadata_key_rotation_cli`, and full
+  `verify-local.sh` passed, including workspace tests, doc-tests,
+  license/runbook/workflow/release-readiness guards, release artifact/SBOM
+  checks, macOS package check, Windows package skip on non-Windows, and public
+  repo guard.
+
+Scope note:
+
+- S181 stores only version ID plus email/phone candidate IDs for contact
+  conflicts. It does not store contact values, contact hashes, paths, names, or
+  resume text, and it leaves the conflict for manual review instead of
+  auto-merging candidates.
 
 ### S180
 
