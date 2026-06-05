@@ -323,6 +323,7 @@ impl BenchmarkReport {
                 "\"run_id\":\"{}\",",
                 "\"platform\":\"{}\",",
                 "\"dataset_kind\":\"{}\",",
+                "\"generation_mode\":\"streaming\",",
                 "\"document_count\":{},",
                 "\"query_count\":{},",
                 "\"top_k\":{},",
@@ -672,11 +673,8 @@ pub fn run_synthetic_query_benchmark(
 ) -> Result<BenchmarkReport> {
     let build_started = Instant::now();
     let index = FullTextIndex::open_or_create(index_dir).map_err(BenchmarkError::fulltext)?;
-    let documents = (0..config.document_count)
-        .map(synthetic_document)
-        .collect::<Vec<_>>();
     index
-        .replace_documents(documents)
+        .replace_documents((0..config.document_count).map(synthetic_document))
         .map_err(BenchmarkError::fulltext)?;
     index.commit().map_err(BenchmarkError::fulltext)?;
     index.reload().map_err(BenchmarkError::fulltext)?;

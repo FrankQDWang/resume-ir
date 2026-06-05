@@ -51,6 +51,7 @@ require_text "$worker_runbook" "resume-daemon"
 require_text "$worker_runbook" "FailedRetryable"
 require_text "$release_runbook" "BLOCKED"
 require_text "$release_runbook" "resume-benchmark gate"
+require_text "$release_runbook" 'generation_mode: "streaming"'
 require_text "$release_runbook" "field-gate"
 require_text "$release_runbook" "--require-private-business-labeled"
 require_text "$release_runbook" 'target_claim: "field_quality_target_met"'

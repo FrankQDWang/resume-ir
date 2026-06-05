@@ -35,6 +35,7 @@ fn resume_benchmark_outputs_redacted_synthetic_json() {
     assert!(stdout.contains("\"run_id\":\"bench_"));
     assert!(stdout.contains("\"platform\":"));
     assert!(stdout.contains("\"dataset_kind\":\"synthetic\""));
+    assert!(stdout.contains("\"generation_mode\":\"streaming\""));
     assert!(stdout.contains("\"document_count\":24"));
     assert!(stdout.contains("\"query_count\":6"));
     assert!(stdout.contains("\"top_k\":5"));

@@ -63,7 +63,10 @@ The installed binary form is `resume-benchmark gate --report
 benchmark-smoke.json`.
 
 The explicit `--allow-synthetic` flag is required for synthetic smoke artifacts.
-Do not treat a passing synthetic gate as 100k or 1M real-corpus proof.
+Synthetic query reports must include `generation_mode: "streaming"` so larger
+local synthetic pressure runs do not require pre-collecting the full synthetic
+document set in memory. Do not treat a passing synthetic gate as 100k or 1M
+real-corpus proof.
 
 Run private real-corpus benchmark gates only against local redacted aggregate
 reports. The report must use `dataset_kind: "private-real-corpus"`,

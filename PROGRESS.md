@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, and S198 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, and S199 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -397,8 +397,12 @@ obsolete preliminary files and checklists are not product scope.
   field-quality release-evidence, and private business dedupe-quality release-
   evidence gates, plus private real-corpus OCR throughput release-evidence
   gates; query, OCR, and vector smoke gates are wired into PR and nightly
-  workflows. Synthetic runs must opt in with `--allow-synthetic` and cannot
-  prove 100k/1M production performance or representative OCR throughput.
+  workflows. Synthetic query benchmark document generation is now streamed into
+  the full-text index instead of pre-collecting the full synthetic document set
+  in memory, and redacted synthetic benchmark reports include
+  `generation_mode: "streaming"` for runbook audit. Synthetic runs must opt in
+  with `--allow-synthetic` and cannot prove 100k/1M production performance or
+  representative OCR throughput.
   Private real-corpus query
   reports are accepted only as strict redacted local aggregate JSON with local
   corpus/query-set digests, explicit hot-index hybrid query evidence
@@ -633,8 +637,71 @@ obsolete preliminary files and checklists are not product scope.
 | S196 | Product private business vector-quality release evidence gate complete locally | Focused regression first failed because `VectorQualityGateConfig::require_private_business_labeled` did not exist. After implementation, vector-quality gates can require `private-business-labeled` reports, reject ordinary labeled reports for release evidence, reject private reports that contain raw query/candidate/path/sample/candidate-id/vector surfaces or missing dataset/annotation/model manifest digests, and accept only redacted aggregate private-local vector-quality evidence with recall/MRR/NDCG metrics and fixed taxonomy. Focused RED/GREEN, full `benchmark-runner`, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice adds the release-evidence boundary only. It does not create or upload private labels, run a real vector-quality evaluation, select or license a production model, prove model distribution, prove real semantic quality, prove real 100k/1M ANN latency, validate platforms, or clear stable release readiness. |
 | S197 | Product release-readiness vector-quality blocker complete locally | Focused release-readiness tests first failed because stable-release blockers did not include `vector quality`: text output omitted `vector quality: blocked`, and JSON still reported 12 blockers. After implementation, `release-readiness` reports a separate `vector quality` blocker, the release-readiness CI check asserts the label and detail, and the release blockers runbook plus runbook policy guard document the private business `vector-gate` evidence boundary with dataset/annotation/model manifest digests and no raw query/candidate/path/id/vector payloads. Focused RED/GREEN, full release-readiness CLI tests, focused clippy, fmt, diff check, public guard, policy scripts, and full local verification passed locally. | This slice wires vector-quality evidence into release readiness only. It does not create private labels, run real semantic evaluation, select/license/distribute a model, prove real vector quality or ANN latency, clear field/dedupe/benchmark/platform blockers, or make stable release ready. |
 | S198 | Product private real-corpus OCR throughput release evidence gate complete locally | Focused OCR gate tests first failed because `OcrThroughputGateConfig` had no private-real-corpus release mode and `resume-benchmark ocr-gate` did not accept `--require-private-real-corpus`. After implementation, OCR throughput gates can reject synthetic reports for release evidence, accept only strict `private-real-corpus` redacted local aggregate reports with dataset/OCR-runtime/renderer/language-pack manifest digests, aggregate latency/throughput metrics, target claim `ocr_throughput_target_met`, and explicit false raw OCR text/page image/resume-path/document-ID/page-ID/command-path booleans. Release-readiness now reports an `OCR throughput` blocker, and the release blockers runbook plus policy guards document the private OCR evidence boundary. Focused RED/GREEN, full `benchmark-runner`, release-readiness tests, runbook/readiness checks, focused clippy, fmt/diff checks, public guard, and full local verification passed locally. | This slice adds the release-evidence validator and blocker only. It does not run a real OCR benchmark, upload or sanitize private OCR reports, choose/license/distribute OCR runtimes or language packs, prove full-library scanned OCR throughput, validate platforms, sign/release, or make stable release ready. |
+| S199 | Product synthetic query benchmark streaming complete locally | A focused CLI regression first failed because redacted synthetic benchmark reports did not include `generation_mode: "streaming"`. After implementation, `run_synthetic_query_benchmark` streams generated synthetic documents directly into the full-text index instead of collecting the full document set into a `Vec`, and synthetic benchmark reports expose the streaming generation mode for runbook audit. The release blockers runbook and runbook policy guard now require that boundary. Focused RED/GREEN, full `benchmark-runner`, runbook guard, focused clippy, fmt/diff checks, public guard, and full local verification passed locally. | This slice improves scalable synthetic pressure-run feasibility only. It does not run a real 100k/1M private benchmark, prove production P95, produce representative real-corpus evidence, clear OCR/model licensing, validate platforms, or make stable release ready. |
 
 ## Command Log
+
+### S199
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_outputs_redacted_synthetic_json -- --exact
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- The focused CLI regression failed before implementation because the redacted
+  synthetic query benchmark report did not include
+  `generation_mode: "streaming"`.
+- The runbook guard failed before documentation because
+  `docs/runbooks/release-blockers.md` did not mention
+  `generation_mode: "streaming"`.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_outputs_redacted_synthetic_json -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner
+./scripts/ci/check-runbooks.sh
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+```
+
+Output summary:
+
+- `run_synthetic_query_benchmark` now passes the synthetic document iterator
+  directly to `FullTextIndex::replace_documents` instead of pre-collecting the
+  whole document set into a `Vec`.
+- Redacted synthetic benchmark JSON includes
+  `generation_mode: "streaming"` while continuing to omit raw synthetic resume
+  text, paths, and query strings.
+- Full `benchmark-runner`, runbook guard, focused clippy, fmt, and diff checks
+  passed locally.
+
+Final checkpoint verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S199 uses synthetic data only. It does not read, print, commit, or upload
+  private resumes, filenames, paths, raw text, local diagnostics, tokens, model
+  caches, private labels, OCR text, page images, runtime paths, command paths,
+  or vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S198
 
