@@ -7,7 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{
-    DocumentId, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrWordBox, UnixTimestamp,
+    DocumentId, ImportTaskId, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrWordBox,
+    UnixTimestamp,
 };
 
 #[test]
@@ -444,6 +445,102 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     remove_dir(&data_dir);
 }
 
+#[test]
+fn purge_deleted_removes_empty_import_root_task_paths_without_path_leak() {
+    let _guard = s14_test_lock();
+    let data_dir = temp_dir("purge-empty-import-root-data");
+    let fixture_root = temp_dir("purge-empty-import-root-fixture");
+    fs::copy(
+        fixture_file("synthetic-java-engineer.docx"),
+        fixture_root.join("synthetic-java-engineer.docx"),
+    )
+    .unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+        ])
+        .output()
+        .expect("import single-document root fixture");
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    let task_id = ImportTaskId::from_str(stdout_value(&import_stdout, "task id: ")).unwrap();
+
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 1"));
+    let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
+
+    let private_root_path = {
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+        let scope = store
+            .import_scan_scope_by_task_id(&task_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(scope.canonical_root_path, task.root_path);
+        assert!(task.root_path.contains("purge-empty-import-root-fixture"));
+        task.root_path
+    };
+
+    let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "delete",
+            "--doc-id",
+            &deleted_doc_id,
+        ])
+        .output()
+        .expect("delete single-document imported document");
+    assert!(delete.status.success());
+
+    let purge = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "purge", "--deleted"])
+        .output()
+        .expect("purge deleted single-document imported document");
+    assert!(
+        purge.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&purge.stdout),
+        String::from_utf8_lossy(&purge.stderr)
+    );
+    assert!(purge.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&purge.stdout);
+    assert!(stdout.contains("purge completed"));
+    assert!(stdout.contains("purged import tasks: 1"));
+    assert!(stdout.contains("purged import scan scopes: 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(&private_root_path));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains("synthetic-java-engineer.docx"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    assert!(store.import_task_by_id(&task_id).unwrap().is_none());
+    assert!(store
+        .import_scan_scope_by_task_id(&task_id)
+        .unwrap()
+        .is_none());
+    assert!(store
+        .document_by_id(&DocumentId::from_str(&deleted_doc_id).unwrap())
+        .unwrap()
+        .is_none());
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
+}
+
 fn import_fixtures(data_dir: &Path, fixture_root: &Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -529,6 +626,13 @@ fn doc_id_for_file(search_output: &str, file_name: &str) -> String {
     }
 
     panic!("file not found in search output: {file_name}");
+}
+
+fn stdout_value<'a>(stdout: &'a str, prefix: &str) -> &'a str {
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .expect("stdout value")
 }
 
 fn fixture_root() -> PathBuf {

@@ -1044,6 +1044,78 @@ impl MetaStore {
         Ok(deleted)
     }
 
+    pub fn purge_import_tasks_for_deleted_document_roots(
+        &self,
+        document_ids: &[DocumentId],
+    ) -> Result<ImportTaskPurge> {
+        if document_ids.is_empty() {
+            return Ok(ImportTaskPurge::empty());
+        }
+
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let deleted_paths = document_paths_for_ids_from_connection(&transaction, document_ids)?;
+        if deleted_paths.is_empty() {
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(ImportTaskPurge::empty());
+        }
+        let visible_paths = visible_document_paths_from_connection(&transaction)?;
+        let import_tasks = import_tasks_from_connection(&transaction)?;
+        let task_ids = import_tasks
+            .into_iter()
+            .filter(|task| {
+                deleted_paths
+                    .iter()
+                    .any(|path| import_root_matches_document_path(&task.root_path, path))
+                    && !visible_paths
+                        .iter()
+                        .any(|path| import_root_matches_document_path(&task.root_path, path))
+            })
+            .map(|task| task.id)
+            .collect::<Vec<_>>();
+
+        if task_ids.is_empty() {
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(ImportTaskPurge::empty());
+        }
+
+        let scan_scopes = count_import_task_child_rows(
+            &transaction,
+            "import_scan_scope",
+            "import_task_id",
+            &task_ids,
+        )?;
+        let scan_errors = count_import_task_child_rows(
+            &transaction,
+            "import_scan_error",
+            "import_task_id",
+            &task_ids,
+        )?;
+        let cancellations = count_import_task_child_rows(
+            &transaction,
+            "import_task_cancellation",
+            "import_task_id",
+            &task_ids,
+        )?;
+        let placeholders = import_task_id_placeholders(task_ids.len());
+        let delete_sql = format!("DELETE FROM import_task WHERE id IN ({placeholders})");
+        let delete_params = task_ids
+            .iter()
+            .map(|task_id| Value::Text(task_id.as_str().to_string()))
+            .collect::<Vec<_>>();
+        let tasks = transaction
+            .execute(&delete_sql, params_from_iter(delete_params))
+            .map_err(MetaStoreError::storage)?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+
+        Ok(ImportTaskPurge {
+            tasks,
+            scan_scopes,
+            scan_errors,
+            cancellations,
+        })
+    }
+
     pub fn purge_ingest_jobs_for_documents(
         &self,
         document_ids: &[DocumentId],
@@ -3625,6 +3697,41 @@ impl IngestJobPurge {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImportTaskPurge {
+    tasks: usize,
+    scan_scopes: usize,
+    scan_errors: usize,
+    cancellations: usize,
+}
+
+impl ImportTaskPurge {
+    fn empty() -> Self {
+        Self {
+            tasks: 0,
+            scan_scopes: 0,
+            scan_errors: 0,
+            cancellations: 0,
+        }
+    }
+
+    pub fn tasks(self) -> usize {
+        self.tasks
+    }
+
+    pub fn scan_scopes(self) -> usize {
+        self.scan_scopes
+    }
+
+    pub fn scan_errors(self) -> usize {
+        self.scan_errors
+    }
+
+    pub fn cancellations(self) -> usize {
+        self.cancellations
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OcrPageCachePurge {
     entries: usize,
     word_boxes: usize,
@@ -4989,6 +5096,140 @@ fn read_import_task(row: &Row<'_>) -> Result<ImportTask> {
         finished_at: read_optional_timestamp(row, 5)?,
         updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 6)?),
     })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DocumentPathRecord {
+    source_uri: String,
+    normalized_path: String,
+}
+
+fn document_paths_for_ids_from_connection(
+    connection: &Connection,
+    document_ids: &[DocumentId],
+) -> Result<Vec<DocumentPathRecord>> {
+    if document_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = (0..document_ids.len())
+        .map(|index| format!("?{}", index + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "\
+        SELECT source_uri, normalized_path
+        FROM document
+        WHERE id IN ({placeholders})"
+    );
+    let params = document_ids
+        .iter()
+        .map(|document_id| Value::Text(document_id.as_str().to_string()))
+        .collect::<Vec<_>>();
+    let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+    let mut rows = statement
+        .query(params_from_iter(params))
+        .map_err(MetaStoreError::storage)?;
+    let mut paths = Vec::new();
+
+    while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+        paths.push(DocumentPathRecord {
+            source_uri: read_string(row, 0)?,
+            normalized_path: read_string(row, 1)?,
+        });
+    }
+
+    Ok(paths)
+}
+
+fn visible_document_paths_from_connection(
+    connection: &Connection,
+) -> Result<Vec<DocumentPathRecord>> {
+    let mut statement = connection
+        .prepare(
+            "\
+            SELECT source_uri, normalized_path
+            FROM document
+            WHERE is_deleted = 0 AND status <> ?1",
+        )
+        .map_err(MetaStoreError::storage)?;
+    let mut rows = statement
+        .query(params![document_status_to_storage(DocumentStatus::Deleted)])
+        .map_err(MetaStoreError::storage)?;
+    let mut paths = Vec::new();
+
+    while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+        paths.push(DocumentPathRecord {
+            source_uri: read_string(row, 0)?,
+            normalized_path: read_string(row, 1)?,
+        });
+    }
+
+    Ok(paths)
+}
+
+fn import_tasks_from_connection(connection: &Connection) -> Result<Vec<ImportTask>> {
+    let sql = format!("SELECT {IMPORT_TASK_COLUMNS} FROM import_task ORDER BY rowid");
+    let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+    let mut rows = statement.query([]).map_err(MetaStoreError::storage)?;
+    let mut tasks = Vec::new();
+
+    while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+        tasks.push(read_import_task(row)?);
+    }
+
+    Ok(tasks)
+}
+
+fn import_root_matches_document_path(root_path: &str, document_path: &DocumentPathRecord) -> bool {
+    path_string_is_root_or_child(root_path, &document_path.normalized_path)
+        || path_string_is_root_or_child(root_path, &document_path.source_uri)
+}
+
+fn path_string_is_root_or_child(root_path: &str, path: &str) -> bool {
+    let root_path = root_path.trim();
+    if root_path.is_empty() {
+        return false;
+    }
+    let root = root_path.trim_end_matches(['/', '\\']);
+    let root = if root.is_empty() { root_path } else { root };
+    if path == root {
+        return true;
+    }
+    path.strip_prefix(root)
+        .is_some_and(|remaining| remaining.starts_with('/') || remaining.starts_with('\\'))
+}
+
+fn count_import_task_child_rows(
+    connection: &Connection,
+    table_name: &'static str,
+    column_name: &'static str,
+    task_ids: &[ImportTaskId],
+) -> Result<usize> {
+    if task_ids.is_empty() {
+        return Ok(0);
+    }
+    let placeholders = import_task_id_placeholders(task_ids.len());
+    let sql = format!(
+        "\
+        SELECT COUNT(*)
+        FROM {table_name}
+        WHERE {column_name} IN ({placeholders})"
+    );
+    let params = task_ids
+        .iter()
+        .map(|task_id| Value::Text(task_id.as_str().to_string()))
+        .collect::<Vec<_>>();
+    let count = connection
+        .query_row(&sql, params_from_iter(params), |row| row.get::<_, i64>(0))
+        .map_err(MetaStoreError::storage)?;
+    i64_to_usize(count, "import_task_child.count")
+}
+
+fn import_task_id_placeholders(count: usize) -> String {
+    (0..count)
+        .map(|index| format!("?{}", index + 1))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn read_import_scan_scope(row: &Row<'_>) -> Result<ImportScanScope> {

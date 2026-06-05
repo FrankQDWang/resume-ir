@@ -6164,6 +6164,9 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
     deleted_content_hashes.retain(|content_hash| !live_content_hashes.contains(content_hash));
 
     let vector_documents_purged = purge_vector_documents(data_dir, &deleted_doc_id_set)?;
+    let import_task_purge = store
+        .purge_import_tasks_for_deleted_document_roots(&deleted_document_ids)
+        .map_err(CliError::store)?;
     let ingest_job_purge = store
         .purge_ingest_jobs_for_documents(&deleted_document_ids)
         .map_err(CliError::store)?;
@@ -6201,6 +6204,19 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
         snapshot_purge.removed_staging()
     );
     println!("vector documents purged: {vector_documents_purged}");
+    println!("purged import tasks: {}", import_task_purge.tasks());
+    println!(
+        "purged import scan scopes: {}",
+        import_task_purge.scan_scopes()
+    );
+    println!(
+        "purged import scan errors: {}",
+        import_task_purge.scan_errors()
+    );
+    println!(
+        "purged import cancellations: {}",
+        import_task_purge.cancellations()
+    );
     println!("ingest jobs purged: {}", ingest_job_purge.jobs());
     println!(
         "embedding job specs purged: {}",

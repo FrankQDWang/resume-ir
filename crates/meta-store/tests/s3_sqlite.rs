@@ -2053,6 +2053,55 @@ fn import_tasks_persist_without_document_foreign_key() {
 }
 
 #[test]
+fn purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_documents() {
+    let store = migrated_store();
+    let root_path = "synthetic/import/root";
+    let mut first_document = document("purge-import-root-first", false, DocumentStatus::Searchable);
+    let mut second_document = document(
+        "purge-import-root-second",
+        false,
+        DocumentStatus::Searchable,
+    );
+    first_document.normalized_path = format!("{root_path}/first.pdf");
+    second_document.normalized_path = format!("{root_path}/second.pdf");
+    let task = import_task(
+        "purge-import-root-task",
+        root_path,
+        ImportTaskStatus::Queued,
+    );
+
+    store.upsert_document(&first_document).unwrap();
+    store.upsert_document(&second_document).unwrap();
+    store.insert_import_task(&task).unwrap();
+    store
+        .mark_document_deleted(
+            &first_document.id,
+            UnixTimestamp::from_unix_seconds(1_800_014_010),
+        )
+        .unwrap();
+
+    let retained = store
+        .purge_import_tasks_for_deleted_document_roots(std::slice::from_ref(&first_document.id))
+        .unwrap();
+
+    assert_eq!(retained.tasks(), 0);
+    assert!(store.import_task_by_id(&task.id).unwrap().is_some());
+
+    store
+        .mark_document_deleted(
+            &second_document.id,
+            UnixTimestamp::from_unix_seconds(1_800_014_020),
+        )
+        .unwrap();
+    let purged = store
+        .purge_import_tasks_for_deleted_document_roots(&[first_document.id, second_document.id])
+        .unwrap();
+
+    assert_eq!(purged.tasks(), 1);
+    assert!(store.import_task_by_id(&task.id).unwrap().is_none());
+}
+
+#[test]
 fn import_task_status_updates_support_completion_and_retry() {
     let store = migrated_store();
     let task = import_task(

@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, and S181 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, and S182 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -159,10 +159,14 @@ obsolete preliminary files and checklists are not product scope.
   Deleted-document purge also reports and proves removal of persisted embedding
   job specs linked to purged ingest jobs for deleted documents, keeping vector
   worker queue metadata auditable during cleanup.
+  Deleted-document purge now also removes import tasks whose roots contain
+  deleted documents and no visible documents, cascading scan scopes, scan
+  errors, and cancellations so emptied import-root paths are cleared from
+  current metadata while roots with visible documents are retained.
   Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
-  field and dedupe quality datasets/results, future non-cache PII surface purge
-  coverage, and forensic erase proof.
+  field and dedupe quality datasets/results, remaining future non-cache PII
+  surface purge coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
   helpers, embedding worker, model/dimension-scoped durable per-version
@@ -533,8 +537,62 @@ obsolete preliminary files and checklists are not product scope.
 | S179 | Product scan-error breakdown diagnostics complete locally | Focused tests first failed because `MetaStore::import_scan_error_breakdown` and CLI scan-error breakdown output did not exist. After implementation, metadata can aggregate persisted import scan errors by redacted kind and filesystem operation, and local `status`, `doctor`, and `export-diagnostics --redact` report those aggregates without paths, path digests, filenames, or raw resume text. Focused RED/GREEN meta-store and CLI tests, full meta-store, full S9 import/search, S13 diagnostics, fmt/diff/public guards, focused clippy, and full local verification passed locally. | This slice improves scan-error observability only. It does not change scan retry policy, prove whole-machine discovery coverage, validate real external-drive disconnects, clear cross-platform watcher proof, clear large-corpus import evidence, clear OCR/model licensing, or clear stable release readiness. |
 | S180 | Product hosted Windows full-text snapshot read-lock stability complete locally | PR #9 hosted Windows Platform CI failed in `s8_fulltext::incremental_snapshot_inherits_replaces_and_excludes_documents`: the first `publish_snapshot` returned Windows `os error 33` while reading freshly written snapshot files. A focused regression first failed because `read_snapshot_file_with_retry` did not exist. After implementation, snapshot archive file reads, encrypted snapshot envelope reads, and encrypted-header probes use the existing bounded transient Windows lock retry policy. Focused RED/GREEN, the hosted-failing exact test, full `index-fulltext`, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice covers hosted Windows full-text snapshot file-read stability only. It does not prove hosted Windows CI has passed until the pushed branch check completes, nor does it clear large-corpus, installer/service, signing, notarization, OCR/model licensing, or stable release blockers. |
 | S181 | Product candidate contact conflict review complete locally | Focused tests first failed because `MetaStore::candidate_contact_conflicts` did not exist and automatic hashed-contact assignment still errored with `candidate.contact_hash` when email and phone matched different candidates. After implementation, schema V18 persists redacted `candidate_contact_conflict` rows with only version and candidate IDs, conflicting hashed-contact assignment returns `Ok(None)` without auto-folding, successful later assignment clears stale conflicts, and `resume-cli candidate-review conflicts --limit <count>` lists reviewable conflicts with contact values, contact hashes, and paths redacted. Focused RED/GREEN meta-store and CLI tests, full meta-store, full candidate-folding CLI tests, metadata key backup/rotation schema regression tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice adds local redacted conflict surfacing only. It does not auto-merge conflicting candidates, add a UI, prove real business dedupe-quality results, clear broader field normalization, clear future non-cache PII purge coverage, prove forensic erase, or clear stable release blockers. |
+| S182 | Product deleted-document import-root path purge complete locally | Focused tests first failed because empty import roots retained `import_task` and `import_scan_scope` path metadata after document purge. After implementation, deleted-document purge removes import tasks whose roots contain deleted documents and no visible documents, cascading scan scope, scan error, and cancellation rows; roots with live documents are retained, and CLI purge reports only redacted counters. Focused RED/GREEN, full meta-store, full delete/search CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice covers empty-root import task path cleanup only. It does not prove forensic erase, all possible future non-cache PII surfaces, real corpus purge audits, or stable release blockers. |
 
 ## Command Log
+
+### S182
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_documents -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_empty_import_root_task_paths_without_path_leak -- --exact
+```
+
+Output summary:
+
+- The meta-store focused test failed before implementation because
+  `MetaStore::purge_import_tasks_for_deleted_document_roots` did not exist.
+- The first CLI test draft also proved `resume-cli import` does not accept a
+  single-file root, so the regression was corrected to import a directory
+  containing one synthetic DOCX fixture. The corrected focused test then failed
+  before implementation because `purge --deleted` did not report
+  `purged import tasks: 1`.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_empty_import_root_task_paths_without_path_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_documents -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The focused CLI purge regression passed after implementation and proved
+  stdout reported import task/scope purge counts while omitting the data dir,
+  private temp import root, requested root, and fixture filename.
+- The focused meta-store regression passed and proved a deleted-document root
+  with another visible document keeps its import task, while a now-empty root
+  purges the task.
+- Full `meta-store` passed: 50 tests plus doc-tests.
+- Full `s14_delete_search` passed: 8 tests.
+- Focused clippy, `cargo fmt --all --check`, `git diff --check`,
+  `guard-public-repo.sh`, and full `verify-local.sh` passed.
+
+Scope note:
+
+- S182 removes import-root path surfaces only when deleted documents empty that
+  root. It does not wipe SQLite free pages, audit every possible future metadata
+  surface, or use real resume data.
 
 ### S181
 
