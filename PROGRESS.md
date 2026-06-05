@@ -110,8 +110,8 @@ obsolete preliminary files and checklists are not product scope.
   Private business labeled field-quality release evidence is now accepted only
   as strict redacted local aggregate JSON with dataset/annotation manifest
   digests, explicit false raw-data/path/value/sample-ID booleans, a fixed field
-  taxonomy, and production field metrics for email, phone, school, degree,
-  company, title, skill, and date ranges.
+  taxonomy, and production field metrics for email, phone, school,
+  school_tier, degree, company, title, skill, and date ranges.
   Soft-dedupe scoring now compares
   same-name profiles with bounded non-contact evidence overlap and surfaces
   redacted suspected-duplicate hints in local CLI and daemon search results
@@ -643,8 +643,74 @@ obsolete preliminary files and checklists are not product scope.
 | S198 | Product private real-corpus OCR throughput release evidence gate complete locally | Focused OCR gate tests first failed because `OcrThroughputGateConfig` had no private-real-corpus release mode and `resume-benchmark ocr-gate` did not accept `--require-private-real-corpus`. After implementation, OCR throughput gates can reject synthetic reports for release evidence, accept only strict `private-real-corpus` redacted local aggregate reports with dataset/OCR-runtime/renderer/language-pack manifest digests, aggregate latency/throughput metrics, target claim `ocr_throughput_target_met`, and explicit false raw OCR text/page image/resume-path/document-ID/page-ID/command-path booleans. Release-readiness now reports an `OCR throughput` blocker, and the release blockers runbook plus policy guards document the private OCR evidence boundary. Focused RED/GREEN, full `benchmark-runner`, release-readiness tests, runbook/readiness checks, focused clippy, fmt/diff checks, public guard, and full local verification passed locally. | This slice adds the release-evidence validator and blocker only. It does not run a real OCR benchmark, upload or sanitize private OCR reports, choose/license/distribute OCR runtimes or language packs, prove full-library scanned OCR throughput, validate platforms, sign/release, or make stable release ready. |
 | S199 | Product synthetic query benchmark streaming complete locally | A focused CLI regression first failed because redacted synthetic benchmark reports did not include `generation_mode: "streaming"`. After implementation, `run_synthetic_query_benchmark` streams generated synthetic documents directly into the full-text index instead of collecting the full document set into a `Vec`, and synthetic benchmark reports expose the streaming generation mode for runbook audit. The release blockers runbook and runbook policy guard now require that boundary. Focused RED/GREEN, full `benchmark-runner`, runbook guard, focused clippy, fmt/diff checks, public guard, and full local verification passed locally. | This slice improves scalable synthetic pressure-run feasibility only. It does not run a real 100k/1M private benchmark, prove production P95, produce representative real-corpus evidence, clear OCR/model licensing, validate platforms, or make stable release ready. |
 | S200 | Product school-tier extraction and filtering complete locally | Focused tests first failed because `FieldType::SchoolTier`, rank-fusion `SchoolTier` filters, and import mapping for the new field did not exist. After implementation, extractor-rules recognizes explicit `985`, `211`, `双一流`, overseas, and regular-school evidence inside bounded education/school context, persists canonical `school_tier` entity mentions, wires the SQLite entity whitelist and benchmark field labels, and supports `--school-tier` filtering through direct CLI search plus CLI/daemon IPC search payloads. Focused RED/GREEN, full extractor/rank/import/meta-store/benchmark tests, persisted-field and search-IPC CLI tests, daemon search-IPC tests, focused clippy, and fmt passed locally. | This slice uses synthetic/temp fixtures only. It does not infer school tier from broad school dictionaries, prove real business field-quality metrics, evaluate private resume corpora, clear broad multilingual education coverage, or make stable release ready. |
+| S201 | Product field-quality school-tier release gate complete locally | Focused RED tests first failed because private-business field-quality reports without `school_tier` metrics were accepted by both the library gate and CLI gate. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `school_tier` metrics for private business release evidence, complete strict reports include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, full `benchmark-runner`, and runbook guard passed locally. | This slice tightens release-evidence validation only. It does not create private labels, run real business field-quality evaluation, prove production `school_tier` F1 on representative resumes, infer tier from broad school dictionaries, or make stable release ready. |
 
 ## Command Log
+
+### S201
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_rejects_private_business_report_without_school_tier_metric -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_gate_requires_private_business_school_tier_metric -- --exact
+```
+
+Output summary:
+
+- The library regression failed before implementation because a
+  `private-business-labeled` field-quality report without `school_tier` metrics
+  returned `Ok(FieldQualityGateEvaluation { ... })`.
+- The CLI regression failed before implementation because
+  `resume-benchmark field-gate --require-private-business-labeled` accepted a
+  report missing `school_tier`.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_rejects_private_business_report_without_school_tier_metric -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_gate_requires_private_business_school_tier_metric -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_accepts_private_business_labeled_release_evidence -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_gate_accepts_private_business_labeled_report -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- Private-business field-quality reports missing `school_tier` are now rejected
+  with the existing production field metrics error.
+- Complete strict private-business field-quality reports with `school_tier`
+  remain accepted by both the library and CLI gate.
+- Full `benchmark-runner` and runbook guard passed locally.
+
+Final checkpoint verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Formatter check, focused benchmark-runner clippy, whitespace diff check, and
+  public repo guard passed.
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S201 uses synthetic test reports only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, local diagnostics, tokens,
+  model caches, private labels, OCR text, page images, command paths, or
+  vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S200
 

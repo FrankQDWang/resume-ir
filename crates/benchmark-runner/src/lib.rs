@@ -1585,6 +1585,7 @@ const PRODUCTION_FIELD_QUALITY_THRESHOLDS: &[(&str, f64)] = &[
     ("email", 0.995),
     ("phone", 0.995),
     ("school", 0.93),
+    ("school_tier", 0.90),
     ("degree", 0.95),
     ("company", 0.90),
     ("title", 0.88),

@@ -365,6 +365,23 @@ fn field_quality_gate_rejects_private_business_report_without_production_fields(
 }
 
 #[test]
+fn field_quality_gate_rejects_private_business_report_without_school_tier_metric() {
+    let report = minimal_private_business_field_quality_json().replace(
+        ",\"school_tier\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0}",
+        "",
+    );
+    let config = FieldQualityGateConfig::new(0.93, 0.93, 0.93)
+        .with_min_samples(1_000)
+        .require_private_business_labeled();
+
+    let error = evaluate_field_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business field quality requires production field metrics"));
+}
+
+#[test]
 fn field_quality_gate_rejects_private_business_report_without_boundary_metadata() {
     let report = minimal_private_business_field_quality_json().replace(
         "\"privacy_boundary\":\"redacted_local_aggregate\"",
@@ -900,6 +917,7 @@ fn minimal_private_business_field_quality_json() -> String {
         "\"email\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"phone\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"school\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"school_tier\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"degree\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"company\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"title\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
