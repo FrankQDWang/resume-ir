@@ -20,6 +20,7 @@ unresolved.
 - 100k and 1M hot-index hybrid real-corpus benchmarks are not available
 - private business labeled field-quality evidence is not available
 - private business labeled dedupe-quality evidence is not available
+- private business labeled vector-quality evidence is not available
 - a reviewed licensed OCR engine is not selected or distributed
 - a reviewed licensed embedding model is not selected or distributed
 - Windows and macOS cross-platform validation are not complete
@@ -134,6 +135,32 @@ This gate is a release evidence validator. It does not create, upload, label,
 or sanitize private dedupe-quality reports and cannot clear the dedupe quality
 blocker until representative local business labels and aggregate dedupe metrics
 exist.
+
+Run private business vector-quality gates only against local redacted aggregate
+reports. The report must use `dataset_kind: "private-business-labeled"`,
+`target_claim: "vector_quality_target_met"`, `corpus_origin: "private_local"`,
+`privacy_boundary: "redacted_local_aggregate"`, `vector_taxonomy:
+"resume-ir.vector-quality.v1"`, false raw-query/candidate-text/path/sample-ID/
+candidate-ID/vector booleans, and sha256 digests for the dataset, annotation,
+and model manifests (`dataset_manifest_sha256`,
+`annotation_manifest_sha256`, and `model_manifest_sha256`). Do not upload
+reports if they contain raw queries,
+candidate text, resume text, candidate IDs, sample IDs, filenames, local paths,
+vectors, command paths, model paths, or notes.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  vector-gate --report private-vector-quality.json \
+  --require-private-business-labeled \
+  --min-samples 1000 \
+  --min-recall-at-k 0.90 --min-mrr 0.85 --min-ndcg-at-k 0.90 \
+  --max-zero-recall-queries 0
+```
+
+This gate is a release evidence validator. It does not create, upload, label,
+embed, or sanitize private vector-quality reports and cannot clear the vector
+quality blocker until representative local business labels, a reviewed model
+manifest, and aggregate semantic retrieval metrics exist.
 
 Generate a local release dry-run manifest only after release binaries have been
 built:

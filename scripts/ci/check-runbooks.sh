@@ -58,6 +58,10 @@ require_text "$release_runbook" 'field_taxonomy:'
 require_text "$release_runbook" "dedupe-gate"
 require_text "$release_runbook" 'target_claim: "dedupe_quality_target_met"'
 require_text "$release_runbook" 'dedupe_taxonomy:'
+require_text "$release_runbook" "vector-gate"
+require_text "$release_runbook" 'target_claim: "vector_quality_target_met"'
+require_text "$release_runbook" 'vector_taxonomy:'
+require_text "$release_runbook" "model_manifest_sha256"
 require_text "$release_runbook" 'query_mode: "hybrid"'
 require_text "$release_runbook" 'retrieval_layers:'
 require_text "$release_runbook" "hot_index: true"

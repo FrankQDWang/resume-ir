@@ -134,6 +134,10 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
         "private business labeled dedupe-quality evidence is not available",
     ),
     (
+        "vector quality",
+        "private business labeled vector-quality evidence is not available",
+    ),
+    (
         "OCR engine license/distribution",
         "reviewed OCR runtime manifest, engine distribution, and language-pack distribution evidence is not complete",
     ),
