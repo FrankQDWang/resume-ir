@@ -27,6 +27,7 @@ fn daemon_search_ipc_authenticates_filters_and_redacts_results() {
         degree: "master",
         skill: "Kubernetes",
         years: 7.0,
+        school: "",
         school_tier: "985",
         certificate: "",
         company: "",
@@ -41,6 +42,7 @@ fn daemon_search_ipc_authenticates_filters_and_redacts_results() {
         degree: "bachelor",
         skill: "Rust",
         years: 2.0,
+        school: "",
         school_tier: "overseas",
         certificate: "",
         company: "",
@@ -292,6 +294,7 @@ fn daemon_search_ipc_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff
             degree: "bachelor",
             skill: "Java",
             years: 4.0,
+            school: "",
             school_tier: "985",
             certificate: "",
             company: "",
@@ -319,6 +322,7 @@ fn daemon_search_ipc_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff
         degree: "bachelor",
         skill: "Java",
         years: 4.0,
+        school: "",
         school_tier: "",
         certificate: "",
         company: "",
@@ -415,6 +419,7 @@ fn daemon_search_ipc_prefilters_certificates_before_fulltext_top_k_cutoff() {
             degree: "bachelor",
             skill: "Java",
             years: 4.0,
+            school: "",
             school_tier: "",
             certificate: "",
             company: "",
@@ -442,6 +447,7 @@ fn daemon_search_ipc_prefilters_certificates_before_fulltext_top_k_cutoff() {
         degree: "bachelor",
         skill: "Java",
         years: 4.0,
+        school: "",
         school_tier: "",
         certificate: "pmp",
         company: "",
@@ -510,6 +516,128 @@ fn daemon_search_ipc_prefilters_certificates_before_fulltext_top_k_cutoff() {
 }
 
 #[test]
+fn daemon_search_ipc_prefilters_school_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-ipc-school-data");
+    let target_doc = DocumentId::from_non_secret_parts(&["s48", "school-target"]);
+    let target_version = ResumeVersionId::from_non_secret_parts(&["s48", "school-target-version"]);
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut index_documents = Vec::new();
+
+    for index in 0..5 {
+        let document_id =
+            DocumentId::from_non_secret_parts(&["s48", &format!("school-decoy-{index}")]);
+        let version_id =
+            ResumeVersionId::from_non_secret_parts(&["s48", &format!("school-decoy-{index}")]);
+        let file_name = format!("school-decoy-{index}.pdf");
+        let clean_text = format!("School decoy {index} {noisy_query_text}");
+        seed_searchable_resume(SeedResume {
+            data_dir: &data_dir,
+            document_id: &document_id,
+            version_id: &version_id,
+            file_name: &file_name,
+            clean_text: &clean_text,
+            degree: "bachelor",
+            skill: "Java",
+            years: 4.0,
+            school: "synthetic search college",
+            school_tier: "",
+            certificate: "",
+            company: "",
+            title: "",
+        });
+        index_documents.push(IndexDocument {
+            doc_id: document_id.to_string(),
+            version_id: version_id.to_string(),
+            file_name,
+            clean_text: clean_text.clone(),
+            sections: vec![IndexSection {
+                section_type: "education".to_string(),
+                text: clean_text,
+            }],
+            is_deleted: false,
+        });
+    }
+
+    seed_searchable_resume(SeedResume {
+        data_dir: &data_dir,
+        document_id: &target_doc,
+        version_id: &target_version,
+        file_name: "school-target.pdf",
+        clean_text: "School target needle",
+        degree: "bachelor",
+        skill: "Java",
+        years: 4.0,
+        school: "synthetic institute of technology",
+        school_tier: "",
+        certificate: "",
+        company: "",
+        title: "",
+    });
+    index_documents.push(IndexDocument {
+        doc_id: target_doc.to_string(),
+        version_id: target_version.to_string(),
+        file_name: "school-target.pdf".to_string(),
+        clean_text: "School target needle".to_string(),
+        sections: vec![IndexSection {
+            section_type: "education".to_string(),
+            text: "needle".to_string(),
+        }],
+        is_deleted: false,
+    });
+    seed_fulltext_index_vec(&data_dir, index_documents);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "needle",
+            "mode": "fulltext",
+            "top_k": 1,
+            "filters": {
+                "schools_any": ["synthetic institute of technology"]
+            }
+        }),
+    );
+
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or_default();
+    let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(payload["result_count"], 1);
+    let results = payload["results"].as_array().unwrap();
+    assert_eq!(results[0]["doc_id"], target_doc.to_string());
+    assert_eq!(results[0]["version_id"], target_version.to_string());
+    assert!(!response.contains("school-decoy-"));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn daemon_search_ipc_prefilters_company_and_title_before_fulltext_top_k_cutoff() {
     let data_dir = temp_dir("search-ipc-company-title-data");
     let target_doc = DocumentId::from_non_secret_parts(&["s48", "company-title-target"]);
@@ -538,6 +666,7 @@ fn daemon_search_ipc_prefilters_company_and_title_before_fulltext_top_k_cutoff()
             degree: "bachelor",
             skill: "Java",
             years: 4.0,
+            school: "",
             school_tier: "",
             certificate: "",
             company: "synthetic search",
@@ -565,6 +694,7 @@ fn daemon_search_ipc_prefilters_company_and_title_before_fulltext_top_k_cutoff()
         degree: "bachelor",
         skill: "Java",
         years: 4.0,
+        school: "",
         school_tier: "",
         certificate: "",
         company: "synthetic payments",
@@ -824,6 +954,7 @@ struct SeedResume<'a> {
     degree: &'a str,
     skill: &'a str,
     years: f32,
+    school: &'a str,
     school_tier: &'a str,
     certificate: &'a str,
     company: &'a str,
@@ -896,6 +1027,15 @@ fn seed_searchable_resume(seed: SeedResume<'_>) {
             "school-tier",
             EntityType::SchoolTier,
             seed.school_tier,
+            0.95,
+        ));
+    }
+    if !seed.school.is_empty() {
+        mentions.push(entity_mention(
+            seed.version_id,
+            "school",
+            EntityType::School,
+            seed.school,
             0.95,
         ));
     }

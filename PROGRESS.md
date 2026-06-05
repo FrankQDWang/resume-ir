@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, and S199 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, and S207 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -649,8 +649,87 @@ obsolete preliminary files and checklists are not product scope.
 | S204 | Product hosted Rust workspace school-tier debug assertion stability complete locally | PR #9 hosted Rust workspace failed in `import_persists_school_tier_mentions_and_filters_search_without_output_leaks` because the test checked that the entire `EntityMention` Debug string did not contain `985`; the Debug string already redacts raw and normalized values, but opaque hex IDs can legitimately contain that digit sequence. The test now asserts the `raw_value` and `normalized_value` Debug fields are redacted while keeping the normalized school-tier value and filtered-search assertions. Focused persisted-field tests, fmt, focused clippy, diff check, public guard, and full local verification passed. | This slice stabilizes a flaky privacy assertion only. It does not change production search/filter behavior, read private resumes, broaden school-tier extraction, prove hosted CI has passed until PR #9 reruns, or make stable release ready. |
 | S205 | Product company/title search filtering complete locally | Focused tests first failed because rank-fusion had no company/title profile filter API, CLI search rejected `--company` and `--title`, CLI IPC did not emit `companies_any` or `titles_any`, and daemon IPC ignored those filters until after full-text top-k retrieval. After implementation, company filters normalize common legal suffixes, title filters normalize common English and Chinese aliases, CLI supports `--company`/`--companies-any` and `--title`/`--titles-any`, CLI/daemon IPC carry `companies_any` and `titles_any`, persisted profiles hydrate company/title entity mentions, and both CLI and daemon prefilter matching document IDs before full-text top-k truncation. Focused RED/GREEN and related rank/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden company or title extraction beyond currently persisted entity evidence, prove real business field-quality metrics, evaluate private resume corpora, clear multilingual coverage, or make stable release ready. |
 | S206 | Product release-readiness fault-drill blocker coverage complete locally | Focused release-readiness tests and the release-readiness CI guard first failed because the current blocker detail did not explicitly include actual ENOSPC and service-level daemon kill drills, and the release blockers runbook did not list hardware fault drills in the current blocked items. After implementation, `release-readiness` text/JSON and the runbook consistently keep hardware fault drills blocked until actual ENOSPC, service-level daemon kill, battery-mode, and external-drive disconnect drills are proven on release platforms. Focused RED/GREEN, release-readiness guard, runbook guard, fmt, and focused clippy passed locally. | This slice tightens fail-closed release readiness evidence only. It does not run destructive ENOSPC tests, install or kill a real platform service, switch real battery state, disconnect external drives, clear platform validation, signing, notarization, benchmark, OCR/model licensing, or make stable release ready. |
+| S207 | Product school search filtering complete locally | Focused tests first failed because rank-fusion lacked school profile/filter API, CLI search rejected `--school`, CLI IPC did not emit `schools_any`, and daemon IPC ignored school filters until after full-text top-k retrieval. After implementation, school filters normalize persisted school evidence, CLI supports `--school`/`--schools-any`, CLI/daemon IPC carry `schools_any`, persisted profiles hydrate school mentions, and both CLI and daemon prefilter school document IDs before full-text top-k truncation. Focused RED/GREEN, related rank/CLI/daemon suites, fmt, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden school extraction beyond currently persisted evidence, prove real business field-quality metrics, evaluate private resume corpora, clear broad school dictionaries, or make stable release ready. |
 
 ## Command Log
+
+### S207
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_any_school -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_school_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_school_before_fulltext_top_k_cutoff -- --exact
+```
+
+Output summary:
+
+- The rank-fusion focused test failed before implementation because
+  `SearchFilters::with_schools_any`, `SearchFilters::schools_any`, and
+  `ResumeProfile::with_schools` did not exist.
+- The direct CLI focused test failed before implementation because `search`
+  rejected `--school`.
+- The CLI IPC focused test failed before implementation because the rejected
+  `--school` argument prevented the request from reaching the fake daemon.
+- The daemon IPC focused test failed before implementation because the daemon
+  applied no school prefilter before the full-text top-k cutoff and returned a
+  school decoy instead of the matching synthetic target.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_any_school -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_school_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_school_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo clippy -p rank-fusion -p resume-cli -p resume-daemon --all-targets -- -D warnings
+```
+
+Output summary:
+
+- School field filters now normalize persisted school entity values and match
+  profile school evidence in rank-fusion.
+- Direct CLI search supports `--school` and `--schools-any`, persists school
+  profile evidence from metadata, and applies the school document-ID prefilter
+  before full-text top-k truncation.
+- CLI and daemon IPC search requests carry `schools_any`; daemon IPC parsing,
+  persisted profile hydration, and document-ID prefiltering now handle school
+  entity mentions before full-text retrieval.
+- Focused RED/GREEN tests, related rank-fusion, CLI search-filter, CLI IPC, and
+  daemon IPC suites, and focused clippy passed locally.
+
+Final checkpoint verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0, public repo guard passed.
+- `verify-local.sh`: exit 0, including workspace tests/doc-tests,
+  license/runbook/workflow/release-readiness checks, release artifact/SBOM
+  checks, macOS package check, and final public repo guard.
+
+Scope note:
+
+- S207 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, or vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S206
 

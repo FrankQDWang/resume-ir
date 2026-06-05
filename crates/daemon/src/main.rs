@@ -2602,6 +2602,25 @@ fn parse_search_filters(
             parsed = parsed.with_school_tiers_any(school_tiers);
         }
     }
+    if let Some(value) = object.get("schools_any") {
+        if !value.is_null() {
+            let schools = value
+                .as_array()
+                .ok_or(IpcCommandError::BadRequest("schools_any must be an array"))?;
+            if schools.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many schools"));
+            }
+            let schools = schools
+                .iter()
+                .map(|school| {
+                    school.as_str().ok_or(IpcCommandError::BadRequest(
+                        "schools_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_schools_any(schools);
+        }
+    }
     if let Some(value) = object.get("certificates_any") {
         if !value.is_null() {
             let certificates = value.as_array().ok_or(IpcCommandError::BadRequest(
@@ -2719,6 +2738,20 @@ fn daemon_field_filter_doc_id_prefilter(
         daemon_merge_filter_doc_ids(
             &mut allowed_doc_ids,
             daemon_school_tier_filter_doc_ids(store, filters.school_tiers_any())
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.schools_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::School,
+                    filters.schools_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
                 .map_err(DaemonError::store)
                 .map_err(IpcCommandError::Internal)?,
         );
@@ -3132,6 +3165,14 @@ fn daemon_persisted_profile(
         })
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let schools = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::School
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let companies = fields
         .iter()
         .filter(|field| {
@@ -3166,6 +3207,7 @@ fn daemon_persisted_profile(
 
     let mut profile = ResumeProfile::new(doc_id)
         .with_school_tiers(school_tiers)
+        .with_schools(schools)
         .with_certificates(certificates)
         .with_companies(companies)
         .with_titles(titles)

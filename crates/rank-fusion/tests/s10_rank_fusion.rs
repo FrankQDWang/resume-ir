@@ -81,6 +81,24 @@ fn field_filters_match_any_certificate() {
 }
 
 #[test]
+fn field_filters_match_any_school() {
+    let filters = SearchFilters::default()
+        .with_schools_any(["Synthetic Institute of Technology", "Other University"]);
+    let matching =
+        ResumeProfile::new("doc_school").with_schools(["synthetic institute of technology"]);
+    let other_school = ResumeProfile::new("doc_other_school").with_schools(["Synthetic College"]);
+    let missing_school = ResumeProfile::new("doc_missing_school");
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&other_school));
+    assert!(!filters.matches(&missing_school));
+    assert_eq!(
+        filters.schools_any(),
+        &["other university", "synthetic institute of technology"]
+    );
+}
+
+#[test]
 fn field_filters_match_company_and_title() {
     let filters = SearchFilters::default()
         .with_companies_any(["Synthetic Payments Inc.", "Other Co"])

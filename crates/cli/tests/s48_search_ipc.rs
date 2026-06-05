@@ -41,6 +41,10 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             serde_json::json!(["985", "double_first_class"])
         );
         assert_eq!(
+            payload["filters"]["schools_any"],
+            serde_json::json!(["synthetic institute of technology"])
+        );
+        assert_eq!(
             payload["filters"]["certificates_any"],
             serde_json::json!(["cka", "pmp"])
         );
@@ -97,6 +101,8 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             "5",
             "--school-tier",
             "985,双一流",
+            "--school",
+            "Synthetic Institute of Technology",
             "--certificate",
             "PMP,CKA",
             "--company",

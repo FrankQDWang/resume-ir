@@ -82,6 +82,7 @@ impl SchoolTier {
 pub struct ResumeProfile {
     doc_id: String,
     degree: Option<DegreeLevel>,
+    schools: Vec<String>,
     school_tiers: Vec<SchoolTier>,
     certificates: Vec<String>,
     companies: Vec<String>,
@@ -95,6 +96,7 @@ impl ResumeProfile {
         Self {
             doc_id: doc_id.into(),
             degree: None,
+            schools: Vec::new(),
             school_tiers: Vec::new(),
             certificates: Vec::new(),
             companies: Vec::new(),
@@ -115,6 +117,21 @@ impl ResumeProfile {
     {
         self.school_tiers = school_tiers
             .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
+    pub fn with_schools<I, S>(mut self, schools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.schools = schools
+            .into_iter()
+            .map(|school| normalize_school(school.as_ref()))
+            .filter(|school| !school.is_empty())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -194,6 +211,10 @@ impl ResumeProfile {
         &self.school_tiers
     }
 
+    pub fn schools(&self) -> &[String] {
+        &self.schools
+    }
+
     pub fn certificates(&self) -> &[String] {
         &self.certificates
     }
@@ -221,6 +242,7 @@ impl fmt::Debug for ResumeProfile {
             .debug_struct("ResumeProfile")
             .field("doc_id", &self.doc_id)
             .field("degree", &self.degree)
+            .field("school_count", &self.schools.len())
             .field("school_tier_count", &self.school_tiers.len())
             .field("certificate_count", &self.certificates.len())
             .field("company_count", &self.companies.len())
@@ -234,6 +256,7 @@ impl fmt::Debug for ResumeProfile {
 #[derive(Clone, Default, PartialEq)]
 pub struct SearchFilters {
     degree_min: Option<DegreeLevel>,
+    schools_any: Vec<String>,
     school_tiers_any: Vec<SchoolTier>,
     certificates_any: Vec<String>,
     companies_any: Vec<String>,
@@ -254,6 +277,21 @@ impl SearchFilters {
     {
         self.school_tiers_any = school_tiers
             .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
+    pub fn with_schools_any<I, S>(mut self, schools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.schools_any = schools
+            .into_iter()
+            .map(|school| normalize_school(school.as_ref()))
+            .filter(|school| !school.is_empty())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -327,6 +365,7 @@ impl SearchFilters {
 
     pub fn is_empty(&self) -> bool {
         self.degree_min.is_none()
+            && self.schools_any.is_empty()
             && self.school_tiers_any.is_empty()
             && self.certificates_any.is_empty()
             && self.companies_any.is_empty()
@@ -345,6 +384,10 @@ impl SearchFilters {
 
     pub fn school_tiers_any(&self) -> &[SchoolTier] {
         &self.school_tiers_any
+    }
+
+    pub fn schools_any(&self) -> &[String] {
+        &self.schools_any
     }
 
     pub fn certificates_any(&self) -> &[String] {
@@ -374,6 +417,17 @@ impl SearchFilters {
             && !school_tiers_match_any(&self.school_tiers_any, profile.school_tiers())
         {
             return false;
+        }
+
+        if !self.schools_any.is_empty() {
+            let profile_schools = profile.schools().iter().collect::<BTreeSet<_>>();
+            if !self
+                .schools_any
+                .iter()
+                .any(|school| profile_schools.contains(school))
+            {
+                return false;
+            }
         }
 
         if !self.certificates_any.is_empty() {
@@ -453,6 +507,7 @@ impl fmt::Debug for SearchFilters {
         formatter
             .debug_struct("SearchFilters")
             .field("degree_min", &self.degree_min)
+            .field("schools_any_count", &self.schools_any.len())
             .field("school_tiers_any_count", &self.school_tiers_any.len())
             .field("certificates_any_count", &self.certificates_any.len())
             .field("companies_any_count", &self.companies_any.len())
@@ -835,6 +890,10 @@ pub fn fuse_hybrid_rrf(recall: HybridRecall, k: f32, limit: usize) -> Vec<Ranked
 
 fn normalize_skill(skill: &str) -> String {
     normalize_dedupe_value(skill)
+}
+
+fn normalize_school(school: &str) -> String {
+    normalize_dedupe_value(school)
 }
 
 fn normalize_company(company: &str) -> String {
