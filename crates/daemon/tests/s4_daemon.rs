@@ -371,7 +371,7 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
     let stdout = child.stdout.take().expect("daemon stdout");
     wait_until_metadata_store_ready(&mut child, &data_dir);
 
-    let task_id = seed_queued_import_task(
+    let task_id = seed_queued_import_task_in_ready_store(
         &data_dir,
         "daemon-import-scheduler",
         &canonical_fixture_root,
@@ -735,6 +735,25 @@ fn seed_queued_import_task(
 ) -> ImportTaskId {
     let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
+    insert_queued_import_task(&store, label, canonical_root, queued_at_seconds)
+}
+
+fn seed_queued_import_task_in_ready_store(
+    data_dir: &Path,
+    label: &str,
+    canonical_root: &Path,
+    queued_at_seconds: i64,
+) -> ImportTaskId {
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
+    insert_queued_import_task(&store, label, canonical_root, queued_at_seconds)
+}
+
+fn insert_queued_import_task(
+    store: &MetaStore,
+    label: &str,
+    canonical_root: &Path,
+    queued_at_seconds: i64,
+) -> ImportTaskId {
     let now = UnixTimestamp::from_unix_seconds(queued_at_seconds);
     let task_id = ImportTaskId::from_non_secret_parts(&["s43", label]);
     let task = ImportTask {
