@@ -235,6 +235,102 @@ Java island migration
 }
 
 #[test]
+fn import_persists_labeled_school_and_degree_mentions_without_output_leaks() {
+    let data_dir = temp_dir("persisted-labeled-education-data");
+    let resume_root = temp_dir("persisted-labeled-education-resumes");
+    fs::write(
+        resume_root.join("synthetic-labeled-education-candidate.txt"),
+        "\
+Synthetic Education Candidate
+Email: education-candidate@example.test
+Education
+School: Synthetic Institute of Technology
+Degree: MSc Computer Science
+教育经历
+学校：合成大学
+学历：博士研究生
+Skills: Java
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import labeled education fields");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("Synthetic Institute"));
+    assert!(!stdout.contains("合成大学"));
+    assert!(!stdout.contains("博士研究生"));
+    assert!(!stdout.contains("education-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-labeled-education-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+
+    let school_normalized = mentions
+        .iter()
+        .filter(|mention| mention.entity_type == EntityType::School)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!mention.raw_value.contains(':'));
+            assert!(!mention.raw_value.contains('：'));
+            assert!(!format!("{mention:?}").contains("Synthetic Institute"));
+            mention.normalized_value.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        school_normalized,
+        vec!["synthetic institute of technology", "合成大学"]
+    );
+
+    let degree_normalized = mentions
+        .iter()
+        .filter(|mention| mention.entity_type == EntityType::Degree)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!mention.raw_value.contains(':'));
+            assert!(!mention.raw_value.contains('：'));
+            assert!(!format!("{mention:?}").contains("博士"));
+            mention.normalized_value.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(degree_normalized, vec!["master", "doctor"]);
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_labeled_company_and_title_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-labeled-role-data");
     let resume_root = temp_dir("persisted-labeled-role-resumes");

@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, and S191 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, and S192 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -196,10 +196,16 @@ obsolete preliminary files and checklists are not product scope.
   aliases for frontend, full-stack, machine-learning, data-science, DevOps, QA,
   engineering-manager, and solutions-architect families while avoiding
   certificate-line title false positives.
+  School/degree extraction now strips common English and Chinese education
+  labels such as `School:`, `Degree:`, `学校：`, and `学历：` from field evidence,
+  normalizes school whitespace/case, maps degree aliases such as MSc, BSc, PhD,
+  `博士研究生`, and `硕士研究生` to canonical degree values, and avoids duplicate
+  generic degree matches inside labeled degree evidence.
   Missing production work
   includes broader dictionaries and normalization beyond the current
-  high-signal certificate/skill/title aliases, Chinese explicit/open-ended date
-  ranges, China mobile phone formats, and labeled company/title forms, real
+  high-signal certificate/skill/title aliases, labeled school/degree forms and
+  degree aliases, Chinese explicit/open-ended date ranges, China mobile phone
+  formats, and labeled company/title forms, real
   business labeled field and dedupe quality datasets/results, remaining future
   non-cache PII surface purge coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
@@ -582,8 +588,71 @@ obsolete preliminary files and checklists are not product scope.
 | S189 | Product labeled company/title extraction complete locally | Focused tests first failed because `Company: Synthetic Commerce Inc.` normalized to `company: synthetic commerce`, `公司：合成科技有限公司` normalized with the label and unstripped Chinese suffix, and persisted company/title raw values still contained `Company:`/`公司：`/`Title:`/`职位：` labels. After implementation, extractor-rules strips common English and Chinese company/title labels before validation, points spans at only the field values, normalizes Chinese company suffixes such as `有限公司`, and import persists the stripped Company/Title mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves labeled company/title extraction only. It does not prove real business field-quality metrics, broad company/title dictionaries, all multilingual employer/title idioms, real corpus results, or stable release readiness. |
 | S190 | Product broader title alias extraction complete locally | Focused tests first failed because frontend, full-stack, machine-learning, data-scientist, DevOps, QA, engineering-manager, and solutions-architect title evidence produced no Title mentions, and import therefore persisted none of those title aliases. After implementation, extractor-rules maps those high-signal English and Chinese role families to canonical title values, keeps exact span evidence, rejects certificate-looking title candidates such as `AWS Certified Solutions Architect`, and import persists the title mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves title dictionaries/normalization only. It does not prove real business field-quality metrics, broad multilingual title coverage, model-based role inference, real corpus results, or stable release readiness. |
 | S191 | Product hosted Windows daemon-kill readiness test stability complete locally | PR #9 hosted Windows Platform CI failed in `foreground_daemon_can_be_killed_and_restarted_without_path_leak` because the test killed the foreground daemon after metadata readiness but before stdout readiness evidence was reliably captured, so `resume-daemon foreground ready` was absent from the killed-child stdout assertion. After implementation, the test uses a bounded background stdout reader to wait for the ready line before killing the daemon, then joins the reader after process exit and preserves the restart and path-redaction assertions. Focused exact daemon-kill test, full `resume-daemon`, focused daemon clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice stabilizes hosted Windows daemon-kill test evidence only. It does not change production daemon behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear platform installer/service, signing, notarization, OCR/model licensing, benchmark, or stable release blockers. |
+| S192 | Product labeled school/degree extraction complete locally | Focused tests first failed because labeled school values kept `School:` / `学校：` in normalized values and persisted school raw values still contained label delimiters. After implementation, extractor-rules strips common English and Chinese school labels, points school spans at value text only, normalizes school whitespace/case, maps degree aliases such as MSc, BSc, PhD, `博士研究生`, and `硕士研究生` to canonical degree values, and prevents generic degree aliases from duplicating labeled degree spans. Import persists the stripped School/Degree mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves school/degree dictionaries/normalization only. It does not prove real business field-quality metrics, broad school dictionaries, school tier/985/211 extraction, broad multilingual degree coverage, real corpus results, or stable release readiness. |
 
 ## Command Log
+
+### S192
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_labeled_school_and_degree_values_with_alias_normalization -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_labeled_school_and_degree_mentions_without_output_leaks -- --exact
+```
+
+Output summary:
+
+- The extractor regression failed before implementation because labeled school
+  values kept `School:` / `学校：` in normalized values instead of value-only
+  school evidence.
+- The CLI persisted-field regression failed before implementation because
+  persisted School raw values still contained label delimiters.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_labeled_school_and_degree_values_with_alias_normalization -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_labeled_school_and_degree_mentions_without_output_leaks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p import-pipeline -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+```
+
+Output summary:
+
+- The exact labeled school/degree extractor and exact CLI persisted-field
+  regressions passed after implementation.
+- Full `extractor-rules`, full persisted-field CLI tests, full
+  `import-pipeline`, focused clippy, `cargo fmt --all --check`, and
+  `git diff --check` passed locally before final guard/full-local verification.
+
+Final checkpoint verification:
+
+```bash
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `guard-public-repo.sh` passed.
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S192 uses synthetic data only. It does not read, print, commit, or upload
+  private resumes, filenames, paths, raw text, local diagnostics, tokens, or
+  model caches.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S191
 

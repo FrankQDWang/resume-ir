@@ -108,6 +108,61 @@ Experience
 }
 
 #[test]
+fn extracts_labeled_school_and_degree_values_with_alias_normalization() {
+    let text = "\
+Education
+School: Synthetic Institute of Technology
+Degree: MSc Computer Science
+教育经历
+学校：合成大学
+学历：博士研究生";
+
+    let matches = extract_strong_fields(text);
+
+    let schools = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::School)
+        .collect::<Vec<_>>();
+    let school_normalized = schools
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        school_normalized,
+        vec!["synthetic institute of technology", "合成大学"]
+    );
+    assert_eq!(
+        &text[schools[0].span_start..schools[0].span_end],
+        "Synthetic Institute of Technology"
+    );
+    assert_eq!(
+        &text[schools[1].span_start..schools[1].span_end],
+        "合成大学"
+    );
+    assert!(schools.iter().all(|field| !field.raw_value.contains(':')));
+    assert!(schools.iter().all(|field| !field.raw_value.contains('：')));
+    assert!(!format!("{:?}", schools[0]).contains("Synthetic Institute"));
+
+    let degrees = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Degree)
+        .collect::<Vec<_>>();
+    let degree_normalized = degrees
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(degree_normalized, vec!["master", "doctor"]);
+    assert_eq!(&text[degrees[0].span_start..degrees[0].span_end], "MSc");
+    assert_eq!(
+        &text[degrees[1].span_start..degrees[1].span_end],
+        "博士研究生"
+    );
+    assert!(degrees.iter().all(|field| !field.raw_value.contains(':')));
+    assert!(degrees.iter().all(|field| !field.raw_value.contains('：')));
+    assert!(!format!("{:?}", degrees[1]).contains("博士"));
+}
+
+#[test]
 fn extracts_chinese_year_month_date_ranges_with_years_evidence() {
     let text = "\
 Experience

@@ -606,22 +606,63 @@ fn civil_from_days(days_since_epoch: i64) -> (i32, i32, i32) {
 fn extract_schools(text: &str, matches: &mut Vec<RuleMatch>) {
     for (line_start, line) in indexed_lines(text) {
         let trimmed = line.trim();
-        if trimmed.len() > 120 || !looks_like_school(trimmed) {
+        if trimmed.len() > 120 {
             continue;
         }
 
         let leading = line.len() - line.trim_start().len();
-        let span_start = line_start + leading;
-        let span_end = span_start + trimmed.len();
+        let trimmed_span_start = line_start + leading;
+        let Some(segment) = school_segment(trimmed, trimmed_span_start) else {
+            continue;
+        };
         matches.push(RuleMatch {
             field_type: FieldType::School,
-            raw_value: trimmed.to_string(),
-            normalized_value: Some(trimmed.to_lowercase()),
-            span_start,
-            span_end,
+            raw_value: segment.text.to_string(),
+            normalized_value: Some(normalize_school(segment.text)),
+            span_start: segment.span_start,
+            span_end: segment.span_start + segment.text.len(),
             confidence: 0.84,
         });
     }
+}
+
+fn school_segment<'a>(
+    trimmed_line: &'a str,
+    trimmed_span_start: usize,
+) -> Option<LabeledSegment<'a>> {
+    if let Some((label, value, delimiter_len)) =
+        split_labeled_value_line(trimmed_line, is_school_label)
+    {
+        let value_leading = value.len() - value.trim_start().len();
+        let value = value.trim();
+        if value.is_empty() || !looks_like_school(value) {
+            return None;
+        }
+        return Some(LabeledSegment {
+            text: value,
+            span_start: trimmed_span_start + label.len() + delimiter_len + value_leading,
+        });
+    }
+
+    looks_like_school(trimmed_line).then_some(LabeledSegment {
+        text: trimmed_line,
+        span_start: trimmed_span_start,
+    })
+}
+
+fn is_school_label(label: &str) -> bool {
+    matches!(
+        label.to_lowercase().as_str(),
+        "school"
+            | "university"
+            | "college"
+            | "institution"
+            | "institute"
+            | "学校"
+            | "院校"
+            | "毕业院校"
+            | "大学"
+    )
 }
 
 fn looks_like_school(line: &str) -> bool {
@@ -631,32 +672,58 @@ fn looks_like_school(line: &str) -> bool {
         .any(|needle| lower.contains(needle))
 }
 
+fn normalize_school(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 fn extract_degrees(text: &str, matches: &mut Vec<RuleMatch>) {
-    for (normalized, confidence, pattern) in [
-        (
-            "doctor",
-            0.96,
-            r"(?i)\b(?:ph\.?d\.?|doctor(?:ate)?(?:\s+of\s+[A-Za-z ]+)?)\b|博士",
-        ),
-        (
-            "master",
-            0.95,
-            r"(?i)\b(?:master(?:'s)?(?:\s+of\s+[A-Za-z ]+)?|m\.?s\.?|m\.?a\.?|mba)\b|硕士|研究生",
-        ),
-        (
-            "bachelor",
-            0.95,
-            r"(?i)\b(?:bachelor(?:'s)?(?:\s+of\s+[A-Za-z ]+)?|b\.?s\.?|b\.?a\.?|beng)\b|本科|学士",
-        ),
-        (
-            "associate",
-            0.9,
-            r"(?i)\bassociate(?:\s+degree)?\b|大专|专科",
-        ),
-        ("high_school", 0.9, r"(?i)\bhigh\s+school\b|高中"),
-    ] {
+    let mut claimed_spans = Vec::<(usize, usize)>::new();
+
+    for (line_start, line) in indexed_lines(text) {
+        let trimmed = line.trim();
+        if trimmed.len() > 140 {
+            continue;
+        }
+
+        let leading = line.len() - line.trim_start().len();
+        let trimmed_span_start = line_start + leading;
+        let Some(segment) = degree_segment(trimmed, trimmed_span_start) else {
+            continue;
+        };
+        let Some((normalized, confidence, relative_start, relative_end)) =
+            first_degree_match(segment.text)
+        else {
+            continue;
+        };
+        let span = (
+            segment.span_start + relative_start,
+            segment.span_start + relative_end,
+        );
+        claimed_spans.push(span);
+        matches.push(RuleMatch {
+            field_type: FieldType::Degree,
+            raw_value: segment.text[relative_start..relative_end].to_string(),
+            normalized_value: Some(normalized.to_string()),
+            span_start: span.0,
+            span_end: span.1,
+            confidence,
+        });
+    }
+
+    for (normalized, confidence, pattern) in degree_alias_patterns() {
         let regex = Regex::new(pattern).unwrap();
         for found in regex.find_iter(text) {
+            let span = (found.start(), found.end());
+            if claimed_spans
+                .iter()
+                .any(|claimed| ranges_overlap(*claimed, span))
+            {
+                continue;
+            }
             matches.push(RuleMatch {
                 field_type: FieldType::Degree,
                 raw_value: found.as_str().to_string(),
@@ -667,6 +734,70 @@ fn extract_degrees(text: &str, matches: &mut Vec<RuleMatch>) {
             });
         }
     }
+}
+
+fn degree_segment<'a>(
+    trimmed_line: &'a str,
+    trimmed_span_start: usize,
+) -> Option<LabeledSegment<'a>> {
+    let (label, value, delimiter_len) = split_labeled_value_line(trimmed_line, is_degree_label)?;
+    let value_leading = value.len() - value.trim_start().len();
+    let value = value.trim();
+    (!value.is_empty()).then_some(LabeledSegment {
+        text: value,
+        span_start: trimmed_span_start + label.len() + delimiter_len + value_leading,
+    })
+}
+
+fn is_degree_label(label: &str) -> bool {
+    matches!(
+        label.to_lowercase().as_str(),
+        "degree"
+            | "education"
+            | "education level"
+            | "qualification"
+            | "学历"
+            | "学位"
+            | "教育"
+            | "最高学历"
+    )
+}
+
+fn first_degree_match(value: &str) -> Option<(&'static str, f32, usize, usize)> {
+    for (normalized, confidence, pattern) in degree_alias_patterns() {
+        let regex = Regex::new(pattern).unwrap();
+        if let Some(found) = regex.find(value) {
+            return Some((normalized, confidence, found.start(), found.end()));
+        }
+    }
+
+    None
+}
+
+fn degree_alias_patterns() -> [(&'static str, f32, &'static str); 5] {
+    [
+        (
+            "doctor",
+            0.96,
+            r"(?i)\b(?:ph\.?\s*d\.?|phd|doctor(?:ate)?(?:\s+of\s+[A-Za-z ]+)?)\b|博士研究生|博士",
+        ),
+        (
+            "master",
+            0.95,
+            r"(?i)\b(?:master(?:'s)?(?:\s+of\s+[A-Za-z ]+)?|m\.?\s*sc|m\.?\s*s\.?|m\.?\s*a\.?|mba)\b|硕士研究生|硕士|研究生",
+        ),
+        (
+            "bachelor",
+            0.95,
+            r"(?i)\b(?:bachelor(?:'s)?(?:\s+of\s+[A-Za-z ]+)?|b\.?\s*sc|b\.?\s*s\.?|b\.?\s*a\.?|b\.?\s*eng|beng)\b|本科|学士",
+        ),
+        (
+            "associate",
+            0.9,
+            r"(?i)\bassociate(?:\s+degree)?\b|大专|专科",
+        ),
+        ("high_school", 0.9, r"(?i)\bhigh\s+school\b|高中"),
+    ]
 }
 
 fn extract_skills(text: &str, matches: &mut Vec<RuleMatch>) {
