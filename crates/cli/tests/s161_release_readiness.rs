@@ -25,6 +25,7 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("field extraction quality: blocked"));
     assert!(stdout.contains("dedupe quality: blocked"));
     assert!(stdout.contains("vector quality: blocked"));
+    assert!(stdout.contains("OCR throughput: blocked"));
     assert!(stdout.contains("OCR engine license/distribution: blocked"));
     assert!(stdout.contains("embedding model license/distribution: blocked"));
     assert!(stdout.contains("cross-platform release validation: blocked"));
@@ -64,7 +65,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     );
 
     let blockers = report["blockers"].as_array().expect("blockers array");
-    assert_eq!(blockers.len(), 13);
+    assert_eq!(blockers.len(), 14);
     let labels = blockers
         .iter()
         .map(|blocker| blocker["label"].as_str().expect("blocker label"))
@@ -78,6 +79,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(labels.contains(&"field extraction quality"));
     assert!(labels.contains(&"dedupe quality"));
     assert!(labels.contains(&"vector quality"));
+    assert!(labels.contains(&"OCR throughput"));
     assert!(labels.contains(&"OCR engine license/distribution"));
     assert!(labels.contains(&"embedding model license/distribution"));
     assert!(labels.contains(&"cross-platform release validation"));

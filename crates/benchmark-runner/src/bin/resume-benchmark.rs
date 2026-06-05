@@ -150,6 +150,9 @@ fn run_ocr_gate(args: OcrGateArgs) -> Result<(), CliError> {
     if args.allow_synthetic {
         config = config.allow_synthetic();
     }
+    if args.require_private_real_corpus {
+        config = config.require_private_real_corpus();
+    }
     evaluate_ocr_throughput_gate_json(&report_json, config).map_err(CliError::gate)?;
     println!("OCR throughput gate passed");
     Ok(())
@@ -576,6 +579,7 @@ fn parse_ocr_throughput_args(args: &[String]) -> Result<OcrThroughputArgs, CliEr
 fn parse_ocr_gate_args(args: &[String]) -> Result<OcrGateArgs, CliError> {
     let mut report = None;
     let mut allow_synthetic = false;
+    let mut require_private_real_corpus = false;
     let mut min_pages = 200_usize;
     let mut max_p95_ms = 30_000.0_f64;
     let mut min_pages_per_second = 0.1_f64;
@@ -592,6 +596,10 @@ fn parse_ocr_gate_args(args: &[String]) -> Result<OcrGateArgs, CliError> {
             }
             "--allow-synthetic" => {
                 allow_synthetic = true;
+                index += 1;
+            }
+            "--require-private-real-corpus" => {
+                require_private_real_corpus = true;
                 index += 1;
             }
             "--min-pages" => {
@@ -616,6 +624,7 @@ fn parse_ocr_gate_args(args: &[String]) -> Result<OcrGateArgs, CliError> {
     Ok(OcrGateArgs {
         report: report.ok_or_else(CliError::usage)?,
         allow_synthetic,
+        require_private_real_corpus,
         min_pages,
         max_p95_ms,
         min_pages_per_second,
@@ -788,7 +797,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -871,6 +880,7 @@ struct OcrThroughputArgs {
 struct OcrGateArgs {
     report: PathBuf,
     allow_synthetic: bool,
+    require_private_real_corpus: bool,
     min_pages: usize,
     max_p95_ms: f64,
     min_pages_per_second: f64,

@@ -641,6 +641,105 @@ fn resume_benchmark_ocr_gate_rejects_synthetic_without_explicit_allowance() {
 }
 
 #[test]
+fn resume_benchmark_ocr_gate_requires_private_real_corpus_report() {
+    let report_dir = temp_dir("ocr-throughput-cli-private-real-gate");
+    let report_path = report_dir.join("ocr-report.json");
+    fs::write(
+        &report_path,
+        concat!(
+            "{\"schema_version\":\"ocr-throughput.v1\",",
+            "\"dataset_kind\":\"synthetic\",",
+            "\"page_count\":500,",
+            "\"pages_per_second\":2.5,",
+            "\"page_latency_ms\":{\"samples\":500,\"p95\":450},",
+            "\"target_claim\":\"not_evaluated\"}"
+        ),
+    )
+    .unwrap();
+
+    let synthetic_gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "ocr-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-real-corpus",
+            "--min-pages",
+            "500",
+            "--max-p95-ms",
+            "1000",
+            "--min-pages-per-second",
+            "1",
+        ])
+        .output()
+        .expect("run OCR throughput gate");
+
+    assert!(!synthetic_gate.status.success());
+    assert!(String::from_utf8_lossy(&synthetic_gate.stderr)
+        .contains("private real-corpus OCR benchmark required"));
+
+    fs::write(
+        &report_path,
+        concat!(
+            "{\"schema_version\":\"ocr-throughput.v1\",",
+            "\"run_id\":\"ocr_release_20260605\",",
+            "\"platform\":\"macos/aarch64\",",
+            "\"dataset_kind\":\"private-real-corpus\",",
+            "\"page_count\":500,",
+            "\"document_count\":200,",
+            "\"scanned_document_count\":150,",
+            "\"engine_kind\":\"tesseract\",",
+            "\"page_latency_ms\":{\"samples\":500,\"p50\":250.0,\"p95\":450.0,\"p99\":800.0},",
+            "\"pages_per_second\":2.5,",
+            "\"target_claim\":\"ocr_throughput_target_met\",",
+            "\"corpus_origin\":\"private_local\",",
+            "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"contains_raw_ocr_text\":false,",
+            "\"contains_page_images\":false,",
+            "\"contains_resume_paths\":false,",
+            "\"contains_document_ids\":false,",
+            "\"contains_page_ids\":false,",
+            "\"contains_command_paths\":false,",
+            "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+            "\"ocr_runtime_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"renderer_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+            "\"language_pack_manifest_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+            "\"scope\":\"private real-corpus OCR throughput benchmark; aggregate redacted report only\"}"
+        ),
+    )
+    .unwrap();
+
+    let private_gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "ocr-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-real-corpus",
+            "--min-pages",
+            "500",
+            "--max-p95-ms",
+            "1000",
+            "--min-pages-per-second",
+            "1",
+        ])
+        .output()
+        .expect("run OCR throughput gate");
+
+    assert!(
+        private_gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&private_gate.stdout),
+        String::from_utf8_lossy(&private_gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&private_gate.stdout).trim(),
+        "OCR throughput gate passed"
+    );
+    assert!(private_gate.stderr.is_empty());
+
+    remove_dir(&report_dir);
+}
+
+#[test]
 fn resume_benchmark_vector_quality_outputs_redacted_report_and_gate() {
     let command = embedding_fixture_script("vector-quality-cli-private-command");
     let dataset_dir = temp_dir("vector-quality-cli-dataset");

@@ -985,6 +985,7 @@ pub struct OcrThroughputGateConfig {
     max_p95_ms: f64,
     min_pages_per_second: f64,
     allow_synthetic: bool,
+    require_private_real_corpus: bool,
 }
 
 impl OcrThroughputGateConfig {
@@ -994,11 +995,17 @@ impl OcrThroughputGateConfig {
             max_p95_ms,
             min_pages_per_second,
             allow_synthetic: false,
+            require_private_real_corpus: false,
         }
     }
 
     pub fn allow_synthetic(mut self) -> Self {
         self.allow_synthetic = true;
+        self
+    }
+
+    pub fn require_private_real_corpus(mut self) -> Self {
+        self.require_private_real_corpus = true;
         self
     }
 }
@@ -3072,6 +3079,7 @@ pub fn evaluate_ocr_throughput_gate_json(
     report_json: &str,
     config: OcrThroughputGateConfig,
 ) -> std::result::Result<OcrThroughputGateEvaluation, BenchmarkGateError> {
+    reject_duplicate_json_object_keys(report_json)?;
     let report: serde_json::Value =
         serde_json::from_str(report_json).map_err(|_| BenchmarkGateError::invalid_json())?;
 
@@ -3083,6 +3091,15 @@ pub fn evaluate_ocr_throughput_gate_json(
     }
 
     let dataset_kind = required_str(&report, "dataset_kind")?;
+    match dataset_kind {
+        "synthetic" | "private-real-corpus" => {}
+        _ => return Err(BenchmarkGateError::failed("unsupported OCR dataset")),
+    }
+    if config.require_private_real_corpus && dataset_kind != "private-real-corpus" {
+        return Err(BenchmarkGateError::failed(
+            "private real-corpus OCR benchmark required",
+        ));
+    }
     let page_count = required_usize(&report, "page_count")?;
     let latency = report
         .get("page_latency_ms")
@@ -3096,6 +3113,9 @@ pub fn evaluate_ocr_throughput_gate_json(
         return Err(BenchmarkGateError::failed(
             "synthetic OCR benchmark requires explicit allowance",
         ));
+    }
+    if dataset_kind == "private-real-corpus" {
+        validate_private_real_ocr_throughput_boundary(&report, target_claim)?;
     }
     if page_count < config.min_pages || samples < config.min_pages {
         return Err(BenchmarkGateError::failed(
@@ -3112,7 +3132,7 @@ pub fn evaluate_ocr_throughput_gate_json(
             "OCR pages-per-second below threshold",
         ));
     }
-    if target_claim != "not_evaluated" {
+    if dataset_kind == "synthetic" && target_claim != "not_evaluated" {
         return Err(BenchmarkGateError::failed(
             "OCR throughput target claim is not proven",
         ));
@@ -3124,6 +3144,202 @@ pub fn evaluate_ocr_throughput_gate_json(
         p95_ms,
         pages_per_second,
     })
+}
+
+const PRIVATE_REAL_OCR_THROUGHPUT_SCOPE: &str =
+    "private real-corpus OCR throughput benchmark; aggregate redacted report only";
+const PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM: &str = "ocr_throughput_target_met";
+
+fn validate_private_real_ocr_throughput_boundary(
+    report: &serde_json::Value,
+    target_claim: &str,
+) -> std::result::Result<(), BenchmarkGateError> {
+    validate_private_real_ocr_throughput_shape(report)?;
+    let page_count = private_ocr_usize(report, "page_count")?;
+    let document_count = private_ocr_usize(report, "document_count")?;
+    let scanned_document_count = private_ocr_usize(report, "scanned_document_count")?;
+    let latency = report
+        .get("page_latency_ms")
+        .ok_or_else(private_ocr_boundary_error)?;
+    let samples = private_ocr_usize(latency, "samples")?;
+    if document_count == 0
+        || scanned_document_count == 0
+        || scanned_document_count > document_count
+        || samples != page_count
+    {
+        return Err(private_ocr_boundary_error());
+    }
+    if private_ocr_str(report, "corpus_origin")? != "private_local"
+        || private_ocr_str(report, "privacy_boundary")? != "redacted_local_aggregate"
+        || private_ocr_bool(report, "contains_raw_ocr_text")?
+        || private_ocr_bool(report, "contains_page_images")?
+        || private_ocr_bool(report, "contains_resume_paths")?
+        || private_ocr_bool(report, "contains_document_ids")?
+        || private_ocr_bool(report, "contains_page_ids")?
+        || private_ocr_bool(report, "contains_command_paths")?
+        || !is_sha256_hex(private_ocr_str(report, "dataset_manifest_sha256")?)
+        || !is_sha256_hex(private_ocr_str(report, "ocr_runtime_manifest_sha256")?)
+        || !is_sha256_hex(private_ocr_str(report, "renderer_manifest_sha256")?)
+        || !is_sha256_hex(private_ocr_str(report, "language_pack_manifest_sha256")?)
+        || private_ocr_str(report, "scope")? != PRIVATE_REAL_OCR_THROUGHPUT_SCOPE
+    {
+        return Err(private_ocr_boundary_error());
+    }
+    if target_claim != PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM {
+        return Err(BenchmarkGateError::failed(
+            "private real-corpus OCR benchmark requires throughput target claim",
+        ));
+    }
+    if !is_safe_benchmark_token(private_ocr_str(report, "run_id")?)
+        || !is_safe_platform_label(private_ocr_str(report, "platform")?)
+        || !is_safe_benchmark_token(private_ocr_str(report, "engine_kind")?)
+    {
+        return Err(private_ocr_boundary_error());
+    }
+
+    Ok(())
+}
+
+fn validate_private_real_ocr_throughput_shape(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = report.as_object() else {
+        return Err(private_ocr_boundary_error());
+    };
+    for key in object.keys() {
+        if !is_allowed_private_real_ocr_key(key) {
+            return Err(BenchmarkGateError::failed(
+                "unsupported private real-corpus OCR benchmark field",
+            ));
+        }
+    }
+    private_ocr_str(report, "schema_version")?;
+    private_ocr_str(report, "run_id")?;
+    private_ocr_str(report, "platform")?;
+    private_ocr_str(report, "dataset_kind")?;
+    private_ocr_usize(report, "page_count")?;
+    private_ocr_usize(report, "document_count")?;
+    private_ocr_usize(report, "scanned_document_count")?;
+    private_ocr_str(report, "engine_kind")?;
+    let latency = report
+        .get("page_latency_ms")
+        .ok_or_else(private_ocr_boundary_error)?;
+    validate_private_real_ocr_latency_shape(latency)?;
+    private_ocr_number(report, "pages_per_second")?;
+    private_ocr_str(report, "target_claim")?;
+    private_ocr_str(report, "corpus_origin")?;
+    private_ocr_str(report, "privacy_boundary")?;
+    private_ocr_bool(report, "contains_raw_ocr_text")?;
+    private_ocr_bool(report, "contains_page_images")?;
+    private_ocr_bool(report, "contains_resume_paths")?;
+    private_ocr_bool(report, "contains_document_ids")?;
+    private_ocr_bool(report, "contains_page_ids")?;
+    private_ocr_bool(report, "contains_command_paths")?;
+    private_ocr_str(report, "dataset_manifest_sha256")?;
+    private_ocr_str(report, "ocr_runtime_manifest_sha256")?;
+    private_ocr_str(report, "renderer_manifest_sha256")?;
+    private_ocr_str(report, "language_pack_manifest_sha256")?;
+    private_ocr_str(report, "scope")?;
+    Ok(())
+}
+
+fn validate_private_real_ocr_latency_shape(
+    latency: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = latency.as_object() else {
+        return Err(private_ocr_boundary_error());
+    };
+    for key in object.keys() {
+        if !matches!(key.as_str(), "samples" | "p50" | "p95" | "p99") {
+            return Err(BenchmarkGateError::failed(
+                "unsupported private real-corpus OCR latency field",
+            ));
+        }
+    }
+    private_ocr_usize(latency, "samples")?;
+    let p50 = private_ocr_number(latency, "p50")?;
+    let p95 = private_ocr_number(latency, "p95")?;
+    let p99 = private_ocr_number(latency, "p99")?;
+    if p50 > p95 || p95 > p99 {
+        return Err(private_ocr_boundary_error());
+    }
+    Ok(())
+}
+
+fn is_allowed_private_real_ocr_key(key: &str) -> bool {
+    matches!(
+        key,
+        "schema_version"
+            | "run_id"
+            | "platform"
+            | "dataset_kind"
+            | "page_count"
+            | "document_count"
+            | "scanned_document_count"
+            | "engine_kind"
+            | "page_latency_ms"
+            | "pages_per_second"
+            | "target_claim"
+            | "corpus_origin"
+            | "privacy_boundary"
+            | "contains_raw_ocr_text"
+            | "contains_page_images"
+            | "contains_resume_paths"
+            | "contains_document_ids"
+            | "contains_page_ids"
+            | "contains_command_paths"
+            | "dataset_manifest_sha256"
+            | "ocr_runtime_manifest_sha256"
+            | "renderer_manifest_sha256"
+            | "language_pack_manifest_sha256"
+            | "scope"
+    )
+}
+
+fn private_ocr_str<'a>(
+    value: &'a serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<&'a str, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(private_ocr_boundary_error)
+}
+
+fn private_ocr_bool(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<bool, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(private_ocr_boundary_error)
+}
+
+fn private_ocr_usize(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<usize, BenchmarkGateError> {
+    let number = value
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(private_ocr_boundary_error)?;
+    usize::try_from(number).map_err(|_| private_ocr_boundary_error())
+}
+
+fn private_ocr_number(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<f64, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|number| number.is_finite() && *number >= 0.0)
+        .ok_or_else(private_ocr_boundary_error)
+}
+
+fn private_ocr_boundary_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private real-corpus OCR benchmark requires redacted local boundary")
 }
 
 fn required_str<'a>(

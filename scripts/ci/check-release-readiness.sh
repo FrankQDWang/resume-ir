@@ -79,6 +79,8 @@ require_text "$stdout_file" '"label": "dedupe quality"'
 require_text "$stdout_file" "private business labeled dedupe-quality evidence is not available"
 require_text "$stdout_file" '"label": "vector quality"'
 require_text "$stdout_file" "private business labeled vector-quality evidence is not available"
+require_text "$stdout_file" '"label": "OCR throughput"'
+require_text "$stdout_file" "private real-corpus OCR throughput evidence is not available"
 require_text "$stdout_file" '"label": "OCR engine license/distribution"'
 require_text "$stdout_file" '"label": "embedding model license/distribution"'
 require_text "$stdout_file" '"label": "cross-platform release validation"'
@@ -105,5 +107,6 @@ require_text "$workflow_guard" "check-release-readiness.sh"
 require_text "$release_workflow" "./scripts/ci/check-release-readiness.sh"
 require_text "$runbook" "resume-cli --data-dir <local-data-dir> release-readiness --json"
 require_text "$runbook" "vector-gate --report private-vector-quality.json"
+require_text "$runbook" "ocr-gate --report private-ocr-throughput.json"
 
 printf '%s\n' "release readiness check passed"

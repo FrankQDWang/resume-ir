@@ -62,6 +62,11 @@ require_text "$release_runbook" "vector-gate"
 require_text "$release_runbook" 'target_claim: "vector_quality_target_met"'
 require_text "$release_runbook" 'vector_taxonomy:'
 require_text "$release_runbook" "model_manifest_sha256"
+require_text "$release_runbook" "ocr-gate --report private-ocr-throughput.json"
+require_text "$release_runbook" 'target_claim: "ocr_throughput_target_met"'
+require_text "$release_runbook" "ocr_runtime_manifest_sha256"
+require_text "$release_runbook" "renderer_manifest_sha256"
+require_text "$release_runbook" "language_pack_manifest_sha256"
 require_text "$release_runbook" 'query_mode: "hybrid"'
 require_text "$release_runbook" 'retrieval_layers:'
 require_text "$release_runbook" "hot_index: true"

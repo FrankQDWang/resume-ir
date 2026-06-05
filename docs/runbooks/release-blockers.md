@@ -21,6 +21,7 @@ unresolved.
 - private business labeled field-quality evidence is not available
 - private business labeled dedupe-quality evidence is not available
 - private business labeled vector-quality evidence is not available
+- private real-corpus OCR throughput evidence is not available
 - a reviewed licensed OCR engine is not selected or distributed
 - a reviewed licensed embedding model is not selected or distributed
 - Windows and macOS cross-platform validation are not complete
@@ -162,6 +163,30 @@ embed, or sanitize private vector-quality reports and cannot clear the vector
 quality blocker until representative local business labels, a reviewed model
 manifest, and aggregate semantic retrieval metrics exist.
 
+Run private real-corpus OCR throughput gates only against local redacted
+aggregate reports. The report must use `dataset_kind: "private-real-corpus"`,
+`target_claim: "ocr_throughput_target_met"`, `corpus_origin:
+"private_local"`, `privacy_boundary: "redacted_local_aggregate"`, false raw
+OCR text/page image/path/document-ID/page-ID/command-path booleans, and sha256
+digests for the dataset, OCR runtime, renderer, and language-pack manifests
+(`dataset_manifest_sha256`, `ocr_runtime_manifest_sha256`,
+`renderer_manifest_sha256`, and `language_pack_manifest_sha256`). Do not upload
+reports if they contain raw OCR text, page images, resume text, filenames,
+local paths, document IDs, page IDs, command paths, runtime paths, or notes.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  ocr-gate --report private-ocr-throughput.json \
+  --require-private-real-corpus \
+  --min-pages 500 --max-p95-ms 1000 --min-pages-per-second 1
+```
+
+This gate is a release evidence validator. It does not run OCR, upload, label,
+or sanitize private OCR throughput reports and cannot clear the OCR throughput
+blocker until representative local scanned-resume runs, reviewed runtime/
+renderer/language-pack manifests, and aggregate latency/throughput metrics
+exist.
+
 Generate a local release dry-run manifest only after release binaries have been
 built:
 
@@ -273,6 +298,8 @@ Stable release requires current evidence for:
 - macOS install, upgrade, uninstall, LaunchAgent start, LaunchAgent stop, signing,
   and notarization
 - 100k and 1M hot-index hybrid benchmark runs on representative hardware
+- private real-corpus OCR throughput gate with reviewed OCR runtime, renderer,
+  and language-pack manifests
 - OCR and embedding model license review
 - OCR runtime manifest checksum validation
 - model pack manifest checksum validation

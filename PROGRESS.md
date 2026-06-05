@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, and S197 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, and S198 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -270,7 +270,13 @@ obsolete preliminary files and checklists are not product scope.
   and per-document failure aggregate output. The benchmark runner can now
   exercise synthetic OCR page throughput through the existing local command or
   Tesseract OCR clients and gate redacted page-latency/pages-per-second reports
-  with explicit synthetic opt-in. OCR runtime diagnostics now support combined
+  with explicit synthetic opt-in. Private real-corpus OCR throughput release
+  evidence is now accepted only as strict redacted local aggregate JSON with
+  dataset, OCR runtime, renderer, and language-pack manifest digests, explicit
+  false raw OCR text/page image/resume-path/document-ID/page-ID/command-path
+  booleans, and aggregate latency/throughput metrics; release-readiness now
+  keeps stable release blocked until representative private real-corpus OCR
+  throughput evidence exists. OCR runtime diagnostics now support combined
   Tesseract language requests such as `eng+chi_sim` by checking each requested
   language pack without dumping the full local language list; this machine also
   verified a local Apache-2.0 `tesseract-lang` install and `eng+chi_sim`
@@ -293,8 +299,8 @@ obsolete preliminary files and checklists are not product scope.
   current OCR jobs and current OCR page-cache entries that are no longer shared
   by visible documents. Missing or BLOCKED work includes final OCR/renderer
   distribution approval, full non-English OCR quality and language-pack distribution policy, full-library scanned
-  resume OCR proof beyond bounded local witness budgets, real large-corpus OCR
-  throughput proof, and Windows/macOS
+  resume OCR proof beyond bounded local witness budgets, actual representative
+  private real-corpus OCR throughput runs, and Windows/macOS
   validation.
 - P5 packaging/platform: not production-ready. A local CLI service lifecycle
   now writes, reports, removes, starts, stops, and reports runtime state for a
@@ -389,9 +395,10 @@ obsolete preliminary files and checklists are not product scope.
   throughput, labeled vector-quality, private real-corpus query release-
   evidence, private business vector-quality release-evidence, private business
   field-quality release-evidence, and private business dedupe-quality release-
-  evidence gates; query, OCR, and vector smoke gates are wired into PR and
-  nightly workflows. Synthetic runs must opt in with `--allow-synthetic` and
-  cannot prove 100k/1M production performance.
+  evidence gates, plus private real-corpus OCR throughput release-evidence
+  gates; query, OCR, and vector smoke gates are wired into PR and nightly
+  workflows. Synthetic runs must opt in with `--allow-synthetic` and cannot
+  prove 100k/1M production performance or representative OCR throughput.
   Private real-corpus query
   reports are accepted only as strict redacted local aggregate JSON with local
   corpus/query-set digests, explicit hot-index hybrid query evidence
@@ -408,13 +415,19 @@ obsolete preliminary files and checklists are not product scope.
   aggregate JSON with dataset/annotation/model manifest digests, aggregate
   recall/MRR/NDCG metrics, and explicit proof that raw queries, candidate text,
   resume paths, sample identifiers, candidate identifiers, and vectors are not
-  included. The release-readiness gate and release blockers runbook now include
-  vector quality as a separate blocked release criterion instead of relying only
-  on the embedding model license/distribution blocker.
+  included. Private real-corpus OCR throughput reports are accepted only as
+  strict redacted aggregate JSON with dataset/OCR-runtime/renderer/language-pack
+  manifest digests, aggregate latency and throughput metrics, and explicit
+  proof that raw OCR text, page images, resume paths, document identifiers, page
+  identifiers, and command paths are not included. The release-readiness gate
+  and release blockers runbook now include vector quality and OCR throughput as
+  separate blocked release criteria instead of relying only on the model and OCR
+  license/distribution blockers.
   Missing or BLOCKED work includes actual 100k/1M real-corpus benchmark runs,
   real-corpus nightly/release performance evidence, real business labeled field,
-  dedupe, and vector datasets/results, licensed model selection/distribution,
-  real semantic/vector quality datasets/results, destructive
+  dedupe, and vector datasets/results, actual representative private
+  real-corpus OCR throughput runs, licensed model selection/distribution, real
+  semantic/vector quality datasets/results, destructive
   service-level kill/actual ENOSPC fault injection, actual battery/external-
   drive hardware fault drills, Windows/macOS validation, and cross-platform
   performance evidence.
@@ -619,8 +632,84 @@ obsolete preliminary files and checklists are not product scope.
 | S195 | Product hosted Windows daemon startup-queue test stability complete locally | The pushed S194 run cleared the previous full-text commit failure but hosted Windows Platform CI then failed in `foreground_import_scheduler_processes_task_enqueued_after_startup`: after the test waited for daemon metadata readiness, its helper reopened the same live data-dir and reran migrations, producing `MetaStoreError { kind: Migration }` while the foreground import worker loop was active. Root cause: the test was doing redundant migration DDL after daemon readiness had already proved the store was migrated. After implementation, the startup-queue test uses a ready-store helper that opens the migrated data-dir and inserts the queued task without rerunning migrations, while the existing helper still migrates fresh stores for pre-daemon setup. Hosted-failing exact test, full `s4_daemon`, focused daemon clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice stabilizes hosted Windows daemon test harness startup-queue evidence only. It does not change production daemon behavior, prove hosted Windows CI has passed until the pushed PR check completes, or clear platform installer/service, signing, notarization, OCR/model licensing, benchmark, large-corpus, or stable release blockers. |
 | S196 | Product private business vector-quality release evidence gate complete locally | Focused regression first failed because `VectorQualityGateConfig::require_private_business_labeled` did not exist. After implementation, vector-quality gates can require `private-business-labeled` reports, reject ordinary labeled reports for release evidence, reject private reports that contain raw query/candidate/path/sample/candidate-id/vector surfaces or missing dataset/annotation/model manifest digests, and accept only redacted aggregate private-local vector-quality evidence with recall/MRR/NDCG metrics and fixed taxonomy. Focused RED/GREEN, full `benchmark-runner`, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice adds the release-evidence boundary only. It does not create or upload private labels, run a real vector-quality evaluation, select or license a production model, prove model distribution, prove real semantic quality, prove real 100k/1M ANN latency, validate platforms, or clear stable release readiness. |
 | S197 | Product release-readiness vector-quality blocker complete locally | Focused release-readiness tests first failed because stable-release blockers did not include `vector quality`: text output omitted `vector quality: blocked`, and JSON still reported 12 blockers. After implementation, `release-readiness` reports a separate `vector quality` blocker, the release-readiness CI check asserts the label and detail, and the release blockers runbook plus runbook policy guard document the private business `vector-gate` evidence boundary with dataset/annotation/model manifest digests and no raw query/candidate/path/id/vector payloads. Focused RED/GREEN, full release-readiness CLI tests, focused clippy, fmt, diff check, public guard, policy scripts, and full local verification passed locally. | This slice wires vector-quality evidence into release readiness only. It does not create private labels, run real semantic evaluation, select/license/distribute a model, prove real vector quality or ANN latency, clear field/dedupe/benchmark/platform blockers, or make stable release ready. |
+| S198 | Product private real-corpus OCR throughput release evidence gate complete locally | Focused OCR gate tests first failed because `OcrThroughputGateConfig` had no private-real-corpus release mode and `resume-benchmark ocr-gate` did not accept `--require-private-real-corpus`. After implementation, OCR throughput gates can reject synthetic reports for release evidence, accept only strict `private-real-corpus` redacted local aggregate reports with dataset/OCR-runtime/renderer/language-pack manifest digests, aggregate latency/throughput metrics, target claim `ocr_throughput_target_met`, and explicit false raw OCR text/page image/resume-path/document-ID/page-ID/command-path booleans. Release-readiness now reports an `OCR throughput` blocker, and the release blockers runbook plus policy guards document the private OCR evidence boundary. Focused RED/GREEN, full `benchmark-runner`, release-readiness tests, runbook/readiness checks, focused clippy, fmt/diff checks, public guard, and full local verification passed locally. | This slice adds the release-evidence validator and blocker only. It does not run a real OCR benchmark, upload or sanitize private OCR reports, choose/license/distribute OCR runtimes or language packs, prove full-library scanned OCR throughput, validate platforms, sign/release, or make stable release ready. |
 
 ## Command Log
+
+### S198
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner ocr_throughput_gate_requires_private_real_release_boundary -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_gate_requires_private_real_corpus_report -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness release_readiness_json_reports_blockers_without_local_path_leaks -- --exact
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- The focused OCR library regression failed before implementation because
+  `OcrThroughputGateConfig::require_private_real_corpus` did not exist.
+- The focused OCR CLI regression failed before implementation because
+  `resume-benchmark ocr-gate --require-private-real-corpus` did not reject
+  synthetic reports with `private real-corpus OCR benchmark required` or accept
+  the strict private real-corpus report.
+- The release-readiness JSON regression failed before implementation because
+  the blocker list still had 13 items instead of the expected 14 with
+  `OCR throughput`.
+- The runbook policy check failed before documentation because
+  `docs/runbooks/release-blockers.md` did not mention
+  `ocr-gate --report private-ocr-throughput.json`.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner ocr_throughput_gate_requires_private_real_release_boundary -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_gate_requires_private_real_corpus_report -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-readiness.sh
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli --all-targets -- -D warnings
+```
+
+Output summary:
+
+- `ocr-gate --require-private-real-corpus` rejects synthetic OCR throughput
+  reports and accepts strict private real-corpus redacted aggregate OCR
+  throughput reports.
+- Private OCR reports must include dataset, OCR runtime, renderer, and language
+  pack manifest digests, aggregate page latency/throughput, target claim
+  `ocr_throughput_target_met`, and false raw OCR text/page image/resume-path/
+  document-ID/page-ID/command-path booleans.
+- Full `benchmark-runner`, full `s161_release_readiness`, runbook/readiness
+  policy checks, focused `benchmark-runner` clippy, and focused `resume-cli`
+  clippy passed locally.
+
+Final checkpoint verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S198 uses synthetic data only. It does not read, print, commit, or upload
+  private resumes, filenames, paths, raw text, local diagnostics, tokens, model
+  caches, private labels, OCR text, page images, runtime paths, command paths,
+  or vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S197
 
