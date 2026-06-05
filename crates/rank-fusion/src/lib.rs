@@ -241,15 +241,10 @@ impl SearchFilters {
             }
         }
 
-        if !self.school_tiers_any.is_empty() {
-            let profile_tiers = profile.school_tiers().iter().collect::<BTreeSet<_>>();
-            if !self
-                .school_tiers_any
-                .iter()
-                .any(|school_tier| profile_tiers.contains(school_tier))
-            {
-                return false;
-            }
+        if !self.school_tiers_any.is_empty()
+            && !school_tiers_match_any(&self.school_tiers_any, profile.school_tiers())
+        {
+            return false;
         }
 
         if !self.skills_any.is_empty() {
@@ -274,6 +269,21 @@ impl SearchFilters {
 
         true
     }
+}
+
+fn school_tiers_match_any(filters: &[SchoolTier], profile_tiers: &[SchoolTier]) -> bool {
+    let requested_unknown = filters.contains(&SchoolTier::Unknown);
+    if requested_unknown
+        && (profile_tiers.is_empty() || profile_tiers.contains(&SchoolTier::Unknown))
+    {
+        return true;
+    }
+
+    let profile_tiers = profile_tiers.iter().collect::<BTreeSet<_>>();
+    filters
+        .iter()
+        .filter(|school_tier| **school_tier != SchoolTier::Unknown)
+        .any(|school_tier| profile_tiers.contains(school_tier))
 }
 
 impl fmt::Debug for SearchFilters {

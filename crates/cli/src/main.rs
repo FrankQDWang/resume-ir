@@ -5709,20 +5709,9 @@ fn field_filter_doc_id_prefilter(
         );
     }
     if !filters.school_tiers_any().is_empty() {
-        let school_tier_values = filters
-            .school_tiers_any()
-            .iter()
-            .map(|school_tier| school_tier.canonical().to_string())
-            .collect::<Vec<_>>();
         merge_filter_doc_ids(
             &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::SchoolTier,
-                    &school_tier_values,
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                    false,
-                )
+            school_tier_filter_doc_ids(store, filters.school_tiers_any())
                 .map_err(CliError::store)?,
         );
     }
@@ -5753,6 +5742,33 @@ fn field_filter_doc_id_prefilter(
     }
 
     Ok(allowed_doc_ids)
+}
+
+fn school_tier_filter_doc_ids(
+    store: &MetaStore,
+    school_tiers: &[SchoolTier],
+) -> meta_store::Result<Vec<DocumentId>> {
+    let known_values = school_tiers
+        .iter()
+        .filter(|school_tier| **school_tier != SchoolTier::Unknown)
+        .map(|school_tier| school_tier.canonical().to_string())
+        .collect::<Vec<_>>();
+    let mut document_ids = Vec::new();
+    if !known_values.is_empty() {
+        document_ids.extend(store.searchable_document_ids_with_entity_values(
+            EntityType::SchoolTier,
+            &known_values,
+            FIELD_FILTER_CONFIDENCE_THRESHOLD,
+            false,
+        )?);
+    }
+    if school_tiers.contains(&SchoolTier::Unknown) {
+        document_ids.extend(store.searchable_document_ids_without_entity_type(
+            EntityType::SchoolTier,
+            FIELD_FILTER_CONFIDENCE_THRESHOLD,
+        )?);
+    }
+    Ok(document_ids)
 }
 
 fn merge_filter_doc_ids(current: &mut Option<BTreeSet<String>>, next: Vec<DocumentId>) {

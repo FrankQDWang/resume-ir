@@ -644,8 +644,88 @@ obsolete preliminary files and checklists are not product scope.
 | S199 | Product synthetic query benchmark streaming complete locally | A focused CLI regression first failed because redacted synthetic benchmark reports did not include `generation_mode: "streaming"`. After implementation, `run_synthetic_query_benchmark` streams generated synthetic documents directly into the full-text index instead of collecting the full document set into a `Vec`, and synthetic benchmark reports expose the streaming generation mode for runbook audit. The release blockers runbook and runbook policy guard now require that boundary. Focused RED/GREEN, full `benchmark-runner`, runbook guard, focused clippy, fmt/diff checks, public guard, and full local verification passed locally. | This slice improves scalable synthetic pressure-run feasibility only. It does not run a real 100k/1M private benchmark, prove production P95, produce representative real-corpus evidence, clear OCR/model licensing, validate platforms, or make stable release ready. |
 | S200 | Product school-tier extraction and filtering complete locally | Focused tests first failed because `FieldType::SchoolTier`, rank-fusion `SchoolTier` filters, and import mapping for the new field did not exist. After implementation, extractor-rules recognizes explicit `985`, `211`, `双一流`, overseas, and regular-school evidence inside bounded education/school context, persists canonical `school_tier` entity mentions, wires the SQLite entity whitelist and benchmark field labels, and supports `--school-tier` filtering through direct CLI search plus CLI/daemon IPC search payloads. Focused RED/GREEN, full extractor/rank/import/meta-store/benchmark tests, persisted-field and search-IPC CLI tests, daemon search-IPC tests, focused clippy, and fmt passed locally. | This slice uses synthetic/temp fixtures only. It does not infer school tier from broad school dictionaries, prove real business field-quality metrics, evaluate private resume corpora, clear broad multilingual education coverage, or make stable release ready. |
 | S201 | Product field-quality school-tier release gate complete locally | Focused RED tests first failed because private-business field-quality reports without `school_tier` metrics were accepted by both the library gate and CLI gate. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `school_tier` metrics for private business release evidence, complete strict reports include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, full `benchmark-runner`, and runbook guard passed locally. | This slice tightens release-evidence validation only. It does not create private labels, run real business field-quality evaluation, prove production `school_tier` F1 on representative resumes, infer tier from broad school dictionaries, or make stable release ready. |
+| S202 | Product unknown school-tier filtering complete locally | Focused tests first failed because `SchoolTier::Unknown` did not match profiles with no school-tier evidence, CLI `--school-tier unknown` returned no target when known-tier decoys consumed the full-text top-k window, `MetaStore` had no missing-entity prefilter helper, and daemon IPC had the same post-filter-only top-k gap. After implementation, `unknown` means no high-confidence persisted `school_tier` mention on a searchable visible version, known and unknown tier filters are unioned before intersecting with other field filters, and both CLI and daemon full-text search apply the prefilter before top-k truncation. Focused RED/GREEN and related rank/meta-store/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not infer unknown as an extracted entity, read real resumes, prove broad school dictionaries, produce private field-quality evidence, or make stable release ready. |
 
 ## Command Log
+
+### S202
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_unknown_school_tier_when_no_tier_evidence_exists -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite searchable_document_ids_without_entity_type_matches_visible_versions_only -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff -- --exact
+```
+
+Output summary:
+
+- The rank-fusion regression failed before implementation because
+  `SchoolTier::Unknown` did not match a profile with no school-tier evidence.
+- The CLI regression failed before implementation because
+  `--school-tier unknown` returned zero results after known-tier decoys consumed
+  the full-text top-k candidate window.
+- The meta-store regression failed before implementation because the missing
+  entity-type helper did not exist.
+- The daemon IPC regression failed before implementation because full-text
+  search filtered only after top-k candidate retrieval, returning zero results.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_unknown_school_tier_when_no_tier_evidence_exists -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite searchable_document_ids_without_entity_type_matches_visible_versions_only -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_school_tier_mentions_and_filters_search_without_output_leaks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc
+```
+
+Output summary:
+
+- `unknown` school-tier filters now match profiles with no tier evidence while
+  excluding profiles with known tiers.
+- The SQLite helper returns searchable visible versions without high-confidence
+  `school_tier` mentions, treating low-confidence tier mentions as absent and
+  excluding deleted, discovered, and hidden-only evidence.
+- CLI and daemon full-text search prefilter `unknown` before top-k truncation,
+  while existing known-tier import/filter and IPC behavior remain covered.
+
+Final checkpoint verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p rank-fusion -p meta-store -p resume-cli -p resume-daemon --all-targets -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Formatter check passed.
+- Focused clippy initially reported a collapsible nested `if` introduced in
+  `rank-fusion`; after collapsing the condition, the same clippy command passed
+  for rank-fusion, meta-store, resume-cli, and resume-daemon.
+- Whitespace diff check and public repo guard passed.
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S202 uses synthetic temp files and synthetic in-memory/file-backed stores
+  only. It does not read, print, commit, or upload private resumes, filenames,
+  paths, raw text, local diagnostics, tokens, model caches, private labels, OCR
+  text, page images, command paths, or vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S201
 

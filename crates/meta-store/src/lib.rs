@@ -1670,6 +1670,48 @@ impl MetaStore {
         Ok(document_ids)
     }
 
+    pub fn searchable_document_ids_without_entity_type(
+        &self,
+        entity_type: EntityType,
+        min_confidence: f32,
+    ) -> Result<Vec<DocumentId>> {
+        validate_confidence_threshold(min_confidence, "entity_mention.confidence")?;
+
+        let connection = self.connection.borrow();
+        let mut statement = connection
+            .prepare(
+                "\
+                SELECT DISTINCT document.id
+                FROM document AS document
+                JOIN resume_version AS version ON version.document_id = document.id
+                WHERE document.is_deleted = 0
+                    AND document.status IN ('indexed_partial', 'searchable')
+                    AND version.visibility = 'searchable'
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM entity_mention AS mention
+                        WHERE mention.resume_version_id = version.id
+                            AND mention.entity_type = ?1
+                            AND mention.confidence >= ?2
+                    )
+                ORDER BY document.file_name",
+            )
+            .map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                entity_type_to_storage(&entity_type),
+                f64::from(min_confidence),
+            ])
+            .map_err(MetaStoreError::storage)?;
+        let mut document_ids = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            document_ids.push(read_id::<DocumentId>(row, 0, "document.id")?);
+        }
+
+        Ok(document_ids)
+    }
+
     pub fn upsert_ocr_page_cache_entry(&self, entry: &OcrPageCacheEntry) -> Result<()> {
         validate_ocr_page_cache_entry(entry)?;
         let connection = self.connection.borrow();

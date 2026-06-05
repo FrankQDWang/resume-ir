@@ -1454,6 +1454,100 @@ fn entity_mentions_replace_query_and_redact_values() {
 }
 
 #[test]
+fn searchable_document_ids_without_entity_type_matches_visible_versions_only() {
+    let store = migrated_store();
+    let no_tier_document = document("without-school-tier", false, DocumentStatus::Searchable);
+    let known_tier_document = document("with-school-tier", false, DocumentStatus::Searchable);
+    let low_confidence_document = document(
+        "low-confidence-school-tier",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let hidden_version_document = document(
+        "hidden-school-tier-version",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let discovered_document =
+        document("discovered-without-tier", false, DocumentStatus::Discovered);
+    let deleted_document = document("deleted-without-tier", true, DocumentStatus::Deleted);
+    for document in [
+        &no_tier_document,
+        &known_tier_document,
+        &low_confidence_document,
+        &hidden_version_document,
+        &discovered_document,
+        &deleted_document,
+    ] {
+        store.upsert_document(document).unwrap();
+    }
+
+    let no_tier_version =
+        resume_version("without-school-tier-version", no_tier_document.id.clone());
+    let known_tier_version =
+        resume_version("with-school-tier-version", known_tier_document.id.clone());
+    let low_confidence_version = resume_version(
+        "low-confidence-school-tier-version",
+        low_confidence_document.id.clone(),
+    );
+    let mut hidden_version = resume_version(
+        "hidden-school-tier-version",
+        hidden_version_document.id.clone(),
+    );
+    hidden_version.visibility = ResumeVisibility::Hidden;
+    let discovered_version = resume_version(
+        "discovered-without-tier-version",
+        discovered_document.id.clone(),
+    );
+    let deleted_version =
+        resume_version("deleted-without-tier-version", deleted_document.id.clone());
+    for version in [
+        &no_tier_version,
+        &known_tier_version,
+        &low_confidence_version,
+        &hidden_version,
+        &discovered_version,
+        &deleted_version,
+    ] {
+        store.upsert_resume_version(version).unwrap();
+    }
+
+    let known_tier = entity_mention(
+        "known-school-tier",
+        &known_tier_version.id,
+        EntityType::SchoolTier,
+        "985",
+        Some("985"),
+        10..13,
+        0.95,
+    );
+    store
+        .replace_entity_mentions(&known_tier_version.id, &[known_tier])
+        .unwrap();
+    let low_confidence_tier = entity_mention(
+        "low-confidence-school-tier",
+        &low_confidence_version.id,
+        EntityType::SchoolTier,
+        "985",
+        Some("985"),
+        10..13,
+        0.40,
+    );
+    store
+        .replace_entity_mentions(&low_confidence_version.id, &[low_confidence_tier])
+        .unwrap();
+
+    let document_ids = store
+        .searchable_document_ids_without_entity_type(EntityType::SchoolTier, 0.75)
+        .unwrap();
+
+    assert_eq!(
+        document_ids,
+        vec![low_confidence_document.id, no_tier_document.id]
+    );
+}
+
+#[test]
 fn contact_entity_mentions_do_not_persist_contact_values() {
     let db_path = temp_db_path("private-contact-mention");
     let store = MetaStore::open(&db_path).unwrap();

@@ -2624,11 +2624,131 @@ fn daemon_fulltext_search(
     let candidate_limit = args.top_k.saturating_mul(5).clamp(args.top_k, 100);
     let plan = plan_search(&args.query, candidate_limit)
         .map_err(|_| IpcCommandError::BadRequest("query must have searchable terms"))?;
-    let hits = index
-        .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
-        .map_err(DaemonError::fulltext)
-        .map_err(IpcCommandError::Internal)?;
+    let allowed_doc_ids = daemon_field_filter_doc_id_prefilter(store, &args.filters)?;
+    let query = SearchQuery::new(plan.query_text()).with_limit(plan.limit());
+    let hits = match &allowed_doc_ids {
+        Some(doc_ids) => index.search_allowed_doc_ids(query, doc_ids),
+        None => index.search(query),
+    }
+    .map_err(DaemonError::fulltext)
+    .map_err(IpcCommandError::Internal)?;
     daemon_visible_hits(store, hits, &args.filters, args.top_k)
+}
+
+fn daemon_field_filter_doc_id_prefilter(
+    store: &MetaStore,
+    filters: &SearchFilters,
+) -> std::result::Result<Option<BTreeSet<String>>, IpcCommandError> {
+    if filters.is_empty() {
+        return Ok(None);
+    }
+
+    let mut allowed_doc_ids = None;
+    if let Some(degree_min) = filters.degree_min() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Degree,
+                    &daemon_degree_filter_values(degree_min),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    false,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.school_tiers_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            daemon_school_tier_filter_doc_ids(store, filters.school_tiers_any())
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.skills_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Skill,
+                    filters.skills_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if let Some(years_min) = filters.years_experience_min() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_numeric_entity_min(
+                    EntityType::YearsExperience,
+                    years_min,
+                    FIELD_CONFIDENCE_THRESHOLD,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+
+    Ok(allowed_doc_ids)
+}
+
+fn daemon_school_tier_filter_doc_ids(
+    store: &MetaStore,
+    school_tiers: &[SchoolTier],
+) -> meta_store::Result<Vec<DocumentId>> {
+    let known_values = school_tiers
+        .iter()
+        .filter(|school_tier| **school_tier != SchoolTier::Unknown)
+        .map(|school_tier| school_tier.canonical().to_string())
+        .collect::<Vec<_>>();
+    let mut document_ids = Vec::new();
+    if !known_values.is_empty() {
+        document_ids.extend(store.searchable_document_ids_with_entity_values(
+            EntityType::SchoolTier,
+            &known_values,
+            FIELD_CONFIDENCE_THRESHOLD,
+            false,
+        )?);
+    }
+    if school_tiers.contains(&SchoolTier::Unknown) {
+        document_ids.extend(store.searchable_document_ids_without_entity_type(
+            EntityType::SchoolTier,
+            FIELD_CONFIDENCE_THRESHOLD,
+        )?);
+    }
+    Ok(document_ids)
+}
+
+fn daemon_merge_filter_doc_ids(current: &mut Option<BTreeSet<String>>, next: Vec<DocumentId>) {
+    let next = next
+        .into_iter()
+        .map(|document_id| document_id.to_string())
+        .collect::<BTreeSet<_>>();
+    match current {
+        Some(current) => {
+            *current = current.intersection(&next).cloned().collect();
+        }
+        None => *current = Some(next),
+    }
+}
+
+fn daemon_degree_filter_values(min_degree: DegreeLevel) -> Vec<String> {
+    [
+        DegreeLevel::HighSchool,
+        DegreeLevel::Associate,
+        DegreeLevel::Bachelor,
+        DegreeLevel::Master,
+        DegreeLevel::Doctor,
+    ]
+    .into_iter()
+    .filter(|degree| *degree >= min_degree)
+    .map(|degree| degree.canonical().to_string())
+    .collect()
 }
 
 fn record_daemon_query_observation(store: &MetaStore, duration: Duration, result_count: usize) {

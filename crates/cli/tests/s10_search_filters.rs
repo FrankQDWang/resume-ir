@@ -176,6 +176,73 @@ fn filtered_search_prefilters_fields_before_fulltext_top_k_cutoff() {
     remove_dir(&resume_root);
 }
 
+#[test]
+fn filtered_search_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-unknown-tier-data");
+    let resume_root = temp_dir("search-filter-unknown-tier-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("known-tier-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Known Tier Decoy {index}
+Education
+School: Synthetic 985 University (985/211/dual first class)
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("unknown-tier-target.txt"),
+        "\
+Candidate Unknown Tier Target
+Education
+School: Synthetic Regional College
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--school-tier",
+            "unknown",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run unknown school-tier filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("unknown-tier-target.txt"));
+    assert!(!stdout.contains("known-tier-decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
 fn import_fixtures(data_dir: &Path) {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

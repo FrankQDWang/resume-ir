@@ -258,6 +258,123 @@ fn daemon_search_ipc_includes_redacted_soft_dedupe_hints() {
 }
 
 #[test]
+fn daemon_search_ipc_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-ipc-unknown-tier-data");
+    let target_doc = DocumentId::from_non_secret_parts(&["s48", "unknown-tier-target"]);
+    let target_version =
+        ResumeVersionId::from_non_secret_parts(&["s48", "unknown-tier-target-version"]);
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut index_documents = Vec::new();
+
+    for index in 0..5 {
+        let document_id =
+            DocumentId::from_non_secret_parts(&["s48", &format!("tier-decoy-{index}")]);
+        let version_id = ResumeVersionId::from_non_secret_parts(&[
+            "s48",
+            &format!("tier-decoy-version-{index}"),
+        ]);
+        let file_name = format!("known-tier-decoy-{index}.pdf");
+        let clean_text = format!("Known tier decoy {index} {noisy_query_text}");
+        seed_searchable_resume(SeedResume {
+            data_dir: &data_dir,
+            document_id: &document_id,
+            version_id: &version_id,
+            file_name: &file_name,
+            clean_text: &clean_text,
+            degree: "bachelor",
+            skill: "Java",
+            years: 4.0,
+            school_tier: "985",
+        });
+        index_documents.push(IndexDocument {
+            doc_id: document_id.to_string(),
+            version_id: version_id.to_string(),
+            file_name,
+            clean_text: clean_text.clone(),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: clean_text,
+            }],
+            is_deleted: false,
+        });
+    }
+
+    seed_searchable_resume(SeedResume {
+        data_dir: &data_dir,
+        document_id: &target_doc,
+        version_id: &target_version,
+        file_name: "unknown-tier-target.pdf",
+        clean_text: "Unknown tier target needle",
+        degree: "bachelor",
+        skill: "Java",
+        years: 4.0,
+        school_tier: "",
+    });
+    index_documents.push(IndexDocument {
+        doc_id: target_doc.to_string(),
+        version_id: target_version.to_string(),
+        file_name: "unknown-tier-target.pdf".to_string(),
+        clean_text: "Unknown tier target needle".to_string(),
+        sections: vec![IndexSection {
+            section_type: "experience".to_string(),
+            text: "needle".to_string(),
+        }],
+        is_deleted: false,
+    });
+    seed_fulltext_index_vec(&data_dir, index_documents);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "needle",
+            "mode": "fulltext",
+            "top_k": 1,
+            "filters": {
+                "school_tiers_any": ["unknown"]
+            }
+        }),
+    );
+
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or_default();
+    let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(payload["result_count"], 1);
+    let results = payload["results"].as_array().unwrap();
+    assert_eq!(results[0]["doc_id"], target_doc.to_string());
+    assert_eq!(results[0]["version_id"], target_version.to_string());
+    assert!(!response.contains("known-tier-decoy-"));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn daemon_search_ipc_requires_bearer_token_without_leaking_query() {
     let data_dir = temp_dir("search-ipc-auth-data");
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
@@ -487,40 +604,41 @@ fn seed_searchable_resume(seed: SeedResume<'_>) {
             visibility: ResumeVisibility::Searchable,
         })
         .unwrap();
-    store
-        .replace_entity_mentions(
+    let years = seed.years.to_string();
+    let mut mentions = vec![
+        entity_mention(
             seed.version_id,
-            &[
-                entity_mention(
-                    seed.version_id,
-                    "degree",
-                    EntityType::Degree,
-                    seed.degree,
-                    0.95,
-                ),
-                entity_mention(
-                    seed.version_id,
-                    "skill",
-                    EntityType::Skill,
-                    seed.skill,
-                    0.95,
-                ),
-                entity_mention(
-                    seed.version_id,
-                    "years",
-                    EntityType::YearsExperience,
-                    &seed.years.to_string(),
-                    0.95,
-                ),
-                entity_mention(
-                    seed.version_id,
-                    "school-tier",
-                    EntityType::SchoolTier,
-                    seed.school_tier,
-                    0.95,
-                ),
-            ],
-        )
+            "degree",
+            EntityType::Degree,
+            seed.degree,
+            0.95,
+        ),
+        entity_mention(
+            seed.version_id,
+            "skill",
+            EntityType::Skill,
+            seed.skill,
+            0.95,
+        ),
+        entity_mention(
+            seed.version_id,
+            "years",
+            EntityType::YearsExperience,
+            &years,
+            0.95,
+        ),
+    ];
+    if !seed.school_tier.is_empty() {
+        mentions.push(entity_mention(
+            seed.version_id,
+            "school-tier",
+            EntityType::SchoolTier,
+            seed.school_tier,
+            0.95,
+        ));
+    }
+    store
+        .replace_entity_mentions(seed.version_id, &mentions)
         .unwrap();
 }
 
@@ -650,6 +768,10 @@ fn entity_mention_with_raw(
 }
 
 fn seed_fulltext_index<const N: usize>(data_dir: &Path, documents: [IndexDocument; N]) {
+    seed_fulltext_index_vec(data_dir, documents.into_iter().collect());
+}
+
+fn seed_fulltext_index_vec(data_dir: &Path, documents: Vec<IndexDocument>) {
     let index = FullTextIndex::open_or_create(&data_dir.join("search-index")).unwrap();
     index.replace_documents(documents).unwrap();
     index.commit().unwrap();

@@ -57,6 +57,17 @@ fn field_filters_match_any_school_tier() {
 }
 
 #[test]
+fn field_filters_match_unknown_school_tier_when_no_tier_evidence_exists() {
+    let filters = SearchFilters::default().with_school_tiers_any([SchoolTier::Unknown]);
+    let missing_tier = ResumeProfile::new("doc_missing");
+    let known_tier = ResumeProfile::new("doc_known").with_school_tiers([SchoolTier::Regular]);
+
+    assert!(filters.matches(&missing_tier));
+    assert!(!filters.matches(&known_tier));
+    assert_eq!(filters.school_tiers_any()[0].canonical(), "unknown");
+}
+
+#[test]
 fn candidate_fold_keeps_best_ranked_version_per_candidate() {
     let hits = vec![
         RankedHit::new("doc_old", 1, 9.5).with_candidate_key("cand_same"),
