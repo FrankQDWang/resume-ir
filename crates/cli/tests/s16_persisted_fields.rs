@@ -234,6 +234,85 @@ Java island migration
     remove_dir(&resume_root);
 }
 
+#[test]
+fn import_persists_chinese_date_range_and_years_mentions_without_output_leaks() {
+    let data_dir = temp_dir("persisted-chinese-date-data");
+    let resume_root = temp_dir("persisted-chinese-date-resumes");
+    fs::write(
+        resume_root.join("synthetic-chinese-date-candidate.txt"),
+        "\
+Synthetic Date Candidate
+Email: date-candidate@example.test
+Experience
+2020年1月 - 2024年3月
+Synthetic Payments Inc.
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import Chinese date range");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("2020年1月"));
+    assert!(!stdout.contains("date-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-chinese-date-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+    let date_range = mentions
+        .iter()
+        .find(|mention| mention.entity_type == EntityType::DateRange)
+        .unwrap();
+    assert_eq!(
+        date_range.normalized_value.as_deref(),
+        Some("2020-01/2024-03")
+    );
+    assert!(date_range.span_start.is_some());
+    assert!(date_range.span_end.is_some());
+    assert!(!format!("{date_range:?}").contains("2020年1月"));
+
+    let years = mentions
+        .iter()
+        .find(|mention| mention.entity_type == EntityType::YearsExperience)
+        .unwrap();
+    assert_eq!(years.normalized_value.as_deref(), Some("4.2"));
+    assert!(years.span_start.is_some());
+    assert!(years.span_end.is_some());
+    assert!(!format!("{years:?}").contains("2020年1月"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
 fn import_fixtures(data_dir: &Path) {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

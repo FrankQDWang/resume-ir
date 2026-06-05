@@ -55,6 +55,7 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     extract_emails(text, &mut matches);
     extract_phones(text, &mut matches);
     extract_numeric_date_ranges(text, &mut matches);
+    extract_chinese_year_month_date_ranges(text, &mut matches);
     extract_named_month_date_ranges(text, &mut matches);
     derive_years_experience(text, &mut matches);
     extract_schools(text, &mut matches);
@@ -314,6 +315,31 @@ fn extract_numeric_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
         \s*(?:-|–|—|至|到)\s*
         (?P<y2>19\d{2}|20\d{2})[./-](?P<m2>0?[1-9]|1[0-2])
         \b",
+    )
+    .unwrap();
+
+    for captures in regex.captures_iter(text) {
+        let Some(found) = captures.get(0) else {
+            continue;
+        };
+        let normalized = format!(
+            "{}-{}/{}-{}",
+            &captures["y1"],
+            pad_month(&captures["m1"]),
+            &captures["y2"],
+            pad_month(&captures["m2"])
+        );
+        matches.push(date_range_match(found, normalized));
+    }
+}
+
+fn extract_chinese_year_month_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
+    let regex = Regex::new(
+        r"(?x)
+        (?P<y1>19\d{2}|20\d{2})\s*年\s*(?P<m1>0?[1-9]|1[0-2])\s*月?
+        \s*(?:-|–|—|至|到)\s*
+        (?P<y2>19\d{2}|20\d{2})\s*年\s*(?P<m2>0?[1-9]|1[0-2])\s*月?
+        ",
     )
     .unwrap();
 

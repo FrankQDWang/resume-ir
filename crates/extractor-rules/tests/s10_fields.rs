@@ -108,6 +108,41 @@ Experience
 }
 
 #[test]
+fn extracts_chinese_year_month_date_ranges_with_years_evidence() {
+    let text = "\
+Experience
+2020年1月 - 2024年3月
+Synthetic Payments Inc.";
+
+    let matches = extract_strong_fields(text);
+
+    let date_range = matches
+        .iter()
+        .find(|field| field.field_type == FieldType::DateRange)
+        .unwrap();
+    assert_eq!(
+        date_range.normalized_value.as_deref(),
+        Some("2020-01/2024-03")
+    );
+    assert_eq!(
+        &text[date_range.span_start..date_range.span_end],
+        "2020年1月 - 2024年3月"
+    );
+    assert!(date_range.confidence >= 0.9);
+    assert!(!format!("{date_range:?}").contains("2020年1月"));
+
+    let years = matches
+        .iter()
+        .find(|field| field.field_type == FieldType::YearsExperience)
+        .unwrap();
+    assert_eq!(years.normalized_value.as_deref(), Some("4.2"));
+    assert_eq!(
+        &text[years.span_start..years.span_end],
+        date_range.raw_value
+    );
+}
+
+#[test]
 fn extracts_sectioned_skill_aliases_without_header_or_context_noise() {
     let text = "\
 Skills
