@@ -42,6 +42,8 @@ const SNAPSHOT_PUBLISH_RETRY_ATTEMPTS: usize = 100;
 const SNAPSHOT_PUBLISH_RETRY_DELAY: Duration = Duration::from_millis(50);
 const INDEX_OPEN_RETRY_ATTEMPTS: usize = 20;
 const INDEX_OPEN_RETRY_DELAY: Duration = Duration::from_millis(50);
+const INDEX_MUTATION_RETRY_ATTEMPTS: usize = 20;
+const INDEX_MUTATION_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct IndexDocument {
@@ -277,8 +279,11 @@ impl FullTextIndex {
             .ok_or_else(|| FullTextError::internal("index opened read-only"))?
             .lock()
             .map_err(|_| FullTextError::internal("index writer lock poisoned"))?;
-        writer.commit().map_err(FullTextError::tantivy)?;
-        Ok(())
+        retry_transient_index_mutation(
+            || writer.commit().map(|_| ()).map_err(FullTextError::tantivy),
+            INDEX_MUTATION_RETRY_ATTEMPTS,
+            INDEX_MUTATION_RETRY_DELAY,
+        )
     }
 
     pub fn reload(&self) -> Result<()> {
@@ -439,6 +444,33 @@ fn retry_transient_index_open<T>(
 }
 
 fn is_transient_index_open_error(error: &FullTextError) -> bool {
+    is_transient_index_operation_error(error)
+}
+
+fn retry_transient_index_mutation<T>(
+    mut mutate: impl FnMut() -> Result<T>,
+    attempts: usize,
+    retry_delay: Duration,
+) -> Result<T> {
+    let attempts = attempts.max(1);
+    for attempt in 0..attempts {
+        match mutate() {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt + 1 < attempts && is_transient_index_operation_error(&error) => {
+                if !retry_delay.is_zero() {
+                    thread::sleep(retry_delay);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(FullTextError::internal(
+        "full-text index mutation retry exhausted",
+    ))
+}
+
+fn is_transient_index_operation_error(error: &FullTextError) -> bool {
     match error {
         FullTextError::Io { diagnostic } | FullTextError::Tantivy { diagnostic } => {
             is_windows_file_lock_diagnostic(diagnostic)
@@ -1903,6 +1935,30 @@ mod tests {
         .unwrap();
 
         assert_eq!(opened, "opened");
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn index_mutation_retries_transient_windows_access_denied() {
+        let mut attempts = 0_usize;
+
+        let committed = retry_transient_index_mutation(
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    return Err(FullTextError::Tantivy {
+                        diagnostic: "An IO error occurred: 'Access is denied. (os error 5)'"
+                            .to_string(),
+                    });
+                }
+                Ok("committed")
+            },
+            4,
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(committed, "committed");
         assert_eq!(attempts, 3);
     }
 

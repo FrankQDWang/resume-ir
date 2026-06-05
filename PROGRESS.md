@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, and S193 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, and S194 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -346,7 +346,7 @@ obsolete preliminary files and checklists are not product scope.
   local model artifacts, local model-pack manifest validation, targeted fault
   tests, persistent vector snapshot writer-lock protection against stale
   concurrent writers, hosted-Windows full-text snapshot read-open/publish/
-  directory-cleanup retry hardening, metadata-rebuild fallback when import
+  commit/directory-cleanup retry hardening, metadata-rebuild fallback when import
   encounters an unreadable active full-text snapshot,
   local-only macOS LaunchAgent start/stop witness evidence, local-only
   production runbooks, a runbook CI policy guard, a workflow policy guard, and
@@ -372,6 +372,9 @@ obsolete preliminary files and checklists are not product scope.
   file reads, encrypted snapshot envelope reads, and encrypted-header probes
   through the same bounded transient Windows lock retry policy, covering the
   observed `os error 33` read race during incremental snapshot tests.
+  Hosted Windows full-text commits now also route Tantivy writer commits through
+  the bounded transient Windows access-denied retry policy, covering the
+  observed `os error 5` commit race during synthetic full-text snippet tests.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, labeled vector-quality, private real-corpus query release-
   evidence, private business field-quality release-evidence, and private
@@ -594,8 +597,80 @@ obsolete preliminary files and checklists are not product scope.
 | S191 | Product hosted Windows daemon-kill readiness test stability complete locally | PR #9 hosted Windows Platform CI failed in `foreground_daemon_can_be_killed_and_restarted_without_path_leak` because the test killed the foreground daemon after metadata readiness but before stdout readiness evidence was reliably captured, so `resume-daemon foreground ready` was absent from the killed-child stdout assertion. After implementation, the test uses a bounded background stdout reader to wait for the ready line before killing the daemon, then joins the reader after process exit and preserves the restart and path-redaction assertions. Focused exact daemon-kill test, full `resume-daemon`, focused daemon clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice stabilizes hosted Windows daemon-kill test evidence only. It does not change production daemon behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear platform installer/service, signing, notarization, OCR/model licensing, benchmark, or stable release blockers. |
 | S192 | Product labeled school/degree extraction complete locally | Focused tests first failed because labeled school values kept `School:` / `学校：` in normalized values and persisted school raw values still contained label delimiters. After implementation, extractor-rules strips common English and Chinese school labels, points school spans at value text only, normalizes school whitespace/case, maps degree aliases such as MSc, BSc, PhD, `博士研究生`, and `硕士研究生` to canonical degree values, and prevents generic degree aliases from duplicating labeled degree spans. Import persists the stripped School/Degree mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves school/degree dictionaries/normalization only. It does not prove real business field-quality metrics, broad school dictionaries, school tier/985/211 extraction, broad multilingual degree coverage, real corpus results, or stable release readiness. |
 | S193 | Product context-aware degree extraction complete locally | Focused tests first failed because `MS SQL` in a skill section was extracted and persisted as a master's Degree mention. After implementation, extractor-rules extracts unlabeled degree aliases only inside bounded education sections while still extracting explicitly labeled degree lines anywhere, and import no longer persists `MS` from skill evidence as Degree while still persisting education-context `Bachelor of Science`. The field-quality benchmark fixture was updated to put synthetic bachelor evidence inside an `Education` section instead of relying on global degree scanning. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused benchmark regression, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice reduces degree false positives only. It does not prove real business field-quality metrics, broad degree-context coverage, all multilingual education layouts, broad school dictionaries, school tier/985/211 extraction, real corpus results, or stable release readiness. |
+| S194 | Product hosted Windows full-text commit retry stability complete locally | PR #9 hosted Windows Platform CI failed in `top_n_snippets_are_generated_only_for_returned_hits` at `index.commit().unwrap()` with Tantivy `Access is denied. (os error 5)`. Root cause: full-text open and snapshot filesystem operations already had bounded transient Windows retry handling, but `FullTextIndex::commit` called `writer.commit()` directly. A focused regression first failed before the mutation retry helper existed. After implementation, full-text writer commits use the same bounded transient Windows operation policy for access-denied diagnostics. Focused RED/GREEN, the hosted-failing exact test, full `index-fulltext`, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice stabilizes transient Windows full-text commit access-denied errors only. It does not prove hosted Windows CI has passed until the pushed PR check completes, nor does it clear large-corpus, platform validation, installer/service, signing, notarization, OCR/model licensing, or stable release blockers. |
 
 ## Command Log
+
+### S194
+
+Hosted CI failure evidence:
+
+```bash
+gh pr checks 9 --repo FrankQDWang/resume-ir --watch --interval 30
+gh run view 26996795412 --repo FrankQDWang/resume-ir --job 79668116152 --log
+```
+
+Output summary:
+
+- PR #9 hosted Windows Platform CI failed while running
+  `top_n_snippets_are_generated_only_for_returned_hits`.
+- The failure was at `index.commit().unwrap()` with Tantivy reporting
+  `Access is denied. (os error 5)`.
+- The root cause was a missing bounded retry around writer commit; adjacent
+  full-text open and snapshot filesystem operations already retried transient
+  Windows lock/access diagnostics.
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext index_mutation_retries_transient_windows_access_denied -- --exact
+```
+
+Output summary:
+
+- The focused regression failed before implementation because
+  `retry_transient_index_mutation` did not exist.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext tests::index_mutation_retries_transient_windows_access_denied -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext top_n_snippets_are_generated_only_for_returned_hits -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext
+/Users/frankqdwang/.cargo/bin/cargo clippy -p index-fulltext --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- The internal retry regression passed after implementation.
+- The hosted-failing exact full-text snippet test passed locally.
+- Full `index-fulltext`, focused clippy, `cargo fmt --all --check`,
+  `git diff --check`, and `guard-public-repo.sh` passed locally.
+
+Final checkpoint verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S194 uses synthetic data only. It does not read, print, commit, or upload
+  private resumes, filenames, paths, raw text, local diagnostics, tokens, or
+  model caches.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S193
 
