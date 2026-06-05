@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, and S189 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, and S190 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -192,9 +192,13 @@ obsolete preliminary files and checklists are not product scope.
   `Company:`, `Title:`, `公司：`, and `职位：` from the field evidence span,
   normalizes Chinese company suffixes such as `有限公司`, and keeps import
   persistence aligned with the stripped values.
+  Title extraction now also maps broader high-signal English and Chinese role
+  aliases for frontend, full-stack, machine-learning, data-science, DevOps, QA,
+  engineering-manager, and solutions-architect families while avoiding
+  certificate-line title false positives.
   Missing production work
   includes broader dictionaries and normalization beyond the current
-  high-signal certificate/skill aliases, Chinese explicit/open-ended date
+  high-signal certificate/skill/title aliases, Chinese explicit/open-ended date
   ranges, China mobile phone formats, and labeled company/title forms, real
   business labeled field and dedupe quality datasets/results, remaining future
   non-cache PII surface purge coverage, and forensic erase proof.
@@ -576,8 +580,72 @@ obsolete preliminary files and checklists are not product scope.
 | S187 | Product China mobile phone extraction complete locally | Focused tests first failed because compact `13800138000` produced no phone field and `139 0013 8001` was normalized as `+13900138001` instead of `+8613900138001`; import therefore persisted only one redacted phone mention. After implementation, extractor-rules recognizes China mainland mobile numbers with optional `+86`/`0086`, compact or separated local forms, claims those spans before the general phone rule to prevent misnormalization, normalizes them to E.164 `+86...`, and import persists the resulting phone mentions as `<redacted:phone>` without normalized contact plaintext or CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves phone extraction/normalization only. It does not prove real business field-quality metrics, all international numbering plans, broad phone-format coverage, real corpus results, or stable release readiness. |
 | S188 | Product open-ended present date-range extraction complete locally | Focused tests first failed because `2020年1月 - 至今`, `Jan 2021 - Present`, and `2022.03 - Current` produced no DateRange mentions, and import therefore persisted no DateRange/YearsExperience mentions for that evidence. After implementation, extractor-rules recognizes numeric, Chinese year/month, and English named-month open-ended present/current ranges, normalizes them to `YYYY-MM/PRESENT`, preserves exact span evidence, and derives years-experience from the current local month while import persists DateRange/YearsExperience mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves present/current date normalization only. It does not prove real business field-quality metrics, broad multilingual date normalization coverage, all date idioms, real corpus results, or stable release readiness. |
 | S189 | Product labeled company/title extraction complete locally | Focused tests first failed because `Company: Synthetic Commerce Inc.` normalized to `company: synthetic commerce`, `公司：合成科技有限公司` normalized with the label and unstripped Chinese suffix, and persisted company/title raw values still contained `Company:`/`公司：`/`Title:`/`职位：` labels. After implementation, extractor-rules strips common English and Chinese company/title labels before validation, points spans at only the field values, normalizes Chinese company suffixes such as `有限公司`, and import persists the stripped Company/Title mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves labeled company/title extraction only. It does not prove real business field-quality metrics, broad company/title dictionaries, all multilingual employer/title idioms, real corpus results, or stable release readiness. |
+| S190 | Product broader title alias extraction complete locally | Focused tests first failed because frontend, full-stack, machine-learning, data-scientist, DevOps, QA, engineering-manager, and solutions-architect title evidence produced no Title mentions, and import therefore persisted none of those title aliases. After implementation, extractor-rules maps those high-signal English and Chinese role families to canonical title values, keeps exact span evidence, rejects certificate-looking title candidates such as `AWS Certified Solutions Architect`, and import persists the title mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves title dictionaries/normalization only. It does not prove real business field-quality metrics, broad multilingual title coverage, model-based role inference, real corpus results, or stable release readiness. |
 
 ## Command Log
+
+### S190
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_broader_title_aliases_without_certificate_title_noise -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_broader_title_alias_mentions_without_output_leaks -- --exact
+```
+
+Output summary:
+
+- The extractor regression failed before implementation because no Title
+  mentions were produced for the broader frontend, full-stack,
+  machine-learning, data-scientist, DevOps, QA, engineering-manager, or
+  solutions-architect role aliases.
+- The CLI persisted-field regression failed before implementation because
+  import persisted no Title mentions for those aliases.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_broader_title_aliases_without_certificate_title_noise -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_broader_title_alias_mentions_without_output_leaks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p import-pipeline -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+```
+
+Output summary:
+
+- The exact broader-title extractor and exact CLI persisted-field regressions
+  passed after implementation.
+- Full `extractor-rules`, full persisted-field CLI tests, full
+  `import-pipeline`, focused clippy, `cargo fmt --all --check`, and
+  `git diff --check` passed locally before final guard/full-local verification.
+
+Final checkpoint verification:
+
+```bash
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `guard-public-repo.sh` passed.
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S190 uses synthetic data only. It does not read, print, commit, or upload
+  private resumes, filenames, paths, raw text, local diagnostics, tokens, or
+  model caches.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S189
 

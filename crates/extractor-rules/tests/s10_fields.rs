@@ -355,6 +355,53 @@ Title: Product Manager
 }
 
 #[test]
+fn extracts_broader_title_aliases_without_certificate_title_noise() {
+    let text = "\
+Experience
+Staff Frontend Engineer
+全栈开发工程师
+Machine Learning Engineer
+数据科学家
+DevOps Engineer
+QA Engineer
+Engineering Manager
+Solutions Architect
+Certificate
+AWS Certified Solutions Architect";
+
+    let matches = extract_strong_fields(text);
+    let titles = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Title)
+        .collect::<Vec<_>>();
+    let normalized = titles
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        normalized,
+        vec![
+            "frontend_engineer",
+            "fullstack_engineer",
+            "machine_learning_engineer",
+            "data_scientist",
+            "devops_engineer",
+            "qa_engineer",
+            "engineering_manager",
+            "solutions_architect"
+        ]
+    );
+    assert!(titles
+        .iter()
+        .all(|field| text[field.span_start..field.span_end] == field.raw_value));
+    assert!(!titles
+        .iter()
+        .any(|field| field.raw_value.contains("AWS Certified")));
+    assert!(!format!("{:?}", titles[0]).contains("Staff Frontend"));
+}
+
+#[test]
 fn extracts_sectioned_certificate_aliases_without_header_noise() {
     let text = "\
 Certifications

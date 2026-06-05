@@ -330,6 +330,98 @@ Skills: Java
 }
 
 #[test]
+fn import_persists_broader_title_alias_mentions_without_output_leaks() {
+    let data_dir = temp_dir("persisted-title-alias-data");
+    let resume_root = temp_dir("persisted-title-alias-resumes");
+    fs::write(
+        resume_root.join("synthetic-title-alias-candidate.txt"),
+        "\
+Synthetic Title Alias Candidate
+Email: title-alias-candidate@example.test
+Experience
+Role: Staff Frontend Engineer
+职位：数据科学家
+Position: DevOps Engineer
+Title: Engineering Manager
+Certificate
+AWS Certified Solutions Architect
+Skills: Java
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import broader title aliases");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("Staff Frontend"));
+    assert!(!stdout.contains("数据科学家"));
+    assert!(!stdout.contains("DevOps Engineer"));
+    assert!(!stdout.contains("title-alias-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-title-alias-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let title_mentions = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Title)
+        .collect::<Vec<_>>();
+    let normalized = title_mentions
+        .iter()
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!mention.raw_value.contains(':'));
+            assert!(!mention.raw_value.contains('：'));
+            assert!(!mention.raw_value.contains("AWS Certified"));
+            assert!(!format!("{mention:?}").contains("Staff Frontend"));
+            mention.normalized_value.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        normalized,
+        vec![
+            "frontend_engineer",
+            "data_scientist",
+            "devops_engineer",
+            "engineering_manager"
+        ]
+    );
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_chinese_date_range_and_years_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-chinese-date-data");
     let resume_root = temp_dir("persisted-chinese-date-resumes");

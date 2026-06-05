@@ -1007,6 +1007,58 @@ fn is_title_label(label: &str) -> bool {
 
 fn normalize_title(value: &str) -> Option<(&'static str, f32)> {
     let lower = value.to_lowercase();
+    if looks_like_certificate(value) || looks_like_skill_line(value) {
+        return None;
+    }
+    if (lower.contains("frontend") || lower.contains("front-end") || lower.contains("前端"))
+        && has_engineering_role_marker(&lower)
+    {
+        return Some(("frontend_engineer", 0.83));
+    }
+    if (lower.contains("fullstack")
+        || lower.contains("full-stack")
+        || lower.contains("full stack")
+        || lower.contains("全栈"))
+        && has_engineering_role_marker(&lower)
+    {
+        return Some(("fullstack_engineer", 0.83));
+    }
+    if lower.contains("machine learning engineer")
+        || lower.contains("ml engineer")
+        || lower.contains("机器学习工程师")
+        || lower.contains("算法工程师")
+    {
+        return Some(("machine_learning_engineer", 0.83));
+    }
+    if lower.contains("data scientist") || lower.contains("数据科学家") {
+        return Some(("data_scientist", 0.83));
+    }
+    if lower.contains("devops engineer")
+        || lower.contains("site reliability engineer")
+        || lower.contains("运维工程师")
+    {
+        return Some(("devops_engineer", 0.83));
+    }
+    if lower.contains("qa engineer")
+        || lower.contains("quality assurance engineer")
+        || lower.contains("test engineer")
+        || lower.contains("测试工程师")
+    {
+        return Some(("qa_engineer", 0.82));
+    }
+    if lower.contains("engineering manager")
+        || lower.contains("研发经理")
+        || lower.contains("技术经理")
+        || lower.contains("工程经理")
+    {
+        return Some(("engineering_manager", 0.82));
+    }
+    if lower.contains("solutions architect")
+        || lower.contains("solution architect")
+        || lower.contains("架构师")
+    {
+        return Some(("solutions_architect", 0.82));
+    }
     if lower.contains("backend engineer")
         || lower.contains("java engineer")
         || lower.contains("后端")
@@ -1024,6 +1076,13 @@ fn normalize_title(value: &str) -> Option<(&'static str, f32)> {
     }
 
     None
+}
+
+fn has_engineering_role_marker(lower: &str) -> bool {
+    lower.contains("engineer")
+        || lower.contains("developer")
+        || lower.contains("工程师")
+        || lower.contains("开发")
 }
 
 fn extract_certificates(text: &str, matches: &mut Vec<RuleMatch>) {
