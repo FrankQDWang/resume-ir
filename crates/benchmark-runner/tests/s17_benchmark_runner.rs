@@ -687,6 +687,65 @@ fn vector_quality_gate_accepts_labeled_report_without_target_claim() {
     remove_dir(command.parent().unwrap());
 }
 
+#[test]
+fn vector_quality_gate_requires_private_business_labeled_release_boundary() {
+    let ordinary_report = concat!(
+        "{\"schema_version\":\"vector-quality.v1\",",
+        "\"dataset_kind\":\"labeled\",",
+        "\"sample_count\":50,",
+        "\"candidate_count\":200,",
+        "\"top_k\":10,",
+        "\"recall_at_k\":0.95,",
+        "\"mrr\":0.91,",
+        "\"ndcg_at_k\":0.93,",
+        "\"zero_recall_queries\":0,",
+        "\"target_claim\":\"not_evaluated\"}"
+    );
+    let config = VectorQualityGateConfig::new(50, 0.90, 0.90, 0.90)
+        .with_max_zero_recall_queries(0)
+        .require_private_business_labeled();
+
+    let ordinary_error = evaluate_vector_quality_gate_json(ordinary_report, config).unwrap_err();
+
+    assert!(ordinary_error
+        .to_string()
+        .contains("private business vector-quality benchmark required"));
+
+    let private_report = concat!(
+        "{\"schema_version\":\"vector-quality.v1\",",
+        "\"run_id\":\"vector_release_20260605\",",
+        "\"platform\":\"macos/aarch64\",",
+        "\"dataset_kind\":\"private-business-labeled\",",
+        "\"sample_count\":50,",
+        "\"candidate_count\":200,",
+        "\"top_k\":10,",
+        "\"recall_at_k\":0.95,",
+        "\"mrr\":0.91,",
+        "\"ndcg_at_k\":0.93,",
+        "\"zero_recall_queries\":0,",
+        "\"target_claim\":\"vector_quality_target_met\",",
+        "\"corpus_origin\":\"private_local\",",
+        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"contains_raw_queries\":false,",
+        "\"contains_candidate_text\":false,",
+        "\"contains_resume_paths\":false,",
+        "\"contains_sample_ids\":false,",
+        "\"contains_candidate_ids\":false,",
+        "\"contains_vectors\":false,",
+        "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+        "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+        "\"vector_taxonomy\":\"resume-ir.vector-quality.v1\",",
+        "\"scope\":\"private business vector-quality benchmark; aggregate redacted report only\"}"
+    );
+
+    let evaluation = evaluate_vector_quality_gate_json(private_report, config).unwrap();
+
+    assert_eq!(evaluation.dataset_kind(), "private-business-labeled");
+    assert_eq!(evaluation.sample_count(), 50);
+    assert!(evaluation.recall_at_k() >= 0.95);
+}
+
 fn minimal_benchmark_json(
     dataset_kind: &str,
     document_count: usize,

@@ -173,13 +173,16 @@ fn run_vector_quality(args: VectorQualityArgs) -> Result<(), CliError> {
 fn run_vector_gate(args: VectorGateArgs) -> Result<(), CliError> {
     let report_json = fs::read_to_string(&args.report)
         .map_err(|_| CliError::user("unable to read vector quality report"))?;
-    let config = VectorQualityGateConfig::new(
+    let mut config = VectorQualityGateConfig::new(
         args.min_samples,
         args.min_recall_at_k,
         args.min_mrr,
         args.min_ndcg_at_k,
     )
     .with_max_zero_recall_queries(args.max_zero_recall_queries);
+    if args.require_private_business_labeled {
+        config = config.require_private_business_labeled();
+    }
     evaluate_vector_quality_gate_json(&report_json, config).map_err(CliError::gate)?;
     println!("vector quality gate passed");
     Ok(())
@@ -696,6 +699,7 @@ fn parse_vector_gate_args(args: &[String]) -> Result<VectorGateArgs, CliError> {
     let mut min_mrr = 0.70_f64;
     let mut min_ndcg_at_k = 0.80_f64;
     let mut max_zero_recall_queries = 0_usize;
+    let mut require_private_business_labeled = false;
     let mut index = 0_usize;
 
     while index < args.len() {
@@ -727,6 +731,10 @@ fn parse_vector_gate_args(args: &[String]) -> Result<VectorGateArgs, CliError> {
                 max_zero_recall_queries = parse_nonnegative_usize(args.get(index + 1))?;
                 index += 2;
             }
+            "--require-private-business-labeled" => {
+                require_private_business_labeled = true;
+                index += 1;
+            }
             "--help" | "-h" => {
                 return Err(CliError::user(usage()));
             }
@@ -736,6 +744,7 @@ fn parse_vector_gate_args(args: &[String]) -> Result<VectorGateArgs, CliError> {
 
     Ok(VectorGateArgs {
         report: report.ok_or_else(CliError::usage)?,
+        require_private_business_labeled,
         min_samples,
         min_recall_at_k,
         min_mrr,
@@ -779,7 +788,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -881,6 +890,7 @@ struct VectorQualityArgs {
 #[derive(Clone, Debug)]
 struct VectorGateArgs {
     report: PathBuf,
+    require_private_business_labeled: bool,
     min_samples: usize,
     min_recall_at_k: f64,
     min_mrr: f64,

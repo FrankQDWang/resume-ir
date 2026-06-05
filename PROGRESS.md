@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, and S195 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, and S196 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -239,6 +239,11 @@ obsolete preliminary files and checklists are not product scope.
   and zero-recall queries from JSONL samples using the local embedding command
   protocol without emitting raw queries, candidate text, sample IDs, candidate
   IDs, vectors, command paths, or resume paths.
+  Private business labeled vector-quality release evidence is now accepted only
+  as strict redacted local aggregate JSON with dataset, annotation, and model
+  manifest digests, explicit false raw-query/candidate-text/resume-path/sample-
+  ID/candidate-ID/vector booleans, a fixed vector taxonomy, and aggregate
+  recall/MRR/NDCG metrics.
   Missing or BLOCKED work includes licensed model selection/download/
   distribution, real business semantic quality datasets/results, real ANN
   recall/latency proof at large corpus scale, and real performance proof.
@@ -381,10 +386,11 @@ obsolete preliminary files and checklists are not product scope.
   in the startup-queue test harness.
   The benchmark runner now has explicit synthetic query, synthetic OCR
   throughput, labeled vector-quality, private real-corpus query release-
-  evidence, private business field-quality release-evidence, and private
-  business dedupe-quality release-evidence gates; query, OCR, and vector smoke
-  gates are wired into PR and nightly workflows. Synthetic runs must opt in
-  with `--allow-synthetic` and cannot prove 100k/1M production performance.
+  evidence, private business vector-quality release-evidence, private business
+  field-quality release-evidence, and private business dedupe-quality release-
+  evidence gates; query, OCR, and vector smoke gates are wired into PR and
+  nightly workflows. Synthetic runs must opt in with `--allow-synthetic` and
+  cannot prove 100k/1M production performance.
   Private real-corpus query
   reports are accepted only as strict redacted local aggregate JSON with local
   corpus/query-set digests, explicit hot-index hybrid query evidence
@@ -397,6 +403,11 @@ obsolete preliminary files and checklists are not product scope.
   as strict redacted aggregate JSON with dataset/annotation manifest digests,
   aggregate pair counts, and quality metrics, and cannot include raw text,
   paths, profile values, sample identifiers, or document identifiers.
+  Private business vector-quality reports are accepted only as strict redacted
+  aggregate JSON with dataset/annotation/model manifest digests, aggregate
+  recall/MRR/NDCG metrics, and explicit proof that raw queries, candidate text,
+  resume paths, sample identifiers, candidate identifiers, and vectors are not
+  included.
   Missing or BLOCKED work includes actual 100k/1M real-corpus benchmark runs,
   real-corpus nightly/release performance evidence, real business labeled field
   and dedupe datasets/results, licensed model selection/distribution, real
@@ -603,8 +614,66 @@ obsolete preliminary files and checklists are not product scope.
 | S193 | Product context-aware degree extraction complete locally | Focused tests first failed because `MS SQL` in a skill section was extracted and persisted as a master's Degree mention. After implementation, extractor-rules extracts unlabeled degree aliases only inside bounded education sections while still extracting explicitly labeled degree lines anywhere, and import no longer persists `MS` from skill evidence as Degree while still persisting education-context `Bachelor of Science`. The field-quality benchmark fixture was updated to put synthetic bachelor evidence inside an `Education` section instead of relying on global degree scanning. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused benchmark regression, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice reduces degree false positives only. It does not prove real business field-quality metrics, broad degree-context coverage, all multilingual education layouts, broad school dictionaries, school tier/985/211 extraction, real corpus results, or stable release readiness. |
 | S194 | Product hosted Windows full-text commit retry stability complete locally | PR #9 hosted Windows Platform CI failed in `top_n_snippets_are_generated_only_for_returned_hits` at `index.commit().unwrap()` with Tantivy `Access is denied. (os error 5)`. Root cause: full-text open and snapshot filesystem operations already had bounded transient Windows retry handling, but `FullTextIndex::commit` called `writer.commit()` directly. A focused regression first failed before the mutation retry helper existed. After implementation, full-text writer commits use the same bounded transient Windows operation policy for access-denied diagnostics. Focused RED/GREEN, the hosted-failing exact test, full `index-fulltext`, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice stabilizes transient Windows full-text commit access-denied errors only. It does not prove hosted Windows CI has passed until the pushed PR check completes, nor does it clear large-corpus, platform validation, installer/service, signing, notarization, OCR/model licensing, or stable release blockers. |
 | S195 | Product hosted Windows daemon startup-queue test stability complete locally | The pushed S194 run cleared the previous full-text commit failure but hosted Windows Platform CI then failed in `foreground_import_scheduler_processes_task_enqueued_after_startup`: after the test waited for daemon metadata readiness, its helper reopened the same live data-dir and reran migrations, producing `MetaStoreError { kind: Migration }` while the foreground import worker loop was active. Root cause: the test was doing redundant migration DDL after daemon readiness had already proved the store was migrated. After implementation, the startup-queue test uses a ready-store helper that opens the migrated data-dir and inserts the queued task without rerunning migrations, while the existing helper still migrates fresh stores for pre-daemon setup. Hosted-failing exact test, full `s4_daemon`, focused daemon clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice stabilizes hosted Windows daemon test harness startup-queue evidence only. It does not change production daemon behavior, prove hosted Windows CI has passed until the pushed PR check completes, or clear platform installer/service, signing, notarization, OCR/model licensing, benchmark, large-corpus, or stable release blockers. |
+| S196 | Product private business vector-quality release evidence gate complete locally | Focused regression first failed because `VectorQualityGateConfig::require_private_business_labeled` did not exist. After implementation, vector-quality gates can require `private-business-labeled` reports, reject ordinary labeled reports for release evidence, reject private reports that contain raw query/candidate/path/sample/candidate-id/vector surfaces or missing dataset/annotation/model manifest digests, and accept only redacted aggregate private-local vector-quality evidence with recall/MRR/NDCG metrics and fixed taxonomy. Focused RED/GREEN, full `benchmark-runner`, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice adds the release-evidence boundary only. It does not create or upload private labels, run a real vector-quality evaluation, select or license a production model, prove model distribution, prove real semantic quality, prove real 100k/1M ANN latency, validate platforms, or clear stable release readiness. |
 
 ## Command Log
+
+### S196
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_gate_requires_private_business_labeled_release_boundary -- --exact
+```
+
+Output summary:
+
+- The focused regression failed before implementation because
+  `VectorQualityGateConfig::require_private_business_labeled` did not exist.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_gate_requires_private_business_labeled_release_boundary -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_gate_requires_private_business_labeled_report -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- The ordinary `labeled` vector-quality report is rejected when release
+  evidence requires `private-business-labeled`.
+- A private local redacted aggregate report with dataset, annotation, and model
+  manifest digests, explicit false payload/leak booleans, fixed vector taxonomy,
+  and aggregate recall/MRR/NDCG metrics is accepted.
+- Full `benchmark-runner`, focused clippy, `cargo fmt --all --check`,
+  `git diff --check`, and `guard-public-repo.sh` passed locally.
+
+Final checkpoint verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S196 uses synthetic data only. It does not read, print, commit, or upload
+  private resumes, filenames, paths, raw text, local diagnostics, tokens, model
+  caches, private labels, or vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S195
 

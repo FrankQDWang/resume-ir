@@ -1151,6 +1151,7 @@ pub struct VectorQualityGateConfig {
     min_mrr: f64,
     min_ndcg_at_k: f64,
     max_zero_recall_queries: usize,
+    require_private_business_labeled: bool,
 }
 
 impl VectorQualityGateConfig {
@@ -1161,11 +1162,17 @@ impl VectorQualityGateConfig {
             min_mrr,
             min_ndcg_at_k,
             max_zero_recall_queries: 0,
+            require_private_business_labeled: false,
         }
     }
 
     pub fn with_max_zero_recall_queries(mut self, max_zero_recall_queries: usize) -> Self {
         self.max_zero_recall_queries = max_zero_recall_queries;
+        self
+    }
+
+    pub fn require_private_business_labeled(mut self) -> Self {
+        self.require_private_business_labeled = true;
         self
     }
 }
@@ -2108,6 +2115,7 @@ pub fn evaluate_vector_quality_gate_json(
     report_json: &str,
     config: VectorQualityGateConfig,
 ) -> std::result::Result<VectorQualityGateEvaluation, BenchmarkGateError> {
+    reject_duplicate_json_object_keys(report_json)?;
     let report: serde_json::Value =
         serde_json::from_str(report_json).map_err(|_| BenchmarkGateError::invalid_json())?;
 
@@ -2118,9 +2126,17 @@ pub fn evaluate_vector_quality_gate_json(
         ));
     }
     let dataset_kind = required_str(&report, "dataset_kind")?;
-    if dataset_kind != "labeled" {
+    match dataset_kind {
+        "labeled" | "private-business-labeled" => {}
+        _ => {
+            return Err(BenchmarkGateError::failed(
+                "vector quality requires labeled dataset",
+            ));
+        }
+    }
+    if config.require_private_business_labeled && dataset_kind != "private-business-labeled" {
         return Err(BenchmarkGateError::failed(
-            "vector quality requires labeled dataset",
+            "private business vector-quality benchmark required",
         ));
     }
     let sample_count = required_usize(&report, "sample_count")?;
@@ -2130,6 +2146,9 @@ pub fn evaluate_vector_quality_gate_json(
     let zero_recall_queries = required_usize(&report, "zero_recall_queries")?;
     let target_claim = required_str(&report, "target_claim")?;
 
+    if dataset_kind == "private-business-labeled" {
+        validate_private_business_vector_quality_boundary(&report, target_claim)?;
+    }
     if sample_count < config.min_samples {
         return Err(BenchmarkGateError::failed(
             "vector sample count below gate minimum",
@@ -2149,7 +2168,7 @@ pub fn evaluate_vector_quality_gate_json(
             "vector zero-recall query count exceeded threshold",
         ));
     }
-    if target_claim != "not_evaluated" {
+    if dataset_kind == "labeled" && target_claim != "not_evaluated" {
         return Err(BenchmarkGateError::failed(
             "vector target claim is not proven",
         ));
@@ -2162,6 +2181,170 @@ pub fn evaluate_vector_quality_gate_json(
         mrr,
         ndcg_at_k,
     })
+}
+
+const PRIVATE_BUSINESS_VECTOR_QUALITY_SCOPE: &str =
+    "private business vector-quality benchmark; aggregate redacted report only";
+const PRIVATE_BUSINESS_VECTOR_QUALITY_TARGET_CLAIM: &str = "vector_quality_target_met";
+
+fn validate_private_business_vector_quality_boundary(
+    report: &serde_json::Value,
+    target_claim: &str,
+) -> std::result::Result<(), BenchmarkGateError> {
+    validate_private_business_vector_quality_shape(report)?;
+    if private_vector_quality_str(report, "corpus_origin")? != "private_local"
+        || private_vector_quality_str(report, "privacy_boundary")? != "redacted_local_aggregate"
+        || private_vector_quality_bool(report, "contains_raw_queries")?
+        || private_vector_quality_bool(report, "contains_candidate_text")?
+        || private_vector_quality_bool(report, "contains_resume_paths")?
+        || private_vector_quality_bool(report, "contains_sample_ids")?
+        || private_vector_quality_bool(report, "contains_candidate_ids")?
+        || private_vector_quality_bool(report, "contains_vectors")?
+        || !is_sha256_hex(private_vector_quality_str(
+            report,
+            "dataset_manifest_sha256",
+        )?)
+        || !is_sha256_hex(private_vector_quality_str(
+            report,
+            "annotation_manifest_sha256",
+        )?)
+        || !is_sha256_hex(private_vector_quality_str(report, "model_manifest_sha256")?)
+        || private_vector_quality_str(report, "vector_taxonomy")? != "resume-ir.vector-quality.v1"
+        || private_vector_quality_str(report, "scope")? != PRIVATE_BUSINESS_VECTOR_QUALITY_SCOPE
+    {
+        return Err(private_vector_quality_boundary_error());
+    }
+    if target_claim != PRIVATE_BUSINESS_VECTOR_QUALITY_TARGET_CLAIM {
+        return Err(BenchmarkGateError::failed(
+            "private business vector quality requires target claim",
+        ));
+    }
+    if !is_safe_benchmark_token(private_vector_quality_str(report, "run_id")?) {
+        return Err(private_vector_quality_boundary_error());
+    }
+    if !is_safe_platform_label(private_vector_quality_str(report, "platform")?) {
+        return Err(private_vector_quality_boundary_error());
+    }
+
+    Ok(())
+}
+
+fn validate_private_business_vector_quality_shape(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = report.as_object() else {
+        return Err(private_vector_quality_boundary_error());
+    };
+    for key in object.keys() {
+        if !is_allowed_private_business_vector_quality_key(key) {
+            return Err(BenchmarkGateError::failed(
+                "unsupported private business vector quality field",
+            ));
+        }
+    }
+    private_vector_quality_str(report, "schema_version")?;
+    private_vector_quality_str(report, "run_id")?;
+    private_vector_quality_str(report, "platform")?;
+    private_vector_quality_str(report, "dataset_kind")?;
+    private_vector_quality_usize(report, "sample_count")?;
+    private_vector_quality_usize(report, "candidate_count")?;
+    private_vector_quality_usize(report, "top_k")?;
+    private_vector_quality_number(report, "recall_at_k")?;
+    private_vector_quality_number(report, "mrr")?;
+    private_vector_quality_number(report, "ndcg_at_k")?;
+    private_vector_quality_usize(report, "zero_recall_queries")?;
+    private_vector_quality_str(report, "target_claim")?;
+    private_vector_quality_str(report, "corpus_origin")?;
+    private_vector_quality_str(report, "privacy_boundary")?;
+    private_vector_quality_bool(report, "contains_raw_queries")?;
+    private_vector_quality_bool(report, "contains_candidate_text")?;
+    private_vector_quality_bool(report, "contains_resume_paths")?;
+    private_vector_quality_bool(report, "contains_sample_ids")?;
+    private_vector_quality_bool(report, "contains_candidate_ids")?;
+    private_vector_quality_bool(report, "contains_vectors")?;
+    private_vector_quality_str(report, "dataset_manifest_sha256")?;
+    private_vector_quality_str(report, "annotation_manifest_sha256")?;
+    private_vector_quality_str(report, "model_manifest_sha256")?;
+    private_vector_quality_str(report, "vector_taxonomy")?;
+    private_vector_quality_str(report, "scope")?;
+    Ok(())
+}
+
+fn is_allowed_private_business_vector_quality_key(key: &str) -> bool {
+    matches!(
+        key,
+        "schema_version"
+            | "run_id"
+            | "platform"
+            | "dataset_kind"
+            | "sample_count"
+            | "candidate_count"
+            | "top_k"
+            | "recall_at_k"
+            | "mrr"
+            | "ndcg_at_k"
+            | "zero_recall_queries"
+            | "target_claim"
+            | "corpus_origin"
+            | "privacy_boundary"
+            | "contains_raw_queries"
+            | "contains_candidate_text"
+            | "contains_resume_paths"
+            | "contains_sample_ids"
+            | "contains_candidate_ids"
+            | "contains_vectors"
+            | "dataset_manifest_sha256"
+            | "annotation_manifest_sha256"
+            | "model_manifest_sha256"
+            | "vector_taxonomy"
+            | "scope"
+    )
+}
+
+fn private_vector_quality_str<'a>(
+    value: &'a serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<&'a str, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(private_vector_quality_boundary_error)
+}
+
+fn private_vector_quality_bool(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<bool, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(private_vector_quality_boundary_error)
+}
+
+fn private_vector_quality_usize(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<usize, BenchmarkGateError> {
+    let number = value
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(private_vector_quality_boundary_error)?;
+    usize::try_from(number).map_err(|_| private_vector_quality_boundary_error())
+}
+
+fn private_vector_quality_number(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<f64, BenchmarkGateError> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|number| number.is_finite() && (0.0..=1.0).contains(number))
+        .ok_or_else(private_vector_quality_boundary_error)
+}
+
+fn private_vector_quality_boundary_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private business vector quality requires redacted local boundary")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
