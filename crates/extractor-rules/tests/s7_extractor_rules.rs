@@ -40,6 +40,35 @@ fn extracts_email_phone_and_date_ranges_with_offsets_from_mixed_text() {
 }
 
 #[test]
+fn extracts_chinese_mobile_numbers_without_country_prefix_or_separators() {
+    use extractor_rules::{extract_strong_fields, FieldType};
+
+    let text = "手机: 13800138000\n备用电话: 139 0013 8001";
+    let matches = extract_strong_fields(text);
+
+    let phones = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Phone)
+        .collect::<Vec<_>>();
+    let normalized = phones
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(normalized, vec!["+8613800138000", "+8613900138001"]);
+    assert_eq!(
+        &text[phones[0].span_start..phones[0].span_end],
+        "13800138000"
+    );
+    assert_eq!(
+        &text[phones[1].span_start..phones[1].span_end],
+        "139 0013 8001"
+    );
+    assert!(phones.iter().all(|field| field.confidence >= 0.98));
+    assert!(!format!("{:?}", phones[0]).contains("13800138000"));
+}
+
+#[test]
 fn does_not_emit_low_confidence_field_candidates() {
     use extractor_rules::extract_strong_fields;
 

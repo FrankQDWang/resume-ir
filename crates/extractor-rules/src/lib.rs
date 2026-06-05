@@ -266,11 +266,72 @@ fn extract_emails(text: &str, matches: &mut Vec<RuleMatch>) {
 }
 
 fn extract_phones(text: &str, matches: &mut Vec<RuleMatch>) {
+    let mut claimed_spans = Vec::<(usize, usize)>::new();
+    extract_chinese_mobile_phones(text, matches, &mut claimed_spans);
+    extract_general_phones(text, matches, &mut claimed_spans);
+}
+
+fn extract_chinese_mobile_phones(
+    text: &str,
+    matches: &mut Vec<RuleMatch>,
+    claimed_spans: &mut Vec<(usize, usize)>,
+) {
+    let regex = Regex::new(
+        r"(?x)
+        (?:^|[^\d])
+        (?P<phone>(?:(?:\+|00)?86[\s.-]*)?(?P<n>1[3-9]\d[\s.-]*\d{4}[\s.-]*\d{4}))
+        (?:$|[^\d])
+        ",
+    )
+    .unwrap();
+
+    for captures in regex.captures_iter(text) {
+        let Some(found) = captures.name("phone") else {
+            continue;
+        };
+        let span = (found.start(), found.end());
+        if claimed_spans
+            .iter()
+            .any(|claimed| ranges_overlap(*claimed, span))
+        {
+            continue;
+        }
+        let digits = captures["n"]
+            .chars()
+            .filter(|character| character.is_ascii_digit())
+            .collect::<String>();
+        if digits.len() != 11 {
+            continue;
+        }
+        claimed_spans.push(span);
+        matches.push(RuleMatch {
+            field_type: FieldType::Phone,
+            raw_value: found.as_str().to_string(),
+            normalized_value: Some(format!("+86{digits}")),
+            span_start: found.start(),
+            span_end: found.end(),
+            confidence: 0.98,
+        });
+    }
+}
+
+fn extract_general_phones(
+    text: &str,
+    matches: &mut Vec<RuleMatch>,
+    claimed_spans: &mut Vec<(usize, usize)>,
+) {
     let regex =
         Regex::new(r"(?x)(?:\+\d{1,3}[\s.-]*)?(?:\(\d{3}\)|\d{3,4})[\s.-]+\d{3,4}[\s.-]+\d{4}")
             .unwrap();
 
     for found in regex.find_iter(text) {
+        let span = (found.start(), found.end());
+        if claimed_spans
+            .iter()
+            .any(|claimed| ranges_overlap(*claimed, span))
+        {
+            continue;
+        }
         let raw = found.as_str();
         let digits = raw
             .chars()
@@ -287,6 +348,7 @@ fn extract_phones(text: &str, matches: &mut Vec<RuleMatch>) {
         };
 
         if let Some(normalized) = normalized {
+            claimed_spans.push(span);
             matches.push(RuleMatch {
                 field_type: FieldType::Phone,
                 raw_value: raw.to_string(),

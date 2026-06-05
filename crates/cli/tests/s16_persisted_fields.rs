@@ -313,6 +313,81 @@ Synthetic Payments Inc.
     remove_dir(&resume_root);
 }
 
+#[test]
+fn import_persists_chinese_mobile_mentions_without_output_leaks() {
+    let data_dir = temp_dir("persisted-chinese-mobile-data");
+    let resume_root = temp_dir("persisted-chinese-mobile-resumes");
+    fs::write(
+        resume_root.join("synthetic-mobile-candidate.txt"),
+        "\
+Synthetic Mobile Candidate
+Email: mobile-candidate@example.test
+手机: 13800138000
+备用电话: 139 0013 8001
+Skills: Java
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import Chinese mobile numbers");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("13800138000"));
+    assert!(!stdout.contains("139 0013 8001"));
+    assert!(!stdout.contains("mobile-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-mobile-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let phones = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Phone)
+        .collect::<Vec<_>>();
+
+    assert_eq!(phones.len(), 2);
+    for phone in phones {
+        assert_eq!(phone.raw_value, "<redacted:phone>");
+        assert_eq!(phone.normalized_value, None);
+        assert!(phone.span_start.is_some());
+        assert!(phone.span_end.is_some());
+        assert!(!format!("{phone:?}").contains("13800138000"));
+        assert!(!format!("{phone:?}").contains("139 0013 8001"));
+    }
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
 fn import_fixtures(data_dir: &Path) {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
