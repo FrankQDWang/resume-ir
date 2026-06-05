@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, and S192 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, and S193 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -201,6 +201,10 @@ obsolete preliminary files and checklists are not product scope.
   normalizes school whitespace/case, maps degree aliases such as MSc, BSc, PhD,
   `博士研究生`, and `硕士研究生` to canonical degree values, and avoids duplicate
   generic degree matches inside labeled degree evidence.
+  Degree extraction now limits unlabeled degree aliases to education context
+  while still accepting explicitly labeled degree lines anywhere, preventing
+  skill/product phrases such as `MS SQL` from being persisted as a master's
+  degree.
   Missing production work
   includes broader dictionaries and normalization beyond the current
   high-signal certificate/skill/title aliases, labeled school/degree forms and
@@ -589,8 +593,73 @@ obsolete preliminary files and checklists are not product scope.
 | S190 | Product broader title alias extraction complete locally | Focused tests first failed because frontend, full-stack, machine-learning, data-scientist, DevOps, QA, engineering-manager, and solutions-architect title evidence produced no Title mentions, and import therefore persisted none of those title aliases. After implementation, extractor-rules maps those high-signal English and Chinese role families to canonical title values, keeps exact span evidence, rejects certificate-looking title candidates such as `AWS Certified Solutions Architect`, and import persists the title mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves title dictionaries/normalization only. It does not prove real business field-quality metrics, broad multilingual title coverage, model-based role inference, real corpus results, or stable release readiness. |
 | S191 | Product hosted Windows daemon-kill readiness test stability complete locally | PR #9 hosted Windows Platform CI failed in `foreground_daemon_can_be_killed_and_restarted_without_path_leak` because the test killed the foreground daemon after metadata readiness but before stdout readiness evidence was reliably captured, so `resume-daemon foreground ready` was absent from the killed-child stdout assertion. After implementation, the test uses a bounded background stdout reader to wait for the ready line before killing the daemon, then joins the reader after process exit and preserves the restart and path-redaction assertions. Focused exact daemon-kill test, full `resume-daemon`, focused daemon clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice stabilizes hosted Windows daemon-kill test evidence only. It does not change production daemon behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear platform installer/service, signing, notarization, OCR/model licensing, benchmark, or stable release blockers. |
 | S192 | Product labeled school/degree extraction complete locally | Focused tests first failed because labeled school values kept `School:` / `学校：` in normalized values and persisted school raw values still contained label delimiters. After implementation, extractor-rules strips common English and Chinese school labels, points school spans at value text only, normalizes school whitespace/case, maps degree aliases such as MSc, BSc, PhD, `博士研究生`, and `硕士研究生` to canonical degree values, and prevents generic degree aliases from duplicating labeled degree spans. Import persists the stripped School/Degree mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves school/degree dictionaries/normalization only. It does not prove real business field-quality metrics, broad school dictionaries, school tier/985/211 extraction, broad multilingual degree coverage, real corpus results, or stable release readiness. |
+| S193 | Product context-aware degree extraction complete locally | Focused tests first failed because `MS SQL` in a skill section was extracted and persisted as a master's Degree mention. After implementation, extractor-rules extracts unlabeled degree aliases only inside bounded education sections while still extracting explicitly labeled degree lines anywhere, and import no longer persists `MS` from skill evidence as Degree while still persisting education-context `Bachelor of Science`. The field-quality benchmark fixture was updated to put synthetic bachelor evidence inside an `Education` section instead of relying on global degree scanning. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused benchmark regression, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice reduces degree false positives only. It does not prove real business field-quality metrics, broad degree-context coverage, all multilingual education layouts, broad school dictionaries, school tier/985/211 extraction, real corpus results, or stable release readiness. |
 
 ## Command Log
+
+### S193
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules avoids_degree_aliases_outside_education_context -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_does_not_persist_degree_aliases_from_skill_lines -- --exact
+```
+
+Output summary:
+
+- The extractor regression failed before implementation because `MS SQL` in a
+  skill section produced Degree normalized values `["master", "bachelor"]`
+  instead of only `["bachelor"]`.
+- The CLI persisted-field regression failed before implementation because
+  import persisted `MS` as a Degree raw value.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules avoids_degree_aliases_outside_education_context -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_does_not_persist_degree_aliases_from_skill_lines -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p import-pipeline -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- The exact degree-context extractor and exact CLI persisted-field regressions
+  passed after implementation.
+- Full `extractor-rules`, full persisted-field CLI tests, full
+  `import-pipeline`, focused clippy, `cargo fmt --all --check`,
+  `git diff --check`, and `guard-public-repo.sh` passed locally.
+
+Benchmark regression and final checkpoint verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_report_scores_labeled_samples_without_raw_value_leakage -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The field-quality benchmark regression passed after the synthetic labeled
+  fixture was updated to put bachelor evidence inside an `Education` section.
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S193 uses synthetic data only. It does not read, print, commit, or upload
+  private resumes, filenames, paths, raw text, local diagnostics, tokens, or
+  model caches.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S192
 

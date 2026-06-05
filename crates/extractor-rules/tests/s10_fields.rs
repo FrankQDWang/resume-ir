@@ -163,6 +163,44 @@ Degree: MSc Computer Science
 }
 
 #[test]
+fn avoids_degree_aliases_outside_education_context() {
+    let text = "\
+Skills
+MS SQL, Java
+Experience
+Built reporting systems
+Education
+Synthetic University
+Bachelor of Science in Computer Science";
+
+    let matches = extract_strong_fields(text);
+
+    let degrees = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Degree)
+        .collect::<Vec<_>>();
+    let degree_normalized = degrees
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(degree_normalized, vec!["bachelor"]);
+    assert!(degrees[0].raw_value.contains("Bachelor of Science"));
+    assert_eq!(
+        &text[degrees[0].span_start..degrees[0].span_end],
+        degrees[0].raw_value
+    );
+    assert!(!degrees.iter().any(|field| field.raw_value == "MS"));
+
+    let skills = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Skill)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert!(skills.contains(&"SQL"));
+    assert!(skills.contains(&"Java"));
+}
+
+#[test]
 fn extracts_chinese_year_month_date_ranges_with_years_evidence() {
     let text = "\
 Experience

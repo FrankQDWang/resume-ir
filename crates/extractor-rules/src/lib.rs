@@ -682,58 +682,83 @@ fn normalize_school(value: &str) -> String {
 
 fn extract_degrees(text: &str, matches: &mut Vec<RuleMatch>) {
     let mut claimed_spans = Vec::<(usize, usize)>::new();
+    let mut education_context_lines = 0_usize;
 
     for (line_start, line) in indexed_lines(text) {
         let trimmed = line.trim();
+        if trimmed.is_empty() {
+            education_context_lines = education_context_lines.saturating_sub(1);
+            continue;
+        }
+
+        if is_education_section_header(trimmed) {
+            education_context_lines = 8;
+            continue;
+        }
+
+        if education_context_lines > 0 && looks_like_section_header(trimmed) {
+            education_context_lines = 0;
+            continue;
+        }
+
         if trimmed.len() > 140 {
+            education_context_lines = education_context_lines.saturating_sub(1);
             continue;
         }
 
         let leading = line.len() - line.trim_start().len();
         let trimmed_span_start = line_start + leading;
-        let Some(segment) = degree_segment(trimmed, trimmed_span_start) else {
+        if let Some(segment) = degree_segment(trimmed, trimmed_span_start) {
+            push_first_degree_match(segment, matches, &mut claimed_spans);
+            education_context_lines = education_context_lines.saturating_sub(1);
             continue;
-        };
-        let Some((normalized, confidence, relative_start, relative_end)) =
-            first_degree_match(segment.text)
-        else {
-            continue;
-        };
-        let span = (
-            segment.span_start + relative_start,
-            segment.span_start + relative_end,
-        );
-        claimed_spans.push(span);
-        matches.push(RuleMatch {
-            field_type: FieldType::Degree,
-            raw_value: segment.text[relative_start..relative_end].to_string(),
-            normalized_value: Some(normalized.to_string()),
-            span_start: span.0,
-            span_end: span.1,
-            confidence,
-        });
-    }
-
-    for (normalized, confidence, pattern) in degree_alias_patterns() {
-        let regex = Regex::new(pattern).unwrap();
-        for found in regex.find_iter(text) {
-            let span = (found.start(), found.end());
-            if claimed_spans
-                .iter()
-                .any(|claimed| ranges_overlap(*claimed, span))
-            {
-                continue;
-            }
-            matches.push(RuleMatch {
-                field_type: FieldType::Degree,
-                raw_value: found.as_str().to_string(),
-                normalized_value: Some(normalized.to_string()),
-                span_start: found.start(),
-                span_end: found.end(),
-                confidence,
-            });
         }
+
+        if education_context_lines > 0 {
+            push_first_degree_match(
+                LabeledSegment {
+                    text: trimmed,
+                    span_start: trimmed_span_start,
+                },
+                matches,
+                &mut claimed_spans,
+            );
+        }
+
+        education_context_lines = education_context_lines.saturating_sub(1);
     }
+}
+
+fn push_first_degree_match(
+    segment: LabeledSegment<'_>,
+    matches: &mut Vec<RuleMatch>,
+    claimed_spans: &mut Vec<(usize, usize)>,
+) -> bool {
+    let Some((normalized, confidence, relative_start, relative_end)) =
+        first_degree_match(segment.text)
+    else {
+        return false;
+    };
+    let span = (
+        segment.span_start + relative_start,
+        segment.span_start + relative_end,
+    );
+    if claimed_spans
+        .iter()
+        .any(|claimed| ranges_overlap(*claimed, span))
+    {
+        return false;
+    }
+    claimed_spans.push(span);
+    matches.push(RuleMatch {
+        field_type: FieldType::Degree,
+        raw_value: segment.text[relative_start..relative_end].to_string(),
+        normalized_value: Some(normalized.to_string()),
+        span_start: span.0,
+        span_end: span.1,
+        confidence,
+    });
+    true
 }
 
 fn degree_segment<'a>(
@@ -760,6 +785,22 @@ fn is_degree_label(label: &str) -> bool {
             | "学位"
             | "教育"
             | "最高学历"
+    )
+}
+
+fn is_education_section_header(value: &str) -> bool {
+    matches!(
+        value.to_lowercase().as_str(),
+        "education"
+            | "education background"
+            | "academic background"
+            | "academic history"
+            | "学历"
+            | "学位"
+            | "教育"
+            | "教育经历"
+            | "学习经历"
+            | "教育背景"
     )
 }
 

@@ -239,7 +239,7 @@ fn benchmark_gate_rejects_million_release_gate_without_million_proof() {
 #[test]
 fn field_quality_report_scores_labeled_samples_without_raw_value_leakage() {
     let dataset = concat!(
-        "{\"sample_id\":\"case-a\",\"text\":\"Name: Synthetic Candidate\\nEmail: candidate@example.test\\nPhone: +1 (415) 555-0132\\nSkills: Rust, Java\\nBachelor of Science\",",
+        "{\"sample_id\":\"case-a\",\"text\":\"Name: Synthetic Candidate\\nEmail: candidate@example.test\\nPhone: +1 (415) 555-0132\\nEducation\\nBachelor of Science\\nSkills: Rust, Java\",",
         "\"expected\":[",
         "{\"type\":\"name\",\"normalized\":\"synthetic candidate\"},",
         "{\"type\":\"email\",\"normalized\":\"candidate@example.test\"},",
