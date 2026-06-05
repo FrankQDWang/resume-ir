@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, and S208 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, and S209 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -90,7 +90,9 @@ obsolete preliminary files and checklists are not product scope.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
   education/school-tier/company/title/skills/certs/years, persisted entity mentions,
   metadata-indexed field prefiltering before the full-text TopDocs cutoff,
-  contact HMAC assignment, candidate folding, and explicit best-effort local
+  contact HMAC assignment, hash-only exact email/phone search filtering through
+  local CLI and daemon IPC without raw contact or contact-hash output, candidate
+  folding, and explicit best-effort local
   purge of tombstoned documents across metadata, obsolete full-text snapshots,
   full-text staging directories, vector records, current ingest jobs, and
   current OCR page-cache records exist. Contact hash key backup/restore now
@@ -651,8 +653,94 @@ obsolete preliminary files and checklists are not product scope.
 | S206 | Product release-readiness fault-drill blocker coverage complete locally | Focused release-readiness tests and the release-readiness CI guard first failed because the current blocker detail did not explicitly include actual ENOSPC and service-level daemon kill drills, and the release blockers runbook did not list hardware fault drills in the current blocked items. After implementation, `release-readiness` text/JSON and the runbook consistently keep hardware fault drills blocked until actual ENOSPC, service-level daemon kill, battery-mode, and external-drive disconnect drills are proven on release platforms. Focused RED/GREEN, release-readiness guard, runbook guard, fmt, and focused clippy passed locally. | This slice tightens fail-closed release readiness evidence only. It does not run destructive ENOSPC tests, install or kill a real platform service, switch real battery state, disconnect external drives, clear platform validation, signing, notarization, benchmark, OCR/model licensing, or make stable release ready. |
 | S207 | Product school search filtering complete locally | Focused tests first failed because rank-fusion lacked school profile/filter API, CLI search rejected `--school`, CLI IPC did not emit `schools_any`, and daemon IPC ignored school filters until after full-text top-k retrieval. After implementation, school filters normalize persisted school evidence, CLI supports `--school`/`--schools-any`, CLI/daemon IPC carry `schools_any`, persisted profiles hydrate school mentions, and both CLI and daemon prefilter school document IDs before full-text top-k truncation. Focused RED/GREEN, related rank/CLI/daemon suites, fmt, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden school extraction beyond currently persisted evidence, prove real business field-quality metrics, evaluate private resume corpora, clear broad school dictionaries, or make stable release ready. |
 | S208 | Product date-range search filtering complete locally | Focused tests first failed because rank-fusion had no date-range profile/filter API, metadata could not return searchable document IDs by overlapping `date_range` evidence, CLI search rejected `--date-range-overlaps`, CLI IPC did not emit `date_range_overlaps`, and daemon IPC ignored date ranges until after full-text top-k retrieval. After implementation, `DateRange` supports `YYYY-MM/YYYY-MM`, `YYYY-MM..YYYY-MM`, and `YYYY-MM/PRESENT`; metadata prefilters visible searchable documents by overlapping persisted `date_range` mentions; CLI supports `--date-range-overlaps`; CLI/daemon IPC carry and parse `date_range_overlaps`; persisted profiles hydrate date ranges; and both CLI and daemon prefilter date-range document IDs before full-text top-k truncation. Focused RED/GREEN, related meta/rank/CLI/daemon suites, fmt, and focused clippy passed locally. | This slice uses synthetic/temp fixtures only. It does not add separate `edu_start`/`edu_end`/`work_start`/`work_end`/`certificate_date` columns, infer certificate-specific dates, prove real business date-range F1, evaluate private resume corpora, clear broad multilingual date coverage, or make stable release ready. |
+| S209 | Product contact search filtering complete locally | Focused tests first failed because metadata could not return searchable document IDs from candidate contact hashes, CLI search rejected `--email`/`--phone`, CLI IPC could not hash contact filters before submitting a request, and daemon IPC ignored `contact_hashes_any` until after full-text top-k retrieval. After implementation, CLI contact filters normalize email/phone locally, hash them with the existing data-dir contact HMAC key, never put raw contacts in `SearchFilters` or IPC, CLI/daemon IPC carry only `contact_hashes_any`, metadata prefilters visible searchable candidate-assigned documents by email/phone hash, and full-text/semantic/hybrid local search plus daemon full-text IPC apply the metadata prefilter before result filtering. Focused RED/GREEN, related meta/rank/CLI/daemon suites, fmt, diff check, public guard, focused clippy, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not expose fuzzy contact matching, prove real business contact recall, evaluate private resume corpora, guarantee manual IPC against a different data-dir contact key, clear broader field-quality evidence blockers, or make stable release ready. |
 
 ## Command Log
+
+### S209
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store searchable_document_ids_with_contact_hashes_matches_visible_versions_only -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_contact_hash_before_fulltext_top_k_cutoff_without_contact_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_hashes_contact_filters_before_submitting_request -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_contact_hash_before_fulltext_top_k_cutoff -- --exact
+```
+
+Output summary:
+
+- The meta-store focused test failed before implementation because
+  `searchable_document_ids_with_contact_hashes` did not exist.
+- The direct CLI focused test failed before implementation because `search`
+  rejected `--email` and `--phone`.
+- The CLI IPC focused test failed before implementation because the rejected
+  contact arguments prevented the request from reaching the fake daemon.
+- The daemon IPC focused test failed before implementation because the daemon
+  ignored `contact_hashes_any` and returned a high-BM25 decoy instead of the
+  matching synthetic target.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store searchable_document_ids_with_contact_hashes_matches_visible_versions_only -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_contact_hash_before_fulltext_top_k_cutoff_without_contact_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_hashes_contact_filters_before_submitting_request -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_contact_hash_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p rank-fusion -p resume-cli -p resume-daemon --all-targets -- -D warnings
+git diff --check
+```
+
+Output summary:
+
+- Meta-store now returns visible searchable document IDs for candidate-assigned
+  versions whose candidate email or phone hash matches a requested HMAC hash,
+  excluding deleted documents, hidden versions, and non-searchable documents.
+- Direct CLI search supports `--email`/`--emails-any` and `--phone`/`--phones-any`;
+  the CLI normalizes contact values locally and hashes them through the existing
+  contact HMAC key before search planning.
+- CLI IPC search submits only `contact_hashes_any` in the authenticated loopback
+  request and does not include raw email or phone values in the request body,
+  stdout, or stderr.
+- Daemon IPC parses and validates `contact_hashes_any`, prefilters matching
+  document IDs before full-text top-k truncation, and keeps raw contact values
+  plus contact hashes out of the response body.
+- Related suites and focused clippy passed locally after formatting.
+
+Scope note:
+
+- S209 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, vectors, raw contact
+  values, or contact hashes.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
+
+Final checkpoint verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0, `public repo guard passed`.
+- `verify-local.sh`: exit 0, including workspace tests and doc-tests,
+  license/runbook/workflow/release-readiness checks, release artifact and SBOM
+  checks, macOS package check, and the final public repository guard. Windows
+  package check was skipped on this non-Windows host.
 
 ### S208
 

@@ -515,6 +515,78 @@ needle
     remove_dir(&resume_root);
 }
 
+#[test]
+fn filtered_search_prefilters_contact_hash_before_fulltext_top_k_cutoff_without_contact_leak() {
+    let data_dir = temp_dir("search-filter-contact-data");
+    let resume_root = temp_dir("search-filter-contact-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("contact-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Contact Decoy {index}
+Email: decoy-{index}@example.test
+Phone: +1 212-555-010{index}
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("contact-target.txt"),
+        "\
+Candidate Contact Target
+Email: target-contact@example.test
+Phone: +1 212-555-0199
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--email",
+            "TARGET-CONTACT@example.test",
+            "--phone",
+            "212-555-0199",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run contact filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("contact-target.txt"));
+    assert!(!stdout.contains("contact-decoy-"));
+    assert!(!stdout.contains("target-contact@example.test"));
+    assert!(!stdout.contains("TARGET-CONTACT@example.test"));
+    assert!(!stdout.contains("212-555-0199"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
 fn import_fixtures(data_dir: &Path) {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

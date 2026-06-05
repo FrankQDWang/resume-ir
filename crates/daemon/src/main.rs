@@ -28,9 +28,9 @@ use index_fulltext::{
 };
 use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{
-    DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension, ImportRootKind,
-    ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask,
-    ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobFailureKind,
+    ContactHash, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
+    ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobFailureKind,
     IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey,
     OcrPageCacheStatus, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
     WorkerTaskKind,
@@ -2584,6 +2584,32 @@ fn parse_search_filters(
             parsed = parsed.with_skills_any(skills);
         }
     }
+    if let Some(value) = object.get("contact_hashes_any") {
+        if !value.is_null() {
+            let contact_hashes = value.as_array().ok_or(IpcCommandError::BadRequest(
+                "contact_hashes_any must be an array",
+            ))?;
+            if contact_hashes.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many contact hashes"));
+            }
+            let contact_hashes = contact_hashes
+                .iter()
+                .map(|contact_hash| {
+                    let contact_hash = contact_hash.as_str().ok_or(IpcCommandError::BadRequest(
+                        "contact_hashes_any values must be strings",
+                    ))?;
+                    ContactHash::from_keyed_digest(contact_hash.to_string())
+                        .map(|hash| hash.as_str().to_string())
+                        .map_err(|_| {
+                            IpcCommandError::BadRequest(
+                                "contact_hashes_any values must be contact hashes",
+                            )
+                        })
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_contact_hashes_any(contact_hashes);
+        }
+    }
     if let Some(value) = object.get("school_tiers_any") {
         if !value.is_null() {
             let school_tiers = value.as_array().ok_or(IpcCommandError::BadRequest(
@@ -2838,6 +2864,17 @@ fn daemon_field_filter_doc_id_prefilter(
                 .map_err(IpcCommandError::Internal)?,
         );
     }
+    if !filters.contact_hashes_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_contact_hashes(&daemon_contact_hash_filter_values(
+                    filters.contact_hashes_any(),
+                )?)
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
     if let Some(years_min) = filters.years_experience_min() {
         daemon_merge_filter_doc_ids(
             &mut allowed_doc_ids,
@@ -2853,6 +2890,19 @@ fn daemon_field_filter_doc_id_prefilter(
     }
 
     Ok(allowed_doc_ids)
+}
+
+fn daemon_contact_hash_filter_values(
+    contact_hashes: &[String],
+) -> std::result::Result<Vec<ContactHash>, IpcCommandError> {
+    contact_hashes
+        .iter()
+        .map(|contact_hash| {
+            ContactHash::from_keyed_digest(contact_hash.clone()).map_err(|_| {
+                IpcCommandError::BadRequest("contact_hashes_any values must be contact hashes")
+            })
+        })
+        .collect()
 }
 
 fn daemon_school_tier_filter_doc_ids(

@@ -510,6 +510,136 @@ fn candidates_persist_and_are_found_only_by_hashed_contact_material() {
 }
 
 #[test]
+fn searchable_document_ids_with_contact_hashes_matches_visible_versions_only() {
+    let store = migrated_store();
+    let email_hash = contact_hash('a');
+    let phone_hash = contact_hash('b');
+    let deleted_hash = contact_hash('c');
+    let hidden_hash = contact_hash('d');
+    let failed_hash = contact_hash('e');
+    let other_hash = contact_hash('f');
+    let visible_doc = document("contact-visible", false, DocumentStatus::Searchable);
+    let visible_version = resume_version("contact-visible-version", visible_doc.id.clone());
+    let deleted_doc = document("contact-deleted", true, DocumentStatus::Searchable);
+    let deleted_version = resume_version("contact-deleted-version", deleted_doc.id.clone());
+    let hidden_doc = document("contact-hidden", false, DocumentStatus::Searchable);
+    let mut hidden_version = resume_version("contact-hidden-version", hidden_doc.id.clone());
+    hidden_version.visibility = ResumeVisibility::Hidden;
+    let partial_doc = document("contact-partial", false, DocumentStatus::IndexedPartial);
+    let partial_version = resume_version("contact-partial-version", partial_doc.id.clone());
+    let failed_doc = document("contact-failed", false, DocumentStatus::FailedPermanent);
+    let failed_version = resume_version("contact-failed-version", failed_doc.id.clone());
+
+    for document in [
+        visible_doc.clone(),
+        deleted_doc.clone(),
+        hidden_doc.clone(),
+        partial_doc.clone(),
+        failed_doc.clone(),
+    ] {
+        store.upsert_document(&document).unwrap();
+    }
+    for version in [
+        visible_version.clone(),
+        deleted_version.clone(),
+        hidden_version.clone(),
+        partial_version.clone(),
+        failed_version.clone(),
+    ] {
+        store.upsert_resume_version(&version).unwrap();
+    }
+
+    let visible_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["contact-visible-candidate"]),
+        primary_name: None,
+        phone_hash: None,
+        email_hash: Some(email_hash.clone()),
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let partial_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["contact-partial-candidate"]),
+        primary_name: None,
+        phone_hash: Some(phone_hash.clone()),
+        email_hash: None,
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let deleted_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["contact-deleted-candidate"]),
+        primary_name: None,
+        phone_hash: None,
+        email_hash: Some(deleted_hash.clone()),
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let hidden_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["contact-hidden-candidate"]),
+        primary_name: None,
+        phone_hash: Some(hidden_hash.clone()),
+        email_hash: None,
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let failed_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["contact-failed-candidate"]),
+        primary_name: None,
+        phone_hash: Some(failed_hash.clone()),
+        email_hash: None,
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    for candidate in [
+        visible_candidate.clone(),
+        partial_candidate.clone(),
+        deleted_candidate.clone(),
+        hidden_candidate.clone(),
+        failed_candidate.clone(),
+    ] {
+        store.upsert_candidate(&candidate).unwrap();
+    }
+    store
+        .assign_candidate_to_version(&visible_version.id, &visible_candidate.id)
+        .unwrap();
+    store
+        .assign_candidate_to_version(&partial_version.id, &partial_candidate.id)
+        .unwrap();
+    store
+        .assign_candidate_to_version(&deleted_version.id, &deleted_candidate.id)
+        .unwrap();
+    store
+        .assign_candidate_to_version(&hidden_version.id, &hidden_candidate.id)
+        .unwrap();
+    store
+        .assign_candidate_to_version(&failed_version.id, &failed_candidate.id)
+        .unwrap();
+
+    let matches = store
+        .searchable_document_ids_with_contact_hashes(&[
+            email_hash,
+            phone_hash.clone(),
+            deleted_hash,
+            hidden_hash,
+            failed_hash,
+            other_hash,
+        ])
+        .unwrap();
+    let mut expected = vec![visible_doc.id, partial_doc.id.clone()];
+    expected.sort();
+    assert_eq!(matches, expected);
+
+    let phone_matches = store
+        .searchable_document_ids_with_contact_hashes(&[phone_hash])
+        .unwrap();
+    assert_eq!(phone_matches, vec![partial_doc.id]);
+}
+
+#[test]
 fn candidate_contact_hash_indexes_are_unique_and_canonicalized() {
     let store = migrated_store();
     let lowercase_hash = ContactHash::from_keyed_digest("e".repeat(64)).unwrap();

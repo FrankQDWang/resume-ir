@@ -347,6 +347,7 @@ pub struct SearchFilters {
     companies_any: Vec<String>,
     titles_any: Vec<String>,
     skills_any: Vec<String>,
+    contact_hashes_any: Vec<String>,
     years_experience_min: Option<f32>,
 }
 
@@ -448,6 +449,20 @@ impl SearchFilters {
         self
     }
 
+    pub fn with_contact_hashes_any<I, S>(mut self, contact_hashes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.contact_hashes_any = contact_hashes
+            .into_iter()
+            .filter_map(|contact_hash| normalize_contact_hash(contact_hash.as_ref()))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
     pub fn with_years_experience_min(mut self, years: f32) -> Self {
         self.years_experience_min = Some(years.max(0.0));
         self
@@ -462,6 +477,7 @@ impl SearchFilters {
             && self.companies_any.is_empty()
             && self.titles_any.is_empty()
             && self.skills_any.is_empty()
+            && self.contact_hashes_any.is_empty()
             && self.years_experience_min.is_none()
     }
 
@@ -495,6 +511,10 @@ impl SearchFilters {
 
     pub fn titles_any(&self) -> &[String] {
         &self.titles_any
+    }
+
+    pub fn contact_hashes_any(&self) -> &[String] {
+        &self.contact_hashes_any
     }
 
     pub fn years_experience_min(&self) -> Option<f32> {
@@ -622,6 +642,7 @@ impl fmt::Debug for SearchFilters {
             .field("companies_any_count", &self.companies_any.len())
             .field("titles_any_count", &self.titles_any.len())
             .field("skills_any_count", &self.skills_any.len())
+            .field("contact_hashes_any_count", &self.contact_hashes_any.len())
             .field("years_experience_min", &self.years_experience_min)
             .finish()
     }
@@ -999,6 +1020,12 @@ pub fn fuse_hybrid_rrf(recall: HybridRecall, k: f32, limit: usize) -> Vec<Ranked
 
 fn normalize_skill(skill: &str) -> String {
     normalize_dedupe_value(skill)
+}
+
+fn normalize_contact_hash(contact_hash: &str) -> Option<String> {
+    let value = contact_hash.trim();
+    (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
 }
 
 fn parse_year_month(value: &str) -> Option<i32> {

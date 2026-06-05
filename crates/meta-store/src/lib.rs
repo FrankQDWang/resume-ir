@@ -1732,6 +1732,52 @@ impl MetaStore {
         Ok(document_ids)
     }
 
+    pub fn searchable_document_ids_with_contact_hashes(
+        &self,
+        contact_hashes: &[ContactHash],
+    ) -> Result<Vec<DocumentId>> {
+        if contact_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders = (0..contact_hashes.len())
+            .map(|index| format!("?{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "\
+            SELECT DISTINCT version.document_id
+            FROM candidate AS candidate
+            JOIN resume_version AS version ON version.candidate_id = candidate.id
+            JOIN document AS document ON document.id = version.document_id
+            WHERE document.is_deleted = 0
+                AND document.status IN ('indexed_partial', 'searchable')
+                AND version.visibility = 'searchable'
+                AND (
+                    candidate.email_hash IN ({placeholders})
+                    OR candidate.phone_hash IN ({placeholders})
+                )
+            ORDER BY version.document_id"
+        );
+        let values = contact_hashes
+            .iter()
+            .map(|contact_hash| Value::Text(contact_hash.as_str().to_string()))
+            .collect::<Vec<_>>();
+
+        let connection = self.connection.borrow();
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params_from_iter(values))
+            .map_err(MetaStoreError::storage)?;
+        let mut document_ids = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            document_ids.push(read_id::<DocumentId>(row, 0, "document.id")?);
+        }
+
+        Ok(document_ids)
+    }
+
     pub fn searchable_document_ids_without_entity_type(
         &self,
         entity_type: EntityType,

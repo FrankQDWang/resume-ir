@@ -30,14 +30,14 @@ use index_vector::{
 };
 use meta_store::{
     backup_metadata_encryption_key, restore_metadata_encryption_key,
-    rotate_metadata_encryption_key, Candidate, CandidateId, Document, DocumentId, DocumentStatus,
-    EntityMention, EntityType, FileExtension, ImportRootKind as StoreImportRootKind,
-    ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
-    ImportScanErrorSummary, ImportScanProfile as StoreImportScanProfile, ImportScanScope,
-    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobFailureKind,
-    IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState, OcrPageCacheEntry,
-    OcrPageCacheKey, QueryLatencySummary, ResumeVersion, ResumeVersionId, ResumeVisibility,
-    UnixTimestamp, WorkerTaskKind,
+    rotate_metadata_encryption_key, Candidate, CandidateId, ContactHash, Document, DocumentId,
+    DocumentStatus, EntityMention, EntityType, FileExtension,
+    ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
+    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanErrorSummary,
+    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
+    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, QueryLatencySummary,
+    ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -46,7 +46,10 @@ use ocr_client::{
     PdftoppmRenderSpec, RenderedPage, TesseractLanguageAvailability, TesseractOcrClient,
     TesseractOcrSpec,
 };
-use privacy::{backup_contact_hash_key, inspect_contact_hash_key, restore_contact_hash_key};
+use privacy::{
+    backup_contact_hash_key, inspect_contact_hash_key, restore_contact_hash_key, ContactHasher,
+    ContactKind,
+};
 use rank_fusion::{
     fuse_hybrid_rrf, soft_dedupe_score, DateRange, DedupeProfile, DegreeLevel, HybridRecall,
     RankedHit, ResumeProfile, SchoolTier, SearchFilters,
@@ -5449,7 +5452,7 @@ fn pending_import_task(
 }
 
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    let search_args = parse_search_args(args)?;
+    let search_args = parse_search_args(data_dir, args)?;
     if search_args.ipc_auto {
         let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
         let endpoint = discover_search_ipc_endpoint(data_dir)?;
@@ -5612,6 +5615,7 @@ fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
         "companies_any": filters.companies_any(),
         "titles_any": filters.titles_any(),
         "skills_any": filters.skills_any(),
+        "contact_hashes_any": filters.contact_hashes_any(),
         "years_experience_min": filters.years_experience_min(),
     })
 }
@@ -5799,6 +5803,16 @@ fn field_filter_doc_id_prefilter(
                 .map_err(CliError::store)?,
         );
     }
+    if !filters.contact_hashes_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_contact_hashes(&contact_hash_filter_values(
+                    filters.contact_hashes_any(),
+                )?)
+                .map_err(CliError::store)?,
+        );
+    }
     if let Some(years_min) = filters.years_experience_min() {
         merge_filter_doc_ids(
             &mut allowed_doc_ids,
@@ -5813,6 +5827,16 @@ fn field_filter_doc_id_prefilter(
     }
 
     Ok(allowed_doc_ids)
+}
+
+fn contact_hash_filter_values(contact_hashes: &[String]) -> Result<Vec<ContactHash>> {
+    contact_hashes
+        .iter()
+        .map(|contact_hash| {
+            ContactHash::from_keyed_digest(contact_hash.clone())
+                .map_err(|_| CliError::user("search contact filter is invalid"))
+        })
+        .collect()
 }
 
 fn school_tier_filter_doc_ids(
@@ -8049,7 +8073,7 @@ fn format_json_optional_u64(value: Option<u64>) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
-fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
+fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
     let Some(query) = args.first() else {
         return Err(CliError::usage(search_usage()));
     };
@@ -8065,6 +8089,8 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
     let mut ipc_auto = false;
     let mut ipc_endpoint = None;
     let mut ipc_token_file = None;
+    let mut contact_hashes_any = Vec::new();
+    let mut contact_hasher = None;
     let mut index = 1_usize;
 
     while index < args.len() {
@@ -8267,6 +8293,46 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
                 );
                 index += 2;
             }
+            "--email" | "--emails-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let values = comma_values(value);
+                if values.is_empty() {
+                    return Err(CliError::user("search email filter is invalid"));
+                }
+                for value in values {
+                    let normalized = normalize_search_email(value)
+                        .ok_or_else(|| CliError::user("search email filter is invalid"))?;
+                    contact_hashes_any.push(hash_search_contact(
+                        data_dir,
+                        &mut contact_hasher,
+                        ContactKind::Email,
+                        &normalized,
+                    )?);
+                }
+                index += 2;
+            }
+            "--phone" | "--phones-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let values = comma_values(value);
+                if values.is_empty() {
+                    return Err(CliError::user("search phone filter is invalid"));
+                }
+                for value in values {
+                    let normalized = normalize_search_phone(value)
+                        .ok_or_else(|| CliError::user("search phone filter is invalid"))?;
+                    contact_hashes_any.push(hash_search_contact(
+                        data_dir,
+                        &mut contact_hasher,
+                        ContactKind::Phone,
+                        &normalized,
+                    )?);
+                }
+                index += 2;
+            }
             "--years-experience-min" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -8300,6 +8366,9 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
     if !ipc_auto && ipc_endpoint.is_some() != ipc_token_file.is_some() {
         return Err(CliError::usage(search_usage()));
     }
+    if !contact_hashes_any.is_empty() {
+        filters = filters.with_contact_hashes_any(contact_hashes_any);
+    }
 
     Ok(SearchArgs {
         query: query.clone(),
@@ -8318,7 +8387,85 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--skills-any <skill[,skill...]>] [--email <email[,email...]>] [--phone <phone[,phone...]>] [--years-experience-min <years>] [--top-k <n>]"
+}
+
+fn comma_values(value: &str) -> Vec<&str> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn hash_search_contact(
+    data_dir: &Path,
+    hasher: &mut Option<ContactHasher>,
+    kind: ContactKind,
+    normalized_value: &str,
+) -> Result<String> {
+    if hasher.is_none() {
+        *hasher = Some(ContactHasher::load_or_create(data_dir).map_err(CliError::privacy)?);
+    }
+    let hasher = hasher.as_ref().expect("contact hasher initialized");
+    Ok(hasher
+        .hash_contact(kind, normalized_value)
+        .map_err(CliError::privacy)?
+        .as_str()
+        .to_string())
+}
+
+fn normalize_search_email(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.chars().any(char::is_whitespace)
+        || !value.contains('@')
+        || !value.rsplit_once('@')?.1.contains('.')
+    {
+        return None;
+    }
+    Some(value.to_ascii_lowercase())
+}
+
+fn normalize_search_phone(value: &str) -> Option<String> {
+    let raw = value.trim();
+    let digits = raw
+        .chars()
+        .filter(|character| character.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+    if raw.starts_with('+') && (11..=15).contains(&digits.len()) {
+        return Some(format!("+{digits}"));
+    }
+    if let Some(rest) = digits.strip_prefix("0086") {
+        if is_china_mobile(rest) {
+            return Some(format!("+86{rest}"));
+        }
+    }
+    if let Some(rest) = digits.strip_prefix("86") {
+        if is_china_mobile(rest) {
+            return Some(format!("+86{rest}"));
+        }
+    }
+    if is_china_mobile(&digits) {
+        return Some(format!("+86{digits}"));
+    }
+    if digits.len() == 10 {
+        return Some(format!("+1{digits}"));
+    }
+    if digits.len() == 11 && digits.starts_with('1') {
+        return Some(format!("+{digits}"));
+    }
+    None
+}
+
+fn is_china_mobile(digits: &str) -> bool {
+    let bytes = digits.as_bytes();
+    digits.len() == 11
+        && bytes.first() == Some(&b'1')
+        && bytes.get(1).is_some_and(|byte| matches!(byte, b'3'..=b'9'))
 }
 
 fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
@@ -8462,6 +8609,7 @@ fn run_semantic_search(
     let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
         .map_err(CliError::vector)?;
     let vector_limit = search_args.vector_top_k.unwrap_or(candidate_limit);
+    let allowed_doc_ids = field_filter_doc_id_prefilter(store, &search_args.filters)?;
     let vector_hits = vector_index
         .knn_for_model(
             QueryVector::new(query_vector.values().to_vec()).map_err(CliError::vector)?,
@@ -8470,7 +8618,13 @@ fn run_semantic_search(
         )
         .map_err(CliError::vector)?;
 
-    vector_output_hits(store, vector_hits, &search_args.filters, search_args.top_k)
+    vector_output_hits(
+        store,
+        vector_hits,
+        &search_args.filters,
+        allowed_doc_ids.as_ref(),
+        search_args.top_k,
+    )
 }
 
 fn vector_snapshot_dimension(data_dir: &Path) -> Result<usize> {
@@ -8496,12 +8650,18 @@ fn vector_output_hits(
     store: &MetaStore,
     hits: Vec<VectorHit>,
     filters: &SearchFilters,
+    allowed_doc_ids: Option<&BTreeSet<String>>,
     top_k: usize,
 ) -> Result<Vec<SearchOutputHit>> {
     let mut visible = Vec::new();
     let mut seen_candidate_keys = BTreeSet::new();
 
     for (rank, hit) in hits.into_iter().enumerate() {
+        if let Some(allowed_doc_ids) = allowed_doc_ids {
+            if !allowed_doc_ids.contains(hit.doc_id()) {
+                continue;
+            }
+        }
         let Some((document, version)) = hydrate_visible_document_version(store, hit.doc_id())?
         else {
             continue;

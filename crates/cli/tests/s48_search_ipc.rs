@@ -6,6 +6,8 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use privacy::{ContactHasher, ContactKind};
+
 #[test]
 fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store() {
     let data_dir = temp_path("search-ipc-data");
@@ -139,6 +141,112 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
     assert!(!stdout.contains(path_str(&token_file)));
     assert!(!stdout.contains("12121212"));
     assert!(!data_dir.exists());
+
+    remove_path(&data_dir);
+    remove_path(&token_file);
+}
+
+#[test]
+fn search_ipc_hashes_contact_filters_before_submitting_request() {
+    let data_dir = temp_path("search-ipc-contact-data");
+    let token_file = temp_file("search-ipc-contact-token");
+    fs::write(
+        &token_file,
+        "3434343434343434343434343434343434343434343434343434343434343434\n",
+    )
+    .unwrap();
+    let hasher = ContactHasher::load_or_create(&data_dir).unwrap();
+    let expected_email_hash = hasher
+        .hash_contact(ContactKind::Email, "target-contact@example.test")
+        .unwrap()
+        .as_str()
+        .to_string();
+    let expected_phone_hash = hasher
+        .hash_contact(ContactKind::Phone, "+12125550199")
+        .unwrap()
+        .as_str()
+        .to_string();
+    let expected_email_hash_for_request = expected_email_hash.clone();
+    let expected_phone_hash_for_request = expected_phone_hash.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = accept_with_timeout(&listener);
+        let request = read_http_request(&mut stream);
+        assert!(request.starts_with("POST /search HTTP/1.1"));
+        assert!(request.contains(
+            "Authorization: Bearer 3434343434343434343434343434343434343434343434343434343434343434"
+        ));
+        assert!(!request.contains("target-contact@example.test"));
+        assert!(!request.contains("TARGET-CONTACT@example.test"));
+        assert!(!request.contains("212-555-0199"));
+        assert!(!request.contains("+12125550199"));
+        let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+        let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(payload["query"], "private-contact-query");
+        assert_eq!(
+            payload["filters"]["contact_hashes_any"],
+            serde_json::json!([
+                expected_email_hash_for_request,
+                expected_phone_hash_for_request
+            ])
+        );
+
+        let response = serde_json::json!({
+            "schema_version": "daemon.search.v1",
+            "status": "ok",
+            "mode": "fulltext",
+            "search_index": "available",
+            "result_count": 0,
+            "results": []
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.len(),
+            response
+        )
+        .expect("write fake search response");
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "private-contact-query",
+            "--ipc",
+            &format!("http://{addr}/status"),
+            "--ipc-token-file",
+            path_str(&token_file),
+            "--email",
+            "TARGET-CONTACT@example.test",
+            "--phone",
+            "212-555-0199",
+            "--top-k",
+            "3",
+        ])
+        .output()
+        .expect("run resume-cli contact search --ipc");
+
+    server.join().expect("fake daemon joined");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 0"));
+    assert!(!stdout.contains("private-contact-query"));
+    assert!(!stdout.contains("target-contact@example.test"));
+    assert!(!stdout.contains("TARGET-CONTACT@example.test"));
+    assert!(!stdout.contains("212-555-0199"));
+    assert!(!stdout.contains(&expected_email_hash));
+    assert!(!stdout.contains(&expected_phone_hash));
+    assert!(!stdout.contains(path_str(&token_file)));
 
     remove_path(&data_dir);
     remove_path(&token_file);
