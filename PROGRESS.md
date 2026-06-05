@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, and S190 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, and S191 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -581,8 +581,67 @@ obsolete preliminary files and checklists are not product scope.
 | S188 | Product open-ended present date-range extraction complete locally | Focused tests first failed because `2020年1月 - 至今`, `Jan 2021 - Present`, and `2022.03 - Current` produced no DateRange mentions, and import therefore persisted no DateRange/YearsExperience mentions for that evidence. After implementation, extractor-rules recognizes numeric, Chinese year/month, and English named-month open-ended present/current ranges, normalizes them to `YYYY-MM/PRESENT`, preserves exact span evidence, and derives years-experience from the current local month while import persists DateRange/YearsExperience mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves present/current date normalization only. It does not prove real business field-quality metrics, broad multilingual date normalization coverage, all date idioms, real corpus results, or stable release readiness. |
 | S189 | Product labeled company/title extraction complete locally | Focused tests first failed because `Company: Synthetic Commerce Inc.` normalized to `company: synthetic commerce`, `公司：合成科技有限公司` normalized with the label and unstripped Chinese suffix, and persisted company/title raw values still contained `Company:`/`公司：`/`Title:`/`职位：` labels. After implementation, extractor-rules strips common English and Chinese company/title labels before validation, points spans at only the field values, normalizes Chinese company suffixes such as `有限公司`, and import persists the stripped Company/Title mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves labeled company/title extraction only. It does not prove real business field-quality metrics, broad company/title dictionaries, all multilingual employer/title idioms, real corpus results, or stable release readiness. |
 | S190 | Product broader title alias extraction complete locally | Focused tests first failed because frontend, full-stack, machine-learning, data-scientist, DevOps, QA, engineering-manager, and solutions-architect title evidence produced no Title mentions, and import therefore persisted none of those title aliases. After implementation, extractor-rules maps those high-signal English and Chinese role families to canonical title values, keeps exact span evidence, rejects certificate-looking title candidates such as `AWS Certified Solutions Architect`, and import persists the title mentions without CLI output/path/contact leaks. Focused RED/GREEN, full extractor-rules, full import-pipeline, full persisted-field CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves title dictionaries/normalization only. It does not prove real business field-quality metrics, broad multilingual title coverage, model-based role inference, real corpus results, or stable release readiness. |
+| S191 | Product hosted Windows daemon-kill readiness test stability complete locally | PR #9 hosted Windows Platform CI failed in `foreground_daemon_can_be_killed_and_restarted_without_path_leak` because the test killed the foreground daemon after metadata readiness but before stdout readiness evidence was reliably captured, so `resume-daemon foreground ready` was absent from the killed-child stdout assertion. After implementation, the test uses a bounded background stdout reader to wait for the ready line before killing the daemon, then joins the reader after process exit and preserves the restart and path-redaction assertions. Focused exact daemon-kill test, full `resume-daemon`, focused daemon clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice stabilizes hosted Windows daemon-kill test evidence only. It does not change production daemon behavior, prove hosted Windows CI has passed until the pushed branch check completes, or clear platform installer/service, signing, notarization, OCR/model licensing, benchmark, or stable release blockers. |
 
 ## Command Log
+
+### S191
+
+Hosted CI failure:
+
+```bash
+gh pr checks 9 --repo FrankQDWang/resume-ir --watch --interval 30
+gh run view 26995104639 --repo FrankQDWang/resume-ir --job 79663111886 --log
+```
+
+Output summary:
+
+- The PR Windows check failed in
+  `foreground_daemon_can_be_killed_and_restarted_without_path_leak`.
+- The failure was `assertion failed:
+  killed.stdout.contains("resume-daemon foreground ready")` after the foreground
+  daemon was killed.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s81_daemon_kill foreground_daemon_can_be_killed_and_restarted_without_path_leak -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-daemon --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+```
+
+Output summary:
+
+- The exact daemon-kill test passed locally after the test waits for the
+  foreground ready line before killing the child process.
+- Full `resume-daemon`, focused daemon clippy, `cargo fmt --all --check`, and
+  `git diff --check` passed locally before final guard/full-local verification.
+
+Final checkpoint verification:
+
+```bash
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `guard-public-repo.sh` passed.
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S191 uses synthetic/temp data only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, local diagnostics,
+  tokens, or model caches.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S190
 
