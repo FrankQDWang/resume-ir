@@ -2102,6 +2102,39 @@ fn purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_docume
 }
 
 #[test]
+fn purge_import_tasks_matches_windows_canonical_root_to_normalized_document_path() {
+    let store = migrated_store();
+    let mut document = document(
+        "purge-import-root-windows",
+        false,
+        DocumentStatus::Searchable,
+    );
+    document.source_uri = "file://c:/Synthetic/Import Root/resume.docx".to_string();
+    document.normalized_path = "c:/Synthetic/Import Root/resume.docx".to_string();
+    let task = import_task(
+        "purge-import-root-windows-task",
+        r"\\?\C:\Synthetic\Import Root",
+        ImportTaskStatus::Queued,
+    );
+
+    store.upsert_document(&document).unwrap();
+    store.insert_import_task(&task).unwrap();
+    store
+        .mark_document_deleted(
+            &document.id,
+            UnixTimestamp::from_unix_seconds(1_800_014_030),
+        )
+        .unwrap();
+
+    let purged = store
+        .purge_import_tasks_for_deleted_document_roots(std::slice::from_ref(&document.id))
+        .unwrap();
+
+    assert_eq!(purged.tasks(), 1);
+    assert!(store.import_task_by_id(&task.id).unwrap().is_none());
+}
+
+#[test]
 fn import_task_status_updates_support_completion_and_retry() {
     let store = migrated_store();
     let task = import_task(

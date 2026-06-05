@@ -5186,17 +5186,116 @@ fn import_root_matches_document_path(root_path: &str, document_path: &DocumentPa
 }
 
 fn path_string_is_root_or_child(root_path: &str, path: &str) -> bool {
-    let root_path = root_path.trim();
-    if root_path.is_empty() {
+    let Some(root) = path_match_key(root_path) else {
         return false;
-    }
-    let root = root_path.trim_end_matches(['/', '\\']);
-    let root = if root.is_empty() { root_path } else { root };
+    };
+    let Some(path) = path_match_key(path) else {
+        return false;
+    };
     if path == root {
         return true;
     }
-    path.strip_prefix(root)
-        .is_some_and(|remaining| remaining.starts_with('/') || remaining.starts_with('\\'))
+    path.strip_prefix(&root)
+        .is_some_and(|remaining| remaining.starts_with('/'))
+}
+
+fn path_match_key(raw: &str) -> Option<String> {
+    let mut value = raw.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if value.len() >= "file://".len() && value[.."file://".len()].eq_ignore_ascii_case("file://") {
+        value = &value["file://".len()..];
+    }
+
+    let mut normalized = value.replace('\\', "/");
+    if normalized.len() >= "//?/UNC/".len()
+        && normalized[.."//?/UNC/".len()].eq_ignore_ascii_case("//?/UNC/")
+    {
+        normalized = format!("//{}", &normalized["//?/UNC/".len()..]);
+    } else if normalized.len() >= "//?/".len()
+        && normalized[.."//?/".len()].eq_ignore_ascii_case("//?/")
+    {
+        normalized = normalized["//?/".len()..].to_string();
+    } else if normalized.len() >= "//./".len()
+        && normalized[.."//./".len()].eq_ignore_ascii_case("//./")
+    {
+        normalized = normalized["//./".len()..].to_string();
+    }
+
+    if normalized.len() >= 3
+        && normalized.as_bytes()[0] == b'/'
+        && normalized.as_bytes()[2] == b':'
+        && normalized.as_bytes()[1].is_ascii_alphabetic()
+    {
+        normalized = normalized[1..].to_string();
+    }
+
+    let normalized = normalize_path_match_key(&normalized);
+    if path_match_key_is_windows_path(&normalized) {
+        Some(normalized.to_ascii_lowercase())
+    } else {
+        Some(normalized)
+    }
+}
+
+fn normalize_path_match_key(raw: &str) -> String {
+    let (drive_prefix, drive_absolute, without_drive) = split_windows_drive_match_key(raw);
+    let unc_prefix = drive_prefix.is_none() && without_drive.starts_with("//");
+    let absolute = drive_prefix.is_none() && without_drive.starts_with('/') && !unc_prefix;
+    let anchored = drive_absolute || absolute || unc_prefix;
+    let minimum_parts = if unc_prefix { 2 } else { 0 };
+    let mut parts = Vec::<&str>::new();
+
+    for part in without_drive.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.len() > minimum_parts && parts.last().is_some_and(|last| *last != "..") {
+                    parts.pop();
+                } else if !anchored {
+                    parts.push(part);
+                }
+            }
+            _ => parts.push(part),
+        }
+    }
+
+    match (
+        drive_prefix,
+        drive_absolute,
+        unc_prefix,
+        absolute,
+        parts.is_empty(),
+    ) {
+        (Some(prefix), true, _, _, true) => format!("{prefix}:/"),
+        (Some(prefix), true, _, _, false) => format!("{prefix}:/{}", parts.join("/")),
+        (Some(prefix), false, _, _, true) => format!("{prefix}:"),
+        (Some(prefix), false, _, _, false) => format!("{prefix}:{}", parts.join("/")),
+        (None, _, true, _, true) => "//".to_string(),
+        (None, _, true, _, false) => format!("//{}", parts.join("/")),
+        (None, _, false, true, true) => "/".to_string(),
+        (None, _, false, true, false) => format!("/{}", parts.join("/")),
+        (None, _, false, false, true) => ".".to_string(),
+        (None, _, false, false, false) => parts.join("/"),
+    }
+}
+
+fn split_windows_drive_match_key(path: &str) -> (Option<char>, bool, &str) {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        let drive = (bytes[0] as char).to_ascii_lowercase();
+        let rest = &path[2..];
+        return (Some(drive), rest.starts_with('/'), rest);
+    }
+
+    (None, false, path)
+}
+
+fn path_match_key_is_windows_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    path.starts_with("//")
+        || (bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic())
 }
 
 fn count_import_task_child_rows(

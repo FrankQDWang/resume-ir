@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, and S182 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, and S183 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -163,6 +163,10 @@ obsolete preliminary files and checklists are not product scope.
   deleted documents and no visible documents, cascading scan scopes, scan
   errors, and cancellations so emptied import-root paths are cleared from
   current metadata while roots with visible documents are retained.
+  Import-root purge matching now normalizes local file URI prefixes, Windows
+  verbatim canonical roots, drive-letter case, and path separators before
+  comparing roots with document paths, preserving the same redacted purge output
+  on hosted Windows.
   Missing production work
   includes broader dictionaries, stronger normalization, real business labeled
   field and dedupe quality datasets/results, remaining future non-cache PII
@@ -538,8 +542,66 @@ obsolete preliminary files and checklists are not product scope.
 | S180 | Product hosted Windows full-text snapshot read-lock stability complete locally | PR #9 hosted Windows Platform CI failed in `s8_fulltext::incremental_snapshot_inherits_replaces_and_excludes_documents`: the first `publish_snapshot` returned Windows `os error 33` while reading freshly written snapshot files. A focused regression first failed because `read_snapshot_file_with_retry` did not exist. After implementation, snapshot archive file reads, encrypted snapshot envelope reads, and encrypted-header probes use the existing bounded transient Windows lock retry policy. Focused RED/GREEN, the hosted-failing exact test, full `index-fulltext`, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice covers hosted Windows full-text snapshot file-read stability only. It does not prove hosted Windows CI has passed until the pushed branch check completes, nor does it clear large-corpus, installer/service, signing, notarization, OCR/model licensing, or stable release blockers. |
 | S181 | Product candidate contact conflict review complete locally | Focused tests first failed because `MetaStore::candidate_contact_conflicts` did not exist and automatic hashed-contact assignment still errored with `candidate.contact_hash` when email and phone matched different candidates. After implementation, schema V18 persists redacted `candidate_contact_conflict` rows with only version and candidate IDs, conflicting hashed-contact assignment returns `Ok(None)` without auto-folding, successful later assignment clears stale conflicts, and `resume-cli candidate-review conflicts --limit <count>` lists reviewable conflicts with contact values, contact hashes, and paths redacted. Focused RED/GREEN meta-store and CLI tests, full meta-store, full candidate-folding CLI tests, metadata key backup/rotation schema regression tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice adds local redacted conflict surfacing only. It does not auto-merge conflicting candidates, add a UI, prove real business dedupe-quality results, clear broader field normalization, clear future non-cache PII purge coverage, prove forensic erase, or clear stable release blockers. |
 | S182 | Product deleted-document import-root path purge complete locally | Focused tests first failed because empty import roots retained `import_task` and `import_scan_scope` path metadata after document purge. After implementation, deleted-document purge removes import tasks whose roots contain deleted documents and no visible documents, cascading scan scope, scan error, and cancellation rows; roots with live documents are retained, and CLI purge reports only redacted counters. Focused RED/GREEN, full meta-store, full delete/search CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice covers empty-root import task path cleanup only. It does not prove forensic erase, all possible future non-cache PII surfaces, real corpus purge audits, or stable release blockers. |
+| S183 | Product hosted Windows import-root purge path matching complete locally | PR #9 hosted Windows Platform CI failed in `purge_deleted_removes_empty_import_root_task_paths_without_path_leak` because the purge output did not include `purged import tasks: 1`; the empty-root task was not matched when the import task root used a Windows canonical path shape and the document path used normalized slash/file-URI storage. A focused meta-store regression first failed for a `\\?\\C:\\...` root against `file://c:/...` / `c:/...` document paths. After implementation, import-root purge matching builds internal comparison keys that strip local file URI prefixes, remove Windows verbatim prefixes, normalize separators and dot segments, and compare Windows drive/UNC paths case-insensitively. Focused RED/GREEN, full meta-store, full delete/search CLI tests, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice fixes Windows path-shape matching for the S182 purge only. It does not prove hosted Windows CI has passed until the pushed branch check completes, prove forensic erase, audit real corpus purge behavior, or clear stable release blockers. |
 
 ## Command Log
+
+### S183
+
+Remote red evidence:
+
+```bash
+gh run view 26990679379 --job 79649961389 --repo FrankQDWang/resume-ir --log-failed
+```
+
+Output summary:
+
+- PR #9 hosted Windows Platform CI failed in
+  `purge_deleted_removes_empty_import_root_task_paths_without_path_leak`.
+- The failure was `assertion failed: stdout.contains("purged import tasks: 1")`.
+- The same pushed commit passed Rust workspace, macOS Platform CI, public
+  repository guard, dependency tree, license policy, and runbook policy.
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store purge_import_tasks_matches_windows_canonical_root_to_normalized_document_path -- --exact
+```
+
+Output summary:
+
+- Failed before implementation with `left: 0` and `right: 1`, proving the purge
+  did not match a Windows `\\?\\C:\\...` canonical import root against stored
+  `file://c:/...` and `c:/...` document paths.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store purge_import_tasks_matches_windows_canonical_root_to_normalized_document_path -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_documents -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store
+/Users/frankqdwang/.cargo/bin/cargo clippy -p meta-store -p resume-cli --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The Windows path-shape meta-store regression passed after implementation.
+- The original empty-root retention/purge regression still passed.
+- Full `s14_delete_search` passed: 8 tests.
+- Full `meta-store` passed: 51 tests plus doc-tests.
+- Focused clippy, `cargo fmt --all --check`, `git diff --check`,
+  `guard-public-repo.sh`, and full `verify-local.sh` passed.
+
+Scope note:
+
+- S183 changes only internal purge matching keys; it does not print paths,
+  upload data, relax purge counters, or change the redacted CLI surface.
 
 ### S182
 
