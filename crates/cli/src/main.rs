@@ -5604,6 +5604,7 @@ fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
             .iter()
             .map(|school_tier| school_tier.canonical())
             .collect::<Vec<_>>(),
+        "certificates_any": filters.certificates_any(),
         "skills_any": filters.skills_any(),
         "years_experience_min": filters.years_experience_min(),
     })
@@ -5712,6 +5713,19 @@ fn field_filter_doc_id_prefilter(
         merge_filter_doc_ids(
             &mut allowed_doc_ids,
             school_tier_filter_doc_ids(store, filters.school_tiers_any())
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.certificates_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Certificate,
+                    filters.certificates_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
                 .map_err(CliError::store)?,
         );
     }
@@ -8114,6 +8128,21 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
                 filters = filters.with_school_tiers_any(school_tiers);
                 index += 2;
             }
+            "--certificate" | "--certificates-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let certificates = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|certificate| !certificate.is_empty())
+                    .collect::<Vec<_>>();
+                if certificates.is_empty() {
+                    return Err(CliError::user("search certificate filter is invalid"));
+                }
+                filters = filters.with_certificates_any(certificates);
+                index += 2;
+            }
             "--skills-any" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -8177,7 +8206,7 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
 }
 
 fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
@@ -8719,6 +8748,11 @@ fn persisted_profile(
         .filter(|field| field.entity_type == EntityType::Skill && field.confidence >= 0.75)
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let certificates = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Certificate && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let school_tiers = fields
         .iter()
         .filter(|field| field.entity_type == EntityType::SchoolTier && field.confidence >= 0.75)
@@ -8734,6 +8768,7 @@ fn persisted_profile(
 
     let mut profile = ResumeProfile::new(doc_id)
         .with_school_tiers(school_tiers)
+        .with_certificates(certificates)
         .with_skills(skills);
     if let Some(degree) = degree {
         profile = profile.with_degree(degree);

@@ -2602,6 +2602,25 @@ fn parse_search_filters(
             parsed = parsed.with_school_tiers_any(school_tiers);
         }
     }
+    if let Some(value) = object.get("certificates_any") {
+        if !value.is_null() {
+            let certificates = value.as_array().ok_or(IpcCommandError::BadRequest(
+                "certificates_any must be an array",
+            ))?;
+            if certificates.len() > 32 {
+                return Err(IpcCommandError::BadRequest("too many certificates"));
+            }
+            let certificates = certificates
+                .iter()
+                .map(|certificate| {
+                    certificate.as_str().ok_or(IpcCommandError::BadRequest(
+                        "certificates_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_certificates_any(certificates);
+        }
+    }
     if let Some(value) = object.get("years_experience_min") {
         if !value.is_null() {
             let years = value
@@ -2662,6 +2681,20 @@ fn daemon_field_filter_doc_id_prefilter(
         daemon_merge_filter_doc_ids(
             &mut allowed_doc_ids,
             daemon_school_tier_filter_doc_ids(store, filters.school_tiers_any())
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.certificates_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Certificate,
+                    filters.certificates_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
                 .map_err(DaemonError::store)
                 .map_err(IpcCommandError::Internal)?,
         );
@@ -3025,6 +3058,14 @@ fn daemon_persisted_profile(
         })
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let certificates = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::Certificate
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let school_tiers = fields
         .iter()
         .filter(|field| {
@@ -3044,6 +3085,7 @@ fn daemon_persisted_profile(
 
     let mut profile = ResumeProfile::new(doc_id)
         .with_school_tiers(school_tiers)
+        .with_certificates(certificates)
         .with_skills(skills);
     if let Some(degree) = degree {
         profile = profile.with_degree(degree);

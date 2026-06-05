@@ -645,8 +645,84 @@ obsolete preliminary files and checklists are not product scope.
 | S200 | Product school-tier extraction and filtering complete locally | Focused tests first failed because `FieldType::SchoolTier`, rank-fusion `SchoolTier` filters, and import mapping for the new field did not exist. After implementation, extractor-rules recognizes explicit `985`, `211`, `双一流`, overseas, and regular-school evidence inside bounded education/school context, persists canonical `school_tier` entity mentions, wires the SQLite entity whitelist and benchmark field labels, and supports `--school-tier` filtering through direct CLI search plus CLI/daemon IPC search payloads. Focused RED/GREEN, full extractor/rank/import/meta-store/benchmark tests, persisted-field and search-IPC CLI tests, daemon search-IPC tests, focused clippy, and fmt passed locally. | This slice uses synthetic/temp fixtures only. It does not infer school tier from broad school dictionaries, prove real business field-quality metrics, evaluate private resume corpora, clear broad multilingual education coverage, or make stable release ready. |
 | S201 | Product field-quality school-tier release gate complete locally | Focused RED tests first failed because private-business field-quality reports without `school_tier` metrics were accepted by both the library gate and CLI gate. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `school_tier` metrics for private business release evidence, complete strict reports include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, full `benchmark-runner`, and runbook guard passed locally. | This slice tightens release-evidence validation only. It does not create private labels, run real business field-quality evaluation, prove production `school_tier` F1 on representative resumes, infer tier from broad school dictionaries, or make stable release ready. |
 | S202 | Product unknown school-tier filtering complete locally | Focused tests first failed because `SchoolTier::Unknown` did not match profiles with no school-tier evidence, CLI `--school-tier unknown` returned no target when known-tier decoys consumed the full-text top-k window, `MetaStore` had no missing-entity prefilter helper, and daemon IPC had the same post-filter-only top-k gap. After implementation, `unknown` means no high-confidence persisted `school_tier` mention on a searchable visible version, known and unknown tier filters are unioned before intersecting with other field filters, and both CLI and daemon full-text search apply the prefilter before top-k truncation. Focused RED/GREEN and related rank/meta-store/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not infer unknown as an extracted entity, read real resumes, prove broad school dictionaries, produce private field-quality evidence, or make stable release ready. |
+| S203 | Product certificate search filtering complete locally | Focused tests first failed because rank-fusion had no certificate profile/filter API, CLI `--certificate` was rejected by search usage, CLI IPC did not emit `certificates_any`, and daemon IPC ignored certificate filters until after full-text top-k retrieval. After implementation, certificate filters normalize common certificate aliases to extractor canonical values, CLI supports `--certificate` and `--certificates-any`, CLI/daemon IPC carry `certificates_any`, persisted profiles hydrate certificate mentions, and both CLI and daemon prefilter certificate doc IDs before full-text top-k truncation. Focused RED/GREEN and related rank/CLI/daemon suites passed locally. | This slice uses synthetic/temp fixtures only. It does not broaden certificate extraction beyond existing aliases, implement certificate level/date filters, produce private field-quality evidence, or make stable release ready. |
 
 ## Command Log
+
+### S203
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_any_certificate -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_certificates_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_certificates_before_fulltext_top_k_cutoff -- --exact
+```
+
+Output summary:
+
+- The rank-fusion regression failed before implementation because
+  `with_certificates`, `with_certificates_any`, and `certificates_any` did not
+  exist.
+- The direct CLI regression failed before implementation because search usage
+  rejected `--certificate`.
+- The CLI IPC regression failed before implementation because the command did
+  not connect to the fake daemon after rejecting the certificate filter.
+- The daemon IPC regression failed before implementation because
+  `certificates_any` was ignored and a decoy hit won before post-filtering.
+
+Focused implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_any_certificate -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_certificates_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_certificates_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_sectioned_certificate_alias_mentions_without_output_leaks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc
+```
+
+Output summary:
+
+- Certificate profile/filter matching now accepts normalized persisted
+  certificate values and common user input aliases such as `PMP` and `CKA`.
+- CLI direct search and daemon search IPC now prefilter `certificate` evidence
+  before full-text top-k truncation.
+- CLI search IPC serializes `certificates_any`, and existing certificate
+  extraction/persistence tests remain green.
+
+Final checkpoint verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p rank-fusion -p resume-cli -p resume-daemon --all-targets -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Formatter check, focused rank-fusion/CLI/daemon clippy, whitespace diff check,
+  and public repo guard passed.
+- Full `verify-local.sh` passed, including workspace tests/doc-tests,
+  license/runbook/workflow checks, release readiness check, release artifact
+  check, release SBOM check, macOS package check, Windows package skip on
+  non-Windows, and the final public repo guard.
+
+Scope note:
+
+- S203 uses synthetic temp files and synthetic stores only. It does not read,
+  print, commit, or upload private resumes, filenames, paths, raw text, local
+  diagnostics, tokens, model caches, private labels, OCR text, page images,
+  command paths, or vectors.
+- Subagent-driven guidance was used as implementation discipline only; no
+  separate subagent execution owner was spawned for this slice.
 
 ### S202
 

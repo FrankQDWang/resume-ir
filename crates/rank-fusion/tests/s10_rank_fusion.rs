@@ -68,6 +68,19 @@ fn field_filters_match_unknown_school_tier_when_no_tier_evidence_exists() {
 }
 
 #[test]
+fn field_filters_match_any_certificate() {
+    let filters = SearchFilters::default().with_certificates_any(["PMP", "CKA"]);
+    let matching = ResumeProfile::new("doc_certified").with_certificates(["pmp", "cissp"]);
+    let other_certificate = ResumeProfile::new("doc_other").with_certificates(["cpa"]);
+    let missing_certificate = ResumeProfile::new("doc_missing");
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&other_certificate));
+    assert!(!filters.matches(&missing_certificate));
+    assert_eq!(filters.certificates_any(), &["cka", "pmp"]);
+}
+
+#[test]
 fn candidate_fold_keeps_best_ranked_version_per_candidate() {
     let hits = vec![
         RankedHit::new("doc_old", 1, 9.5).with_candidate_key("cand_same"),

@@ -83,6 +83,7 @@ pub struct ResumeProfile {
     doc_id: String,
     degree: Option<DegreeLevel>,
     school_tiers: Vec<SchoolTier>,
+    certificates: Vec<String>,
     skills: Vec<String>,
     years_experience: Option<f32>,
 }
@@ -93,6 +94,7 @@ impl ResumeProfile {
             doc_id: doc_id.into(),
             degree: None,
             school_tiers: Vec::new(),
+            certificates: Vec::new(),
             skills: Vec::new(),
             years_experience: None,
         }
@@ -109,6 +111,21 @@ impl ResumeProfile {
     {
         self.school_tiers = school_tiers
             .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
+    pub fn with_certificates<I, S>(mut self, certificates: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.certificates = certificates
+            .into_iter()
+            .map(|certificate| normalize_certificate(certificate.as_ref()))
+            .filter(|certificate| !certificate.is_empty())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -143,6 +160,10 @@ impl ResumeProfile {
         &self.school_tiers
     }
 
+    pub fn certificates(&self) -> &[String] {
+        &self.certificates
+    }
+
     pub fn skills(&self) -> &[String] {
         &self.skills
     }
@@ -159,6 +180,7 @@ impl fmt::Debug for ResumeProfile {
             .field("doc_id", &self.doc_id)
             .field("degree", &self.degree)
             .field("school_tier_count", &self.school_tiers.len())
+            .field("certificate_count", &self.certificates.len())
             .field("skill_count", &self.skills.len())
             .field("years_experience", &self.years_experience)
             .finish()
@@ -169,6 +191,7 @@ impl fmt::Debug for ResumeProfile {
 pub struct SearchFilters {
     degree_min: Option<DegreeLevel>,
     school_tiers_any: Vec<SchoolTier>,
+    certificates_any: Vec<String>,
     skills_any: Vec<String>,
     years_experience_min: Option<f32>,
 }
@@ -185,6 +208,21 @@ impl SearchFilters {
     {
         self.school_tiers_any = school_tiers
             .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
+    pub fn with_certificates_any<I, S>(mut self, certificates: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.certificates_any = certificates
+            .into_iter()
+            .map(|certificate| normalize_certificate(certificate.as_ref()))
+            .filter(|certificate| !certificate.is_empty())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -214,6 +252,7 @@ impl SearchFilters {
     pub fn is_empty(&self) -> bool {
         self.degree_min.is_none()
             && self.school_tiers_any.is_empty()
+            && self.certificates_any.is_empty()
             && self.skills_any.is_empty()
             && self.years_experience_min.is_none()
     }
@@ -228,6 +267,10 @@ impl SearchFilters {
 
     pub fn school_tiers_any(&self) -> &[SchoolTier] {
         &self.school_tiers_any
+    }
+
+    pub fn certificates_any(&self) -> &[String] {
+        &self.certificates_any
     }
 
     pub fn years_experience_min(&self) -> Option<f32> {
@@ -245,6 +288,17 @@ impl SearchFilters {
             && !school_tiers_match_any(&self.school_tiers_any, profile.school_tiers())
         {
             return false;
+        }
+
+        if !self.certificates_any.is_empty() {
+            let profile_certificates = profile.certificates().iter().collect::<BTreeSet<_>>();
+            if !self
+                .certificates_any
+                .iter()
+                .any(|certificate| profile_certificates.contains(certificate))
+            {
+                return false;
+            }
         }
 
         if !self.skills_any.is_empty() {
@@ -292,6 +346,7 @@ impl fmt::Debug for SearchFilters {
             .debug_struct("SearchFilters")
             .field("degree_min", &self.degree_min)
             .field("school_tiers_any_count", &self.school_tiers_any.len())
+            .field("certificates_any_count", &self.certificates_any.len())
             .field("skills_any_count", &self.skills_any.len())
             .field("years_experience_min", &self.years_experience_min)
             .finish()
@@ -670,6 +725,32 @@ pub fn fuse_hybrid_rrf(recall: HybridRecall, k: f32, limit: usize) -> Vec<Ranked
 
 fn normalize_skill(skill: &str) -> String {
     normalize_dedupe_value(skill)
+}
+
+fn normalize_certificate(certificate: &str) -> String {
+    let normalized = certificate
+        .trim()
+        .to_lowercase()
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    match normalized.as_str() {
+        "aws_certified_solutions_architect"
+        | "aws_solutions_architect_associate"
+        | "aws_solutions_architect_professional"
+        | "saa_c02"
+        | "saa_c03" => "aws_solutions_architect".to_string(),
+        "aws_certified_developer" | "aws_developer_associate" | "dva_c01" | "dva_c02" => {
+            "aws_developer".to_string()
+        }
+        "az_104" => "azure_administrator".to_string(),
+        "certified_kubernetes_administrator" => "cka".to_string(),
+        "certified_kubernetes_application_developer" => "ckad".to_string(),
+        "cfa_level_i" | "cfa_level_1" => "cfa_level_1".to_string(),
+        "注册会计师" => "cpa".to_string(),
+        _ => normalized,
+    }
 }
 
 fn normalize_dedupe_values<I, S>(values: I) -> BTreeSet<String>
