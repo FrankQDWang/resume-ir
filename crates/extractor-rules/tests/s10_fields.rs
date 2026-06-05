@@ -143,6 +143,55 @@ Synthetic Payments Inc.";
 }
 
 #[test]
+fn extracts_open_ended_present_date_ranges_with_years_evidence() {
+    let text = "\
+Experience
+2020年1月 - 至今
+Project
+Jan 2021 - Present
+Contract
+2022.03 - Current";
+
+    let matches = extract_strong_fields(text);
+    let date_ranges = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::DateRange)
+        .collect::<Vec<_>>();
+    let normalized = date_ranges
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        normalized,
+        vec!["2020-01/PRESENT", "2021-01/PRESENT", "2022-03/PRESENT"]
+    );
+    assert_eq!(
+        &text[date_ranges[0].span_start..date_ranges[0].span_end],
+        "2020年1月 - 至今"
+    );
+    assert_eq!(
+        &text[date_ranges[1].span_start..date_ranges[1].span_end],
+        "Jan 2021 - Present"
+    );
+    assert_eq!(
+        &text[date_ranges[2].span_start..date_ranges[2].span_end],
+        "2022.03 - Current"
+    );
+    assert!(date_ranges.iter().all(|field| field.confidence >= 0.9));
+    assert!(!format!("{:?}", date_ranges[0]).contains("至今"));
+
+    let years = matches
+        .iter()
+        .find(|field| field.field_type == FieldType::YearsExperience)
+        .unwrap();
+    let years_value = years.normalized_value.as_deref().unwrap();
+    let years_value = years_value.parse::<f32>().unwrap();
+    assert!(years_value >= 10.0, "{years_value}");
+    assert!(!format!("{years:?}").contains("Present"));
+}
+
+#[test]
 fn extracts_sectioned_skill_aliases_without_header_or_context_noise() {
     let text = "\
 Skills

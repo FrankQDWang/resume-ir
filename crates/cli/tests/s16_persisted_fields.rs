@@ -314,6 +314,95 @@ Synthetic Payments Inc.
 }
 
 #[test]
+fn import_persists_present_date_range_and_years_mentions_without_output_leaks() {
+    let data_dir = temp_dir("persisted-present-date-data");
+    let resume_root = temp_dir("persisted-present-date-resumes");
+    fs::write(
+        resume_root.join("synthetic-present-date-candidate.txt"),
+        "\
+Synthetic Present Date Candidate
+Email: present-date-candidate@example.test
+Experience
+2020年1月 - 至今
+Project
+Jan 2021 - Present
+Contract
+2022.03 - Current
+Skills: Java
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import present date ranges");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("2020年1月"));
+    assert!(!stdout.contains("Present"));
+    assert!(!stdout.contains("present-date-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-present-date-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+    let normalized = mentions
+        .iter()
+        .filter(|mention| mention.entity_type == EntityType::DateRange)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("Present"));
+            mention.normalized_value.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        normalized,
+        vec!["2020-01/PRESENT", "2021-01/PRESENT", "2022-03/PRESENT"]
+    );
+
+    let years = mentions
+        .iter()
+        .find(|mention| mention.entity_type == EntityType::YearsExperience)
+        .unwrap();
+    let years_value = years.normalized_value.as_deref().unwrap();
+    let years_value = years_value.parse::<f32>().unwrap();
+    assert!(years_value >= 10.0, "{years_value}");
+    assert!(years.span_start.is_some());
+    assert!(years.span_end.is_some());
+    assert!(!format!("{years:?}").contains("Present"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_chinese_mobile_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-chinese-mobile-data");
     let resume_root = temp_dir("persisted-chinese-mobile-resumes");

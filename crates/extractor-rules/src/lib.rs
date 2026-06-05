@@ -4,6 +4,7 @@ pub fn crate_name() -> &'static str {
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
 
@@ -55,8 +56,11 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     extract_emails(text, &mut matches);
     extract_phones(text, &mut matches);
     extract_numeric_date_ranges(text, &mut matches);
+    extract_numeric_present_date_ranges(text, &mut matches);
     extract_chinese_year_month_date_ranges(text, &mut matches);
+    extract_chinese_present_date_ranges(text, &mut matches);
     extract_named_month_date_ranges(text, &mut matches);
+    extract_named_month_present_date_ranges(text, &mut matches);
     derive_years_experience(text, &mut matches);
     extract_schools(text, &mut matches);
     extract_degrees(text, &mut matches);
@@ -395,6 +399,25 @@ fn extract_numeric_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
     }
 }
 
+fn extract_numeric_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
+    let regex = Regex::new(
+        r"(?ix)
+        \b
+        (?P<y1>19\d{2}|20\d{2})[./-](?P<m1>0?[1-9]|1[0-2])
+        \s*(?:-|–|—|至|到|to)\s*
+        (?:(?:present|current|now|ongoing)\b|至今|现在|目前|当前)",
+    )
+    .unwrap();
+
+    for captures in regex.captures_iter(text) {
+        let Some(found) = captures.get(0) else {
+            continue;
+        };
+        let normalized = format!("{}-{}/PRESENT", &captures["y1"], pad_month(&captures["m1"]));
+        matches.push(date_range_match(found, normalized));
+    }
+}
+
 fn extract_chinese_year_month_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
     let regex = Regex::new(
         r"(?x)
@@ -416,6 +439,25 @@ fn extract_chinese_year_month_date_ranges(text: &str, matches: &mut Vec<RuleMatc
             &captures["y2"],
             pad_month(&captures["m2"])
         );
+        matches.push(date_range_match(found, normalized));
+    }
+}
+
+fn extract_chinese_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
+    let regex = Regex::new(
+        r"(?ix)
+        (?P<y1>19\d{2}|20\d{2})\s*年\s*(?P<m1>0?[1-9]|1[0-2])\s*月?
+        \s*(?:-|–|—|至|到)?\s*
+        (?:至今|今|现在|目前|当前|(?:present|current|now|ongoing)\b)
+        ",
+    )
+    .unwrap();
+
+    for captures in regex.captures_iter(text) {
+        let Some(found) = captures.get(0) else {
+            continue;
+        };
+        let normalized = format!("{}-{}/PRESENT", &captures["y1"], pad_month(&captures["m1"]));
         matches.push(date_range_match(found, normalized));
     }
 }
@@ -449,6 +491,31 @@ fn extract_named_month_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
             "{}-{}/{}-{}",
             &captures["y1"], month_1, &captures["y2"], month_2
         );
+        matches.push(date_range_match(found, normalized));
+    }
+}
+
+fn extract_named_month_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
+    let regex = Regex::new(
+        r"(?ix)
+        \b
+        (?P<m1>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)
+        \s+
+        (?P<y1>19\d{2}|20\d{2})
+        \s*(?:-|–|—|to)\s*
+        (?:present|current|now|ongoing)
+        \b",
+    )
+    .unwrap();
+
+    for captures in regex.captures_iter(text) {
+        let Some(found) = captures.get(0) else {
+            continue;
+        };
+        let Some(month_1) = month_number(&captures["m1"]) else {
+            continue;
+        };
+        let normalized = format!("{}-{}/PRESENT", &captures["y1"], month_1);
         matches.push(date_range_match(found, normalized));
     }
 }
@@ -500,7 +567,11 @@ fn derive_years_experience(text: &str, matches: &mut Vec<RuleMatch>) {
 fn months_in_normalized_range(normalized: &str) -> Option<i32> {
     let (start, end) = normalized.split_once('/')?;
     let (start_year, start_month) = parse_year_month(start)?;
-    let (end_year, end_month) = parse_year_month(end)?;
+    let (end_year, end_month) = if end == "PRESENT" {
+        current_year_month()?
+    } else {
+        parse_year_month(end)?
+    };
     let months = (end_year - start_year) * 12 + (end_month - start_month);
     (months >= 0).then_some(months.max(1))
 }
@@ -508,6 +579,28 @@ fn months_in_normalized_range(normalized: &str) -> Option<i32> {
 fn parse_year_month(value: &str) -> Option<(i32, i32)> {
     let (year, month) = value.split_once('-')?;
     Some((year.parse().ok()?, month.parse().ok()?))
+}
+
+fn current_year_month() -> Option<(i32, i32)> {
+    let days_since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() / 86_400;
+    let (year, month, _) = civil_from_days(days_since_epoch as i64);
+    Some((year, month))
+}
+
+// Howard Hinnant's civil date conversion keeps this crate dependency-free.
+fn civil_from_days(days_since_epoch: i64) -> (i32, i32, i32) {
+    let days = days_since_epoch + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_piece = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_piece + 2) / 5 + 1;
+    let month = month_piece + if month_piece < 10 { 3 } else { -9 };
+    let year = year + i64::from(month <= 2);
+    (year as i32, month as i32, day as i32)
 }
 
 fn extract_schools(text: &str, matches: &mut Vec<RuleMatch>) {
