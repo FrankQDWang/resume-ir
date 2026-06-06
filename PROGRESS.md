@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, and S222 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, and S223 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -202,8 +202,9 @@ obsolete preliminary files and checklists are not product scope.
   `+86...` before privacy-preserving import persists redacted phone mentions.
   Company/title extraction now strips common English and Chinese labels such as
   `Company:`, `Title:`, `公司：`, and `职位：` from the field evidence span,
-  normalizes Chinese company suffixes such as `有限公司`, and keeps import
-  persistence aligned with the stripped values.
+  normalizes company suffixes such as `Co., Ltd.`, `Pte Ltd`, `GmbH`,
+  `有限公司`, and `有限合伙`, avoids treating unrelated labeled lines as company
+  evidence, and keeps import persistence aligned with the stripped values.
   Title extraction now also maps broader high-signal English and Chinese role
   aliases for frontend, full-stack, machine-learning, data-science, DevOps, QA,
   engineering-manager, and solutions-architect families while avoiding
@@ -695,8 +696,82 @@ obsolete preliminary files and checklists are not product scope.
 | S220 | Product labeled-address city extraction complete locally | Focused RED tests first failed because explicit address lines such as `Address: 123 Market St, San Francisco, CA`, `地址：北京市海淀区...`, and `Current Address: 88 Queen's Road, Hong Kong` produced no location evidence. After implementation, address labels are recognized separately from ordinary location labels, extractor-rules scans delimited address components and high-signal city substrings, persists only the city evidence span such as `San Francisco`, `北京市`, or `Hong Kong`, and import/search can filter those documents by canonical location without storing the full street-address span as location raw evidence. Focused RED/GREEN, full extractor/CLI persisted-field/search-filter/import suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not parse arbitrary unlabeled addresses, complete all global address formats, prove real business location-field F1, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S221 | Product address city substring normalization complete locally | Focused RED tests first failed because explicit address labels containing lowercase/no-delimiter English city substrings such as `123 market st san francisco ca` and `88 queen's road hong kong`, plus Chinese district-style values such as `北京海淀区...` and `深圳南山区...`, produced no location evidence. After implementation, address city substring matching is case-insensitive for English aliases, recognizes high-signal Chinese city aliases without requiring `市`, preserves the original matched city span, and import/search persists canonical city locations without storing full street-address spans as location raw evidence. Focused RED/GREEN, full extractor/CLI persisted-field/search-filter/import suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not parse arbitrary unlabeled addresses, complete all global address formats, prove real business location-field F1, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S222 | Product broader degree alias extraction complete locally | Focused RED tests first failed because high-signal engineering and technical degree aliases such as `MEng`, `M.Tech`, `MPhil`, `B.Tech`, and `B.E.` were not extracted as canonical degree mentions, and `--degree MEng` was not accepted as a master-level filter. After implementation, extractor-rules maps those aliases to `master` or `bachelor` with exact span evidence, rank-fusion parses the same filter aliases through compact punctuation-insensitive normalization while rejecting ambiguous bare `BE`, and import/search persists the broader degree mentions without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business degree-field F1, complete all global education credential aliases, parse ambiguous bare `BE`, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
+| S223 | Product broader company suffix normalization complete locally | Focused RED tests first failed because company values such as `Synthetic AI Co., Ltd.` and `Example Systems Pte Ltd` kept legal suffix fragments, `Alpine Search GmbH` and `合成科技有限合伙` were not recognized as company evidence, `--company "Synthetic AI"` did not match the persisted target, and unrelated labeled lines containing the word company could be misclassified as company evidence. After implementation, extractor-rules recognizes and strips high-signal legal suffixes including `Co., Ltd.`, `Pte Ltd`, `GmbH`, `S.A.`, and `有限合伙`, avoids non-company labeled-line fallback extraction, rank-fusion normalizes the same suffixes for filters/profiles, and import/search persists canonical company mentions without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business company-field F1, complete all global legal-entity suffixes, infer employers from arbitrary prose, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 
 ## Command Log
+
+### S223
+
+Design target:
+
+- Broaden company legal suffix recognition and normalization across extraction,
+  persisted profiles, and search filters.
+- Keep company evidence span-backed and prevent unrelated labeled lines such as
+  contact lines from becoming company evidence.
+- Preserve redacted Debug and CLI output behavior.
+- Use synthetic fixtures only.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --test s10_fields extracts_broader_company_suffixes_with_exact_spans --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion field_filters_normalize_broader_company_suffixes --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_broader_company_suffixes_and_filters_without_output_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The extractor exact failed before implementation with normalized company
+  values `["synthetic ai co.,", "example systems pte"]` instead of the expected
+  canonical company values, and missed `GmbH` plus `有限合伙` company evidence.
+- The rank-fusion exact failed before implementation because the broader
+  company suffix filters did not match canonical profile companies.
+- The CLI persisted-field exact failed before implementation because a
+  non-company labeled contact line containing `company` was misclassified as
+  company evidence, proving the fallback extraction was too broad.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --test s10_fields extracts_broader_company_suffixes_with_exact_spans --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion field_filters_normalize_broader_company_suffixes --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_broader_company_suffixes_and_filters_without_output_leaks --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p rank-fusion -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused GREEN tests passed after broadening company suffix normalization and
+  disabling non-company labeled-line fallback extraction.
+- Full `extractor-rules` passed: 24 S10 tests plus 5 S7 tests and doc-tests.
+- Full `rank-fusion` passed: 17 S10 tests plus 2 S11 tests and doc-tests.
+- Full `resume-cli --test s16_persisted_fields` passed: 20 tests.
+- Full `resume-cli --test s10_search_filters` passed: 9 tests.
+- Full `import-pipeline` passed: 7 tests plus doc-tests.
+- `cargo fmt --all`, `cargo fmt --all --check`, and focused clippy passed.
+- `git diff --check`, the public repo guard, and full local verification
+  passed. Full local verification included workspace clippy/tests/doc-tests,
+  license, runbook, workflow, release readiness, release artifact, SBOM, macOS
+  package, and public-repo guard checks. Windows package check was skipped on
+  the non-Windows host.
+
+Scope note:
+
+- S223 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, vectors, raw contact
+  values, contact hashes, private labels, field values, company values, or
+  private corpus evidence.
 
 ### S222
 

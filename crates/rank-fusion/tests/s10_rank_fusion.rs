@@ -197,6 +197,28 @@ fn field_filters_match_company_and_title() {
 }
 
 #[test]
+fn field_filters_normalize_broader_company_suffixes() {
+    let filters = SearchFilters::default().with_companies_any([
+        "Synthetic AI Co., Ltd.",
+        "Alpine Search GmbH",
+        "合成科技有限合伙",
+    ]);
+    let synthetic_ai = ResumeProfile::new("doc_ai").with_companies(["Synthetic AI"]);
+    let alpine_search = ResumeProfile::new("doc_alpine").with_companies(["Alpine Search"]);
+    let chinese_partnership = ResumeProfile::new("doc_cn").with_companies(["合成科技"]);
+    let decoy = ResumeProfile::new("doc_decoy").with_companies(["Other AI"]);
+
+    assert!(filters.matches(&synthetic_ai));
+    assert!(filters.matches(&alpine_search));
+    assert!(filters.matches(&chinese_partnership));
+    assert!(!filters.matches(&decoy));
+    assert_eq!(
+        filters.companies_any(),
+        &["alpine search", "synthetic ai", "合成科技"]
+    );
+}
+
+#[test]
 fn field_filters_match_any_location() {
     let filters = SearchFilters::default().with_locations_any(["Shanghai", "杭州"]);
     let matching = ResumeProfile::new("doc_shanghai").with_locations(["上海"]);

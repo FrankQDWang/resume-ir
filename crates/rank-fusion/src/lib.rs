@@ -1215,10 +1215,24 @@ fn normalize_major(major: &str) -> String {
 fn normalize_company(company: &str) -> String {
     let mut value = normalize_dedupe_value(company);
     for suffix in [
+        " co., ltd.",
+        " co., ltd",
+        " co. ltd.",
+        " co. ltd",
+        " co ltd",
+        " company limited",
+        " pte. ltd.",
+        " pte. ltd",
+        " pte ltd",
+        " private limited",
         " incorporated",
         " corporation",
-        " company",
         " limited",
+        " company",
+        " gmbh",
+        " s.a.",
+        " s.a",
+        " sa",
         " inc.",
         " inc",
         " corp.",
@@ -1235,7 +1249,14 @@ fn normalize_company(company: &str) -> String {
             break;
         }
     }
-    for suffix in ["有限责任公司", "股份有限公司", "有限公司", "公司"] {
+    for suffix in [
+        "有限责任公司",
+        "股份有限公司",
+        "有限合伙",
+        "合伙企业",
+        "有限公司",
+        "公司",
+    ] {
         if value.ends_with(suffix) {
             value.truncate(value.len() - suffix.len());
             value = value.trim().to_string();

@@ -1403,6 +1403,10 @@ fn company_segment<'a>(
         });
     }
 
+    if trimmed_line.contains([':', '：']) {
+        return None;
+    }
+
     looks_like_company(trimmed_line).then_some(LabeledSegment {
         text: trimmed_line,
         span_start: trimmed_span_start,
@@ -1434,10 +1438,25 @@ fn is_company_label(label: &str) -> bool {
 
 fn looks_like_company(line: &str) -> bool {
     let lower = line.to_lowercase();
-    [
+    let english_suffixes = [
+        " co., ltd.",
+        " co., ltd",
+        " co. ltd.",
+        " co. ltd",
+        " co ltd",
+        " pte. ltd.",
+        " pte. ltd",
+        " pte ltd",
+        " private limited",
+        " limited",
+        " gmbh",
+        " s.a.",
+        " s.a",
+        " sa",
         " inc.",
         " inc",
         " llc",
+        " ltd.",
         " ltd",
         " corp",
         " corporation",
@@ -1446,14 +1465,20 @@ fn looks_like_company(line: &str) -> bool {
         " labs",
         " group",
         " bank",
+    ];
+    let chinese_suffixes = [
         "有限责任公司",
         "股份有限公司",
+        "有限合伙",
+        "合伙企业",
         "有限公司",
         "公司",
         "集团",
-    ]
-    .iter()
-    .any(|needle| lower.ends_with(needle) || lower.contains(needle))
+    ];
+    english_suffixes
+        .iter()
+        .any(|needle| lower.ends_with(needle))
+        || chinese_suffixes.iter().any(|needle| lower.contains(needle))
 }
 
 fn normalize_company(value: &str) -> Option<String> {
@@ -1466,24 +1491,41 @@ fn normalize_company(value: &str) -> Option<String> {
         .to_lowercase();
 
     for suffix in [
+        " co., ltd",
+        " co. ltd",
+        " co ltd",
+        " company limited",
+        " pte. ltd",
+        " pte ltd",
+        " private limited",
         " incorporated",
         " corporation",
         " technologies",
+        " limited",
         " company",
         " group",
         " labs",
+        " gmbh",
+        " s.a",
+        " sa",
         " inc",
         " llc",
         " ltd",
         " corp",
+        " co.",
+        " co",
         " bank",
         " 有限责任公司",
         " 股份有限公司",
+        " 有限合伙",
+        " 合伙企业",
         " 有限公司",
         " 公司",
         " 集团",
         "有限责任公司",
         "股份有限公司",
+        "有限合伙",
+        "合伙企业",
         "有限公司",
         "公司",
         "集团",

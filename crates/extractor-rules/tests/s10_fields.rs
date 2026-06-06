@@ -622,6 +622,57 @@ Title: Product Manager
 }
 
 #[test]
+fn extracts_broader_company_suffixes_with_exact_spans() {
+    let text = "\
+Experience
+Company: Synthetic AI Co., Ltd.
+Employer: Example Systems Pte Ltd
+Organization: Alpine Search GmbH
+公司：合成科技有限合伙";
+
+    let matches = extract_strong_fields(text);
+    let companies = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Company)
+        .collect::<Vec<_>>();
+    let normalized = companies
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        normalized,
+        vec![
+            "synthetic ai",
+            "example systems",
+            "alpine search",
+            "合成科技"
+        ]
+    );
+    assert_eq!(
+        &text[companies[0].span_start..companies[0].span_end],
+        "Synthetic AI Co., Ltd."
+    );
+    assert_eq!(
+        &text[companies[1].span_start..companies[1].span_end],
+        "Example Systems Pte Ltd"
+    );
+    assert_eq!(
+        &text[companies[2].span_start..companies[2].span_end],
+        "Alpine Search GmbH"
+    );
+    assert_eq!(
+        &text[companies[3].span_start..companies[3].span_end],
+        "合成科技有限合伙"
+    );
+    assert!(companies.iter().all(|field| !field.raw_value.contains(':')));
+    assert!(companies
+        .iter()
+        .all(|field| !field.raw_value.contains('：')));
+    assert!(!format!("{:?}", companies[0]).contains("Synthetic AI"));
+}
+
+#[test]
 fn extracts_labeled_location_values_with_exact_spans() {
     let text = "\
 Candidate Location Target
