@@ -1581,6 +1581,7 @@ const DEDUPE_QUALITY_DUPLICATE_CONFIDENCE_THRESHOLD: f32 = 0.70;
 const PRIVATE_BUSINESS_FIELD_QUALITY_SCOPE: &str =
     "private business field-quality benchmark; aggregate redacted report only";
 const PRIVATE_BUSINESS_FIELD_QUALITY_TARGET_CLAIM: &str = "field_quality_target_met";
+const FIELD_QUALITY_SCORE_TOLERANCE: f64 = 0.000_5;
 const PRODUCTION_FIELD_QUALITY_THRESHOLDS: &[(&str, f64)] = &[
     ("name", 0.95),
     ("email", 0.995),
@@ -1769,10 +1770,10 @@ fn validate_private_business_field_metrics(
         let metric = fields
             .get(*field_name)
             .ok_or_else(private_business_field_metric_error)?;
-        validate_private_business_field_quality_metric_shape(metric)?;
-        let precision = private_field_quality_number(metric, "precision")?;
-        let recall = private_field_quality_number(metric, "recall")?;
-        let f1 = private_field_quality_number(metric, "f1")?;
+        let metric = validate_private_business_field_quality_metric_shape(metric)?;
+        let precision = metric.precision();
+        let recall = metric.recall();
+        let f1 = metric.f1();
         if precision < *min_score || recall < *min_score || f1 < *min_score {
             return Err(BenchmarkGateError::failed(
                 "private business field quality below production field threshold",
@@ -1785,7 +1786,7 @@ fn validate_private_business_field_metrics(
 
 fn validate_private_business_field_quality_metric_shape(
     metric: &serde_json::Value,
-) -> std::result::Result<(), BenchmarkGateError> {
+) -> std::result::Result<FieldQualityMetric, BenchmarkGateError> {
     let Some(object) = metric.as_object() else {
         return Err(private_field_quality_boundary_error());
     };
@@ -1799,13 +1800,38 @@ fn validate_private_business_field_quality_metric_shape(
             ));
         }
     }
-    private_field_quality_usize(metric, "true_positive")?;
-    private_field_quality_usize(metric, "false_positive")?;
-    private_field_quality_usize(metric, "false_negative")?;
-    private_field_quality_number(metric, "precision")?;
-    private_field_quality_number(metric, "recall")?;
-    private_field_quality_number(metric, "f1")?;
-    Ok(())
+    let counts = FieldCounts {
+        true_positive: private_field_quality_usize(metric, "true_positive")?,
+        false_positive: private_field_quality_usize(metric, "false_positive")?,
+        false_negative: private_field_quality_usize(metric, "false_negative")?,
+    };
+    let reported = FieldQualityMetric {
+        true_positive: counts.true_positive,
+        false_positive: counts.false_positive,
+        false_negative: counts.false_negative,
+        precision: private_field_quality_number(metric, "precision")?,
+        recall: private_field_quality_number(metric, "recall")?,
+        f1: private_field_quality_number(metric, "f1")?,
+    };
+    if counts.true_positive + counts.false_negative == 0 {
+        return Err(BenchmarkGateError::failed(
+            "private business field quality requires production field support",
+        ));
+    }
+    let expected = counts.metric();
+    if !field_quality_score_matches(reported.precision(), expected.precision())
+        || !field_quality_score_matches(reported.recall(), expected.recall())
+        || !field_quality_score_matches(reported.f1(), expected.f1())
+    {
+        return Err(BenchmarkGateError::failed(
+            "private business field quality metric counts do not match scores",
+        ));
+    }
+    Ok(reported)
+}
+
+fn field_quality_score_matches(reported: f64, expected: f64) -> bool {
+    (reported - expected).abs() <= FIELD_QUALITY_SCORE_TOLERANCE
 }
 
 fn is_allowed_private_business_field_quality_key(key: &str) -> bool {

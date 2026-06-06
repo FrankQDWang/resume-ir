@@ -106,8 +106,11 @@ reports. The report must use `dataset_kind: "private-business-labeled"`,
 sha256 digests for both the dataset and annotation manifests. It must include
 production field metrics for name, email, phone, school, school_tier, degree,
 major, company, title, location, skill, certificate, date ranges, and years
-experience. Do not upload reports if they contain raw resume text, local paths,
-field values, sample IDs, filenames, or notes.
+experience. Every production field metric must have positive labeled support
+(`true_positive + false_negative > 0`), and the reported precision, recall, and
+F1 must match the aggregate counts within rounding tolerance. Do not upload
+reports if they contain raw resume text, local paths, field values, sample IDs,
+filenames, or notes.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
