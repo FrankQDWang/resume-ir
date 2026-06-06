@@ -786,6 +786,7 @@ fn ocr_throughput_gate_requires_private_real_release_boundary() {
         "\"document_count\":200,",
         "\"scanned_document_count\":150,",
         "\"engine_kind\":\"tesseract\",",
+        "\"total_ms\":200000.0,",
         "\"page_latency_ms\":{\"samples\":500,\"p50\":250.0,\"p95\":450.0,\"p99\":800.0},",
         "\"pages_per_second\":2.5,",
         "\"target_claim\":\"ocr_throughput_target_met\",",
@@ -809,6 +810,30 @@ fn ocr_throughput_gate_requires_private_real_release_boundary() {
     assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
     assert_eq!(evaluation.page_count(), 500);
     assert_eq!(evaluation.p95_ms(), 450.0);
+}
+
+#[test]
+fn ocr_throughput_gate_rejects_private_real_report_with_inconsistent_page_counts() {
+    let report = minimal_private_real_ocr_throughput_json(100, 200, 150, 100, 40_000.0, 2.5);
+    let config = OcrThroughputGateConfig::new(1, 1_000.0, 1.0).require_private_real_corpus();
+
+    let error = evaluate_ocr_throughput_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus OCR throughput counts are inconsistent"));
+}
+
+#[test]
+fn ocr_throughput_gate_rejects_private_real_report_with_inconsistent_throughput() {
+    let report = minimal_private_real_ocr_throughput_json(500, 200, 150, 500, 200_000.0, 9.9);
+    let config = OcrThroughputGateConfig::new(500, 1_000.0, 1.0).require_private_real_corpus();
+
+    let error = evaluate_ocr_throughput_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus OCR throughput metric counts do not match scores"));
 }
 
 #[test]
@@ -1256,6 +1281,53 @@ fn minimal_ocr_throughput_json(
         p95_ms,
         p95_ms,
         target_claim,
+    )
+}
+
+fn minimal_private_real_ocr_throughput_json(
+    page_count: usize,
+    document_count: usize,
+    scanned_document_count: usize,
+    samples: usize,
+    total_ms: f64,
+    pages_per_second: f64,
+) -> String {
+    format!(
+        concat!(
+            "{{",
+            "\"schema_version\":\"ocr-throughput.v1\",",
+            "\"run_id\":\"ocr_release_test\",",
+            "\"platform\":\"test/test\",",
+            "\"dataset_kind\":\"private-real-corpus\",",
+            "\"page_count\":{},",
+            "\"document_count\":{},",
+            "\"scanned_document_count\":{},",
+            "\"engine_kind\":\"tesseract\",",
+            "\"total_ms\":{},",
+            "\"page_latency_ms\":{{\"samples\":{},\"p50\":250.0,\"p95\":450.0,\"p99\":800.0}},",
+            "\"pages_per_second\":{},",
+            "\"target_claim\":\"ocr_throughput_target_met\",",
+            "\"corpus_origin\":\"private_local\",",
+            "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"contains_raw_ocr_text\":false,",
+            "\"contains_page_images\":false,",
+            "\"contains_resume_paths\":false,",
+            "\"contains_document_ids\":false,",
+            "\"contains_page_ids\":false,",
+            "\"contains_command_paths\":false,",
+            "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+            "\"ocr_runtime_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"renderer_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+            "\"language_pack_manifest_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+            "\"scope\":\"private real-corpus OCR throughput benchmark; aggregate redacted report only\"",
+            "}}"
+        ),
+        page_count,
+        document_count,
+        scanned_document_count,
+        total_ms,
+        samples,
+        pages_per_second,
     )
 }
 

@@ -1003,6 +1003,7 @@ fn resume_benchmark_ocr_gate_requires_private_real_corpus_report() {
             "\"document_count\":200,",
             "\"scanned_document_count\":150,",
             "\"engine_kind\":\"tesseract\",",
+            "\"total_ms\":200000.0,",
             "\"page_latency_ms\":{\"samples\":500,\"p50\":250.0,\"p95\":450.0,\"p99\":800.0},",
             "\"pages_per_second\":2.5,",
             "\"target_claim\":\"ocr_throughput_target_met\",",
@@ -1050,6 +1051,66 @@ fn resume_benchmark_ocr_gate_requires_private_real_corpus_report() {
         "OCR throughput gate passed"
     );
     assert!(private_gate.stderr.is_empty());
+
+    remove_dir(&report_dir);
+}
+
+#[test]
+fn resume_benchmark_ocr_gate_rejects_private_real_inconsistent_throughput() {
+    let report_dir = temp_dir("ocr-throughput-private-real-inconsistent");
+    let report_path = report_dir.join("ocr-report.json");
+    fs::write(
+        &report_path,
+        concat!(
+            "{\"schema_version\":\"ocr-throughput.v1\",",
+            "\"run_id\":\"ocr_release_20260605\",",
+            "\"platform\":\"macos/aarch64\",",
+            "\"dataset_kind\":\"private-real-corpus\",",
+            "\"page_count\":500,",
+            "\"document_count\":200,",
+            "\"scanned_document_count\":150,",
+            "\"engine_kind\":\"tesseract\",",
+            "\"total_ms\":200000.0,",
+            "\"page_latency_ms\":{\"samples\":500,\"p50\":250.0,\"p95\":450.0,\"p99\":800.0},",
+            "\"pages_per_second\":9.9,",
+            "\"target_claim\":\"ocr_throughput_target_met\",",
+            "\"corpus_origin\":\"private_local\",",
+            "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"contains_raw_ocr_text\":false,",
+            "\"contains_page_images\":false,",
+            "\"contains_resume_paths\":false,",
+            "\"contains_document_ids\":false,",
+            "\"contains_page_ids\":false,",
+            "\"contains_command_paths\":false,",
+            "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+            "\"ocr_runtime_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"renderer_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+            "\"language_pack_manifest_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+            "\"scope\":\"private real-corpus OCR throughput benchmark; aggregate redacted report only\"}"
+        ),
+    )
+    .unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "ocr-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-real-corpus",
+            "--min-pages",
+            "500",
+            "--max-p95-ms",
+            "1000",
+            "--min-pages-per-second",
+            "1",
+        ])
+        .output()
+        .expect("run OCR throughput gate");
+
+    assert!(!gate.status.success());
+    let stderr = String::from_utf8_lossy(&gate.stderr);
+    assert!(stderr.contains("private real-corpus OCR throughput metric counts do not match scores"));
+    assert!(!stderr.contains(path_str(&report_path)));
 
     remove_dir(&report_dir);
 }

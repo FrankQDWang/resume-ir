@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, and S231 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, and S232 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -479,9 +479,10 @@ obsolete preliminary files and checklists are not product scope.
   cannot exceed the maximum possible recall implied by the zero-recall count.
   Private real-corpus OCR throughput reports are accepted only as
   strict redacted aggregate JSON with dataset/OCR-runtime/renderer/language-pack
-  manifest digests, aggregate latency and throughput metrics, and explicit
-  proof that raw OCR text, page images, resume paths, document identifiers, page
-  identifiers, and command paths are not included. The release-readiness gate
+  manifest digests, aggregate latency and throughput metrics with `total_ms`
+  so pages-per-second can be recomputed, and explicit proof that raw OCR text,
+  page images, resume paths, document identifiers, page identifiers, and command
+  paths are not included. The release-readiness gate
   and release blockers runbook now include vector quality and OCR throughput as
   separate blocked release criteria instead of relying only on the model and OCR
   license/distribution blockers.
@@ -728,8 +729,95 @@ obsolete preliminary files and checklists are not product scope.
 | S229 | Product field-quality support and consistency gate complete locally | Focused RED tests first failed because strict private-business field-quality reports could set a required production field to zero labeled support with perfect scores, or report precision/recall/F1 values inconsistent with the aggregate counts, and both library plus CLI gates accepted them. After implementation, every private-business field-quality metric, including required production fields, must have `true_positive + false_negative > 0`, and reported precision/recall/F1 must match the counts within the report's three-decimal rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create/upload private labels, run private field-quality evaluation, prove production F1 on representative resumes, prevent maliciously fabricated aggregate counts beyond consistency checks, clear field-quality blockers, or make stable release ready. |
 | S230 | Product dedupe-quality consistency gate complete locally | Focused RED tests first failed because strict private-business dedupe-quality reports could report pair counts, predicted duplicate counts, or precision/recall/F1 values inconsistent with the confusion-matrix counts, and both library plus CLI gates accepted them. After implementation, private-business dedupe-quality reports must satisfy `pair_count`, `positive_pair_count`, and `predicted_duplicate_pairs` relationships against true/false positive/negative counts, and reported precision/recall/F1 must match those counts within three-decimal rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create/upload private labels, run private dedupe-quality evaluation, prove production dedupe precision/recall on representative resumes, prevent fabricated aggregate counts beyond consistency checks, clear dedupe-quality blockers, or make stable release ready. |
 | S231 | Product vector-quality consistency gate complete locally | Focused RED tests first failed because strict private-business vector-quality reports could claim impossible retrieval counts, such as `top_k > candidate_count`, or report `zero_recall_queries` inconsistent with `sample_count` and recall@k, and both library plus CLI gates accepted them. After implementation, private-business vector-quality reports must have positive feasible `sample_count`, `candidate_count`, and `top_k` values, `candidate_count >= sample_count`, `top_k <= candidate_count`, `zero_recall_queries <= sample_count`, and recall@k no higher than the maximum possible value implied by zero-recall queries within rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create/upload private labels, run private vector-quality evaluation, select or license a production embedding model, prove semantic retrieval quality on representative resumes, prevent fabricated aggregate counts beyond consistency checks, clear vector-quality blockers, or make stable release ready. |
+| S232 | Product OCR throughput consistency gate complete locally | Focused RED tests first failed because strict private real-corpus OCR throughput reports could omit recomputable total runtime evidence, claim page counts incompatible with scanned-document counts, or report `pages_per_second` inconsistent with `page_count / total_ms`, and both library plus CLI gates did not enforce the intended release-evidence error. After implementation, private OCR throughput reports must include positive `total_ms`, have feasible page/document/sample counts, and report pages-per-second matching `page_count / (total_ms / 1000)` within rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not run private OCR throughput benchmarks, create/upload private scanned-resume evidence, choose or license OCR runtimes/language packs, prove full-library OCR throughput, clear OCR throughput blockers, validate platform installers/signing, or make stable release ready. |
 
 ## Command Log
+
+### S232
+
+Design target:
+
+- Require strict private real-corpus OCR throughput aggregate reports to include
+  `total_ms` so `pages_per_second` can be recomputed from `page_count`.
+- Reject impossible aggregate count relationships: empty page/document counts,
+  scanned documents greater than total documents, scanned documents greater than
+  OCR page count, and latency samples not matching page count.
+- Keep the gate local/redacted aggregate only; do not create, upload, or inspect
+  private scanned resumes, OCR text, page images, runtime artifacts, or local
+  OCR diagnostics in this slice.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner ocr_throughput_gate_rejects_private_real_report_with_inconsistent_page_counts --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner ocr_throughput_gate_rejects_private_real_report_with_inconsistent_throughput --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_gate_rejects_private_real_inconsistent_throughput --locked -- --exact
+```
+
+Output summary:
+
+- The library exact tests failed because private OCR reports with `total_ms`
+  went through the older boundary path instead of count/throughput consistency
+  validation.
+- The CLI exact test failed because `resume-benchmark ocr-gate
+  --require-private-real-corpus` did not report the intended throughput
+  consistency error for an impossible aggregate pages-per-second claim.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner ocr_throughput_gate_rejects_private_real_report_with_inconsistent_page_counts --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner ocr_throughput_gate_rejects_private_real_report_with_inconsistent_throughput --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_gate_rejects_private_real_inconsistent_throughput --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner ocr_throughput_gate_requires_private_real_release_boundary --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_gate_requires_private_real_corpus_report --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+```
+
+Output summary:
+
+- The exact rejection tests passed after private OCR throughput validation began
+  requiring `total_ms`, checking page/document/sample feasibility, and
+  recomputing pages-per-second.
+- The existing private OCR release-boundary acceptance tests passed with
+  `total_ms` present.
+- `cargo test -p benchmark-runner --locked`: exit 0; 25 CLI benchmark tests, 52
+  runner tests, and doc-tests passed.
+- `cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings`:
+  exit 0.
+
+Final local gate:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --all --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0.
+- `check-runbooks.sh`: exit 0, `runbook check passed`.
+- `guard-public-repo.sh`: exit 0, `public repo guard passed`.
+- `verify-local.sh`: exit 0; workspace clippy/tests/doc-tests, license/runbook/
+  workflow/release-readiness checks, release artifact and SBOM checks, macOS
+  package DMG verification, and public repository guard passed. Windows package
+  check was skipped on this non-Windows host.
+
+Scope note:
+
+- S232 uses synthetic fixtures only. It does not read, print, commit, or upload
+  real resumes, local data directories, tokens, diagnostics, model caches,
+  private OCR text, page images, runtime paths, or raw personal data.
+- This slice makes redacted aggregate OCR throughput reports harder to
+  overstate by accident. It does not run private OCR throughput benchmarks,
+  choose or license OCR runtimes/language packs, prove production OCR
+  throughput, clear OCR throughput blockers, validate platform
+  installers/signing, or make the complete product ready.
 
 ### S231
 

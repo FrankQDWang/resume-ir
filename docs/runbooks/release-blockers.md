@@ -195,6 +195,12 @@ digests for the dataset, OCR runtime, renderer, and language-pack manifests
 `renderer_manifest_sha256`, and `language_pack_manifest_sha256`). Do not upload
 reports if they contain raw OCR text, page images, resume text, filenames,
 local paths, document IDs, page IDs, command paths, runtime paths, or notes.
+Private OCR throughput reports must also include `total_ms` so
+`pages_per_second` can be recomputed, and must satisfy `page_count > 0`,
+`document_count > 0`, `scanned_document_count > 0`,
+`scanned_document_count <= document_count`, `scanned_document_count <=
+page_count`, `page_latency_ms.samples == page_count`, `total_ms > 0`, and
+`pages_per_second == page_count / (total_ms / 1000)` within rounding tolerance.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \

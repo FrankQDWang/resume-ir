@@ -3230,6 +3230,7 @@ pub fn evaluate_ocr_throughput_gate_json(
 const PRIVATE_REAL_OCR_THROUGHPUT_SCOPE: &str =
     "private real-corpus OCR throughput benchmark; aggregate redacted report only";
 const PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM: &str = "ocr_throughput_target_met";
+const OCR_THROUGHPUT_SCORE_TOLERANCE: f64 = 0.000_5;
 
 fn validate_private_real_ocr_throughput_boundary(
     report: &serde_json::Value,
@@ -3239,16 +3240,25 @@ fn validate_private_real_ocr_throughput_boundary(
     let page_count = private_ocr_usize(report, "page_count")?;
     let document_count = private_ocr_usize(report, "document_count")?;
     let scanned_document_count = private_ocr_usize(report, "scanned_document_count")?;
+    let total_ms = private_ocr_number(report, "total_ms")?;
+    let pages_per_second = private_ocr_number(report, "pages_per_second")?;
     let latency = report
         .get("page_latency_ms")
         .ok_or_else(private_ocr_boundary_error)?;
     let samples = private_ocr_usize(latency, "samples")?;
-    if document_count == 0
+    if page_count == 0
+        || document_count == 0
         || scanned_document_count == 0
         || scanned_document_count > document_count
+        || scanned_document_count > page_count
         || samples != page_count
+        || total_ms <= 0.0
     {
-        return Err(private_ocr_boundary_error());
+        return Err(private_ocr_counts_error());
+    }
+    let expected_pages_per_second = page_count as f64 / (total_ms / 1000.0);
+    if (pages_per_second - expected_pages_per_second).abs() > OCR_THROUGHPUT_SCORE_TOLERANCE {
+        return Err(private_ocr_metric_error());
     }
     if private_ocr_str(report, "corpus_origin")? != "private_local"
         || private_ocr_str(report, "privacy_boundary")? != "redacted_local_aggregate"
@@ -3302,6 +3312,7 @@ fn validate_private_real_ocr_throughput_shape(
     private_ocr_usize(report, "document_count")?;
     private_ocr_usize(report, "scanned_document_count")?;
     private_ocr_str(report, "engine_kind")?;
+    private_ocr_number(report, "total_ms")?;
     let latency = report
         .get("page_latency_ms")
         .ok_or_else(private_ocr_boundary_error)?;
@@ -3358,6 +3369,7 @@ fn is_allowed_private_real_ocr_key(key: &str) -> bool {
             | "document_count"
             | "scanned_document_count"
             | "engine_kind"
+            | "total_ms"
             | "page_latency_ms"
             | "pages_per_second"
             | "target_claim"
@@ -3421,6 +3433,16 @@ fn private_ocr_number(
 
 fn private_ocr_boundary_error() -> BenchmarkGateError {
     BenchmarkGateError::failed("private real-corpus OCR benchmark requires redacted local boundary")
+}
+
+fn private_ocr_counts_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private real-corpus OCR throughput counts are inconsistent")
+}
+
+fn private_ocr_metric_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed(
+        "private real-corpus OCR throughput metric counts do not match scores",
+    )
 }
 
 fn required_str<'a>(
