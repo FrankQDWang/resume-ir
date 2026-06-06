@@ -49,6 +49,9 @@ jobs:
       - name: Tests
         run: cargo test --workspace --locked
 
+      - name: CLI closed-loop check
+        run: ./scripts/ci/check-cli-closed-loop.sh
+
       - name: License check
         run: ./scripts/ci/check-licenses.sh
 

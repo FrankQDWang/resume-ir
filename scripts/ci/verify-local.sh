@@ -10,6 +10,7 @@ fi
 "$CARGO_BIN" fmt --check
 "$CARGO_BIN" clippy --workspace --all-targets --all-features --locked -- -D warnings
 "$CARGO_BIN" test --workspace --locked
+./scripts/ci/check-cli-closed-loop.sh
 ./scripts/ci/check-licenses.sh
 ./scripts/ci/check-runbooks.sh
 ./scripts/ci/check-workflows.sh
