@@ -1371,6 +1371,119 @@ needle needle needle needle needle
 }
 
 #[test]
+fn import_persists_chinese_degree_aliases_and_filters_without_output_leaks() {
+    let data_dir = temp_dir("persisted-chinese-degree-filter-data");
+    let resume_root = temp_dir("persisted-chinese-degree-filter-resumes");
+    fs::write(
+        resume_root.join("synthetic-chinese-degree-target.txt"),
+        "\
+Synthetic Chinese Degree Target
+Email: chinese-degree-target@example.test
+教育经历
+学校：合成大学
+学历：本科
+Skills: needle Rust
+",
+    )
+    .unwrap();
+    fs::write(
+        resume_root.join("synthetic-chinese-degree-decoy.txt"),
+        "\
+Synthetic Chinese Degree Decoy
+Email: chinese-degree-decoy@example.test
+教育经历
+学校：合成学院
+学历：大专
+Skills: needle Rust
+",
+    )
+    .unwrap();
+
+    let import_output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import Chinese degree aliases");
+    assert!(
+        import_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import_output.stdout),
+        String::from_utf8_lossy(&import_output.stderr)
+    );
+    assert!(import_output.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import_output.stdout);
+    assert!(!import_stdout.contains(path_str(&data_dir)));
+    assert!(!import_stdout.contains(path_str(&resume_root)));
+    assert!(!import_stdout.contains("本科"));
+    assert!(!import_stdout.contains("大专"));
+    assert!(!import_stdout.contains("chinese-degree-target@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let target = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-chinese-degree-target.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&target.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let degrees = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Degree)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("本科"));
+            mention.normalized_value.unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(degrees, vec!["bachelor"]);
+
+    let search_output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--degree",
+            "本科",
+            "--top-k",
+            "5",
+        ])
+        .output()
+        .expect("run Chinese degree filtered search");
+    assert!(
+        search_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&search_output.stdout),
+        String::from_utf8_lossy(&search_output.stderr)
+    );
+    assert!(search_output.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search_output.stdout);
+    assert!(search_stdout.contains("synthetic-chinese-degree-target.txt"));
+    assert!(!search_stdout.contains("synthetic-chinese-degree-decoy.txt"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&resume_root)));
+    assert!(!search_stdout.contains("大专"));
+    assert!(!search_stdout.contains("chinese-degree-target@example.test"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_school_tier_mentions_and_filters_search_without_output_leaks() {
     let data_dir = temp_dir("persisted-school-tier-data");
     let resume_root = temp_dir("persisted-school-tier-resumes");

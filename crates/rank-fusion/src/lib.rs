@@ -23,14 +23,17 @@ impl DegreeLevel {
             .filter(|character| !matches!(character, ' ' | '.' | '-' | '_'))
             .collect::<String>();
         match compact.as_str() {
-            "highschool" => Some(Self::HighSchool),
-            "associate" | "associatedegree" | "college" => Some(Self::Associate),
-            "bachelor" | "undergraduate" | "bs" | "ba" | "btech" | "beng" => Some(Self::Bachelor),
+            "highschool" | "高中" | "高中学历" => Some(Self::HighSchool),
+            "associate" | "associatedegree" | "college" | "大专" | "大专学历" | "专科"
+            | "专科学历" => Some(Self::Associate),
+            "bachelor" | "undergraduate" | "bs" | "ba" | "btech" | "beng" | "本科" | "大学本科"
+            | "本科生" | "学士" | "学士学位" => Some(Self::Bachelor),
             "be" if dotted_bachelor_engineering => Some(Self::Bachelor),
-            "master" | "ms" | "ma" | "mba" | "msc" | "meng" | "mtech" | "mphil" => {
-                Some(Self::Master)
+            "master" | "ms" | "ma" | "mba" | "msc" | "meng" | "mtech" | "mphil" | "硕士"
+            | "硕士研究生" | "硕士学位" | "研究生" => Some(Self::Master),
+            "doctor" | "doctorate" | "phd" | "博士" | "博士研究生" | "博士学位" | "博士生" => {
+                Some(Self::Doctor)
             }
-            "doctor" | "doctorate" | "phd" => Some(Self::Doctor),
             _ => None,
         }
     }

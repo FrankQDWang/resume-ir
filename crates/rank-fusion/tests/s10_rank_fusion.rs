@@ -121,6 +121,20 @@ fn degree_level_parse_accepts_broader_engineering_degree_aliases() {
 }
 
 #[test]
+fn degree_level_parse_accepts_chinese_degree_filter_aliases() {
+    assert_eq!(DegreeLevel::parse("高中"), Some(DegreeLevel::HighSchool));
+    assert_eq!(DegreeLevel::parse("大专"), Some(DegreeLevel::Associate));
+    assert_eq!(DegreeLevel::parse("专科"), Some(DegreeLevel::Associate));
+    assert_eq!(DegreeLevel::parse("本科"), Some(DegreeLevel::Bachelor));
+    assert_eq!(DegreeLevel::parse("学士"), Some(DegreeLevel::Bachelor));
+    assert_eq!(DegreeLevel::parse("硕士研究生"), Some(DegreeLevel::Master));
+    assert_eq!(DegreeLevel::parse("硕士"), Some(DegreeLevel::Master));
+    assert_eq!(DegreeLevel::parse("研究生"), Some(DegreeLevel::Master));
+    assert_eq!(DegreeLevel::parse("博士研究生"), Some(DegreeLevel::Doctor));
+    assert_eq!(DegreeLevel::parse("博士"), Some(DegreeLevel::Doctor));
+}
+
+#[test]
 fn field_filters_match_any_school_tier() {
     let filters = SearchFilters::default().with_school_tiers_any([SchoolTier::Tier985]);
     let matching = ResumeProfile::new("doc_elite")
