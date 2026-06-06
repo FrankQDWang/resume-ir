@@ -67,10 +67,26 @@ require_text "$stdout_file" '"stable_release": "blocked"'
 require_text "$stdout_file" '"local_dry_run_artifacts": "evidence_only"'
 require_text "$stdout_file" '"blockers": ['
 require_text "$stdout_file" '"label": "signing certificates"'
+require_text "$stdout_file" "production signing certificates"
+require_text "$stdout_file" "certificate chain"
+require_text "$stdout_file" "private key custody"
+require_text "$stdout_file" "signature verification evidence"
 require_text "$stdout_file" '"label": "macOS notarization"'
+require_text "$stdout_file" "Apple Developer ID"
+require_text "$stdout_file" "notarization credentials"
+require_text "$stdout_file" "notarization ticket"
+require_text "$stdout_file" "Gatekeeper validation"
 require_text "$stdout_file" '"label": "Windows installer lifecycle"'
+require_text "$stdout_file" "MSI install"
+require_text "$stdout_file" "upgrade"
+require_text "$stdout_file" "uninstall"
+require_text "$stdout_file" "rollback"
+require_text "$stdout_file" "release Windows runner"
 require_text "$stdout_file" '"label": "Windows service lifecycle"'
+require_text "$stdout_file" "install/start/stop/status/uninstall/recovery"
 require_text "$stdout_file" '"label": "macOS installer lifecycle"'
+require_text "$stdout_file" "signed pkg/dmg"
+require_text "$stdout_file" "install/upgrade/uninstall/rollback"
 require_text "$stdout_file" '"label": "100k/1M real-corpus benchmarks"'
 require_text "$stdout_file" "representative private real-corpus hot-index hybrid performance evidence is not available"
 require_text "$stdout_file" "500 query samples"
@@ -96,8 +112,20 @@ require_text "$stdout_file" "min-pages 500"
 require_text "$stdout_file" "OCR p95 <= 1000ms"
 require_text "$stdout_file" "pages_per_second >= 1"
 require_text "$stdout_file" '"label": "OCR engine license/distribution"'
+require_text "$stdout_file" "reviewed OCR runtime manifest"
+require_text "$stdout_file" "engine distribution license"
+require_text "$stdout_file" "language-pack distribution license"
+require_text "$stdout_file" "offline packaging evidence"
 require_text "$stdout_file" '"label": "embedding model license/distribution"'
+require_text "$stdout_file" "reviewed licensed embedding model"
+require_text "$stdout_file" "model manifest"
+require_text "$stdout_file" "offline distribution"
+require_text "$stdout_file" "license review"
 require_text "$stdout_file" '"label": "cross-platform release validation"'
+require_text "$stdout_file" "Windows and macOS release platforms"
+require_text "$stdout_file" "fresh release artifacts"
+require_text "$stdout_file" "install/upgrade/uninstall"
+require_text "$stdout_file" "service lifecycle"
 require_text "$stdout_file" '"label": "hardware fault drills"'
 require_text "$stdout_file" "actual ENOSPC"
 require_text "$stdout_file" "service-level daemon kill"

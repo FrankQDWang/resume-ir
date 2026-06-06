@@ -107,23 +107,23 @@ const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail,
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     (
         "signing certificates",
-        "production signing certificates are not available",
+        "production signing certificates are not available; release evidence requires certificate chain, private key custody, and signature verification evidence for every release artifact",
     ),
     (
         "macOS notarization",
-        "notarization credentials and ticket evidence are not available",
+        "Apple Developer ID notarization credentials and ticket evidence are not available; release evidence requires notarization ticket stapling plus Gatekeeper validation on fresh macOS release artifacts",
     ),
     (
         "Windows installer lifecycle",
-        "MSI install, upgrade, uninstall, and rollback are not proven",
+        "MSI install, upgrade, uninstall, and rollback are not proven on a release Windows runner with fresh release artifacts",
     ),
     (
         "Windows service lifecycle",
-        "Windows service install, start, stop, status, uninstall, rollback, and recovery are not proven",
+        "Windows service install/start/stop/status/uninstall/recovery lifecycle is not proven on a release Windows runner with fresh release artifacts",
     ),
     (
         "macOS installer lifecycle",
-        "signed pkg/dmg install, upgrade, uninstall, rollback, and Gatekeeper validation are not proven",
+        "signed pkg/dmg install/upgrade/uninstall/rollback and Gatekeeper validation are not proven on fresh macOS release artifacts",
     ),
     (
         "100k/1M real-corpus benchmarks",
@@ -147,15 +147,15 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "OCR engine license/distribution",
-        "reviewed OCR runtime manifest, engine distribution, and language-pack distribution evidence is not complete",
+        "reviewed OCR runtime manifest, engine distribution license, language-pack distribution license, and offline packaging evidence are not complete",
     ),
     (
         "embedding model license/distribution",
-        "reviewed licensed embedding model selection and distribution evidence is not complete",
+        "reviewed licensed embedding model selection, model manifest, offline distribution, and license review evidence are not complete",
     ),
     (
         "cross-platform release validation",
-        "Windows and macOS release validation evidence is not complete",
+        "Windows and macOS release platforms validation is not complete; release evidence requires fresh release artifacts, install/upgrade/uninstall, and service lifecycle proof",
     ),
     (
         "hardware fault drills",
