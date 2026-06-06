@@ -445,6 +445,45 @@ fn resume_benchmark_field_gate_requires_private_business_school_tier_metric() {
 }
 
 #[test]
+fn resume_benchmark_field_gate_requires_private_business_major_metric() {
+    let dataset_dir = temp_dir("field-quality-private-business-major");
+    let report_path = dataset_dir.join("field-report.json");
+    fs::write(
+        &report_path,
+        minimal_private_business_field_quality_json().replace(
+            ",\"major\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0}",
+            "",
+        ),
+    )
+    .unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "field-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-business-labeled",
+            "--min-samples",
+            "1000",
+            "--min-precision",
+            "0.93",
+            "--min-recall",
+            "0.93",
+            "--min-f1",
+            "0.93",
+        ])
+        .output()
+        .expect("run private business field quality gate");
+
+    assert!(!gate.status.success());
+    assert!(String::from_utf8_lossy(&gate.stderr)
+        .contains("private business field quality requires production field metrics"));
+    assert!(!String::from_utf8_lossy(&gate.stderr).contains(path_str(&report_path)));
+
+    remove_dir(&dataset_dir);
+}
+
+#[test]
 fn resume_benchmark_field_gate_requires_private_business_location_metric() {
     let dataset_dir = temp_dir("field-quality-private-business-location");
     let report_path = dataset_dir.join("field-report.json");
@@ -1290,6 +1329,7 @@ fn minimal_private_business_field_quality_json() -> String {
         "\"school\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"school_tier\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"degree\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"major\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"company\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"title\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"location\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",

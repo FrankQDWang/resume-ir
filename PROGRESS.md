@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, and S216 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, and S217 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -113,7 +113,7 @@ obsolete preliminary files and checklists are not product scope.
   as strict redacted local aggregate JSON with dataset/annotation manifest
   digests, explicit false raw-data/path/value/sample-ID booleans, a fixed field
   taxonomy, and production field metrics for email, phone, school,
-  school_tier, degree, company, title, location, skill, certificate, date
+  school_tier, degree, major, company, title, location, skill, certificate, date
   ranges, and years experience.
   Soft-dedupe scoring now compares
   same-name profiles with bounded non-contact evidence overlap and surfaces
@@ -678,8 +678,74 @@ obsolete preliminary files and checklists are not product scope.
 | S214 | Product years-experience field-quality release gate complete locally | Focused RED tests first failed because private-business field-quality reports missing `years_experience` metrics were accepted by both library and CLI field gates. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `years_experience` metrics, complete strict private-business fixtures include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, complete private-business acceptance regressions, full `benchmark-runner`, focused clippy, fmt, and runbook guard passed locally. | This slice tightens release-evidence validation only. It does not create or upload private labels, run real business years-experience quality evaluation, prove production years-experience recall/F1 on representative resumes, improve date arithmetic coverage, clear field-quality blockers, or make stable release ready. |
 | S215 | Product expanded field-alias extraction complete locally | Focused RED tests first failed because high-signal production aliases for Spark, Hadoop, Airflow, TensorFlow, PyTorch, scikit-learn, Vue.js, Angular, GraphQL, AWS Security Specialty, Google Professional Data Engineer, CCNA, platform engineer, security engineer, mobile engineer, and business analyst were not extracted and `Vue.js` was misclassified as JavaScript through the old `js` suffix alias. After implementation, extractor-rules maps these aliases with span-backed evidence, prevents known certificate aliases from being title mentions, and import persists the new skill/certificate/title entity mentions without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full `extractor-rules`, full `resume-cli --test s16_persisted_fields`, full `resume-cli`, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice broadens high-signal rule dictionaries only. It does not prove real business field-quality metrics, create/upload private labels, complete broad multilingual dictionaries, clear private field-quality blockers, validate million-scale behavior, or make stable release ready. |
 | S216 | Product major extraction and filtering complete locally | Focused RED tests first failed because `FieldType::Major` was missing and rank-fusion lacked `with_majors` / `with_majors_any`. After implementation, labeled `Major:`, `Field of Study:`, and `专业：` lines extract span-backed normalized `major` mentions, SQLite schema v19 accepts and indexes `major` entity mentions, import persists them without output/path/contact/raw-value leaks, CLI supports `--major`/`--majors-any`, CLI/daemon IPC carry `majors_any`, local plus daemon full-text search prefilter matching document IDs before top-k truncation, and benchmark field-quality scoring accepts `major` as an ordinary labeled field. Focused RED/GREEN, full extractor/rank/meta/import/benchmark tests, full `resume-cli`, full `resume-daemon`, fmt, focused clippy, and diff check passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business major-field F1, broaden all education-major dictionaries, add major to private field-quality release gates, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make the complete product ready. |
+| S217 | Product major field-quality release gate complete locally | Focused RED tests first failed because private-business field-quality reports missing `major` metrics were accepted by both the library gate and CLI gate. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `major` metrics for private business release evidence, complete strict private-business fixtures include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create or upload private labels, run real business major-quality evaluation, prove production major recall/F1 on representative resumes, broaden major dictionaries, clear field-quality blockers, or make stable release ready. |
 
 ## Command Log
+
+### S217
+
+Design target:
+
+- Close the S216 release-gate gap by making `major` a required production
+  field metric in private business labeled field-quality evidence.
+- Preserve the redacted local aggregate boundary: reports still must not
+  include raw text, paths, field values, sample IDs, filenames, or notes.
+- Use synthetic fixtures only.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_rejects_private_business_report_without_major_metric --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_gate_requires_private_business_major_metric --locked -- --exact
+```
+
+Output summary:
+
+- The library exact test failed before implementation because a
+  `private-business-labeled` field-quality report without a `major` metric was
+  accepted.
+- The CLI exact test failed before implementation because
+  `resume-benchmark field-gate --require-private-business-labeled` accepted a
+  report without a `major` metric.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_rejects_private_business_report_without_major_metric --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_gate_requires_private_business_major_metric --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused GREEN tests passed after adding `major` to
+  `PRODUCTION_FIELD_QUALITY_THRESHOLDS` and strict private-business report
+  fixtures.
+- Full `s17_benchmark_runner` passed: 42 tests.
+- Full `s17_benchmark_cli` passed: 20 tests.
+- Full `benchmark-runner` passed: CLI 20 tests, runner 42 tests, and doc-tests.
+- Focused benchmark-runner clippy, `cargo fmt --all --check`, `git diff
+  --check`, runbook guard, and public repository guard passed.
+- Full local verification passed locally, including workspace clippy and tests,
+  doc-tests, license/runbook/workflow/release-readiness checks, release
+  artifact and SBOM checks, macOS package check, and final public repository
+  guard. Windows package check was skipped on this non-Windows host.
+
+Scope note:
+
+- S217 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, vectors, raw contact
+  values, contact hashes, private labels, field values, major values, or
+  private corpus evidence.
 
 ### S216
 
