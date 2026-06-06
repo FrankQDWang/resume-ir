@@ -350,6 +350,25 @@ These dry-runs are redacted command-plan evidence only. They do not prove
 Windows service registration, service recovery, rollback, upgrade behavior, or
 administrator-elevated install/uninstall.
 
+Release dry-runs must also produce a blocked Windows Service lifecycle evidence
+manifest. The manifest schema is `release.windows_service_evidence.v1` and must
+contain only MSI artifact names, byte counts, hashes, planned lifecycle actions,
+blocked evidence status, and the Windows package manifest digest. It must not
+contain service tokens, administrator passwords, local paths, raw service logs,
+resume data, diagnostics, indexes, or model caches.
+
+```bash
+scripts/release/create-windows-service-evidence.sh \
+  --version v0.1.0 \
+  --windows-package-manifest release-dry-run/windows-package.json \
+  --out-dir release-dry-run
+```
+
+This Windows Service evidence manifest is a fail-closed release evidence
+validator. It does not register a service, start/stop/query it, configure
+recovery, uninstall it, prove rollback, or clear the Windows service lifecycle
+blocker until administrator-elevated release-runner evidence exists.
+
 Validate any proposed local model pack before worker configuration:
 
 ```bash
