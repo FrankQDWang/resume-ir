@@ -163,6 +163,73 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
 
 #[cfg(unix)]
 #[test]
+fn daemon_embedding_worker_once_rebuilds_schema_mismatched_vector_snapshot_from_completed_jobs() {
+    let data_dir = temp_dir("embedding-jobs-schema-mismatch-data");
+    let (_private_root, _versions) = seed_searchable_resume_versions(&data_dir);
+    let command = write_fixture_executable(
+        "fixture-daemon-embedding-jobs-schema-mismatch",
+        r#"#!/bin/sh
+counter="$(dirname "$0")/counter.txt"
+count=0
+if [ -f "$counter" ]; then
+  count="$(cat "$counter")"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$counter"
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0,0\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+
+    let first = run_embedding_worker_once(&data_dir, &command);
+    assert!(
+        first.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(String::from_utf8_lossy(&first.stdout).contains("embedding worker processed: 2"));
+    assert_eq!(read_counter(&command), 1);
+
+    let manifest_path = data_dir
+        .join("vector-index")
+        .join("vector.snapshot.manifest");
+    let manifest = fs::read_to_string(&manifest_path).expect("read vector snapshot manifest");
+    assert!(manifest.contains("\"schema_version\":\"vector.snapshot.v1\""));
+    fs::write(
+        &manifest_path,
+        "{\"schema_version\":\"vector.snapshot.v999\",\"index_schema\":\"future-vector-schema\",\"payload\":\"PRIVATE schema mismatch path\"}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        inspect_persistent_vector_snapshot(data_dir.join("vector-index")).state(),
+        PersistentVectorSnapshotState::Corrupt
+    );
+
+    let second = run_embedding_worker_once(&data_dir, &command);
+    assert!(
+        second.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(stdout.contains("embedding worker requeued completed: 2"));
+    assert!(stdout.contains("embedding worker processed: 2"));
+    assert!(stdout.contains("embedding worker vector writes: 2"));
+    assert!(!stdout.contains("PRIVATE schema mismatch"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert_eq!(read_counter(&command), 2);
+    assert_vector_snapshot(&data_dir, 4, 2);
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn daemon_embedding_worker_once_reembeds_completed_jobs_for_new_model() {
     let data_dir = temp_dir("embedding-jobs-model-change-data");
     let (_private_root, _versions) = seed_searchable_resume_versions(&data_dir);

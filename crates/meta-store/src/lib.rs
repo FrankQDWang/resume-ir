@@ -2268,6 +2268,76 @@ impl MetaStore {
         }
     }
 
+    pub fn requeue_completed_embedding_jobs_for_model(
+        &self,
+        model_id: &str,
+        dimension: usize,
+        queued_at: UnixTimestamp,
+    ) -> Result<usize> {
+        validate_embedding_job_spec(model_id, dimension)?;
+        let queued_at_seconds = queued_at.as_unix_seconds();
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let changed = transaction
+            .execute(
+                "\
+                UPDATE ingest_job
+                SET
+                    status = ?1,
+                    attempt_count = 0,
+                    queued_at_seconds = ?2,
+                    started_at_seconds = NULL,
+                    finished_at_seconds = NULL,
+                    updated_at_seconds = ?2,
+                    failure_kind = NULL
+                WHERE id IN (
+                    SELECT job.id
+                    FROM ingest_job AS job
+                    JOIN embedding_job_spec AS spec ON spec.ingest_job_id = job.id
+                    WHERE job.status = ?3
+                        AND job.kind = ?4
+                        AND job.resume_version_id IS NOT NULL
+                        AND spec.model_id = ?5
+                        AND spec.dimension = ?6
+                )",
+                params![
+                    ingest_job_status_to_storage(IngestJobStatus::Queued),
+                    queued_at_seconds,
+                    ingest_job_status_to_storage(IngestJobStatus::Completed),
+                    ingest_job_kind_to_storage(IngestJobKind::UpdateIndex),
+                    model_id,
+                    usize_to_i64(dimension, "embedding_job_spec.dimension")?,
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction
+            .execute(
+                "\
+                UPDATE embedding_job_spec
+                SET updated_at_seconds = ?1
+                WHERE model_id = ?2
+                    AND dimension = ?3
+                    AND ingest_job_id IN (
+                        SELECT id
+                        FROM ingest_job
+                        WHERE status = ?4
+                            AND kind = ?5
+                            AND resume_version_id IS NOT NULL
+                            AND updated_at_seconds = ?1
+                    )",
+                params![
+                    queued_at_seconds,
+                    model_id,
+                    usize_to_i64(dimension, "embedding_job_spec.dimension")?,
+                    ingest_job_status_to_storage(IngestJobStatus::Queued),
+                    ingest_job_kind_to_storage(IngestJobKind::UpdateIndex),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(changed)
+    }
+
     pub fn update_job_status(
         &self,
         id: &IngestJobId,

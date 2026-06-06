@@ -1414,6 +1414,65 @@ fn embedding_update_jobs_are_scoped_by_model_and_dimension() {
 }
 
 #[test]
+fn completed_embedding_update_jobs_can_be_requeued_for_vector_snapshot_rebuild() {
+    let store = migrated_store();
+    let document = document(
+        "embedding-rebuild-document-placeholder",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let version = resume_version("embedding-rebuild-version-placeholder", document.id.clone());
+    let queued_at = UnixTimestamp::from_unix_seconds(1_800_000_760);
+    let claim_at = UnixTimestamp::from_unix_seconds(1_800_000_770);
+    let complete_at = UnixTimestamp::from_unix_seconds(1_800_000_780);
+    let requeue_at = UnixTimestamp::from_unix_seconds(1_800_000_790);
+    let reclaim_at = UnixTimestamp::from_unix_seconds(1_800_000_800);
+
+    store.upsert_document(&document).unwrap();
+    store.upsert_resume_version(&version).unwrap();
+    let enqueued = store
+        .enqueue_embedding_job_for_resume_version(
+            &document.id,
+            &version.id,
+            "fixture-local-model",
+            4,
+            queued_at,
+        )
+        .unwrap();
+    let claimed = store
+        .claim_next_embedding_job("fixture-local-model", 4, claim_at)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, enqueued.job.id);
+    store
+        .update_job_status(&claimed.id, IngestJobStatus::Completed, complete_at)
+        .unwrap();
+
+    let requeued = store
+        .requeue_completed_embedding_jobs_for_model("fixture-local-model", 4, requeue_at)
+        .unwrap();
+    assert_eq!(requeued, 1);
+    assert_eq!(
+        store
+            .requeue_completed_embedding_jobs_for_model("other-model", 4, requeue_at)
+            .unwrap(),
+        0
+    );
+    let job = store.ingest_job_by_id(&claimed.id).unwrap().unwrap();
+    assert_eq!(job.status, IngestJobStatus::Queued);
+    assert_eq!(job.attempt_count, 0);
+    assert_eq!(store.status_summary().unwrap().embedding_queue_depth, 1);
+
+    let reclaimed = store
+        .claim_next_embedding_job("fixture-local-model", 4, reclaim_at)
+        .unwrap()
+        .unwrap();
+    assert_eq!(reclaimed.id, claimed.id);
+    assert_eq!(reclaimed.status, IngestJobStatus::Running);
+    assert_eq!(reclaimed.attempt_count, 1);
+}
+
+#[test]
 fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
     let store = migrated_store();
     let key = OcrPageCacheKey::new(

@@ -438,6 +438,74 @@ fn persistent_vector_index_recovers_last_good_snapshot_when_active_is_corrupt() 
 }
 
 #[test]
+fn persistent_vector_index_recovers_last_good_snapshot_when_active_manifest_schema_mismatches() {
+    let private_dir = temp_dir("private-vector-schema-mismatch");
+
+    {
+        let index = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+        index
+            .upsert(vec![VectorDocument::new_for_model(
+                "model-schema-v1",
+                "model-schema-v1:vec_recovered",
+                "doc_recovered",
+                vec![1.0, 0.0, 0.0, 0.0],
+            )
+            .unwrap()])
+            .unwrap();
+        index
+            .upsert(vec![VectorDocument::new_for_model(
+                "model-schema-v1",
+                "model-schema-v1:vec_future_active",
+                "doc_future_active",
+                vec![0.0, 1.0, 0.0, 0.0],
+            )
+            .unwrap()])
+            .unwrap();
+    }
+
+    let manifest = fs::read_to_string(private_dir.join("vector.snapshot.manifest"))
+        .expect("read vector snapshot manifest");
+    assert!(manifest.contains("\"schema_version\":\"vector.snapshot.v1\""));
+    assert!(manifest.contains("\"index_schema\":\"hnsw-vector.v1\""));
+    assert!(manifest.contains("\"dimension\":4"));
+    assert!(!manifest.contains("doc_recovered"));
+    assert!(!manifest.contains("vec_recovered"));
+    assert!(!manifest.contains("model-schema-v1"));
+    assert!(!manifest.contains("1.0"));
+
+    fs::write(
+        private_dir.join("vector.snapshot.manifest"),
+        "{\"schema_version\":\"vector.snapshot.v999\",\"index_schema\":\"future-vector-schema\",\"payload\":\"PRIVATE schema mismatch path\"}\n",
+    )
+    .unwrap();
+
+    let inspection = inspect_persistent_vector_snapshot(&private_dir);
+    assert_eq!(inspection.state(), PersistentVectorSnapshotState::Recovered);
+    assert_eq!(
+        inspection
+            .snapshot()
+            .map(|snapshot| snapshot.vector_count()),
+        Some(1)
+    );
+
+    let reopened = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    let recovered_hits = reopened
+        .knn_for_model(
+            QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
+            2,
+            "model-schema-v1",
+        )
+        .unwrap();
+    assert_eq!(recovered_hits.len(), 1);
+    assert_eq!(recovered_hits[0].doc_id(), "doc_recovered");
+    let debug = format!("{reopened:?}");
+    assert!(!debug.contains("PRIVATE schema mismatch"));
+    assert!(!debug.contains(path_str(&private_dir)));
+
+    remove_dir(&private_dir);
+}
+
+#[test]
 fn persistent_vector_index_rejects_corrupt_snapshot_without_path_leakage() {
     let private_dir = temp_dir("private-corrupt-vector-index");
     fs::write(

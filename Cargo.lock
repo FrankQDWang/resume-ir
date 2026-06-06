@@ -957,6 +957,7 @@ dependencies = [
  "fs4",
  "getrandom 0.2.17",
  "hnsw_rs",
+ "serde_json",
 ]
 
 [[package]]

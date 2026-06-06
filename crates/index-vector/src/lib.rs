@@ -24,8 +24,14 @@ const SNAPSHOT_FILE: &str = "vector.snapshot";
 const SNAPSHOT_TMP_FILE: &str = "vector.snapshot.tmp";
 const SNAPSHOT_LAST_GOOD_FILE: &str = "vector.snapshot.last-good";
 const SNAPSHOT_LAST_GOOD_TMP_FILE: &str = "vector.snapshot.last-good.tmp";
+const SNAPSHOT_MANIFEST_FILE: &str = "vector.snapshot.manifest";
+const SNAPSHOT_LAST_GOOD_MANIFEST_FILE: &str = "vector.snapshot.last-good.manifest";
 const SNAPSHOT_KEY_FILE: &str = "vector.snapshot.key-v1";
 const SNAPSHOT_LOCK_FILE: &str = "vector.lock";
+const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "vector.snapshot.v1";
+const VECTOR_INDEX_SCHEMA_VERSION: &str = "hnsw-vector.v1";
+const VECTOR_SEARCH_BACKEND_MANIFEST: &str = "hnsw_ann";
+const SNAPSHOT_ENCRYPTION_MANIFEST: &str = "xchacha20poly1305.v1";
 const SNAPSHOT_HEADER_ENCRYPTED_V1: &str = "resume-ir-vector-index-encrypted-v1";
 const SNAPSHOT_PLAINTEXT_HEADER_V1: &str = "resume-ir-vector-index-plaintext-v1";
 const SNAPSHOT_KEY_LEN: usize = 32;
@@ -67,8 +73,12 @@ pub struct PersistentVectorIndex {
     dimension: usize,
     snapshot_path: PathBuf,
     temp_path: PathBuf,
+    manifest_path: PathBuf,
+    temp_manifest_path: PathBuf,
     last_good_path: PathBuf,
     last_good_temp_path: PathBuf,
+    last_good_manifest_path: PathBuf,
+    last_good_manifest_temp_path: PathBuf,
     key_path: PathBuf,
     lock_path: PathBuf,
     state: Mutex<IndexState>,
@@ -88,8 +98,12 @@ impl PersistentVectorIndex {
         fs::create_dir_all(root).map_err(|_| VectorIndexError::Storage)?;
         let snapshot_path = root.join(SNAPSHOT_FILE);
         let temp_path = root.join(SNAPSHOT_TMP_FILE);
+        let manifest_path = root.join(SNAPSHOT_MANIFEST_FILE);
+        let temp_manifest_path = snapshot_manifest_path(&temp_path);
         let last_good_path = root.join(SNAPSHOT_LAST_GOOD_FILE);
         let last_good_temp_path = root.join(SNAPSHOT_LAST_GOOD_TMP_FILE);
+        let last_good_manifest_path = root.join(SNAPSHOT_LAST_GOOD_MANIFEST_FILE);
+        let last_good_manifest_temp_path = snapshot_manifest_path(&last_good_temp_path);
         let key_path = root.join(SNAPSHOT_KEY_FILE);
         let lock_path = root.join(SNAPSHOT_LOCK_FILE);
         let state =
@@ -101,8 +115,12 @@ impl PersistentVectorIndex {
             dimension,
             snapshot_path,
             temp_path,
+            manifest_path,
+            temp_manifest_path,
             last_good_path,
             last_good_temp_path,
+            last_good_manifest_path,
+            last_good_manifest_temp_path,
             key_path,
             lock_path,
             state: Mutex::new(state),
@@ -112,8 +130,11 @@ impl PersistentVectorIndex {
 
     fn persist_state(&self, state: &IndexState) -> Result<(), VectorIndexError> {
         write_snapshot(&self.temp_path, &self.key_path, self.dimension, state)?;
+        write_snapshot_manifest(&self.temp_manifest_path, self.dimension)?;
         self.refresh_last_good_snapshot()?;
         fs::rename(&self.temp_path, &self.snapshot_path).map_err(|_| VectorIndexError::Storage)?;
+        fs::rename(&self.temp_manifest_path, &self.manifest_path)
+            .map_err(|_| VectorIndexError::Storage)?;
         Ok(())
     }
 
@@ -130,12 +151,26 @@ impl PersistentVectorIndex {
 
         let snapshot_bytes =
             fs::read(&self.snapshot_path).map_err(|_| VectorIndexError::Storage)?;
+        let manifest_bytes =
+            fs::read(&self.manifest_path).map_err(|_| VectorIndexError::Storage)?;
         let mut file = create_private_file(&self.last_good_temp_path)?;
         file.write_all(&snapshot_bytes)
             .map_err(|_| VectorIndexError::Storage)?;
         file.sync_all().map_err(|_| VectorIndexError::Storage)?;
+        let mut manifest_file = create_private_file(&self.last_good_manifest_temp_path)?;
+        manifest_file
+            .write_all(&manifest_bytes)
+            .map_err(|_| VectorIndexError::Storage)?;
+        manifest_file
+            .sync_all()
+            .map_err(|_| VectorIndexError::Storage)?;
         fs::rename(&self.last_good_temp_path, &self.last_good_path)
             .map_err(|_| VectorIndexError::Storage)?;
+        fs::rename(
+            &self.last_good_manifest_temp_path,
+            &self.last_good_manifest_path,
+        )
+        .map_err(|_| VectorIndexError::Storage)?;
         Ok(())
     }
 
@@ -246,6 +281,25 @@ pub fn inspect_persistent_vector_snapshot(
         },
         Err(_) => inspect_recovered_vector_snapshot(&last_good_path, &key_path),
     }
+}
+
+pub fn reset_persistent_vector_snapshots_for_rebuild(
+    root: impl AsRef<Path>,
+) -> Result<(), VectorIndexError> {
+    let root = root.as_ref();
+    for path in [
+        root.join(SNAPSHOT_FILE),
+        root.join(SNAPSHOT_TMP_FILE),
+        root.join(SNAPSHOT_MANIFEST_FILE),
+        snapshot_manifest_path(&root.join(SNAPSHOT_TMP_FILE)),
+        root.join(SNAPSHOT_LAST_GOOD_FILE),
+        root.join(SNAPSHOT_LAST_GOOD_TMP_FILE),
+        root.join(SNAPSHOT_LAST_GOOD_MANIFEST_FILE),
+        snapshot_manifest_path(&root.join(SNAPSHOT_LAST_GOOD_TMP_FILE)),
+    ] {
+        remove_snapshot_file_if_exists(&path)?;
+    }
+    Ok(())
 }
 
 fn inspect_recovered_vector_snapshot(
@@ -830,6 +884,7 @@ fn read_snapshot(
     key_path: &Path,
     expected_dimension: usize,
 ) -> Result<IndexState, VectorIndexError> {
+    validate_snapshot_manifest(path, Some(expected_dimension))?;
     let (actual_dimension, state) = read_snapshot_unchecked_dimension(path, key_path)?;
     if actual_dimension != expected_dimension {
         return Err(VectorIndexError::InvalidDimension {
@@ -879,6 +934,7 @@ fn read_snapshot_unchecked_dimension(
     path: &Path,
     key_path: &Path,
 ) -> Result<(usize, IndexState), VectorIndexError> {
+    validate_snapshot_manifest(path, None)?;
     let file = File::open(path).map_err(|_| VectorIndexError::Storage)?;
     let mut lines = BufReader::new(file).lines();
     let header = lines
@@ -1006,6 +1062,99 @@ fn write_snapshot(
     Ok(())
 }
 
+fn snapshot_manifest_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(SNAPSHOT_FILE);
+    path.with_file_name(format!("{file_name}.manifest"))
+}
+
+fn validate_snapshot_manifest(
+    snapshot_path: &Path,
+    expected_dimension: Option<usize>,
+) -> Result<(), VectorIndexError> {
+    let manifest_path = snapshot_manifest_path(snapshot_path);
+    let manifest = match fs::read_to_string(&manifest_path) {
+        Ok(manifest) => manifest,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(VectorIndexError::CorruptSnapshot);
+        }
+        Err(_) => return Err(VectorIndexError::Storage),
+    };
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest).map_err(|_| VectorIndexError::CorruptSnapshot)?;
+
+    if manifest
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str)
+        != Some(SNAPSHOT_MANIFEST_SCHEMA_VERSION)
+    {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    if manifest
+        .get("index_schema")
+        .and_then(serde_json::Value::as_str)
+        != Some(VECTOR_INDEX_SCHEMA_VERSION)
+    {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    if manifest
+        .get("search_backend")
+        .and_then(serde_json::Value::as_str)
+        != Some(VECTOR_SEARCH_BACKEND_MANIFEST)
+    {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    if manifest
+        .get("encryption")
+        .and_then(serde_json::Value::as_str)
+        != Some(SNAPSHOT_ENCRYPTION_MANIFEST)
+    {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+
+    let actual_dimension = manifest
+        .get("dimension")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or(VectorIndexError::CorruptSnapshot)?;
+    if actual_dimension == 0 {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    if let Some(expected_dimension) = expected_dimension {
+        validate_manifest_dimension(expected_dimension, actual_dimension)?;
+    }
+
+    Ok(())
+}
+
+fn validate_manifest_dimension(
+    expected_dimension: usize,
+    actual_dimension: usize,
+) -> Result<(), VectorIndexError> {
+    if expected_dimension == actual_dimension {
+        Ok(())
+    } else {
+        Err(VectorIndexError::InvalidDimension {
+            expected: expected_dimension,
+            actual: actual_dimension,
+        })
+    }
+}
+
+fn write_snapshot_manifest(path: &Path, dimension: usize) -> Result<(), VectorIndexError> {
+    let manifest = serde_json::json!({
+        "schema_version": SNAPSHOT_MANIFEST_SCHEMA_VERSION,
+        "index_schema": VECTOR_INDEX_SCHEMA_VERSION,
+        "dimension": dimension,
+        "search_backend": VECTOR_SEARCH_BACKEND_MANIFEST,
+        "encryption": SNAPSHOT_ENCRYPTION_MANIFEST,
+    })
+    .to_string();
+    write_private_file(path, manifest.as_bytes())
+}
+
 fn snapshot_plaintext(dimension: usize, state: &IndexState) -> Result<String, VectorIndexError> {
     let mut output = String::new();
     writeln!(
@@ -1086,6 +1235,14 @@ fn create_private_file(path: &Path) -> Result<File, VectorIndexError> {
     let file = options.open(path).map_err(|_| VectorIndexError::Storage)?;
     restrict_private_file_permissions(path)?;
     Ok(file)
+}
+
+fn remove_snapshot_file_if_exists(path: &Path) -> Result<(), VectorIndexError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(VectorIndexError::Storage),
+    }
 }
 
 #[cfg(unix)]

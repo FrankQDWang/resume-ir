@@ -27,8 +27,9 @@ use index_fulltext::{
     SnapshotReadTarget, SnapshotRootState,
 };
 use index_vector::{
-    inspect_persistent_vector_snapshot, PersistentVectorIndex, PersistentVectorSnapshotState,
-    QueryVector, VectorDocument, VectorHit, VectorIndex,
+    inspect_persistent_vector_snapshot, reset_persistent_vector_snapshots_for_rebuild,
+    PersistentVectorIndex, PersistentVectorSnapshotState, QueryVector, VectorDocument, VectorHit,
+    VectorIndex,
 };
 use meta_store::{
     ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
@@ -1270,6 +1271,18 @@ fn run_embedding_worker_once(
         .embedding_dimension
         .ok_or_else(|| DaemonError::usage(run_usage()))?;
     let now = current_timestamp()?;
+    let rebuild_vector_snapshot = vector_snapshot_requires_embedding_rebuild(data_dir);
+    let completed_requeued = if rebuild_vector_snapshot {
+        store
+            .requeue_completed_embedding_jobs_for_model(model_id, dimension, now)
+            .map_err(DaemonError::store)?
+    } else {
+        0
+    };
+    if rebuild_vector_snapshot {
+        reset_persistent_vector_snapshots_for_rebuild(data_dir.join("vector-index"))
+            .map_err(DaemonError::vector)?;
+    }
     enqueue_embedding_jobs_for_candidates(
         store,
         options.embedding_max_docs,
@@ -1280,7 +1293,10 @@ fn run_embedding_worker_once(
     let jobs = claim_embedding_jobs(store, options.embedding_max_docs, model_id, dimension, now)?;
     let documents_considered = jobs.len();
     if jobs.is_empty() {
-        return Ok(EmbeddingWorkerSummary::default());
+        return Ok(EmbeddingWorkerSummary {
+            completed_requeued,
+            ..EmbeddingWorkerSummary::default()
+        });
     }
 
     let mut candidates = Vec::new();
@@ -1294,6 +1310,7 @@ fn run_embedding_worker_once(
     }
     if candidates.is_empty() {
         return Ok(EmbeddingWorkerSummary {
+            completed_requeued,
             documents_considered,
             processed: 0,
             vector_writes: 0,
@@ -1355,11 +1372,27 @@ fn run_embedding_worker_once(
     }
 
     Ok(EmbeddingWorkerSummary {
+        completed_requeued,
         documents_considered,
         processed: candidates.len(),
         vector_writes,
         failed: 0,
     })
+}
+
+fn vector_snapshot_requires_embedding_rebuild(data_dir: &Path) -> bool {
+    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
+    match (inspection.state(), inspection.snapshot()) {
+        (PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered, _) => {
+            false
+        }
+        (
+            PersistentVectorSnapshotState::Missing
+            | PersistentVectorSnapshotState::Corrupt
+            | PersistentVectorSnapshotState::Unreadable,
+            _,
+        ) => true,
+    }
 }
 
 fn enqueue_embedding_jobs_for_candidates(
@@ -4755,6 +4788,7 @@ impl fmt::Debug for EmbeddingWorkerCandidate {
 
 #[derive(Default)]
 struct EmbeddingWorkerSummary {
+    completed_requeued: usize,
     documents_considered: usize,
     processed: usize,
     vector_writes: usize,
@@ -4763,7 +4797,8 @@ struct EmbeddingWorkerSummary {
 
 impl EmbeddingWorkerSummary {
     fn has_activity(&self) -> bool {
-        self.documents_considered > 0
+        self.completed_requeued > 0
+            || self.documents_considered > 0
             || self.processed > 0
             || self.vector_writes > 0
             || self.failed > 0
@@ -4771,6 +4806,12 @@ impl EmbeddingWorkerSummary {
 }
 
 fn print_embedding_worker_summary(summary: &EmbeddingWorkerSummary) -> Result<()> {
+    if summary.completed_requeued > 0 {
+        println!(
+            "embedding worker requeued completed: {}",
+            summary.completed_requeued
+        );
+    }
     println!(
         "embedding worker documents considered: {}",
         summary.documents_considered

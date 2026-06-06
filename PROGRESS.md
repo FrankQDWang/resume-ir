@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, and S254 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, S254, and S255 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -298,6 +298,13 @@ obsolete preliminary files and checklists are not product scope.
   recover from a corrupt or missing active `vector.snapshot` while preserving
   model/dimension checks, semantic search, daemon embedding/IPC use, and
   redacted diagnostics.
+  Persistent vector snapshots now also write an owner-only schema manifest
+  with the current vector snapshot schema, HNSW index schema, dimension,
+  backend, and encrypted envelope version; incompatible active manifests are
+  treated as unusable so inspection/open recover to last-good when available,
+  and the daemon embedding worker can reset incompatible no-fallback vector
+  snapshots and requeue completed version jobs for local-command rebuild
+  without printing manifest payloads, command paths, vectors, or local paths.
   A labeled vector-quality evaluator and gate now score recall@k, MRR, NDCG@k,
   and zero-recall queries from JSONL samples using the local embedding command
   protocol without emitting raw queries, candidate text, sample IDs, candidate
@@ -415,7 +422,8 @@ obsolete preliminary files and checklists are not product scope.
   availability, snapshot fallback, full-text active-snapshot corruption/
   last-good recovery fault probes, persistent vector active-snapshot
   corruption/last-good recovery, full-text snapshot schema-mismatch recovery
-  and daemon rebuild proof, explicit obsolete
+  and daemon rebuild proof, persistent vector snapshot schema-mismatch
+  recovery and daemon completed-job rebuild proof, explicit obsolete
   full-text snapshot and staging cleanup for deleted-document purge, safe fault
   simulation for disk-space budget, permission-denied probes, file-lock
   contention probes, metadata migration failure probes against synthetic broken
@@ -763,8 +771,85 @@ obsolete preliminary files and checklists are not product scope.
 | S252 | Product full-text index corruption fault probe complete locally | Focused RED first failed because `resume-cli fault-simulate --case index-snapshot-corrupt` returned the fault-simulate usage error even though doctor/export advertised `index_snapshot_corrupt` as an available hook. After implementation, the safe local probe publishes two synthetic encrypted full-text snapshots in a private scratch directory, corrupts the active snapshot envelope, verifies last-good published-snapshot recovery through `FullTextIndex::open_active`, checks a synthetic query still resolves only through the recovered snapshot, cleans the probe directory, redacts paths and synthetic payloads from stdout, and the fault-injection runbook plus runbook guard now document the case. | This slice proves only a safe synthetic full-text active-snapshot corruption/recovery probe. It does not perform destructive disk faults, corrupt real user indexes, prove service-manager kill recovery, validate Windows/macOS filesystem behavior, prove large-corpus recovery latency, or clear release readiness blockers. |
 | S253 | Product vector snapshot recovery complete locally | Focused RED first failed because the persistent vector snapshot surface had no `Recovered` state and doctor did not report a recovered vector index after a corrupt active snapshot. After implementation, `PersistentVectorIndex` writes an encrypted `vector.snapshot.last-good` before replacing the active snapshot, open/search/inspect recover from a corrupt active snapshot, no-backup corrupt snapshots remain corrupt rather than silently empty, CLI and daemon semantic paths treat recovered snapshots as usable, and doctor plus redacted diagnostics report recovered state without paths, vector IDs, or float values. | This slice proves synthetic/local vector snapshot last-good recovery only. It does not choose/license/distribute a production embedding model, prove private semantic quality, prove real ANN recall/latency at 100k/1M scale, validate cross-platform filesystem behavior, clear model/vector-quality blockers, or make stable release ready. |
 | S254 | Product full-text snapshot schema recovery complete locally | Focused RED first failed because published full-text snapshots had no `snapshot-manifest.json`, so active snapshot schema mismatch could not be detected before decrypt/open. After implementation, each encrypted published full-text snapshot writes an owner-only manifest with current full-text snapshot schema, index schema, and encrypted envelope version; open/inspect require that manifest; future/incompatible manifest values make the active snapshot unusable so inspection recovers to the last-good snapshot when available, and the daemon index worker rebuilds from metadata when the active snapshot has no compatible fallback. | This slice proves synthetic/local full-text snapshot schema-mismatch recovery and daemon rebuild only. It does not perform real program upgrade rollback, prove large-corpus migration latency, validate production installer upgrade/uninstall behavior, validate all future schema transitions, or clear release readiness blockers. |
+| S255 | Product vector snapshot schema recovery complete locally | Focused RED first failed because encrypted persistent vector snapshots had no `vector.snapshot.manifest`, so active vector snapshot schema mismatch could not be detected before decrypt/open, and the daemon embedding worker could not rebuild a mismatched no-fallback vector snapshot from completed jobs. After implementation, vector snapshots write an owner-only manifest with current vector snapshot schema, HNSW index schema, dimension, backend, and encrypted envelope version; open/inspect require that manifest; incompatible active manifests recover to encrypted last-good when available; and the daemon embedding worker resets incompatible no-fallback vector snapshots, requeues completed version jobs by model/dimension, and rebuilds through the configured local embedding command without leaking manifest payloads, paths, command paths, text, vectors, or model IDs in output. | This slice proves synthetic/local vector snapshot schema-mismatch fallback and daemon completed-job rebuild only. It does not choose/license/distribute a production embedding model, prove private semantic quality, prove real ANN recall/latency at 100k/1M scale, validate production installer upgrade/uninstall behavior, validate all future vector schema transitions, clear model/vector-quality blockers, or make stable release ready. |
 
 ## Command Log
+
+### S255
+
+Design target:
+
+- Add a local, owner-only persistent vector snapshot manifest that records the
+  current vector snapshot schema, HNSW index schema, dimension, search backend,
+  and encrypted envelope version without storing vectors, model IDs, document
+  IDs, resume text, command paths, or local paths.
+- Treat incompatible active vector snapshot manifests as unusable: recover to
+  encrypted last-good when available, and otherwise let the daemon embedding
+  worker reset the incompatible vector snapshot files and rebuild from
+  completed version jobs through the configured local embedding command.
+- Keep all tests synthetic/local and avoid claiming production model license,
+  private semantic quality, large-corpus ANN latency/recall, installer upgrade
+  rollback, or future vector schema-transition release evidence.
+
+Observed RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p index-vector persistent_vector_index_recovers_last_good_snapshot_when_active_manifest_schema_mismatches --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s52_embedding_jobs daemon_embedding_worker_once_rebuilds_schema_mismatched_vector_snapshot_from_completed_jobs --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p meta-store completed_embedding_update_jobs_can_be_requeued_for_vector_snapshot_rebuild -- --exact
+```
+
+Output summary:
+
+- The focused index-vector and daemon tests failed before implementation
+  because `vector.snapshot.manifest` did not exist.
+- The focused meta-store test failed before implementation because
+  `MetaStore::requeue_completed_embedding_jobs_for_model` did not exist.
+
+Implementation verification:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p index-vector persistent_vector_index_recovers_last_good_snapshot_when_active_manifest_schema_mismatches -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p meta-store completed_embedding_update_jobs_can_be_requeued_for_vector_snapshot_rebuild -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s52_embedding_jobs daemon_embedding_worker_once_rebuilds_schema_mismatched_vector_snapshot_from_completed_jobs -- --exact
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo test -p index-vector --locked
+PATH=<cargo-bin>:$PATH cargo test -p meta-store --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s51_embedding_worker --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s52_embedding_jobs --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s48_search_ipc --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s13_diagnostics --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s71_fault_injection --locked
+PATH=<cargo-bin>:$PATH cargo clippy -p index-vector -p meta-store -p resume-daemon --all-targets --locked -- -D warnings
+git diff --check
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- Focused RED/GREEN exact tests: exit 0 after implementation.
+- Full `index-vector` suite: exit 0; 12 tests passed plus doc-tests.
+- Full `meta-store` suite: exit 0; 56 SQLite tests plus identity/doc-tests
+  passed.
+- Daemon embedding worker/job suites: exit 0; S51 2 tests and S52 5 tests
+  passed, including schema-mismatch vector rebuild from completed jobs.
+- Daemon semantic/hybrid IPC, CLI diagnostics, and CLI fault-injection suites:
+  exit 0.
+- `cargo fmt --check`: exit 0.
+- Focused clippy: exit 0.
+- `git diff --check`: exit 0.
+- `verify-local.sh`: exit 0; full local gate passed after this slice.
+- Public repository guard: exit 0.
+
+Scope note:
+
+- S255 proves only synthetic local vector snapshot schema-mismatch fallback and
+  daemon completed-job rebuild behavior. It does not choose, license, download,
+  or distribute a production embedding model; does not prove private semantic
+  quality or real ANN latency/recall at 100k/1M scale; does not validate
+  Windows/macOS release-platform schema migration behavior; and does not make
+  stable release ready.
 
 ### S254
 
