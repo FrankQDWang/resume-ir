@@ -6633,6 +6633,13 @@ impl PurgeResidualProbe {
             }
         }
 
+        for marker in store
+            .import_root_markers_for_deleted_document_roots(document_ids)
+            .map_err(CliError::store)?
+        {
+            probe.add_marker(&marker);
+        }
+
         for entry in store
             .ocr_page_cache_entries_for_content_hashes(ocr_cache_hashes)
             .map_err(CliError::store)?

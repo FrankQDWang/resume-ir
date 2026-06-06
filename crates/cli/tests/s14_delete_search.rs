@@ -501,6 +501,81 @@ fn purge_deleted_blocks_when_local_data_artifact_retains_deleted_marker_without_
 }
 
 #[test]
+fn purge_deleted_blocks_when_local_data_artifact_retains_import_root_marker_without_leak() {
+    let _guard = s14_test_lock();
+    let data_dir = temp_dir("purge-import-root-residual-data");
+    let fixture_root = temp_dir("purge-import-root-residual-fixture");
+    fs::copy(
+        fixture_file("synthetic-java-engineer.docx"),
+        fixture_root.join("synthetic-java-engineer.docx"),
+    )
+    .unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+        ])
+        .output()
+        .expect("import single-document root fixture");
+    assert!(import.status.success());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    let task_id = ImportTaskId::from_str(stdout_value(&import_stdout, "task id: ")).unwrap();
+
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 1"));
+    let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
+
+    let private_root_path = {
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+        assert!(task
+            .root_path
+            .contains("purge-import-root-residual-fixture"));
+        task.root_path
+    };
+
+    let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "delete",
+            "--doc-id",
+            &deleted_doc_id,
+        ])
+        .output()
+        .expect("delete single-document imported document");
+    assert!(delete.status.success());
+
+    fs::write(
+        data_dir.join("retained-import-root-marker.bin"),
+        &private_root_path,
+    )
+    .unwrap();
+    let purge = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "purge", "--deleted"])
+        .output()
+        .expect("purge deleted document with retained import root marker");
+
+    assert!(!purge.status.success());
+    let stdout = String::from_utf8_lossy(&purge.stdout);
+    let stderr = String::from_utf8_lossy(&purge.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("purge residual scan detected retained deleted material"));
+    assert!(!stderr.contains(&private_root_path));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+    assert!(!stderr.contains("synthetic-java-engineer.docx"));
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
+}
+
+#[test]
 fn purge_deleted_removes_empty_import_root_task_paths_without_path_leak() {
     let _guard = s14_test_lock();
     let data_dir = temp_dir("purge-empty-import-root-data");

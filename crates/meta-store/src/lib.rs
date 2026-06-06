@@ -1056,23 +1056,10 @@ impl MetaStore {
 
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        let deleted_paths = document_paths_for_ids_from_connection(&transaction, document_ids)?;
-        if deleted_paths.is_empty() {
-            transaction.commit().map_err(MetaStoreError::storage)?;
-            return Ok(ImportTaskPurge::empty());
-        }
-        let visible_paths = visible_document_paths_from_connection(&transaction)?;
-        let import_tasks = import_tasks_from_connection(&transaction)?;
+        let import_tasks =
+            import_tasks_for_deleted_document_roots_from_connection(&transaction, document_ids)?;
         let task_ids = import_tasks
             .into_iter()
-            .filter(|task| {
-                deleted_paths
-                    .iter()
-                    .any(|path| import_root_matches_document_path(&task.root_path, path))
-                    && !visible_paths
-                        .iter()
-                        .any(|path| import_root_matches_document_path(&task.root_path, path))
-            })
             .map(|task| task.id)
             .collect::<Vec<_>>();
 
@@ -1116,6 +1103,38 @@ impl MetaStore {
             scan_errors,
             cancellations,
         })
+    }
+
+    pub fn import_root_markers_for_deleted_document_roots(
+        &self,
+        document_ids: &[DocumentId],
+    ) -> Result<Vec<String>> {
+        if document_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let connection = self.connection.borrow();
+        let purge_candidates =
+            import_tasks_for_deleted_document_roots_from_connection(&connection, document_ids)?;
+        let mut markers = Vec::new();
+
+        for task in purge_candidates {
+            markers.push(task.root_path.clone());
+            let sql = format!(
+                "SELECT {IMPORT_SCAN_SCOPE_COLUMNS} FROM import_scan_scope WHERE import_task_id = ?1"
+            );
+            let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+            let mut rows = statement
+                .query(params![task.id.as_str()])
+                .map_err(MetaStoreError::storage)?;
+            if let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+                let scope = read_import_scan_scope(row)?;
+                markers.push(scope.requested_root_path);
+                markers.push(scope.canonical_root_path);
+            }
+        }
+
+        Ok(markers)
     }
 
     pub fn purge_ingest_jobs_for_documents(
@@ -5499,6 +5518,34 @@ fn import_tasks_from_connection(connection: &Connection) -> Result<Vec<ImportTas
     }
 
     Ok(tasks)
+}
+
+fn import_tasks_for_deleted_document_roots_from_connection(
+    connection: &Connection,
+    document_ids: &[DocumentId],
+) -> Result<Vec<ImportTask>> {
+    if document_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let deleted_paths = document_paths_for_ids_from_connection(connection, document_ids)?;
+    if deleted_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let visible_paths = visible_document_paths_from_connection(connection)?;
+    let import_tasks = import_tasks_from_connection(connection)?;
+
+    Ok(import_tasks
+        .into_iter()
+        .filter(|task| {
+            deleted_paths
+                .iter()
+                .any(|path| import_root_matches_document_path(&task.root_path, path))
+                && !visible_paths
+                    .iter()
+                    .any(|path| import_root_matches_document_path(&task.root_path, path))
+        })
+        .collect())
 }
 
 fn import_root_matches_document_path(root_path: &str, document_path: &DocumentPathRecord) -> bool {

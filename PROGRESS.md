@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, S254, S255, and S256 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, S254, S255, S256, and S257 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -185,6 +185,10 @@ obsolete preliminary files and checklists are not product scope.
   marker/file/byte counts when clear, and fails with a redacted generic error if
   any marker remains. This is best-effort local residual proof, not forensic
   erase.
+  The residual scan now also includes import task root paths plus import scan
+  scope requested/canonical root paths that the same deleted-document purge will
+  remove, so emptied-root path metadata is part of the post-purge local residual
+  proof without printing those paths.
   Certificate extraction now treats certificate section headers as bounded
   context, suppresses header values, handles labeled certificate lines with
   ASCII or fullwidth colons, and extracts high-signal certificate aliases such
@@ -782,8 +786,62 @@ obsolete preliminary files and checklists are not product scope.
 | S254 | Product full-text snapshot schema recovery complete locally | Focused RED first failed because published full-text snapshots had no `snapshot-manifest.json`, so active snapshot schema mismatch could not be detected before decrypt/open. After implementation, each encrypted published full-text snapshot writes an owner-only manifest with current full-text snapshot schema, index schema, and encrypted envelope version; open/inspect require that manifest; future/incompatible manifest values make the active snapshot unusable so inspection recovers to the last-good snapshot when available, and the daemon index worker rebuilds from metadata when the active snapshot has no compatible fallback. | This slice proves synthetic/local full-text snapshot schema-mismatch recovery and daemon rebuild only. It does not perform real program upgrade rollback, prove large-corpus migration latency, validate production installer upgrade/uninstall behavior, validate all future schema transitions, or clear release readiness blockers. |
 | S255 | Product vector snapshot schema recovery complete locally | Focused RED first failed because encrypted persistent vector snapshots had no `vector.snapshot.manifest`, so active vector snapshot schema mismatch could not be detected before decrypt/open, and the daemon embedding worker could not rebuild a mismatched no-fallback vector snapshot from completed jobs. After implementation, vector snapshots write an owner-only manifest with current vector snapshot schema, HNSW index schema, dimension, backend, and encrypted envelope version; open/inspect require that manifest; incompatible active manifests recover to encrypted last-good when available; and the daemon embedding worker resets incompatible no-fallback vector snapshots, requeues completed version jobs by model/dimension, and rebuilds through the configured local embedding command without leaking manifest payloads, paths, command paths, text, vectors, or model IDs in output. | This slice proves synthetic/local vector snapshot schema-mismatch fallback and daemon completed-job rebuild only. It does not choose/license/distribute a production embedding model, prove private semantic quality, prove real ANN recall/latency at 100k/1M scale, validate production installer upgrade/uninstall behavior, validate all future vector schema transitions, clear model/vector-quality blockers, or make stable release ready. |
 | S256 | Product purge residual scan complete locally | Focused RED first failed because `resume-cli purge --deleted` did not report a residual scan after deleting tombstoned metadata, OCR cache, vector records, and old snapshots. After implementation, purge collects deleted-scope markers from document IDs, source paths/file names, resume raw/clean text, persisted entity values, and OCR cache text/word boxes before cleanup; after metadata `VACUUM` and index/cache/vector cleanup it stream-scans the local data directory, reports only aggregate residual marker/file/byte counts when clear, and fails closed with a redacted generic error if a retained marker is found. | This slice proves synthetic/local best-effort residual scanning of the current data directory only. It does not prove forensic erase, SSD/filesystem free-space overwrite, OS snapshots/backups cleanup, real-resume purge witnesses, every future PII surface, or stable release readiness. |
+| S257 | Product purge import-root residual marker coverage complete locally | Focused RED first failed because a synthetic retained import-root path marker inside the local data directory did not block `resume-cli purge --deleted`; S256 collected document paths but not the import task root or scan-scope root paths being purged. After implementation, `MetaStore` exposes the import task root paths plus requested/canonical scan-scope root paths that deleted-document purge will remove, and the CLI residual probe includes those markers before cleanup while keeping purge output and retained-marker errors redacted. | This slice proves synthetic/local import-root path residual marker coverage only. It does not prove forensic erase, OS backups/snapshots cleanup, real-resume purge witnesses, every future PII surface, or stable release readiness. |
 
 ## Command Log
+
+### S257
+
+Design target:
+
+- Extend `purge --deleted` residual marker collection to include import task
+  roots plus import scan-scope requested/canonical roots that will be purged
+  because they contain deleted documents and no visible documents.
+- Keep the residual scan local-only and redacted: no root paths, data-dir paths,
+  filenames, or document IDs are printed in success or retained-marker failure
+  output.
+
+TDD RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_blocks_when_local_data_artifact_retains_import_root_marker_without_leak --locked -- --exact
+```
+
+Output summary:
+
+- The first draft test failed on a macOS `/var` to `/private/var`
+  canonicalization assumption; after correcting the test to use the stored root
+  path, the focused RED failed because purge succeeded even though a synthetic
+  retained import-root marker was present in the local data directory.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_blocks_when_local_data_artifact_retains_import_root_marker_without_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p meta-store --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused GREEN passed for retained import-root marker blocking.
+- Full delete/search purge tests, full meta-store tests, focused clippy, diff
+  check, public-repo guard, and full local verification passed.
+- The first `cargo fmt --check` reported a test formatting diff; `cargo fmt`
+  was run and the listed formatting check then passed.
+
+Scope note:
+
+- S257 proves only synthetic local import-root and scan-scope root marker
+  coverage for the current data-dir residual scan. It does not prove forensic
+  erase, SSD/filesystem free-space overwrite, OS snapshots/backups cleanup,
+  real-resume purge witnesses, every future PII surface, cross-platform erase
+  behavior, or stable release readiness.
 
 ### S256
 
