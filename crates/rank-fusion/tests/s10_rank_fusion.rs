@@ -200,6 +200,24 @@ fn field_filters_match_any_location() {
 }
 
 #[test]
+fn field_filters_normalize_broader_location_aliases() {
+    let filters = SearchFilters::default().with_locations_any(["SF Bay Area", "纽约", "Hong Kong"]);
+    let bay_area = ResumeProfile::new("doc_bay_area").with_locations(["San Francisco Bay Area"]);
+    let new_york = ResumeProfile::new("doc_new_york").with_locations(["New York City"]);
+    let hong_kong = ResumeProfile::new("doc_hong_kong").with_locations(["香港"]);
+    let other_location = ResumeProfile::new("doc_seattle").with_locations(["Seattle"]);
+
+    assert!(filters.matches(&bay_area));
+    assert!(filters.matches(&new_york));
+    assert!(filters.matches(&hong_kong));
+    assert!(!filters.matches(&other_location));
+    assert_eq!(
+        filters.locations_any(),
+        &["hong_kong", "new_york", "san_francisco"]
+    );
+}
+
+#[test]
 fn candidate_fold_keeps_best_ranked_version_per_candidate() {
     let hits = vec![
         RankedHit::new("doc_old", 1, 9.5).with_candidate_key("cand_same"),

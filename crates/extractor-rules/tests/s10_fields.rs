@@ -624,6 +624,65 @@ Base: Shenzhen";
 }
 
 #[test]
+fn extracts_broader_labeled_location_aliases_with_exact_spans() {
+    let text = "\
+Candidate Location Alias Target
+Current Location: San Francisco Bay Area
+Preferred City: New York City
+工作地点：香港
+Base City: Singapore
+地点：重庆市
+Experience
+Supported Bay Area customers without declaring a location label";
+
+    let matches = extract_strong_fields(text);
+    let locations = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Location)
+        .collect::<Vec<_>>();
+    let normalized = locations
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        normalized,
+        vec![
+            "san_francisco",
+            "new_york",
+            "hong_kong",
+            "singapore",
+            "chongqing"
+        ]
+    );
+    assert_eq!(
+        &text[locations[0].span_start..locations[0].span_end],
+        "San Francisco Bay Area"
+    );
+    assert_eq!(
+        &text[locations[1].span_start..locations[1].span_end],
+        "New York City"
+    );
+    assert_eq!(
+        &text[locations[2].span_start..locations[2].span_end],
+        "香港"
+    );
+    assert_eq!(
+        &text[locations[3].span_start..locations[3].span_end],
+        "Singapore"
+    );
+    assert_eq!(
+        &text[locations[4].span_start..locations[4].span_end],
+        "重庆市"
+    );
+    assert!(locations.iter().all(|field| field.confidence >= 0.82));
+    assert!(!format!("{:?}", locations[0]).contains("San Francisco"));
+    assert!(!locations
+        .iter()
+        .any(|field| field.raw_value.contains("customers")));
+}
+
+#[test]
 fn extracts_broader_title_aliases_without_certificate_title_noise() {
     let text = "\
 Experience

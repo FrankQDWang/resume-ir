@@ -222,6 +222,124 @@ Skills: Java
 }
 
 #[test]
+fn import_persists_broader_location_aliases_and_filters_without_output_leaks() {
+    let data_dir = temp_dir("persisted-location-alias-data");
+    let resume_root = temp_dir("persisted-location-alias-resumes");
+    fs::write(
+        resume_root.join("synthetic-location-alias-target.txt"),
+        "\
+Synthetic Location Alias Target
+Email: location-alias-target@example.test
+Current Location: San Francisco Bay Area
+Preferred City: New York City
+工作地点：香港
+Base City: Singapore
+Skills: needle Rust
+",
+    )
+    .unwrap();
+    fs::write(
+        resume_root.join("synthetic-location-alias-decoy.txt"),
+        "\
+Synthetic Location Alias Decoy
+Email: location-alias-decoy@example.test
+Location: Austin, TX
+Skills: needle Rust
+",
+    )
+    .unwrap();
+
+    let import_output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import broader location aliases");
+    assert!(
+        import_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import_output.stdout),
+        String::from_utf8_lossy(&import_output.stderr)
+    );
+    assert!(import_output.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import_output.stdout);
+    assert!(!import_stdout.contains(path_str(&data_dir)));
+    assert!(!import_stdout.contains(path_str(&resume_root)));
+    assert!(!import_stdout.contains("San Francisco"));
+    assert!(!import_stdout.contains("New York"));
+    assert!(!import_stdout.contains("香港"));
+    assert!(!import_stdout.contains("location-alias-target@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let target = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-location-alias-target.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&target.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mut locations = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Location)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("San Francisco"));
+            assert!(!format!("{mention:?}").contains("香港"));
+            mention.normalized_value.unwrap()
+        })
+        .collect::<Vec<_>>();
+    locations.sort();
+    assert_eq!(
+        locations,
+        vec!["hong_kong", "new_york", "san_francisco", "singapore"]
+    );
+
+    let search_output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--location",
+            "SF Bay Area",
+            "--top-k",
+            "5",
+        ])
+        .output()
+        .expect("run broader location filtered search");
+    assert!(
+        search_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&search_output.stdout),
+        String::from_utf8_lossy(&search_output.stderr)
+    );
+    assert!(search_output.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search_output.stdout);
+    assert!(search_stdout.contains("synthetic-location-alias-target.txt"));
+    assert!(!search_stdout.contains("synthetic-location-alias-decoy.txt"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&resume_root)));
+    assert!(!search_stdout.contains("SF Bay Area"));
+    assert!(!search_stdout.contains("location-alias-target@example.test"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_sectioned_skill_alias_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-skill-alias-data");
     let resume_root = temp_dir("persisted-skill-alias-resumes");
