@@ -164,6 +164,12 @@ and model manifests (`dataset_manifest_sha256`,
 reports if they contain raw queries,
 candidate text, resume text, candidate IDs, sample IDs, filenames, local paths,
 vectors, command paths, model paths, or notes.
+Private vector-quality release reports must also have feasible aggregate
+retrieval counts: `sample_count > 0`, `candidate_count > 0`, `top_k > 0`,
+`candidate_count >= sample_count`, `top_k <= candidate_count`,
+`zero_recall_queries <= sample_count`, and `recall_at_k` must not exceed the
+maximum possible recall implied by `zero_recall_queries` within rounding
+tolerance.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \

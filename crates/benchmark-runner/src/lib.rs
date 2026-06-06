@@ -2247,6 +2247,7 @@ pub fn evaluate_vector_quality_gate_json(
 const PRIVATE_BUSINESS_VECTOR_QUALITY_SCOPE: &str =
     "private business vector-quality benchmark; aggregate redacted report only";
 const PRIVATE_BUSINESS_VECTOR_QUALITY_TARGET_CLAIM: &str = "vector_quality_target_met";
+const VECTOR_QUALITY_SCORE_TOLERANCE: f64 = 0.000_5;
 
 fn validate_private_business_vector_quality_boundary(
     report: &serde_json::Value,
@@ -2307,13 +2308,26 @@ fn validate_private_business_vector_quality_shape(
     private_vector_quality_str(report, "run_id")?;
     private_vector_quality_str(report, "platform")?;
     private_vector_quality_str(report, "dataset_kind")?;
-    private_vector_quality_usize(report, "sample_count")?;
-    private_vector_quality_usize(report, "candidate_count")?;
-    private_vector_quality_usize(report, "top_k")?;
-    private_vector_quality_number(report, "recall_at_k")?;
+    let sample_count = private_vector_quality_usize(report, "sample_count")?;
+    let candidate_count = private_vector_quality_usize(report, "candidate_count")?;
+    let top_k = private_vector_quality_usize(report, "top_k")?;
+    let recall_at_k = private_vector_quality_number(report, "recall_at_k")?;
     private_vector_quality_number(report, "mrr")?;
     private_vector_quality_number(report, "ndcg_at_k")?;
-    private_vector_quality_usize(report, "zero_recall_queries")?;
+    let zero_recall_queries = private_vector_quality_usize(report, "zero_recall_queries")?;
+    if sample_count == 0
+        || candidate_count == 0
+        || top_k == 0
+        || candidate_count < sample_count
+        || top_k > candidate_count
+        || zero_recall_queries > sample_count
+    {
+        return Err(private_vector_quality_counts_error());
+    }
+    let max_possible_recall = (sample_count - zero_recall_queries) as f64 / sample_count as f64;
+    if recall_at_k > max_possible_recall + VECTOR_QUALITY_SCORE_TOLERANCE {
+        return Err(private_vector_quality_metric_error());
+    }
     private_vector_quality_str(report, "target_claim")?;
     private_vector_quality_str(report, "corpus_origin")?;
     private_vector_quality_str(report, "privacy_boundary")?;
@@ -2406,6 +2420,14 @@ fn private_vector_quality_number(
 
 fn private_vector_quality_boundary_error() -> BenchmarkGateError {
     BenchmarkGateError::failed("private business vector quality requires redacted local boundary")
+}
+
+fn private_vector_quality_counts_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private business vector quality counts are inconsistent")
+}
+
+fn private_vector_quality_metric_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private business vector quality metric counts do not match scores")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

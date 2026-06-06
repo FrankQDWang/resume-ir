@@ -1306,6 +1306,70 @@ fn resume_benchmark_vector_gate_requires_private_business_labeled_report() {
     remove_dir(&report_dir);
 }
 
+#[test]
+fn resume_benchmark_vector_gate_rejects_private_business_impossible_top_k() {
+    let report_dir = temp_dir("vector-quality-private-business-impossible-top-k");
+    let report_path = report_dir.join("vector-report.json");
+    fs::write(
+        &report_path,
+        concat!(
+            "{\"schema_version\":\"vector-quality.v1\",",
+            "\"run_id\":\"vector_release_20260605\",",
+            "\"platform\":\"macos/aarch64\",",
+            "\"dataset_kind\":\"private-business-labeled\",",
+            "\"sample_count\":10,",
+            "\"candidate_count\":3,",
+            "\"top_k\":5,",
+            "\"recall_at_k\":1.0,",
+            "\"mrr\":1.0,",
+            "\"ndcg_at_k\":1.0,",
+            "\"zero_recall_queries\":0,",
+            "\"target_claim\":\"vector_quality_target_met\",",
+            "\"corpus_origin\":\"private_local\",",
+            "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"contains_raw_queries\":false,",
+            "\"contains_candidate_text\":false,",
+            "\"contains_resume_paths\":false,",
+            "\"contains_sample_ids\":false,",
+            "\"contains_candidate_ids\":false,",
+            "\"contains_vectors\":false,",
+            "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+            "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+            "\"vector_taxonomy\":\"resume-ir.vector-quality.v1\",",
+            "\"scope\":\"private business vector-quality benchmark; aggregate redacted report only\"}"
+        ),
+    )
+    .unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "vector-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-business-labeled",
+            "--min-samples",
+            "10",
+            "--min-recall-at-k",
+            "0.99",
+            "--min-mrr",
+            "0.99",
+            "--min-ndcg-at-k",
+            "0.99",
+            "--max-zero-recall-queries",
+            "0",
+        ])
+        .output()
+        .expect("run vector quality gate");
+
+    assert!(!gate.status.success());
+    let stderr = String::from_utf8_lossy(&gate.stderr);
+    assert!(stderr.contains("private business vector quality counts are inconsistent"));
+    assert!(!stderr.contains(path_str(&report_path)));
+
+    remove_dir(&report_dir);
+}
+
 fn ocr_fixture_script(label: &str) -> PathBuf {
     let path = temp_dir(label).join(ocr_fixture_file_name());
     fs::write(&path, ocr_fixture_script_body()).unwrap();

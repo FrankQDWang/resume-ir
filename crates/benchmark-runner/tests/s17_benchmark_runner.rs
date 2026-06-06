@@ -965,6 +965,52 @@ fn vector_quality_gate_requires_private_business_labeled_release_boundary() {
     assert!(evaluation.recall_at_k() >= 0.95);
 }
 
+#[test]
+fn vector_quality_gate_rejects_private_business_report_with_impossible_top_k() {
+    let report = minimal_private_business_vector_quality_json()
+        .replace("\"candidate_count\":200", "\"candidate_count\":5");
+    let config = VectorQualityGateConfig::new(50, 0.90, 0.90, 0.90)
+        .with_max_zero_recall_queries(0)
+        .require_private_business_labeled();
+
+    let error = evaluate_vector_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business vector quality counts are inconsistent"));
+}
+
+#[test]
+fn vector_quality_gate_rejects_private_business_report_with_impossible_zero_recall_count() {
+    let report = minimal_private_business_vector_quality_json()
+        .replace("\"zero_recall_queries\":0", "\"zero_recall_queries\":51");
+    let config = VectorQualityGateConfig::new(50, 0.90, 0.90, 0.90)
+        .with_max_zero_recall_queries(51)
+        .require_private_business_labeled();
+
+    let error = evaluate_vector_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business vector quality counts are inconsistent"));
+}
+
+#[test]
+fn vector_quality_gate_rejects_private_business_report_with_inconsistent_zero_recall_metric() {
+    let report = minimal_private_business_vector_quality_json()
+        .replace("\"recall_at_k\":0.95", "\"recall_at_k\":1.0")
+        .replace("\"zero_recall_queries\":0", "\"zero_recall_queries\":1");
+    let config = VectorQualityGateConfig::new(50, 0.90, 0.90, 0.90)
+        .with_max_zero_recall_queries(1)
+        .require_private_business_labeled();
+
+    let error = evaluate_vector_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business vector quality metric counts do not match scores"));
+}
+
 fn minimal_benchmark_json(
     dataset_kind: &str,
     document_count: usize,
@@ -1130,6 +1176,39 @@ fn minimal_private_business_dedupe_quality_json() -> String {
         "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
         "\"dedupe_taxonomy\":\"resume-ir.dedupe.v1\",",
         "\"scope\":\"private business dedupe-quality benchmark; aggregate redacted report only\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn minimal_private_business_vector_quality_json() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"vector-quality.v1\",",
+        "\"run_id\":\"vectorq_test\",",
+        "\"platform\":\"test/test\",",
+        "\"dataset_kind\":\"private-business-labeled\",",
+        "\"sample_count\":50,",
+        "\"candidate_count\":200,",
+        "\"top_k\":10,",
+        "\"recall_at_k\":0.95,",
+        "\"mrr\":0.91,",
+        "\"ndcg_at_k\":0.93,",
+        "\"zero_recall_queries\":0,",
+        "\"target_claim\":\"vector_quality_target_met\",",
+        "\"corpus_origin\":\"private_local\",",
+        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"contains_raw_queries\":false,",
+        "\"contains_candidate_text\":false,",
+        "\"contains_resume_paths\":false,",
+        "\"contains_sample_ids\":false,",
+        "\"contains_candidate_ids\":false,",
+        "\"contains_vectors\":false,",
+        "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+        "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+        "\"vector_taxonomy\":\"resume-ir.vector-quality.v1\",",
+        "\"scope\":\"private business vector-quality benchmark; aggregate redacted report only\"",
         "}"
     )
     .to_string()

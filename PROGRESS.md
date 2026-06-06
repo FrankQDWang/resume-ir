@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, and S230 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, and S231 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -474,7 +474,10 @@ obsolete preliminary files and checklists are not product scope.
   aggregate JSON with dataset/annotation/model manifest digests, aggregate
   recall/MRR/NDCG metrics, and explicit proof that raw queries, candidate text,
   resume paths, sample identifiers, candidate identifiers, and vectors are not
-  included. Private real-corpus OCR throughput reports are accepted only as
+  included. They must also have feasible `sample_count`, `candidate_count`,
+  `top_k`, and `zero_recall_queries` counts, and the reported `recall_at_k`
+  cannot exceed the maximum possible recall implied by the zero-recall count.
+  Private real-corpus OCR throughput reports are accepted only as
   strict redacted aggregate JSON with dataset/OCR-runtime/renderer/language-pack
   manifest digests, aggregate latency and throughput metrics, and explicit
   proof that raw OCR text, page images, resume paths, document identifiers, page
@@ -724,8 +727,95 @@ obsolete preliminary files and checklists are not product scope.
 | S228 | Product name field-quality release gate complete locally | Focused RED tests first failed because private-business field-quality reports missing `name` metrics were accepted by both the library gate and CLI gate. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `name` metrics for private business release evidence, complete strict private-business fixtures include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create or upload private labels, run real business name-quality evaluation, prove production name precision/recall/F1 on representative resumes, add fuzzy/person-alias matching, clear field-quality blockers, or make stable release ready. |
 | S229 | Product field-quality support and consistency gate complete locally | Focused RED tests first failed because strict private-business field-quality reports could set a required production field to zero labeled support with perfect scores, or report precision/recall/F1 values inconsistent with the aggregate counts, and both library plus CLI gates accepted them. After implementation, every private-business field-quality metric, including required production fields, must have `true_positive + false_negative > 0`, and reported precision/recall/F1 must match the counts within the report's three-decimal rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create/upload private labels, run private field-quality evaluation, prove production F1 on representative resumes, prevent maliciously fabricated aggregate counts beyond consistency checks, clear field-quality blockers, or make stable release ready. |
 | S230 | Product dedupe-quality consistency gate complete locally | Focused RED tests first failed because strict private-business dedupe-quality reports could report pair counts, predicted duplicate counts, or precision/recall/F1 values inconsistent with the confusion-matrix counts, and both library plus CLI gates accepted them. After implementation, private-business dedupe-quality reports must satisfy `pair_count`, `positive_pair_count`, and `predicted_duplicate_pairs` relationships against true/false positive/negative counts, and reported precision/recall/F1 must match those counts within three-decimal rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create/upload private labels, run private dedupe-quality evaluation, prove production dedupe precision/recall on representative resumes, prevent fabricated aggregate counts beyond consistency checks, clear dedupe-quality blockers, or make stable release ready. |
+| S231 | Product vector-quality consistency gate complete locally | Focused RED tests first failed because strict private-business vector-quality reports could claim impossible retrieval counts, such as `top_k > candidate_count`, or report `zero_recall_queries` inconsistent with `sample_count` and recall@k, and both library plus CLI gates accepted them. After implementation, private-business vector-quality reports must have positive feasible `sample_count`, `candidate_count`, and `top_k` values, `candidate_count >= sample_count`, `top_k <= candidate_count`, `zero_recall_queries <= sample_count`, and recall@k no higher than the maximum possible value implied by zero-recall queries within rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create/upload private labels, run private vector-quality evaluation, select or license a production embedding model, prove semantic retrieval quality on representative resumes, prevent fabricated aggregate counts beyond consistency checks, clear vector-quality blockers, or make stable release ready. |
 
 ## Command Log
+
+### S231
+
+Design target:
+
+- Require strict private-business vector-quality aggregate reports to have
+  feasible retrieval counts: positive `sample_count`, `candidate_count`, and
+  `top_k`, `candidate_count >= sample_count`, `top_k <= candidate_count`, and
+  `zero_recall_queries <= sample_count`.
+- Reject recall@k claims that exceed the maximum possible recall implied by the
+  zero-recall query count, allowing only the benchmark rounding tolerance.
+- Keep the gate local/redacted aggregate only; do not create, upload, or
+  inspect private vector labels, queries, candidates, embeddings, or resumes in
+  this slice.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_gate_rejects_private_business_report_with_impossible_top_k --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_gate_rejects_private_business_report_with_impossible_zero_recall_count --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_gate_rejects_private_business_report_with_inconsistent_zero_recall_metric --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_gate_rejects_private_business_impossible_top_k --locked -- --exact
+```
+
+Output summary:
+
+- The library exact tests failed because `evaluate_vector_quality_gate_json`
+  accepted private-business reports with `top_k > candidate_count`,
+  `zero_recall_queries > sample_count`, or a perfect recall@k score despite a
+  positive zero-recall query count.
+- The CLI exact test failed because `resume-benchmark vector-gate
+  --require-private-business-labeled` exited successfully for an impossible
+  private vector-quality report.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_gate_rejects_private_business_report_with_impossible_top_k --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_gate_rejects_private_business_report_with_impossible_zero_recall_count --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner vector_quality_gate_rejects_private_business_report_with_inconsistent_zero_recall_metric --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_vector_gate_rejects_private_business_impossible_top_k --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+```
+
+Output summary:
+
+- The exact tests passed after private vector-quality validation began checking
+  retrieval count feasibility and zero-recall metric consistency.
+- `cargo test -p benchmark-runner --locked`: exit 0; 24 CLI benchmark tests, 50
+  runner tests, and doc-tests passed.
+- `cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings`:
+  exit 0.
+
+Final local gate:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --all --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0.
+- `check-runbooks.sh`: exit 0, `runbook check passed`.
+- `guard-public-repo.sh`: exit 0, `public repo guard passed`.
+- `verify-local.sh`: exit 0; workspace clippy/tests/doc-tests, license/runbook/
+  workflow/release-readiness checks, release artifact and SBOM checks, macOS
+  package DMG verification, and public repository guard passed. Windows package
+  check was skipped on this non-Windows host.
+
+Scope note:
+
+- S231 uses synthetic fixtures only. It does not read, print, commit, or upload
+  real resumes, local data directories, tokens, diagnostics, model caches,
+  private vector labels, queries, candidates, embeddings, or raw personal data.
+- This slice makes redacted aggregate vector-quality reports harder to
+  overstate by accident. It does not create private labels, run private semantic
+  evaluation, select or license a production embedding model, prove production
+  semantic quality, clear vector-quality blockers, validate million-scale
+  behavior, clear platform/signing/model/OCR blockers, or make the complete
+  product ready.
 
 ### S230
 
