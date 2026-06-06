@@ -1593,6 +1593,7 @@ const PRODUCTION_FIELD_QUALITY_THRESHOLDS: &[(&str, f64)] = &[
     ("skill", 0.92),
     ("certificate", 0.90),
     ("date_range", 0.93),
+    ("years_experience", 0.90),
 ];
 
 pub fn evaluate_field_quality_gate_json(
