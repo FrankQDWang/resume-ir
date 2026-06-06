@@ -1157,7 +1157,38 @@ pub fn fuse_hybrid_rrf(recall: HybridRecall, k: f32, limit: usize) -> Vec<Ranked
 }
 
 fn normalize_skill(skill: &str) -> String {
-    normalize_dedupe_value(skill)
+    let normalized = normalize_dedupe_value(skill);
+    let compact = normalized
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .collect::<String>();
+    match compact.as_str() {
+        "k8s" | "kubernetes" => "kubernetes".to_string(),
+        "golang" | "go" => "go".to_string(),
+        "postgres" | "postgresql" => "postgresql".to_string(),
+        "nodejs" | "node" => "node.js".to_string(),
+        "reactjs" | "react" => "react".to_string(),
+        "vuejs" | "vue" => "vue.js".to_string(),
+        "ts" | "typescript" => "typescript".to_string(),
+        "js" | "javascript" => "javascript".to_string(),
+        "sklearn" | "scikitlearn" => "scikit-learn".to_string(),
+        "pytorch" => "pytorch".to_string(),
+        "tensorflow" => "tensorflow".to_string(),
+        "graphql" => "graphql".to_string(),
+        "amazonwebservices" | "aws" => "aws".to_string(),
+        "microsoftazure" | "azure" => "azure".to_string(),
+        "googlecloudplatform" | "googlecloud" | "gcp" => "gcp".to_string(),
+        "terraform" => "terraform".to_string(),
+        "ansible" => "ansible".to_string(),
+        "jenkins" => "jenkins".to_string(),
+        "gitlabci" | "gitlabcicd" => "gitlab ci".to_string(),
+        "apachekafka" | "kafka" => "kafka".to_string(),
+        "apacheflink" | "flink" => "flink".to_string(),
+        "elasticsearch" | "elastic" => "elasticsearch".to_string(),
+        "mongodb" => "mongodb".to_string(),
+        "snowflake" => "snowflake".to_string(),
+        _ => normalized,
+    }
 }
 
 fn normalize_contact_hash(contact_hash: &str) -> Option<String> {

@@ -1328,8 +1328,20 @@ fn push_skill_alias_matches(
     }
 }
 
-fn skill_alias_patterns() -> [(&'static str, &'static str); 26] {
+fn skill_alias_patterns() -> [(&'static str, &'static str); 38] {
     [
+        ("AWS", r"(?i)\b(?:aws|amazon\s+web\s+services)\b"),
+        ("Azure", r"(?i)\b(?:azure|microsoft\s+azure)\b"),
+        ("GCP", r"(?i)\b(?:gcp|google\s+cloud(?:\s+platform)?)\b"),
+        ("Terraform", r"(?i)\bterraform\b"),
+        ("Ansible", r"(?i)\bansible\b"),
+        ("Jenkins", r"(?i)\bjenkins\b"),
+        ("GitLab CI", r"(?i)\bgitlab\s+ci(?:/cd)?\b"),
+        ("Kafka", r"(?i)\b(?:apache\s+)?kafka\b"),
+        ("Flink", r"(?i)\b(?:apache\s+)?flink\b"),
+        ("Elasticsearch", r"(?i)\belastic\s*search\b"),
+        ("MongoDB", r"(?i)\bmongo\s*db\b"),
+        ("Snowflake", r"(?i)\bsnowflake\b"),
         ("Spark", r"(?i)\b(?:apache\s+)?spark\b"),
         ("Hadoop", r"(?i)\b(?:apache\s+)?hadoop\b"),
         ("Airflow", r"(?i)\b(?:apache\s+)?airflow\b"),

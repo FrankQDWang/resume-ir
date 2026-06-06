@@ -39,6 +39,60 @@ fn field_filters_require_degree_skill_and_year_thresholds() {
 }
 
 #[test]
+fn field_filters_normalize_broader_skill_aliases() {
+    let filters = SearchFilters::default().with_skills_any([
+        "K8s",
+        "Golang",
+        "Postgres",
+        "NodeJS",
+        "React.js",
+        "TS",
+        "sklearn",
+        "Amazon Web Services",
+        "Google Cloud Platform",
+        "Elastic Search",
+        "Mongo DB",
+        "GitLab CI/CD",
+    ]);
+
+    let matching = ResumeProfile::new("doc_skill_aliases").with_skills([
+        "Kubernetes",
+        "Go",
+        "PostgreSQL",
+        "Node.js",
+        "React",
+        "TypeScript",
+        "scikit-learn",
+        "AWS",
+        "GCP",
+        "Elasticsearch",
+        "MongoDB",
+        "GitLab CI",
+    ]);
+    let decoy = ResumeProfile::new("doc_decoy").with_skills(["Java"]);
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&decoy));
+    assert_eq!(
+        filters.skills_any(),
+        &[
+            "aws",
+            "elasticsearch",
+            "gcp",
+            "gitlab ci",
+            "go",
+            "kubernetes",
+            "mongodb",
+            "node.js",
+            "postgresql",
+            "react",
+            "scikit-learn",
+            "typescript",
+        ]
+    );
+}
+
+#[test]
 fn degree_level_parse_accepts_broader_engineering_degree_aliases() {
     assert_eq!(DegreeLevel::parse("MEng"), Some(DegreeLevel::Master));
     assert_eq!(DegreeLevel::parse("M.Tech"), Some(DegreeLevel::Master));

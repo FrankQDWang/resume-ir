@@ -782,6 +782,138 @@ Java island migration
 }
 
 #[test]
+fn import_persists_broader_skill_aliases_and_filters_without_output_leaks() {
+    let data_dir = temp_dir("persisted-broader-skill-alias-data");
+    let resume_root = temp_dir("persisted-broader-skill-alias-resumes");
+    fs::write(
+        resume_root.join("synthetic-broader-skill-target.txt"),
+        "\
+Synthetic Broader Skill Target
+Email: broader-skill-target@example.test
+Technical Skills
+Amazon Web Services / Microsoft Azure / Google Cloud Platform
+Terraform, Ansible, Jenkins, GitLab CI
+Apache Kafka, Apache Flink, Elastic Search
+Mongo DB, Snowflake
+Experience
+needle delivery platform
+",
+    )
+    .unwrap();
+    fs::write(
+        resume_root.join("synthetic-broader-skill-decoy.txt"),
+        "\
+Synthetic Broader Skill Decoy
+Email: broader-skill-decoy@example.test
+Skills: Java
+Experience
+needle delivery platform
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import broader skill aliases");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("Amazon Web Services"));
+    assert!(!stdout.contains("broader-skill-target@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-broader-skill-target.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mut normalized = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Skill)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("Amazon Web Services"));
+            mention.normalized_value.unwrap()
+        })
+        .collect::<Vec<_>>();
+    normalized.sort();
+
+    assert_eq!(
+        normalized,
+        vec![
+            "AWS",
+            "Ansible",
+            "Azure",
+            "Elasticsearch",
+            "Flink",
+            "GCP",
+            "GitLab CI",
+            "Jenkins",
+            "Kafka",
+            "MongoDB",
+            "Snowflake",
+            "Terraform",
+        ]
+    );
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--skills-any",
+            "Amazon Web Services",
+            "--top-k",
+            "5",
+        ])
+        .output()
+        .expect("search broader skill aliases");
+    assert!(
+        search.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&search.stdout),
+        String::from_utf8_lossy(&search.stderr)
+    );
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(search_stdout.contains("synthetic-broader-skill-target.txt"));
+    assert!(!search_stdout.contains("synthetic-broader-skill-decoy.txt"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&resume_root)));
+    assert!(!search_stdout.contains("Amazon Web Services"));
+    assert!(!search_stdout.contains("broader-skill-target@example.test"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_labeled_school_and_degree_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-labeled-education-data");
     let resume_root = temp_dir("persisted-labeled-education-resumes");

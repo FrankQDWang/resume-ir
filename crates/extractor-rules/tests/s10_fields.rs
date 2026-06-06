@@ -1162,3 +1162,51 @@ Business Analyst";
         .any(|field| field.raw_value.contains("AWS Certified")));
     assert!(!format!("{:?}", titles[0]).contains("Platform Engineer"));
 }
+
+#[test]
+fn extracts_broader_cloud_data_and_devops_skill_aliases() {
+    let text = "\
+Technical Skills
+Amazon Web Services / Microsoft Azure / Google Cloud Platform
+Terraform, Ansible, Jenkins, GitLab CI
+Apache Kafka, Apache Flink, Elastic Search
+Mongo DB, Snowflake
+Experience
+AWSome internal branding should not be a skill";
+
+    let matches = extract_strong_fields(text);
+
+    let skills = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Skill)
+        .collect::<Vec<_>>();
+    let skill_normalized = skills
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        skill_normalized,
+        vec![
+            "AWS",
+            "Azure",
+            "GCP",
+            "Terraform",
+            "Ansible",
+            "Jenkins",
+            "GitLab CI",
+            "Kafka",
+            "Flink",
+            "Elasticsearch",
+            "MongoDB",
+            "Snowflake",
+        ]
+    );
+    assert!(skills
+        .iter()
+        .all(|field| text[field.span_start..field.span_end] == field.raw_value));
+    assert!(!skills
+        .iter()
+        .any(|field| field.raw_value == "Technical Skills"));
+    assert!(!skills.iter().any(|field| field.raw_value == "AWSome"));
+    assert!(!format!("{:?}", skills[0]).contains("Amazon Web Services"));
+}

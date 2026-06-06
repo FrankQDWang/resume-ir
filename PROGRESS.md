@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, and S225 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, and S226 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -194,6 +194,13 @@ obsolete preliminary files and checklists are not product scope.
   frontend aliases such as Spark, Hadoop, Airflow, TensorFlow, PyTorch,
   scikit-learn, Vue.js, Angular, and GraphQL, while avoiding `.js` suffixes
   being separately extracted as JavaScript.
+  Skill extraction and filtering now also recognize high-signal cloud, data,
+  and DevOps aliases such as AWS/Amazon Web Services, Azure, GCP/Google Cloud
+  Platform, Terraform, Ansible, Jenkins, GitLab CI, Kafka, Flink,
+  Elasticsearch, MongoDB, and Snowflake, and rank-fusion normalizes common
+  user-input aliases such as K8s, Golang, Postgres, NodeJS, React.js, TS,
+  sklearn, and GitLab CI/CD to the same canonical skill keys used by persisted
+  profiles.
   Date-range extraction now also handles Chinese year/month ranges such as
   `2020年1月 - 2024年3月`, normalizes them to the existing `YYYY-MM/YYYY-MM`
   schema, preserves exact span evidence, and keeps years-experience derivation
@@ -705,8 +712,85 @@ obsolete preliminary files and checklists are not product scope.
 | S223 | Product broader company suffix normalization complete locally | Focused RED tests first failed because company values such as `Synthetic AI Co., Ltd.` and `Example Systems Pte Ltd` kept legal suffix fragments, `Alpine Search GmbH` and `合成科技有限合伙` were not recognized as company evidence, `--company "Synthetic AI"` did not match the persisted target, and unrelated labeled lines containing the word company could be misclassified as company evidence. After implementation, extractor-rules recognizes and strips high-signal legal suffixes including `Co., Ltd.`, `Pte Ltd`, `GmbH`, `S.A.`, and `有限合伙`, avoids non-company labeled-line fallback extraction, rank-fusion normalizes the same suffixes for filters/profiles, and import/search persists canonical company mentions without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business company-field F1, complete all global legal-entity suffixes, infer employers from arbitrary prose, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S224 | Product broader school-tier alias normalization complete locally | Focused RED tests first failed because explicit school-tier aliases such as `C9 League`, `Project 211`, `Ivy League`, and `Russell Group` were not extracted or parsed as canonical school tiers, and `--school-tier "C9 League"` could not match the persisted target. After implementation, extractor-rules maps `C9 League` and Project 985/211 aliases to canonical 985/211 evidence, maps Double First-Class phrases plus `双一流建设高校` to `double_first_class`, maps Ivy League/Russell Group to `overseas`, preserves exact span evidence, and rank-fusion parses the same aliases for filters. Import/search persists the broader school-tier aliases without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not infer tiers from arbitrary school names, prove real business school-tier F1, complete all global ranking systems, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S225 | Product broader certificate alias normalization complete locally | Focused RED tests first failed because CKS, Terraform Associate, Google Associate Cloud Engineer, AZ-204, and RHCSA aliases were not extracted as the intended canonical certificate mentions, rank-fusion preserved raw normalized aliases such as `terraform_associate` and `az_204`, and `--certificate "Terraform Associate"` could not match the persisted target. After implementation, extractor-rules maps CKS/Certified Kubernetes Security Specialist, HashiCorp Certified Terraform Associate/Terraform Associate, Google/GCP Associate Cloud Engineer, AZ-204/Azure Developer, and RHCSA/Red Hat Certified System Administrator to canonical certificate values with exact span evidence, and rank-fusion normalizes the same aliases for filters/profiles. Import/search persists the broader certificate aliases without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business certificate-field F1, complete all global certification dictionaries, infer certification levels or dates, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
+| S226 | Product broader skill alias extraction and filtering complete locally | Focused RED tests first failed because high-signal cloud/data/DevOps skill aliases such as Amazon Web Services, Microsoft Azure, Google Cloud Platform, Terraform, Ansible, Jenkins, GitLab CI, Kafka, Flink, Elastic Search, Mongo DB, and Snowflake were not extracted as skill mentions, rank-fusion did not normalize user skill aliases such as K8s, Golang, Postgres, NodeJS, React.js, TS, sklearn, Amazon Web Services, Google Cloud Platform, Elastic Search, Mongo DB, and GitLab CI/CD to persisted canonical skill keys, and `--skills-any "Amazon Web Services"` could not match the persisted target. After implementation, extractor-rules maps those high-signal skill aliases to canonical skill values with exact span evidence, rank-fusion normalizes common filter/profile aliases to the same keys, and import/search persists broader skill aliases without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business skill-field F1, complete all global skill dictionaries, infer skills from arbitrary prose, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 
 ## Command Log
+
+### S226
+
+Design target:
+
+- Broaden explicit high-signal cloud, data, and DevOps skill aliases across
+  extraction, persisted profiles, and search filters.
+- Preserve exact span evidence and redacted Debug/output behavior.
+- Normalize common user search aliases to the same canonical skill keys used by
+  persisted profiles.
+- Use synthetic fixtures only.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p extractor-rules --test s10_fields extracts_broader_cloud_data_and_devops_skill_aliases --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p rank-fusion --test s10_rank_fusion field_filters_normalize_broader_skill_aliases --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s16_persisted_fields import_persists_broader_skill_aliases_and_filters_without_output_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The extractor exact failed before implementation with no skill evidence for
+  Amazon Web Services, Microsoft Azure, Google Cloud Platform, Terraform,
+  Ansible, Jenkins, GitLab CI, Kafka, Flink, Elastic Search, Mongo DB, or
+  Snowflake.
+- The rank-fusion exact failed before implementation because filters containing
+  aliases such as K8s, Golang, Postgres, NodeJS, React.js, TS, sklearn, Amazon
+  Web Services, Google Cloud Platform, Elastic Search, Mongo DB, and GitLab
+  CI/CD did not match profiles using the persisted canonical skill values.
+- The CLI persisted-field exact failed before implementation because no broader
+  skill aliases were persisted for the target, so the intended
+  `--skills-any "Amazon Web Services"` filter path could not match it.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p extractor-rules --test s10_fields extracts_broader_cloud_data_and_devops_skill_aliases --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p rank-fusion --test s10_rank_fusion field_filters_normalize_broader_skill_aliases --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s16_persisted_fields import_persists_broader_skill_aliases_and_filters_without_output_leaks --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p extractor-rules --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p rank-fusion --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p import-pipeline --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s16_persisted_fields --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s10_search_filters --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --all
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p extractor-rules -p rank-fusion -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused GREEN tests passed after adding the broader explicit skill aliases to
+  extractor-rules and rank-fusion skill normalization.
+- Full `extractor-rules` passed: 27 S10 tests plus 5 S7 tests and doc-tests.
+- Full `rank-fusion` passed: 20 S10 tests plus 2 S11 tests and doc-tests.
+- Full `import-pipeline` passed: 7 tests plus doc-tests.
+- Full `resume-cli --test s16_persisted_fields` passed: 23 tests.
+- Full `resume-cli --test s10_search_filters` passed: 9 tests.
+- `cargo fmt --all`, `cargo fmt --all --check`, and focused clippy passed.
+- `git diff --check`, the public repo guard, and full local verification
+  passed. Full local verification included workspace clippy/tests/doc-tests,
+  license, runbook, workflow, release readiness, release artifact, SBOM, macOS
+  package, and public-repo guard checks. Windows package check was skipped on
+  the non-Windows host.
+
+Scope note:
+
+- S226 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, vectors, raw contact
+  values, contact hashes, private labels, field values, skill values, or
+  private corpus evidence.
 
 ### S225
 
