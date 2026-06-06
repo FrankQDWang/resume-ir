@@ -163,6 +163,43 @@ Degree: MSc Computer Science
 }
 
 #[test]
+fn extracts_broader_degree_aliases_with_exact_spans() {
+    let text = "\
+Education
+Degree: MEng Computer Engineering
+Qualification: B.Tech Information Technology
+M.Tech Artificial Intelligence
+Degree: MPhil Data Science
+Degree: B.E. Software Engineering
+Skills
+Built M.Tech style dashboards outside education";
+
+    let matches = extract_strong_fields(text);
+    let degrees = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Degree)
+        .collect::<Vec<_>>();
+    let normalized = degrees
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        normalized,
+        vec!["master", "bachelor", "master", "master", "bachelor"]
+    );
+    assert_eq!(&text[degrees[0].span_start..degrees[0].span_end], "MEng");
+    assert_eq!(&text[degrees[1].span_start..degrees[1].span_end], "B.Tech");
+    assert_eq!(&text[degrees[2].span_start..degrees[2].span_end], "M.Tech");
+    assert_eq!(&text[degrees[3].span_start..degrees[3].span_end], "MPhil");
+    assert_eq!(&text[degrees[4].span_start..degrees[4].span_end], "B.E.");
+    assert!(!degrees
+        .iter()
+        .any(|field| field.raw_value.contains("dashboards")));
+    assert!(!format!("{:?}", degrees[0]).contains("MEng"));
+}
+
+#[test]
 fn extracts_labeled_major_values_with_alias_normalization() {
     let text = "\
 Education

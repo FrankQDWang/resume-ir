@@ -16,14 +16,21 @@ pub enum DegreeLevel {
 
 impl DegreeLevel {
     pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "high_school" | "high-school" | "highschool" | "high school" => Some(Self::HighSchool),
-            "associate" | "associate_degree" | "associate degree" | "college" => {
-                Some(Self::Associate)
+        let lowered = value.trim().to_ascii_lowercase();
+        let dotted_bachelor_engineering = lowered.split_whitespace().collect::<String>() == "b.e.";
+        let compact = lowered
+            .chars()
+            .filter(|character| !matches!(character, ' ' | '.' | '-' | '_'))
+            .collect::<String>();
+        match compact.as_str() {
+            "highschool" => Some(Self::HighSchool),
+            "associate" | "associatedegree" | "college" => Some(Self::Associate),
+            "bachelor" | "undergraduate" | "bs" | "ba" | "btech" | "beng" => Some(Self::Bachelor),
+            "be" if dotted_bachelor_engineering => Some(Self::Bachelor),
+            "master" | "ms" | "ma" | "mba" | "msc" | "meng" | "mtech" | "mphil" => {
+                Some(Self::Master)
             }
-            "bachelor" | "undergraduate" | "bs" | "ba" => Some(Self::Bachelor),
-            "master" | "ms" | "ma" | "mba" => Some(Self::Master),
-            "doctor" | "doctorate" | "phd" | "ph.d." => Some(Self::Doctor),
+            "doctor" | "doctorate" | "phd" => Some(Self::Doctor),
             _ => None,
         }
     }

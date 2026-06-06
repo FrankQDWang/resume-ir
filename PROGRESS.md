@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, and S221 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, and S222 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -225,9 +225,10 @@ obsolete preliminary files and checklists are not product scope.
   metadata prefiltering before full-text top-k truncation.
   School/degree extraction now strips common English and Chinese education
   labels such as `School:`, `Degree:`, `学校：`, and `学历：` from field evidence,
-  normalizes school whitespace/case, maps degree aliases such as MSc, BSc, PhD,
-  `博士研究生`, and `硕士研究生` to canonical degree values, and avoids duplicate
-  generic degree matches inside labeled degree evidence.
+  normalizes school whitespace/case, maps degree aliases such as MSc, BSc,
+  MEng, M.Tech, MPhil, BSc, B.Tech, B.E., PhD, `博士研究生`, and
+  `硕士研究生` to canonical degree values, and avoids duplicate generic degree
+  matches inside labeled degree evidence.
   Degree extraction now limits unlabeled degree aliases to education context
   while still accepting explicitly labeled degree lines anywhere, preventing
   skill/product phrases such as `MS SQL` from being persisted as a master's
@@ -238,8 +239,8 @@ obsolete preliminary files and checklists are not product scope.
   `--school-tier` search filtering through direct CLI and daemon IPC paths.
   Missing production work
   includes broader dictionaries and normalization beyond the current
-  high-signal certificate/skill/title aliases, labeled school/degree forms and
-  degree aliases, explicit school-tier aliases, remaining address forms beyond
+  high-signal certificate/skill/title aliases, remaining labeled school/degree
+  forms and degree aliases, explicit school-tier aliases, remaining address forms beyond
   current high-signal labeled address city substring extraction,
   Chinese explicit/open-ended date ranges, China mobile phone formats, and
   labeled company/title forms, real
@@ -693,8 +694,80 @@ obsolete preliminary files and checklists are not product scope.
 | S219 | Product broader location alias normalization complete locally | Focused RED tests first failed because high-signal labeled location values such as San Francisco Bay Area, New York City, Hong Kong, Singapore, and Chongqing were persisted as raw normalized strings or Chinese text, and search filters such as `SF Bay Area`, `纽约`, and `Hong Kong` did not match equivalent profile locations. After implementation, extractor-rules and rank-fusion normalize those aliases to stable canonical location keys while keeping extraction limited to explicit location labels, and import persists the canonical aliases with span evidence so `--location "SF Bay Area"` prefilters before full-text top-k truncation. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business location-field F1, complete arbitrary address parsing, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S220 | Product labeled-address city extraction complete locally | Focused RED tests first failed because explicit address lines such as `Address: 123 Market St, San Francisco, CA`, `地址：北京市海淀区...`, and `Current Address: 88 Queen's Road, Hong Kong` produced no location evidence. After implementation, address labels are recognized separately from ordinary location labels, extractor-rules scans delimited address components and high-signal city substrings, persists only the city evidence span such as `San Francisco`, `北京市`, or `Hong Kong`, and import/search can filter those documents by canonical location without storing the full street-address span as location raw evidence. Focused RED/GREEN, full extractor/CLI persisted-field/search-filter/import suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not parse arbitrary unlabeled addresses, complete all global address formats, prove real business location-field F1, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S221 | Product address city substring normalization complete locally | Focused RED tests first failed because explicit address labels containing lowercase/no-delimiter English city substrings such as `123 market st san francisco ca` and `88 queen's road hong kong`, plus Chinese district-style values such as `北京海淀区...` and `深圳南山区...`, produced no location evidence. After implementation, address city substring matching is case-insensitive for English aliases, recognizes high-signal Chinese city aliases without requiring `市`, preserves the original matched city span, and import/search persists canonical city locations without storing full street-address spans as location raw evidence. Focused RED/GREEN, full extractor/CLI persisted-field/search-filter/import suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not parse arbitrary unlabeled addresses, complete all global address formats, prove real business location-field F1, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
+| S222 | Product broader degree alias extraction complete locally | Focused RED tests first failed because high-signal engineering and technical degree aliases such as `MEng`, `M.Tech`, `MPhil`, `B.Tech`, and `B.E.` were not extracted as canonical degree mentions, and `--degree MEng` was not accepted as a master-level filter. After implementation, extractor-rules maps those aliases to `master` or `bachelor` with exact span evidence, rank-fusion parses the same filter aliases through compact punctuation-insensitive normalization while rejecting ambiguous bare `BE`, and import/search persists the broader degree mentions without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business degree-field F1, complete all global education credential aliases, parse ambiguous bare `BE`, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 
 ## Command Log
+
+### S222
+
+Design target:
+
+- Broaden canonical `degree` extraction and search-filter parsing for
+  high-signal engineering/technical degree aliases.
+- Keep unlabeled degree extraction bounded to education context, and avoid
+  accepting ambiguous bare `BE`.
+- Preserve span evidence and redacted Debug/output behavior.
+- Use synthetic fixtures only.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --test s10_fields extracts_broader_degree_aliases_with_exact_spans --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion degree_level_parse_accepts_broader_engineering_degree_aliases --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_broader_degree_aliases_and_filters_without_output_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The extractor exact failed before implementation with no canonical degree
+  matches for `MEng`, `B.Tech`, `M.Tech`, `MPhil`, and `B.E.`.
+- The rank-fusion exact failed before implementation because `MEng` parsed as
+  no degree level.
+- The CLI persisted-field exact failed before implementation because the
+  target document had no canonical `degree` mentions from the broader aliases.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --test s10_fields extracts_broader_degree_aliases_with_exact_spans --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion degree_level_parse_accepts_broader_engineering_degree_aliases --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_broader_degree_aliases_and_filters_without_output_leaks --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p rank-fusion -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused GREEN tests passed after adding broader degree aliases to
+  extractor-rules and rank-fusion parsing, with ambiguous bare `BE` rejected.
+- Full `extractor-rules` passed: 23 S10 tests plus 5 S7 tests and doc-tests.
+- Full `rank-fusion` passed: 16 S10 tests plus 2 S11 tests and doc-tests.
+- Full `resume-cli --test s16_persisted_fields` passed: 19 tests.
+- Full `resume-cli --test s10_search_filters` passed: 9 tests.
+- Full `import-pipeline` passed: 7 tests plus doc-tests.
+- `cargo fmt --all`, `cargo fmt --all --check`, and focused clippy passed.
+- `git diff --check`, the public repo guard, and full local verification
+  passed. Full local verification included workspace clippy/tests/doc-tests,
+  license, runbook, workflow, release readiness, release artifact, SBOM, macOS
+  package, and public-repo guard checks. Windows package check was skipped on
+  the non-Windows host.
+
+Scope note:
+
+- S222 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, vectors, raw contact
+  values, contact hashes, private labels, field values, degree values, or
+  private corpus evidence.
 
 ### S221
 

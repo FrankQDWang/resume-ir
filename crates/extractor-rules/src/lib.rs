@@ -969,12 +969,12 @@ fn degree_alias_patterns() -> [(&'static str, f32, &'static str); 5] {
         (
             "master",
             0.95,
-            r"(?i)\b(?:master(?:'s)?(?:\s+of\s+[A-Za-z ]+)?|m\.?\s*sc|m\.?\s*s\.?|m\.?\s*a\.?|mba)\b|硕士研究生|硕士|研究生",
+            r"(?i)\b(?:master(?:'s)?(?:\s+of\s+[A-Za-z ]+)?|m\.?\s*sc|m\.?\s*s\.?|m\.?\s*a\.?|m\.?\s*eng|m\.?\s*tech|m\.?\s*phil|mba)\b|硕士研究生|硕士|研究生",
         ),
         (
             "bachelor",
             0.95,
-            r"(?i)\b(?:bachelor(?:'s)?(?:\s+of\s+[A-Za-z ]+)?|b\.?\s*sc|b\.?\s*s\.?|b\.?\s*a\.?|b\.?\s*eng|beng)\b|本科|学士",
+            r"(?i)(?:\bb\.\s*e\.|\b(?:bachelor(?:'s)?(?:\s+of\s+[A-Za-z ]+)?|b\.?\s*sc|b\.?\s*s\.?|b\.?\s*a\.?|b\.?\s*tech|b\.?\s*eng|beng)\b)|本科|学士",
         ),
         (
             "associate",

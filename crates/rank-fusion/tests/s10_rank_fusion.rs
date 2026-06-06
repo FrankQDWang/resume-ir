@@ -39,6 +39,16 @@ fn field_filters_require_degree_skill_and_year_thresholds() {
 }
 
 #[test]
+fn degree_level_parse_accepts_broader_engineering_degree_aliases() {
+    assert_eq!(DegreeLevel::parse("MEng"), Some(DegreeLevel::Master));
+    assert_eq!(DegreeLevel::parse("M.Tech"), Some(DegreeLevel::Master));
+    assert_eq!(DegreeLevel::parse("MPhil"), Some(DegreeLevel::Master));
+    assert_eq!(DegreeLevel::parse("B.Tech"), Some(DegreeLevel::Bachelor));
+    assert_eq!(DegreeLevel::parse("B.E."), Some(DegreeLevel::Bachelor));
+    assert_eq!(DegreeLevel::parse("BE"), None);
+}
+
+#[test]
 fn field_filters_match_any_school_tier() {
     let filters = SearchFilters::default().with_school_tiers_any([SchoolTier::Tier985]);
     let matching = ResumeProfile::new("doc_elite")
