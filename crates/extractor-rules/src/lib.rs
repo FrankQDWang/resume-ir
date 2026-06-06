@@ -795,17 +795,25 @@ fn push_school_tier_matches(
 
 fn school_tier_alias_patterns() -> [(&'static str, f32, &'static str); 5] {
     [
-        ("985", 0.92, r"985"),
-        ("211", 0.9, r"211"),
+        (
+            "985",
+            0.92,
+            r"(?i)\bc9\s+league\b|\bproject\s*985\b|\b985\s*project\b|985\s*工程|985",
+        ),
+        (
+            "211",
+            0.9,
+            r"(?i)\bproject\s*211\b|\b211\s*project\b|211\s*工程|211",
+        ),
         (
             "double_first_class",
             0.9,
-            r"(?i)double[-\s_]*first[-\s_]*class|双一流",
+            r"(?i)double[-\s_]*first[-\s_]*class|双一流(?:建设高校|建设大学|高校|院校|大学)?",
         ),
         (
             "overseas",
             0.86,
-            r"(?i)overseas|foreign\s+university|international\s+university|海外高校|海外院校|海外学校|海外|国外",
+            r"(?i)overseas|foreign\s+university|international\s+university|ivy\s+league|russell\s+group|海外高校|海外院校|海外学校|海外|国外",
         ),
         (
             "regular",

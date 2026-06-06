@@ -58,17 +58,38 @@ pub enum SchoolTier {
 
 impl SchoolTier {
     pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "985" => Some(Self::Tier985),
-            "211" => Some(Self::Tier211),
-            "double_first_class" | "double-first-class" | "double first class"
-            | "doublefirstclass" => Some(Self::DoubleFirstClass),
-            "overseas" | "oversea" | "foreign" | "international" => Some(Self::Overseas),
-            "regular" | "ordinary" | "normal" => Some(Self::Regular),
+        let lowered = value.trim().to_ascii_lowercase();
+        let compact = lowered
+            .chars()
+            .filter(|character| character.is_alphanumeric())
+            .collect::<String>();
+        match compact.as_str() {
+            "985" | "project985" | "985project" | "985工程" | "c9league" => Some(Self::Tier985),
+            "211" | "project211" | "211project" | "211工程" => Some(Self::Tier211),
+            "doublefirstclass"
+            | "doublefirstclassuniversity"
+            | "双一流"
+            | "双一流建设高校"
+            | "双一流建设大学"
+            | "双一流高校"
+            | "双一流院校" => Some(Self::DoubleFirstClass),
+            "overseas"
+            | "oversea"
+            | "foreign"
+            | "foreignuniversity"
+            | "international"
+            | "internationaluniversity"
+            | "ivyleague"
+            | "russellgroup"
+            | "海外"
+            | "国外"
+            | "海外高校"
+            | "海外院校" => Some(Self::Overseas),
+            "regular" | "regularuniversity" | "ordinary" | "ordinaryuniversity"
+            | "ordinarycollege" | "normal" | "普通" | "普通高校" | "普通院校" | "普通本科" => {
+                Some(Self::Regular)
+            }
             "unknown" => Some(Self::Unknown),
-            "双一流" => Some(Self::DoubleFirstClass),
-            "海外" | "国外" | "海外高校" | "海外院校" => Some(Self::Overseas),
-            "普通" | "普通高校" | "普通院校" | "普通本科" => Some(Self::Regular),
             _ => None,
         }
     }

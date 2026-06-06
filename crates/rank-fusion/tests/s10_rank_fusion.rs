@@ -67,6 +67,34 @@ fn field_filters_match_any_school_tier() {
 }
 
 #[test]
+fn field_filters_parse_broader_school_tier_aliases() {
+    assert_eq!(SchoolTier::parse("C9 League"), Some(SchoolTier::Tier985));
+    assert_eq!(SchoolTier::parse("Project 985"), Some(SchoolTier::Tier985));
+    assert_eq!(SchoolTier::parse("211 Project"), Some(SchoolTier::Tier211));
+    assert_eq!(
+        SchoolTier::parse("Double First-Class University"),
+        Some(SchoolTier::DoubleFirstClass)
+    );
+    assert_eq!(SchoolTier::parse("Ivy League"), Some(SchoolTier::Overseas));
+    assert_eq!(
+        SchoolTier::parse("Russell Group"),
+        Some(SchoolTier::Overseas)
+    );
+
+    let filters = SearchFilters::default().with_school_tiers_any([
+        SchoolTier::parse("C9 League").unwrap(),
+        SchoolTier::parse("Ivy League").unwrap(),
+    ]);
+    let elite = ResumeProfile::new("doc_elite").with_school_tiers([SchoolTier::Tier985]);
+    let overseas = ResumeProfile::new("doc_overseas").with_school_tiers([SchoolTier::Overseas]);
+    let regular = ResumeProfile::new("doc_regular").with_school_tiers([SchoolTier::Regular]);
+
+    assert!(filters.matches(&elite));
+    assert!(filters.matches(&overseas));
+    assert!(!filters.matches(&regular));
+}
+
+#[test]
 fn field_filters_match_unknown_school_tier_when_no_tier_evidence_exists() {
     let filters = SearchFilters::default().with_school_tiers_any([SchoolTier::Unknown]);
     let missing_tier = ResumeProfile::new("doc_missing");

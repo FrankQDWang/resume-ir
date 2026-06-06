@@ -337,6 +337,54 @@ Built 985 telemetry dashboards";
 }
 
 #[test]
+fn extracts_broader_school_tier_aliases_with_exact_spans() {
+    let text = "\
+Education
+School Tier: C9 League
+Institution Tier: Project 211 University
+University Tier: Double First-Class University
+School: Ivy League University
+Skills
+Built C9 League traffic dashboards";
+
+    let matches = extract_strong_fields(text);
+
+    let school_tiers = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::SchoolTier)
+        .collect::<Vec<_>>();
+    let normalized = school_tiers
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        normalized,
+        vec!["985", "211", "double_first_class", "overseas"]
+    );
+    assert_eq!(
+        &text[school_tiers[0].span_start..school_tiers[0].span_end],
+        "C9 League"
+    );
+    assert_eq!(
+        &text[school_tiers[1].span_start..school_tiers[1].span_end],
+        "Project 211"
+    );
+    assert_eq!(
+        &text[school_tiers[2].span_start..school_tiers[2].span_end],
+        "Double First-Class"
+    );
+    assert_eq!(
+        &text[school_tiers[3].span_start..school_tiers[3].span_end],
+        "Ivy League"
+    );
+    assert!(!school_tiers
+        .iter()
+        .any(|field| field.span_start > text.find("Skills").unwrap()));
+    assert!(!format!("{:?}", school_tiers[0]).contains("C9 League"));
+}
+
+#[test]
 fn avoids_degree_aliases_outside_education_context() {
     let text = "\
 Skills

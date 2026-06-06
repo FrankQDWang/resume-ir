@@ -1234,6 +1234,120 @@ Skills: Java
 }
 
 #[test]
+fn import_persists_broader_school_tier_aliases_and_filters_without_output_leaks() {
+    let data_dir = temp_dir("persisted-school-tier-alias-data");
+    let resume_root = temp_dir("persisted-school-tier-alias-resumes");
+    fs::write(
+        resume_root.join("synthetic-school-tier-alias-target.txt"),
+        "\
+Synthetic School Tier Alias Target
+Email: school-tier-alias-target@example.test
+Education
+School Tier: C9 League
+University Tier: Double First-Class University
+School: Ivy League University
+Skills: needle Java
+",
+    )
+    .unwrap();
+    fs::write(
+        resume_root.join("synthetic-school-tier-alias-decoy.txt"),
+        "\
+Synthetic School Tier Alias Decoy
+Email: school-tier-alias-decoy@example.test
+Education
+School Tier: Regular University
+Skills: needle Java
+",
+    )
+    .unwrap();
+
+    let import_output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import broader school-tier aliases");
+    assert!(
+        import_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import_output.stdout),
+        String::from_utf8_lossy(&import_output.stderr)
+    );
+    assert!(import_output.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import_output.stdout);
+    assert!(!import_stdout.contains(path_str(&data_dir)));
+    assert!(!import_stdout.contains(path_str(&resume_root)));
+    assert!(!import_stdout.contains("C9 League"));
+    assert!(!import_stdout.contains("Ivy League"));
+    assert!(!import_stdout.contains("school-tier-alias-target@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let target = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-school-tier-alias-target.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&target.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let tiers = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::SchoolTier)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("C9 League"));
+            assert!(!format!("{mention:?}").contains("Ivy League"));
+            mention.normalized_value.unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(tiers, vec!["985", "double_first_class", "overseas"]);
+
+    let search_output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--school-tier",
+            "C9 League",
+            "--top-k",
+            "5",
+        ])
+        .output()
+        .expect("run broader school-tier filtered search");
+    assert!(
+        search_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&search_output.stdout),
+        String::from_utf8_lossy(&search_output.stderr)
+    );
+    assert!(search_output.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search_output.stdout);
+    assert!(search_stdout.contains("synthetic-school-tier-alias-target.txt"));
+    assert!(!search_stdout.contains("synthetic-school-tier-alias-decoy.txt"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&resume_root)));
+    assert!(!search_stdout.contains("C9 League"));
+    assert!(!search_stdout.contains("school-tier-alias-target@example.test"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_does_not_persist_degree_aliases_from_skill_lines() {
     let data_dir = temp_dir("persisted-degree-context-data");
     let resume_root = temp_dir("persisted-degree-context-resumes");
