@@ -105,7 +105,7 @@ reports. The report must use `dataset_kind: "private-business-labeled"`,
 "resume-ir.fields.v1"`, false raw-data/path/field-value/sample-ID booleans, and
 sha256 digests for both the dataset and annotation manifests. It must include
 production field metrics for email, phone, school, school_tier, degree,
-company, title, skill, and date ranges. Do not upload reports if they contain
+company, title, location, skill, and date ranges. Do not upload reports if they contain
 raw resume text, local paths, field values, sample IDs, filenames, or notes.
 
 ```bash
