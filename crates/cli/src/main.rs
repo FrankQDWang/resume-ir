@@ -5604,6 +5604,7 @@ fn search_ipc_request_body(search_args: &SearchArgs) -> String {
 fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
     serde_json::json!({
         "degree_min": filters.degree_min().map(DegreeLevel::canonical),
+        "names_any": filters.names_any(),
         "school_tiers_any": filters
             .school_tiers_any()
             .iter()
@@ -5719,6 +5720,19 @@ fn field_filter_doc_id_prefilter(
                     &degree_filter_values(degree_min),
                     FIELD_FILTER_CONFIDENCE_THRESHOLD,
                     false,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.names_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Name,
+                    filters.names_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
                 )
                 .map_err(CliError::store)?,
         );
@@ -8220,6 +8234,21 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
                 filters = filters.with_degree_min(degree);
                 index += 2;
             }
+            "--name" | "--names-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let names = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .collect::<Vec<_>>();
+                if names.is_empty() {
+                    return Err(CliError::user("search name filter is invalid"));
+                }
+                filters = filters.with_names_any(names);
+                index += 2;
+            }
             "--school-tier" | "--school-tier-any" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -8448,7 +8477,7 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--major <major[,major...]>] [--majors-any <major[,major...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--location <location[,location...]>] [--locations-any <location[,location...]>] [--skills-any <skill[,skill...]>] [--email <email[,email...]>] [--phone <phone[,phone...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--name <name[,name...]>] [--names-any <name[,name...]>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--major <major[,major...]>] [--majors-any <major[,major...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--location <location[,location...]>] [--locations-any <location[,location...]>] [--skills-any <skill[,skill...]>] [--email <email[,email...]>] [--phone <phone[,phone...]>] [--years-experience-min <years>] [--top-k <n>]"
 }
 
 fn comma_values(value: &str) -> Vec<&str> {
@@ -9071,6 +9100,11 @@ fn persisted_profile(
     let fields = store
         .entity_mentions_for_version(&version.id)
         .map_err(CliError::store)?;
+    let names = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Name && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let degree = fields
         .iter()
         .filter(|field| field.entity_type == EntityType::Degree && field.confidence >= 0.75)
@@ -9130,6 +9164,7 @@ fn persisted_profile(
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut profile = ResumeProfile::new(doc_id)
+        .with_names(names)
         .with_school_tiers(school_tiers)
         .with_schools(schools)
         .with_majors(majors)

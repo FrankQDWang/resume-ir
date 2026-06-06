@@ -93,6 +93,24 @@ fn field_filters_normalize_broader_skill_aliases() {
 }
 
 #[test]
+fn field_filters_match_candidate_name_any() {
+    let filters =
+        SearchFilters::default().with_names_any([" Synthetic Candidate ", "synthetic alternate"]);
+
+    let matching = ResumeProfile::new("doc_candidate").with_names(["synthetic candidate"]);
+    let other_name = ResumeProfile::new("doc_other").with_names(["synthetic other"]);
+    let missing_name = ResumeProfile::new("doc_missing");
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&other_name));
+    assert!(!filters.matches(&missing_name));
+    assert_eq!(
+        filters.names_any(),
+        &["synthetic alternate", "synthetic candidate"]
+    );
+}
+
+#[test]
 fn degree_level_parse_accepts_broader_engineering_degree_aliases() {
     assert_eq!(DegreeLevel::parse("MEng"), Some(DegreeLevel::Master));
     assert_eq!(DegreeLevel::parse("M.Tech"), Some(DegreeLevel::Master));

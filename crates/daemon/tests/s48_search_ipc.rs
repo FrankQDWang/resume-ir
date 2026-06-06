@@ -1016,6 +1016,133 @@ fn daemon_search_ipc_prefilters_company_and_title_before_fulltext_top_k_cutoff()
 }
 
 #[test]
+fn daemon_search_ipc_prefilters_name_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-ipc-name-data");
+    let target_doc = DocumentId::from_non_secret_parts(&["s48", "name-target"]);
+    let target_version = ResumeVersionId::from_non_secret_parts(&["s48", "name-target-version"]);
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut index_documents = Vec::new();
+
+    for index in 0..5 {
+        let document_id =
+            DocumentId::from_non_secret_parts(&["s48", &format!("name-decoy-{index}")]);
+        let version_id = ResumeVersionId::from_non_secret_parts(&[
+            "s48",
+            &format!("name-decoy-version-{index}"),
+        ]);
+        let file_name = format!("name-decoy-{index}.pdf");
+        let clean_text = format!("Name decoy {index} {noisy_query_text}");
+        seed_searchable_resume(SeedResume {
+            data_dir: &data_dir,
+            document_id: &document_id,
+            version_id: &version_id,
+            file_name: &file_name,
+            clean_text: &clean_text,
+            degree: "bachelor",
+            skill: "Java",
+            years: 4.0,
+            school: "",
+            school_tier: "",
+            certificate: "",
+            company: "",
+            title: "",
+        });
+        append_name_mention(&data_dir, &version_id, &format!("synthetic decoy {index}"));
+        index_documents.push(IndexDocument {
+            doc_id: document_id.to_string(),
+            version_id: version_id.to_string(),
+            file_name,
+            clean_text: clean_text.clone(),
+            sections: vec![IndexSection {
+                section_type: "summary".to_string(),
+                text: clean_text,
+            }],
+            is_deleted: false,
+        });
+    }
+
+    seed_searchable_resume(SeedResume {
+        data_dir: &data_dir,
+        document_id: &target_doc,
+        version_id: &target_version,
+        file_name: "name-target.pdf",
+        clean_text: "Name target needle",
+        degree: "bachelor",
+        skill: "Java",
+        years: 4.0,
+        school: "",
+        school_tier: "",
+        certificate: "",
+        company: "",
+        title: "",
+    });
+    append_name_mention(&data_dir, &target_version, "synthetic target");
+    index_documents.push(IndexDocument {
+        doc_id: target_doc.to_string(),
+        version_id: target_version.to_string(),
+        file_name: "name-target.pdf".to_string(),
+        clean_text: "Name target needle".to_string(),
+        sections: vec![IndexSection {
+            section_type: "summary".to_string(),
+            text: "needle".to_string(),
+        }],
+        is_deleted: false,
+    });
+    seed_fulltext_index_vec(&data_dir, index_documents);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "needle",
+            "mode": "fulltext",
+            "top_k": 1,
+            "filters": {
+                "names_any": ["Synthetic Target"]
+            }
+        }),
+    );
+
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or_default();
+    let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(payload["result_count"], 1);
+    let results = payload["results"].as_array().unwrap();
+    assert_eq!(results[0]["doc_id"], target_doc.to_string());
+    assert_eq!(results[0]["version_id"], target_version.to_string());
+    assert!(!response.contains("Synthetic Target"));
+    assert!(!response.contains("name-decoy-"));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn daemon_search_ipc_prefilters_location_before_fulltext_top_k_cutoff() {
     let data_dir = temp_dir("search-ipc-location-data");
     let target_doc = DocumentId::from_non_secret_parts(&["s48", "location-target"]);
@@ -1605,6 +1732,22 @@ fn append_date_range_mention(
         version_id,
         "date-range",
         EntityType::DateRange,
+        normalized_value,
+        0.95,
+    ));
+    store
+        .replace_entity_mentions(version_id, &mentions)
+        .unwrap();
+}
+
+fn append_name_mention(data_dir: &Path, version_id: &ResumeVersionId, normalized_value: &str) {
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let mut mentions = store.entity_mentions_for_version(version_id).unwrap();
+    mentions.push(entity_mention(
+        version_id,
+        "name",
+        EntityType::Name,
         normalized_value,
         0.95,
     ));

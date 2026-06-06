@@ -177,6 +177,59 @@ fn filtered_search_prefilters_fields_before_fulltext_top_k_cutoff() {
 }
 
 #[test]
+fn filtered_search_prefilters_name_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-name-data");
+    let resume_root = temp_dir("search-filter-name-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("name-decoy-{index}.txt")),
+            format!("Name: Synthetic Decoy {index}\nSkills: Java\n{noisy_query_text}\n"),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("name-target.txt"),
+        "Name: Synthetic Target\nSkills: Java\nneedle\n",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--name",
+            "Synthetic Target",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run name-filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("name-target.txt"));
+    assert!(!stdout.contains("name-decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn filtered_search_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff() {
     let data_dir = temp_dir("search-filter-unknown-tier-data");
     let resume_root = temp_dir("search-filter-unknown-tier-resumes");

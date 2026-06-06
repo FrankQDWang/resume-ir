@@ -34,6 +34,10 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
         assert_eq!(payload["top_k"], 3);
         assert_eq!(payload["filters"]["degree_min"], "master");
         assert_eq!(
+            payload["filters"]["names_any"],
+            serde_json::json!(["synthetic candidate"])
+        );
+        assert_eq!(
             payload["filters"]["skills_any"],
             serde_json::json!(["java", "rust"])
         );
@@ -109,6 +113,8 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             "3",
             "--degree",
             "master",
+            "--name",
+            "Synthetic Candidate",
             "--skills-any",
             "Rust,Java",
             "--years-experience-min",

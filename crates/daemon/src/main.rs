@@ -2629,6 +2629,25 @@ fn parse_search_filters(
             parsed = parsed.with_school_tiers_any(school_tiers);
         }
     }
+    if let Some(value) = object.get("names_any") {
+        if !value.is_null() {
+            let names = value
+                .as_array()
+                .ok_or(IpcCommandError::BadRequest("names_any must be an array"))?;
+            if names.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many names"));
+            }
+            let names = names
+                .iter()
+                .map(|name| {
+                    name.as_str().ok_or(IpcCommandError::BadRequest(
+                        "names_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_names_any(names);
+        }
+    }
     if let Some(value) = object.get("schools_any") {
         if !value.is_null() {
             let schools = value
@@ -2806,6 +2825,20 @@ fn daemon_field_filter_doc_id_prefilter(
                     &daemon_degree_filter_values(degree_min),
                     FIELD_CONFIDENCE_THRESHOLD,
                     false,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.names_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Name,
+                    filters.names_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
                 )
                 .map_err(DaemonError::store)
                 .map_err(IpcCommandError::Internal)?,
@@ -3284,6 +3317,13 @@ fn daemon_persisted_profile(
         .entity_mentions_for_version(&version.id)
         .map_err(DaemonError::store)
         .map_err(IpcCommandError::Internal)?;
+    let names = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::Name && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let degree = fields
         .iter()
         .filter(|field| {
@@ -3371,6 +3411,7 @@ fn daemon_persisted_profile(
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut profile = ResumeProfile::new(doc_id)
+        .with_names(names)
         .with_school_tiers(school_tiers)
         .with_schools(schools)
         .with_majors(majors)

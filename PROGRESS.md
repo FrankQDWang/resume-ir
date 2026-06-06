@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, and S226 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, and S227 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -201,6 +201,9 @@ obsolete preliminary files and checklists are not product scope.
   user-input aliases such as K8s, Golang, Postgres, NodeJS, React.js, TS,
   sklearn, and GitLab CI/CD to the same canonical skill keys used by persisted
   profiles.
+  Candidate-name field filtering now matches persisted `name` entity mentions
+  through direct CLI search and CLI/daemon IPC, with metadata prefiltering
+  before the full-text top-k cutoff and normalized name profile matching.
   Date-range extraction now also handles Chinese year/month ranges such as
   `2020年1月 - 2024年3月`, normalizes them to the existing `YYYY-MM/YYYY-MM`
   schema, preserves exact span evidence, and keeps years-experience derivation
@@ -713,8 +716,116 @@ obsolete preliminary files and checklists are not product scope.
 | S224 | Product broader school-tier alias normalization complete locally | Focused RED tests first failed because explicit school-tier aliases such as `C9 League`, `Project 211`, `Ivy League`, and `Russell Group` were not extracted or parsed as canonical school tiers, and `--school-tier "C9 League"` could not match the persisted target. After implementation, extractor-rules maps `C9 League` and Project 985/211 aliases to canonical 985/211 evidence, maps Double First-Class phrases plus `双一流建设高校` to `double_first_class`, maps Ivy League/Russell Group to `overseas`, preserves exact span evidence, and rank-fusion parses the same aliases for filters. Import/search persists the broader school-tier aliases without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not infer tiers from arbitrary school names, prove real business school-tier F1, complete all global ranking systems, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S225 | Product broader certificate alias normalization complete locally | Focused RED tests first failed because CKS, Terraform Associate, Google Associate Cloud Engineer, AZ-204, and RHCSA aliases were not extracted as the intended canonical certificate mentions, rank-fusion preserved raw normalized aliases such as `terraform_associate` and `az_204`, and `--certificate "Terraform Associate"` could not match the persisted target. After implementation, extractor-rules maps CKS/Certified Kubernetes Security Specialist, HashiCorp Certified Terraform Associate/Terraform Associate, Google/GCP Associate Cloud Engineer, AZ-204/Azure Developer, and RHCSA/Red Hat Certified System Administrator to canonical certificate values with exact span evidence, and rank-fusion normalizes the same aliases for filters/profiles. Import/search persists the broader certificate aliases without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business certificate-field F1, complete all global certification dictionaries, infer certification levels or dates, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S226 | Product broader skill alias extraction and filtering complete locally | Focused RED tests first failed because high-signal cloud/data/DevOps skill aliases such as Amazon Web Services, Microsoft Azure, Google Cloud Platform, Terraform, Ansible, Jenkins, GitLab CI, Kafka, Flink, Elastic Search, Mongo DB, and Snowflake were not extracted as skill mentions, rank-fusion did not normalize user skill aliases such as K8s, Golang, Postgres, NodeJS, React.js, TS, sklearn, Amazon Web Services, Google Cloud Platform, Elastic Search, Mongo DB, and GitLab CI/CD to persisted canonical skill keys, and `--skills-any "Amazon Web Services"` could not match the persisted target. After implementation, extractor-rules maps those high-signal skill aliases to canonical skill values with exact span evidence, rank-fusion normalizes common filter/profile aliases to the same keys, and import/search persists broader skill aliases without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business skill-field F1, complete all global skill dictionaries, infer skills from arbitrary prose, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
+| S227 | Product candidate-name field filtering complete locally | Focused RED tests first failed because rank-fusion had no `with_names`/`with_names_any` API, direct CLI search rejected `--name`, CLI IPC did not transmit `names_any`, and daemon IPC ignored name filters until after full-text top-k retrieval. After implementation, rank-fusion normalizes persisted and requested names, CLI supports `--name`/`--names-any`, CLI IPC emits canonical `names_any`, daemon IPC parses `names_any`, and both CLI plus daemon prefilter `EntityType::Name` document IDs before the full-text top-k cutoff while hydrated profiles still verify the name match. Focused RED/GREEN, full rank-fusion, full CLI search-filter and search-IPC suites, full daemon search-IPC suite, full `resume-cli`, full `resume-daemon`, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business name-field precision/recall, add fuzzy/person-alias matching, change search snippet redaction, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 
 ## Command Log
+
+### S227
+
+Design target:
+
+- Add explicit candidate-name field filtering over already-persisted `name`
+  entity mentions.
+- Keep the filter exact after whitespace/lowercase normalization; do not add
+  fuzzy matching or inferred person aliases in this slice.
+- Apply the same filter through direct CLI search, CLI search IPC, and daemon
+  search IPC before full-text top-k retrieval.
+- Use synthetic/temp fixtures only.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p rank-fusion --test s10_rank_fusion field_filters_match_candidate_name_any --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_name_before_fulltext_top_k_cutoff --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_name_before_fulltext_top_k_cutoff --locked -- --exact
+```
+
+Output summary:
+
+- The rank-fusion exact test failed to compile because `SearchFilters` had no
+  `with_names_any` method and `ResumeProfile` had no `with_names` method.
+- The direct CLI exact test failed with search usage output because
+  `resume-cli search` did not accept `--name`.
+- The daemon IPC exact test returned a high-scoring decoy document because
+  `names_any` was ignored by daemon request parsing/prefiltering.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p rank-fusion --test s10_rank_fusion field_filters_match_candidate_name_any --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_name_before_fulltext_top_k_cutoff --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_name_before_fulltext_top_k_cutoff --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --all
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p rank-fusion --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s10_search_filters --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s48_search_ipc --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-daemon --test s48_search_ipc --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p rank-fusion -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-daemon --locked
+```
+
+Output summary:
+
+- The exact rank-fusion test passed after adding `ResumeProfile::with_names`,
+  `SearchFilters::with_names_any`, `names_any()`, and exact normalized name
+  matching.
+- The exact direct CLI test passed: `resume-cli search --name "Synthetic
+  Target"` now returns the low-frequency target before full-text top-k cutoff
+  and does not return the noisy decoys.
+- The exact daemon IPC test passed: `names_any` is parsed, normalized, applied
+  as a metadata document-ID prefilter, and the response excludes the decoys.
+- The exact CLI search IPC test passed with request-body evidence that
+  `--name "Synthetic Candidate"` is serialized as canonical `names_any:
+  ["synthetic candidate"]`.
+- `cargo test -p rank-fusion --locked`: exit 0; 21 S10 tests, 2 S11 hybrid RRF
+  tests, and doc-tests passed.
+- `cargo test -p resume-cli --test s10_search_filters --locked`: exit 0; 10
+  search-filter tests passed.
+- `cargo test -p resume-cli --test s48_search_ipc --locked`: exit 0; 8 CLI
+  search IPC tests passed.
+- `cargo test -p resume-daemon --test s48_search_ipc --locked`: exit 0; 14
+  daemon search IPC tests passed.
+- `cargo clippy -p rank-fusion -p resume-cli -p resume-daemon --all-targets
+  --locked -- -D warnings`: exit 0.
+- `cargo test -p resume-cli --locked`: exit 0; all CLI tests passed, including
+  S10 search filters, S16 persisted fields, OCR handoff, semantic/hybrid search,
+  diagnostics, IPC, delete/purge, candidate review, release-readiness, and
+  fault-simulation suites.
+- `cargo test -p resume-daemon --locked`: exit 0; all daemon tests passed,
+  including status/import/search/detail IPC, import scheduler, OCR worker,
+  embedding worker, and daemon-kill restart coverage.
+
+Final local gate:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0, `public repo guard passed`.
+- `verify-local.sh`: exit 0; workspace clippy/tests/doc-tests, license/runbook/
+  workflow/release-readiness checks, release artifact and SBOM checks, macOS
+  package DMG verification, and public repository guard passed. Windows package
+  check was skipped on this non-Windows host.
+
+Scope note:
+
+- S227 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload real resumes, local data directories, tokens, diagnostics, model
+  caches, or raw personal data.
+- This slice adds exact normalized candidate-name filtering over persisted
+  field evidence. It does not prove real business name-field precision/recall,
+  implement fuzzy/person-alias matching, change search snippet redaction, clear
+  private field-quality blockers, validate million-scale behavior, clear
+  platform/signing/model/OCR blockers, or make the complete product ready.
 
 ### S226
 

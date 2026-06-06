@@ -172,6 +172,7 @@ impl DateRange {
 #[derive(Clone, PartialEq)]
 pub struct ResumeProfile {
     doc_id: String,
+    names: Vec<String>,
     degree: Option<DegreeLevel>,
     schools: Vec<String>,
     school_tiers: Vec<SchoolTier>,
@@ -189,6 +190,7 @@ impl ResumeProfile {
     pub fn new(doc_id: impl Into<String>) -> Self {
         Self {
             doc_id: doc_id.into(),
+            names: Vec::new(),
             degree: None,
             schools: Vec::new(),
             school_tiers: Vec::new(),
@@ -205,6 +207,21 @@ impl ResumeProfile {
 
     pub fn with_degree(mut self, degree: DegreeLevel) -> Self {
         self.degree = Some(degree);
+        self
+    }
+
+    pub fn with_names<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.names = names
+            .into_iter()
+            .map(|name| normalize_name(name.as_ref()))
+            .filter(|name| !name.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         self
     }
 
@@ -348,6 +365,10 @@ impl ResumeProfile {
         self.degree
     }
 
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+
     pub fn school_tiers(&self) -> &[SchoolTier] {
         &self.school_tiers
     }
@@ -394,6 +415,7 @@ impl fmt::Debug for ResumeProfile {
         formatter
             .debug_struct("ResumeProfile")
             .field("doc_id", &self.doc_id)
+            .field("name_count", &self.names.len())
             .field("degree", &self.degree)
             .field("school_count", &self.schools.len())
             .field("school_tier_count", &self.school_tiers.len())
@@ -412,6 +434,7 @@ impl fmt::Debug for ResumeProfile {
 #[derive(Clone, Default, PartialEq)]
 pub struct SearchFilters {
     degree_min: Option<DegreeLevel>,
+    names_any: Vec<String>,
     schools_any: Vec<String>,
     school_tiers_any: Vec<SchoolTier>,
     majors_any: Vec<String>,
@@ -428,6 +451,21 @@ pub struct SearchFilters {
 impl SearchFilters {
     pub fn with_degree_min(mut self, degree: DegreeLevel) -> Self {
         self.degree_min = Some(degree);
+        self
+    }
+
+    pub fn with_names_any<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.names_any = names
+            .into_iter()
+            .map(|name| normalize_name(name.as_ref()))
+            .filter(|name| !name.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         self
     }
 
@@ -574,6 +612,7 @@ impl SearchFilters {
 
     pub fn is_empty(&self) -> bool {
         self.degree_min.is_none()
+            && self.names_any.is_empty()
             && self.schools_any.is_empty()
             && self.school_tiers_any.is_empty()
             && self.majors_any.is_empty()
@@ -589,6 +628,10 @@ impl SearchFilters {
 
     pub fn degree_min(&self) -> Option<DegreeLevel> {
         self.degree_min
+    }
+
+    pub fn names_any(&self) -> &[String] {
+        &self.names_any
     }
 
     pub fn skills_any(&self) -> &[String] {
@@ -638,6 +681,17 @@ impl SearchFilters {
     pub fn matches(&self, profile: &ResumeProfile) -> bool {
         if let Some(min_degree) = self.degree_min {
             if profile.degree().is_none_or(|degree| degree < min_degree) {
+                return false;
+            }
+        }
+
+        if !self.names_any.is_empty() {
+            let profile_names = profile.names().iter().collect::<BTreeSet<_>>();
+            if !self
+                .names_any
+                .iter()
+                .any(|name| profile_names.contains(name))
+            {
                 return false;
             }
         }
@@ -1195,6 +1249,10 @@ fn normalize_contact_hash(contact_hash: &str) -> Option<String> {
     let value = contact_hash.trim();
     (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
         .then(|| value.to_ascii_lowercase())
+}
+
+fn normalize_name(name: &str) -> String {
+    normalize_dedupe_value(name)
 }
 
 fn parse_year_month(value: &str) -> Option<i32> {
