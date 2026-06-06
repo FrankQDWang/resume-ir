@@ -114,6 +114,45 @@ fn benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence() {
 }
 
 #[test]
+fn benchmark_gate_rejects_private_real_report_with_inconsistent_query_counts() {
+    let report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false)
+        .replace("\"samples\":200", "\"samples\":199");
+    let config = BenchmarkGateConfig::new(100_000, 100, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark counts are inconsistent"));
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_report_with_inconsistent_qps() {
+    let report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false)
+        .replace("\"qps\":100.0", "\"qps\":999.0");
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark metric counts do not match scores"));
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_report_with_impossible_total_hits() {
+    let report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false)
+        .replace("\"total_hits\":100", "\"total_hits\":2001");
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark counts are inconsistent"));
+}
+
+#[test]
 fn benchmark_gate_rejects_private_real_report_without_hot_hybrid_evidence() {
     let mut report = minimal_benchmark_json("private-real-corpus", 100_000, 200, 150.0, 0, false)
         .replace(
@@ -1055,7 +1094,7 @@ fn minimal_benchmark_json(
             "\"query_count\":{},",
             "\"top_k\":10,",
             "\"build_ms\":1.0,",
-            "\"query_total_ms\":1.0,",
+            "\"query_total_ms\":{}.0,",
             "\"qps\":100.0,",
             "\"index_size_bytes\":1000,",
             "\"query_latency_ms\":{{",
@@ -1078,6 +1117,7 @@ fn minimal_benchmark_json(
         dataset_kind,
         document_count,
         query_count,
+        query_count * 10,
         query_count,
         p95_ms,
         p95_ms,

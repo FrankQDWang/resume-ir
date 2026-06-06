@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, and S232 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, and S233 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -730,8 +730,76 @@ obsolete preliminary files and checklists are not product scope.
 | S230 | Product dedupe-quality consistency gate complete locally | Focused RED tests first failed because strict private-business dedupe-quality reports could report pair counts, predicted duplicate counts, or precision/recall/F1 values inconsistent with the confusion-matrix counts, and both library plus CLI gates accepted them. After implementation, private-business dedupe-quality reports must satisfy `pair_count`, `positive_pair_count`, and `predicted_duplicate_pairs` relationships against true/false positive/negative counts, and reported precision/recall/F1 must match those counts within three-decimal rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create/upload private labels, run private dedupe-quality evaluation, prove production dedupe precision/recall on representative resumes, prevent fabricated aggregate counts beyond consistency checks, clear dedupe-quality blockers, or make stable release ready. |
 | S231 | Product vector-quality consistency gate complete locally | Focused RED tests first failed because strict private-business vector-quality reports could claim impossible retrieval counts, such as `top_k > candidate_count`, or report `zero_recall_queries` inconsistent with `sample_count` and recall@k, and both library plus CLI gates accepted them. After implementation, private-business vector-quality reports must have positive feasible `sample_count`, `candidate_count`, and `top_k` values, `candidate_count >= sample_count`, `top_k <= candidate_count`, `zero_recall_queries <= sample_count`, and recall@k no higher than the maximum possible value implied by zero-recall queries within rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create/upload private labels, run private vector-quality evaluation, select or license a production embedding model, prove semantic retrieval quality on representative resumes, prevent fabricated aggregate counts beyond consistency checks, clear vector-quality blockers, or make stable release ready. |
 | S232 | Product OCR throughput consistency gate complete locally | Focused RED tests first failed because strict private real-corpus OCR throughput reports could omit recomputable total runtime evidence, claim page counts incompatible with scanned-document counts, or report `pages_per_second` inconsistent with `page_count / total_ms`, and both library plus CLI gates did not enforce the intended release-evidence error. After implementation, private OCR throughput reports must include positive `total_ms`, have feasible page/document/sample counts, and report pages-per-second matching `page_count / (total_ms / 1000)` within rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not run private OCR throughput benchmarks, create/upload private scanned-resume evidence, choose or license OCR runtimes/language packs, prove full-library OCR throughput, clear OCR throughput blockers, validate platform installers/signing, or make stable release ready. |
+| S233 | Product query benchmark consistency gate complete locally | Focused RED tests first failed because strict private real-corpus query benchmark reports could claim latency sample counts different from query count, impossible total hit counts above `query_count * top_k`, or QPS inconsistent with `query_count / query_total_ms`, and both library plus CLI gates accepted them. After implementation, private query benchmark reports must have positive document/query/top-k counts, latency samples matching query count, feasible zero-result and total-hit counts, ordered latency summaries, positive `query_total_ms`, and QPS matching `query_count / (query_total_ms / 1000)` within rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, diff check, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not run private 100k/1M query benchmarks, create/upload private benchmark evidence, prove `<200ms` P95 on representative hardware, prevent fabricated aggregate counts beyond consistency checks, clear benchmark/model/platform blockers, or make stable release ready. |
 
 ## Command Log
+
+### S233
+
+Design target:
+
+- Require strict private real-corpus query benchmark aggregate reports to be
+  internally self-consistent before they can count as release evidence.
+- Reject impossible aggregate count relationships: zero document/query/top-k
+  counts, latency samples not matching query count, zero-result queries above
+  query count, total hits above `query_count * top_k`, unordered latency
+  summaries, and non-positive query runtime.
+- Recompute QPS from `query_count / (query_total_ms / 1000)` within rounding
+  tolerance.
+- Keep the gate local/redacted aggregate only; do not create, upload, or inspect
+  private resumes, queries, manifests, benchmark reports, paths, or diagnostics
+  in this slice.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_with_inconsistent_query_counts --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_with_inconsistent_qps --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_with_impossible_total_hits --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps --locked -- --exact
+```
+
+Output summary:
+
+- The library exact tests failed because reports with mismatched sample/query
+  counts, impossible total-hit counts, or inconsistent QPS were accepted as
+  `BenchmarkGateEvaluation`.
+- The CLI exact test failed because `resume-benchmark gate
+  --require-private-real-corpus --require-million-scale` accepted an impossible
+  aggregate QPS claim.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_with_inconsistent_query_counts --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_with_inconsistent_qps --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_with_impossible_total_hits --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_gate_accepts_private_real_corpus_release_report --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --all --check
+./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The exact rejection tests passed after private query benchmark validation began
+  enforcing aggregate count feasibility and QPS recomputation.
+- Existing strict private query benchmark acceptance passed after fixtures used
+  self-consistent `query_total_ms` and QPS values.
+- `cargo test -p benchmark-runner --locked`: exit 0; 26 CLI benchmark tests, 55
+  runner tests, and benchmark-runner doc-tests passed.
+- `cargo fmt --all --check`, `cargo clippy -p benchmark-runner --all-targets
+  --locked -- -D warnings`, `git diff --check`, and
+  `./scripts/ci/check-runbooks.sh`: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace clippy, workspace tests,
+  doc-tests, license/runbook/workflow/release-readiness checks, release
+  artifact/SBOM checks, macOS package check, and public repo guard passed;
+  Windows package check was skipped on non-Windows.
 
 ### S232
 

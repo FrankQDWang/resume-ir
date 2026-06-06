@@ -77,8 +77,13 @@ reports. The report must use `dataset_kind: "private-real-corpus"`,
 "redacted_local_aggregate"`, `query_mode: "hybrid"`, `retrieval_layers:
 "fulltext+field+vector+rrf"`, `hot_index: true`, false hot-path OCR/parsing/
 heavy-model-inference booleans, false raw-data/path/query booleans, and sha256
-digests for the local dataset manifest plus query set. Do not upload reports if
-they contain raw resume text, local paths, queries, sample IDs, or filenames.
+digests for the local dataset manifest plus query set. It must also have
+internally consistent aggregate metrics: latency samples equal query count,
+zero-result queries do not exceed query count, total hits do not exceed
+`query_count * top_k`, latency percentiles are ordered, `query_total_ms` is
+positive, and reported QPS matches `query_count / (query_total_ms / 1000)`
+within rounding tolerance. Do not upload reports if they contain raw resume text,
+local paths, queries, sample IDs, or filenames.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \

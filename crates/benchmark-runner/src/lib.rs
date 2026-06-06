@@ -2894,6 +2894,7 @@ fn validate_private_real_benchmark_boundary(
     target_claim: &str,
 ) -> std::result::Result<(), BenchmarkGateError> {
     validate_private_real_report_shape(report)?;
+    validate_private_real_benchmark_consistency(report)?;
     if private_real_str(report, "corpus_origin")? != "private_local"
         || private_real_str(report, "privacy_boundary")? != "redacted_local_aggregate"
         || private_real_bool(report, "contains_raw_resume_text")?
@@ -2926,6 +2927,56 @@ fn validate_private_real_benchmark_boundary(
     }
 
     Ok(())
+}
+
+const PRIVATE_REAL_BENCHMARK_SCORE_TOLERANCE: f64 = 0.000_5;
+
+fn validate_private_real_benchmark_consistency(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let document_count = private_real_usize(report, "document_count")?;
+    let query_count = private_real_usize(report, "query_count")?;
+    let top_k = private_real_usize(report, "top_k")?;
+    let query_total_ms = private_real_number(report, "query_total_ms")?;
+    let qps = private_real_number(report, "qps")?;
+    let zero_result_queries = private_real_usize(report, "zero_result_queries")?;
+    let total_hits = private_real_usize(report, "total_hits")?;
+    let latency = report
+        .get("query_latency_ms")
+        .ok_or_else(private_real_boundary_error)?;
+    let samples = private_real_usize(latency, "samples")?;
+    let min = private_real_number(latency, "min")?;
+    let mean = private_real_number(latency, "mean")?;
+    let p50 = private_real_number(latency, "p50")?;
+    let p95 = private_real_number(latency, "p95")?;
+    let p99 = private_real_number(latency, "p99")?;
+    let max = private_real_number(latency, "max")?;
+    let max_hits = query_count
+        .checked_mul(top_k)
+        .ok_or_else(private_real_counts_error)?;
+
+    if document_count == 0
+        || query_count == 0
+        || top_k == 0
+        || samples != query_count
+        || zero_result_queries > query_count
+        || total_hits > max_hits
+        || query_total_ms <= 0.0
+        || !latency_summary_is_ordered(min, mean, p50, p95, p99, max)
+    {
+        return Err(private_real_counts_error());
+    }
+
+    let expected_qps = query_count as f64 / (query_total_ms / 1000.0);
+    if (qps - expected_qps).abs() > PRIVATE_REAL_BENCHMARK_SCORE_TOLERANCE {
+        return Err(private_real_metric_error());
+    }
+
+    Ok(())
+}
+
+fn latency_summary_is_ordered(min: f64, mean: f64, p50: f64, p95: f64, p99: f64, max: f64) -> bool {
+    min <= mean && mean <= max && min <= p50 && p50 <= p95 && p95 <= p99 && p99 <= max
 }
 
 fn validate_private_real_report_shape(
@@ -3530,6 +3581,14 @@ fn private_real_number(
 
 fn private_real_boundary_error() -> BenchmarkGateError {
     BenchmarkGateError::failed("private real-corpus benchmark requires redacted local boundary")
+}
+
+fn private_real_counts_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private real-corpus benchmark counts are inconsistent")
+}
+
+fn private_real_metric_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed("private real-corpus benchmark metric counts do not match scores")
 }
 
 fn is_sha256_hex(value: &str) -> bool {
