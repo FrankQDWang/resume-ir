@@ -464,6 +464,68 @@ fn doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_valu
 }
 
 #[test]
+fn doctor_and_diagnostics_report_recovered_vector_snapshot_without_path_or_values() {
+    let data_dir = temp_dir("diagnostics-vector-recovered-private-data");
+    let vector_root = data_dir.join("vector-index");
+    let vector_index = PersistentVectorIndex::open(&vector_root, 4).unwrap();
+    vector_index
+        .upsert(vec![VectorDocument::new(
+            "vec_recovered",
+            "doc_recovered",
+            vec![1.0, 0.0, 0.0, 0.0],
+        )
+        .unwrap()])
+        .unwrap();
+    vector_index
+        .upsert(vec![VectorDocument::new(
+            "vec_corrupt_active",
+            "doc_corrupt_active",
+            vec![0.0, 1.0, 0.0, 0.0],
+        )
+        .unwrap()])
+        .unwrap();
+    fs::write(
+        vector_root.join("vector.snapshot"),
+        "not a valid encrypted vector snapshot",
+    )
+    .unwrap();
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with recovered vector index");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("vector index: recovered (hnsw ann vector snapshot)"));
+    assert!(stdout.contains("vector index vectors: 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains("1.0"));
+    assert!(!stdout.contains("vec_recovered"));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with recovered vector index");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"vector_index_state\": \"recovered\""));
+    assert!(stdout.contains("\"vector_index_backend\": \"hnsw_ann\""));
+    assert!(stdout.contains("\"vector_index_vectors\": 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains("1.0"));
+    assert!(!stdout.contains("vec_recovered"));
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn doctor_and_diagnostics_report_invalid_contact_hash_key_without_leaks() {
     let data_dir = temp_dir("diagnostics-invalid-key");
     let key_path = data_dir.join("secrets").join("contact-hash-key-v1");

@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, and S252 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, and S253 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -293,6 +293,10 @@ obsolete preliminary files and checklists are not product scope.
   `vector.snapshot` artifact no longer stores vector IDs, document IDs, model
   IDs, or float values as plaintext while reopen, inspection, semantic search,
   daemon embedding workers, and diagnostics continue to work.
+  Persistent vector snapshots now also keep an encrypted last-good backup and
+  recover from a corrupt or missing active `vector.snapshot` while preserving
+  model/dimension checks, semantic search, daemon embedding/IPC use, and
+  redacted diagnostics.
   A labeled vector-quality evaluator and gate now score recall@k, MRR, NDCG@k,
   and zero-recall queries from JSONL samples using the local embedding command
   protocol without emitting raw queries, candidate text, sample IDs, candidate
@@ -408,7 +412,8 @@ obsolete preliminary files and checklists are not product scope.
   diagnostics, redacted resource telemetry for the data-disk volume, current
   process memory, CPU cores, OCR page-budget remediation, and OCR runtime
   availability, snapshot fallback, full-text active-snapshot corruption/
-  last-good recovery fault probes, explicit obsolete
+  last-good recovery fault probes, persistent vector active-snapshot
+  corruption/last-good recovery, explicit obsolete
   full-text snapshot and staging cleanup for deleted-document purge, safe fault
   simulation for disk-space budget, permission-denied probes, file-lock
   contention probes, metadata migration failure probes against synthetic broken
@@ -754,8 +759,75 @@ obsolete preliminary files and checklists are not product scope.
 | S250 | Product benchmark smoke acceptance gate complete locally | Focused RED guard first failed because the repository had PR-inline benchmark smoke commands but no reusable `scripts/ci/check-benchmark-smoke.sh` required by local verification, workflow policy, and the PR workflow. After implementation, `scripts/ci/check-benchmark-smoke.sh` runs synthetic query benchmark plus gate, synthetic OCR throughput plus gate, and synthetic vector-quality plus gate in a private temporary workspace, validates report JSON, rejects temporary paths, local path markers, runtime-data markers, command markers, and fixture payloads from reports, runs Cargo quietly to avoid temporary-path logs, and is required by `verify-local.sh` plus the PR workflow. | This slice adds a synthetic benchmark acceptance gate only. It does not run private real-corpus 100k/1M benchmarks, prove `<200ms` P95 on representative hardware, prove real scanned-resume OCR throughput/quality, prove real semantic/vector quality, choose or license a production embedding model, clear platform blockers, upload production evidence, or make stable release ready. |
 | S251 | Product daemon semantic/hybrid search IPC complete locally | Focused RED first failed because authenticated daemon `/search` IPC returned 400 for `mode: semantic`, and the daemon closed-loop script did not require semantic or hybrid IPC search. After implementation, daemon search IPC parses `fulltext`, `semantic`, and `hybrid` modes, uses daemon startup embedding configuration rather than accepting command paths from CLI search requests, embeds semantic queries through the local embedding protocol, searches the persisted model-scoped HNSW vector snapshot, applies existing field prefilters, candidate folding, visibility filtering, soft-dedupe hints, and hybrid RRF, returns redacted `daemon.search.v1` results, and the daemon closed-loop gate now verifies semantic plus hybrid IPC searches against synthetic imported PDF/DOCX/scanned-PDF fixtures. | This slice adds synthetic daemon semantic/hybrid IPC functionality only. It does not choose/license/distribute a production embedding model, prove private semantic quality, prove real ANN recall/latency at 100k/1M scale, validate Windows semantic IPC with an executable embedding runtime, clear model/vector-quality blockers, or make stable release ready. |
 | S252 | Product full-text index corruption fault probe complete locally | Focused RED first failed because `resume-cli fault-simulate --case index-snapshot-corrupt` returned the fault-simulate usage error even though doctor/export advertised `index_snapshot_corrupt` as an available hook. After implementation, the safe local probe publishes two synthetic encrypted full-text snapshots in a private scratch directory, corrupts the active snapshot envelope, verifies last-good published-snapshot recovery through `FullTextIndex::open_active`, checks a synthetic query still resolves only through the recovered snapshot, cleans the probe directory, redacts paths and synthetic payloads from stdout, and the fault-injection runbook plus runbook guard now document the case. | This slice proves only a safe synthetic full-text active-snapshot corruption/recovery probe. It does not perform destructive disk faults, corrupt real user indexes, prove service-manager kill recovery, validate Windows/macOS filesystem behavior, prove large-corpus recovery latency, or clear release readiness blockers. |
+| S253 | Product vector snapshot recovery complete locally | Focused RED first failed because the persistent vector snapshot surface had no `Recovered` state and doctor did not report a recovered vector index after a corrupt active snapshot. After implementation, `PersistentVectorIndex` writes an encrypted `vector.snapshot.last-good` before replacing the active snapshot, open/search/inspect recover from a corrupt active snapshot, no-backup corrupt snapshots remain corrupt rather than silently empty, CLI and daemon semantic paths treat recovered snapshots as usable, and doctor plus redacted diagnostics report recovered state without paths, vector IDs, or float values. | This slice proves synthetic/local vector snapshot last-good recovery only. It does not choose/license/distribute a production embedding model, prove private semantic quality, prove real ANN recall/latency at 100k/1M scale, validate cross-platform filesystem behavior, clear model/vector-quality blockers, or make stable release ready. |
 
 ## Command Log
+
+### S253
+
+Design target:
+
+- Make persistent vector snapshots recover from a corrupt active
+  `vector.snapshot` using an encrypted last-good backup.
+- Keep no-backup corrupt snapshots fail-closed as corrupt, not silently empty.
+- Keep recovered vector snapshots usable by CLI semantic/hybrid search, daemon
+  semantic/hybrid IPC, and redacted doctor/diagnostics without leaking local
+  paths, vector IDs, document IDs, model IDs, or float values.
+
+Observed RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p index-vector persistent_vector_index_recovers_last_good_snapshot_when_active_is_corrupt --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_report_recovered_vector_snapshot_without_path_or_values --locked -- --exact
+```
+
+Output summary:
+
+- The focused index-vector test failed before implementation because
+  `PersistentVectorSnapshotState::Recovered` did not exist.
+- The focused diagnostics test failed before implementation because doctor did
+  not report a recovered vector index after active snapshot corruption.
+
+Implementation verification:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p index-vector persistent_vector_index_recovers_last_good_snapshot_when_active_is_corrupt --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s13_diagnostics doctor_and_diagnostics_report_recovered_vector_snapshot_without_path_or_values --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p index-vector --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s13_diagnostics --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s39_embedding_worker --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s48_search_ipc --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s51_embedding_worker --locked
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo clippy -p index-vector -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+git diff --check
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- Focused RED/GREEN exact tests: exit 0 after implementation.
+- Full index-vector suite: exit 0; 11 tests passed plus doc-tests.
+- Full diagnostics CLI suite: exit 0; 15 tests passed.
+- Embedding worker, daemon search IPC, and daemon embedding worker suites:
+  exit 0.
+- The full index-vector suite caught an initial regression where corrupt active
+  snapshots with no backup reopened as an empty index; this was fixed before
+  acceptance.
+- `cargo fmt --check`: exit 0 after formatting the touched vector file.
+- Focused clippy: exit 0.
+- `git diff --check`: exit 0.
+- `verify-local.sh`: exit 0; full local gate passed after this slice.
+- Public repository guard: exit 0.
+
+Scope note:
+
+- S253 proves a synthetic local persistent-vector active-snapshot
+  corruption/recovery path only. It does not select or license a production
+  embedding model, prove private semantic quality, prove ANN recall/latency at
+  100k/1M scale, validate Windows/macOS filesystem behavior, clear model/vector
+  blockers, or make the complete product ready.
 
 ### S252
 

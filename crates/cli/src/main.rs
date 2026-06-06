@@ -6579,7 +6579,10 @@ fn purge_vector_documents(data_dir: &Path, doc_ids: &BTreeSet<String>) -> Result
     let inspection = inspect_persistent_vector_snapshot(&vector_root);
     match (inspection.state(), inspection.snapshot()) {
         (PersistentVectorSnapshotState::Missing, _) => Ok(0),
-        (PersistentVectorSnapshotState::Ready, Some(snapshot)) => {
+        (
+            PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered,
+            Some(snapshot),
+        ) => {
             let index = PersistentVectorIndex::open(&vector_root, snapshot.dimension())
                 .map_err(CliError::vector)?;
             index.purge_doc_ids(doc_ids).map_err(CliError::vector)
@@ -8872,7 +8875,10 @@ fn run_semantic_search(
 fn vector_snapshot_dimension(data_dir: &Path) -> Result<usize> {
     let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
     match (inspection.state(), inspection.snapshot()) {
-        (PersistentVectorSnapshotState::Ready, Some(snapshot)) => Ok(snapshot.dimension()),
+        (
+            PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered,
+            Some(snapshot),
+        ) => Ok(snapshot.dimension()),
         (PersistentVectorSnapshotState::Missing, _) => Err(CliError::user(
             "semantic search unavailable: vector index is missing",
         )),
@@ -9652,6 +9658,11 @@ impl VectorIndexDiagnostic {
                 Some(VectorSearchBackend::LinearScan) => "available (linear vector snapshot)",
                 None => "available (vector snapshot)",
             },
+            PersistentVectorSnapshotState::Recovered => match self.search_backend() {
+                Some(VectorSearchBackend::HnswAnn) => "recovered (hnsw ann vector snapshot)",
+                Some(VectorSearchBackend::LinearScan) => "recovered (linear vector snapshot)",
+                None => "recovered (vector snapshot)",
+            },
             PersistentVectorSnapshotState::Corrupt => "corrupt",
             PersistentVectorSnapshotState::Unreadable => "unreadable",
         }
@@ -9661,6 +9672,7 @@ impl VectorIndexDiagnostic {
         match self.inspection.state() {
             PersistentVectorSnapshotState::Missing => "unavailable",
             PersistentVectorSnapshotState::Ready => "available",
+            PersistentVectorSnapshotState::Recovered => "recovered",
             PersistentVectorSnapshotState::Corrupt => "corrupt",
             PersistentVectorSnapshotState::Unreadable => "unreadable",
         }

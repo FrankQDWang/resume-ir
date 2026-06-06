@@ -2932,7 +2932,10 @@ fn daemon_semantic_search(
 fn daemon_vector_snapshot_dimension(data_dir: &Path) -> Option<usize> {
     let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
     match (inspection.state(), inspection.snapshot()) {
-        (PersistentVectorSnapshotState::Ready, Some(snapshot)) => Some(snapshot.dimension()),
+        (
+            PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered,
+            Some(snapshot),
+        ) => Some(snapshot.dimension()),
         _ => None,
     }
 }

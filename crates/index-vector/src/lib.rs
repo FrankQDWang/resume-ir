@@ -22,6 +22,8 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 const SNAPSHOT_FILE: &str = "vector.snapshot";
 const SNAPSHOT_TMP_FILE: &str = "vector.snapshot.tmp";
+const SNAPSHOT_LAST_GOOD_FILE: &str = "vector.snapshot.last-good";
+const SNAPSHOT_LAST_GOOD_TMP_FILE: &str = "vector.snapshot.last-good.tmp";
 const SNAPSHOT_KEY_FILE: &str = "vector.snapshot.key-v1";
 const SNAPSHOT_LOCK_FILE: &str = "vector.lock";
 const SNAPSHOT_HEADER_ENCRYPTED_V1: &str = "resume-ir-vector-index-encrypted-v1";
@@ -65,6 +67,8 @@ pub struct PersistentVectorIndex {
     dimension: usize,
     snapshot_path: PathBuf,
     temp_path: PathBuf,
+    last_good_path: PathBuf,
+    last_good_temp_path: PathBuf,
     key_path: PathBuf,
     lock_path: PathBuf,
     state: Mutex<IndexState>,
@@ -84,19 +88,21 @@ impl PersistentVectorIndex {
         fs::create_dir_all(root).map_err(|_| VectorIndexError::Storage)?;
         let snapshot_path = root.join(SNAPSHOT_FILE);
         let temp_path = root.join(SNAPSHOT_TMP_FILE);
+        let last_good_path = root.join(SNAPSHOT_LAST_GOOD_FILE);
+        let last_good_temp_path = root.join(SNAPSHOT_LAST_GOOD_TMP_FILE);
         let key_path = root.join(SNAPSHOT_KEY_FILE);
         let lock_path = root.join(SNAPSHOT_LOCK_FILE);
-        let state = if snapshot_path.exists() {
-            read_snapshot(&snapshot_path, &key_path, dimension)?
-        } else {
-            IndexState::default()
-        };
+        let state =
+            read_snapshot_with_recovery(&snapshot_path, &last_good_path, &key_path, dimension)?
+                .unwrap_or_default();
         let ann_backend = HnswSearchBackend::build(&state);
 
         Ok(Self {
             dimension,
             snapshot_path,
             temp_path,
+            last_good_path,
+            last_good_temp_path,
             key_path,
             lock_path,
             state: Mutex::new(state),
@@ -106,7 +112,30 @@ impl PersistentVectorIndex {
 
     fn persist_state(&self, state: &IndexState) -> Result<(), VectorIndexError> {
         write_snapshot(&self.temp_path, &self.key_path, self.dimension, state)?;
+        self.refresh_last_good_snapshot()?;
         fs::rename(&self.temp_path, &self.snapshot_path).map_err(|_| VectorIndexError::Storage)?;
+        Ok(())
+    }
+
+    fn refresh_last_good_snapshot(&self) -> Result<(), VectorIndexError> {
+        if !self.snapshot_path.exists() {
+            return Ok(());
+        }
+
+        match read_snapshot(&self.snapshot_path, &self.key_path, self.dimension) {
+            Ok(_) => {}
+            Err(VectorIndexError::CorruptSnapshot) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+
+        let snapshot_bytes =
+            fs::read(&self.snapshot_path).map_err(|_| VectorIndexError::Storage)?;
+        let mut file = create_private_file(&self.last_good_temp_path)?;
+        file.write_all(&snapshot_bytes)
+            .map_err(|_| VectorIndexError::Storage)?;
+        file.sync_all().map_err(|_| VectorIndexError::Storage)?;
+        fs::rename(&self.last_good_temp_path, &self.last_good_path)
+            .map_err(|_| VectorIndexError::Storage)?;
         Ok(())
     }
 
@@ -166,11 +195,13 @@ impl PersistentVectorIndex {
     }
 
     fn read_latest_state(&self) -> Result<IndexState, VectorIndexError> {
-        if self.snapshot_path.exists() {
-            read_snapshot(&self.snapshot_path, &self.key_path, self.dimension)
-        } else {
-            Ok(IndexState::default())
-        }
+        Ok(read_snapshot_with_recovery(
+            &self.snapshot_path,
+            &self.last_good_path,
+            &self.key_path,
+            self.dimension,
+        )?
+        .unwrap_or_default())
     }
 
     fn rebuild_ann_backend(&self, state: &IndexState) -> Result<(), VectorIndexError> {
@@ -188,8 +219,12 @@ pub fn inspect_persistent_vector_snapshot(
 ) -> PersistentVectorSnapshotInspection {
     let root = root.as_ref();
     let snapshot_path = root.join(SNAPSHOT_FILE);
+    let last_good_path = root.join(SNAPSHOT_LAST_GOOD_FILE);
     let key_path = root.join(SNAPSHOT_KEY_FILE);
     if !snapshot_path.exists() {
+        if last_good_path.exists() {
+            return inspect_recovered_vector_snapshot(&last_good_path, &key_path);
+        }
         return PersistentVectorSnapshotInspection {
             state: PersistentVectorSnapshotState::Missing,
             snapshot: None,
@@ -199,6 +234,34 @@ pub fn inspect_persistent_vector_snapshot(
     match read_snapshot_unchecked_dimension(&snapshot_path, &key_path) {
         Ok((dimension, state)) => PersistentVectorSnapshotInspection {
             state: PersistentVectorSnapshotState::Ready,
+            snapshot: Some(snapshot_from_state(
+                &state,
+                dimension,
+                VectorSearchBackend::HnswAnn,
+            )),
+        },
+        Err(VectorIndexError::Storage) => PersistentVectorSnapshotInspection {
+            state: PersistentVectorSnapshotState::Unreadable,
+            snapshot: None,
+        },
+        Err(_) => inspect_recovered_vector_snapshot(&last_good_path, &key_path),
+    }
+}
+
+fn inspect_recovered_vector_snapshot(
+    last_good_path: &Path,
+    key_path: &Path,
+) -> PersistentVectorSnapshotInspection {
+    if !last_good_path.exists() {
+        return PersistentVectorSnapshotInspection {
+            state: PersistentVectorSnapshotState::Corrupt,
+            snapshot: None,
+        };
+    }
+
+    match read_snapshot_unchecked_dimension(last_good_path, key_path) {
+        Ok((dimension, state)) => PersistentVectorSnapshotInspection {
+            state: PersistentVectorSnapshotState::Recovered,
             snapshot: Some(snapshot_from_state(
                 &state,
                 dimension,
@@ -236,6 +299,7 @@ impl PersistentVectorSnapshotInspection {
 pub enum PersistentVectorSnapshotState {
     Missing,
     Ready,
+    Recovered,
     Corrupt,
     Unreadable,
 }
@@ -775,6 +839,40 @@ fn read_snapshot(
     }
 
     Ok(state)
+}
+
+fn read_snapshot_with_recovery(
+    snapshot_path: &Path,
+    last_good_path: &Path,
+    key_path: &Path,
+    expected_dimension: usize,
+) -> Result<Option<IndexState>, VectorIndexError> {
+    if snapshot_path.exists() {
+        return match read_snapshot(snapshot_path, key_path, expected_dimension) {
+            Ok(state) => Ok(Some(state)),
+            Err(VectorIndexError::CorruptSnapshot) => {
+                if !last_good_path.exists() {
+                    return Err(VectorIndexError::CorruptSnapshot);
+                }
+                read_snapshot(last_good_path, key_path, expected_dimension).map(Some)
+            }
+            Err(error) => Err(error),
+        };
+    }
+
+    read_last_good_snapshot(last_good_path, key_path, expected_dimension)
+}
+
+fn read_last_good_snapshot(
+    last_good_path: &Path,
+    key_path: &Path,
+    expected_dimension: usize,
+) -> Result<Option<IndexState>, VectorIndexError> {
+    if !last_good_path.exists() {
+        return Ok(None);
+    }
+
+    read_snapshot(last_good_path, key_path, expected_dimension).map(Some)
 }
 
 fn read_snapshot_unchecked_dimension(

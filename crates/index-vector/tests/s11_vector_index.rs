@@ -380,6 +380,64 @@ fn persistent_vector_index_preserves_tombstones_from_stale_concurrent_openers() 
 }
 
 #[test]
+fn persistent_vector_index_recovers_last_good_snapshot_when_active_is_corrupt() {
+    let private_dir = temp_dir("private-vector-last-good");
+
+    {
+        let index = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+        index
+            .upsert(vec![VectorDocument::new(
+                "vec_recovered",
+                "doc_recovered",
+                vec![1.0, 0.0, 0.0, 0.0],
+            )
+            .unwrap()])
+            .unwrap();
+        index
+            .upsert(vec![VectorDocument::new(
+                "vec_corrupt_active",
+                "doc_corrupt_active",
+                vec![0.0, 1.0, 0.0, 0.0],
+            )
+            .unwrap()])
+            .unwrap();
+    }
+
+    let backup_text = fs::read_to_string(private_dir.join("vector.snapshot.last-good")).unwrap();
+    assert!(backup_text.starts_with("resume-ir-vector-index-encrypted-v1\n"));
+    assert!(!backup_text.contains("doc_recovered"));
+    assert!(!backup_text.contains("vec_recovered"));
+    fs::write(
+        private_dir.join("vector.snapshot"),
+        "not a valid encrypted vector snapshot",
+    )
+    .unwrap();
+
+    let inspection = inspect_persistent_vector_snapshot(&private_dir);
+    assert_eq!(inspection.state(), PersistentVectorSnapshotState::Recovered);
+    assert_eq!(
+        inspection
+            .snapshot()
+            .map(|snapshot| snapshot.vector_count()),
+        Some(1)
+    );
+
+    let reopened = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+    let recovered_hits = reopened
+        .knn(QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(), 2)
+        .unwrap();
+    assert_eq!(recovered_hits.len(), 1);
+    assert_eq!(recovered_hits[0].doc_id(), "doc_recovered");
+    let corrupt_active_hits = reopened
+        .knn(QueryVector::new(vec![0.0, 1.0, 0.0, 0.0]).unwrap(), 2)
+        .unwrap();
+    assert_eq!(corrupt_active_hits.len(), 1);
+    assert_eq!(corrupt_active_hits[0].doc_id(), "doc_recovered");
+
+    remove_dir(&private_dir);
+}
+
+#[test]
 fn persistent_vector_index_rejects_corrupt_snapshot_without_path_leakage() {
     let private_dir = temp_dir("private-corrupt-vector-index");
     fs::write(
