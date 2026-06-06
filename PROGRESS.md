@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, and S238 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, and S239 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -736,8 +736,77 @@ obsolete preliminary files and checklists are not product scope.
 | S236 | Product release-readiness benchmark detail gate complete locally | Focused RED tests first failed because the release-readiness text and JSON benchmark blocker only said representative private hot-index hybrid evidence was missing, without exposing the stricter release evidence gates for at least 500 query samples, `--require-million-scale`, and `percentile_confidence: release`. After implementation, the `100k/1M real-corpus benchmarks` blocker detail carries those concrete evidence requirements, and the release-readiness CI guard checks for them while continuing to reject local path leaks. Focused RED/GREEN, release-readiness guard, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves fail-closed release-readiness reporting only. It does not run private 100k/1M query benchmarks, create/upload private benchmark reports, prove `<200ms` P95, generate release-grade percentile evidence, clear benchmark/model/platform blockers, or make stable release ready. |
 | S237 | Product release-readiness quality detail gate complete locally | Focused RED tests first failed because release-readiness text and JSON details for field extraction, dedupe, vector quality, and OCR throughput only said evidence was missing, without exposing the strict private evidence gate thresholds from the release runbook. After implementation, those blockers report field `min-samples 1000` plus precision/recall/F1 `>= 0.93`, dedupe `min-pairs 1000`, `min-positive-pairs 100`, and precision/recall/F1 `>= 0.90`, vector `min-samples 1000`, recall@k `>= 0.90`, MRR `>= 0.85`, NDCG@k `>= 0.90`, and OCR throughput `min-pages 500`, p95 `<= 1000ms`, and pages_per_second `>= 1`. The release-readiness CI guard checks those details. Focused RED/GREEN, release-readiness guard, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves fail-closed release-readiness reporting only. It does not create/upload private labels, run private field/dedupe/vector/OCR evaluations, prove production quality or OCR throughput, select/license models or OCR runtimes, clear blockers, or make stable release ready. |
 | S238 | Product release-readiness external blocker detail gate complete locally | Focused RED tests first failed because release-readiness text and JSON details for signing, notarization, installer/service lifecycle, OCR/model license distribution, and cross-platform validation did not expose the concrete external evidence required to clear those blockers. After implementation, those blockers report certificate chain, private key custody, signature verification evidence, Apple Developer ID notarization credentials/tickets/Gatekeeper proof, Windows MSI and service lifecycle proof on release Windows runners, signed macOS pkg/dmg lifecycle proof, OCR runtime and language-pack distribution license evidence, licensed embedding model manifest/offline distribution/license review, and Windows/macOS fresh-release install/upgrade/uninstall/service validation. The release-readiness CI guard checks those details while continuing to reject local path leaks. Focused RED/GREEN, release-readiness guard, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves fail-closed release-readiness reporting only. It does not obtain signing certificates, notarize artifacts, run Windows/macOS release installers, approve OCR/model licenses, produce release artifacts evidence, clear platform/license/signing blockers, or make stable release ready. |
+| S239 | Product signing-evidence release gate complete locally | Focused RED guard first failed because `scripts/release/create-signing-evidence.sh` did not exist, so release dry-runs had no machine-readable evidence boundary for certificate chain, private-key custody, or artifact signature verification. After implementation, release dry-runs can generate `signing-evidence.json` with schema `release.signing_evidence.v1`, `signing_status: blocked`, artifact manifest digest, per-artifact missing signature/blocked verification records, required signing evidence, and prohibited public signing material markers. Local CI, workflow policy, release workflow, and the release blockers runbook now require the signing-evidence dry-run while continuing to reject temp paths, local data markers, diagnostics, model caches, and key material. Focused RED/GREEN, workflow guard, runbook guard, release artifact guard, shell syntax checks, diff check, public guard, and full local verification passed locally. | This slice adds a fail-closed signing-evidence validator only. It does not obtain production signing certificates, sign artifacts, validate a certificate chain, prove private-key custody, notarize macOS artifacts, clear installer/platform blockers, or make stable release ready. |
 
 ## Command Log
+
+### S239
+
+Design target:
+
+- Add a machine-readable blocked signing evidence dry-run manifest so release
+  dry-runs track certificate chain, private key custody, and artifact signature
+  verification requirements without fabricating signatures.
+- Keep the manifest aggregate and redacted: artifact names, byte counts, hashes,
+  and blocked evidence status only, with no local paths, signing secrets,
+  certificate passwords, diagnostics, model caches, indexes, or resume data.
+- Wire the new signing evidence guard into local CI and the release workflow,
+  while keeping stable release blocked.
+
+Observed RED:
+
+```bash
+./scripts/ci/check-signing-evidence.sh
+```
+
+Output summary:
+
+- The new guard failed before implementation with `missing required signing
+  evidence file: scripts/release/create-signing-evidence.sh`.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-signing-evidence.sh
+./scripts/ci/check-workflows.sh
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-artifacts.sh
+sh -n scripts/ci/check-signing-evidence.sh scripts/release/create-signing-evidence.sh scripts/ci/verify-local.sh scripts/ci/check-workflows.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `./scripts/ci/check-signing-evidence.sh`: exit 0; the guard generated a
+  blocked `release.signing_evidence.v1` manifest from synthetic release
+  artifacts, verified required signing evidence fields, rejected local path and
+  key-material markers, and confirmed workflow/runbook/local-verify wiring.
+- `./scripts/ci/check-workflows.sh`: exit 0.
+- `./scripts/ci/check-runbooks.sh`: exit 0.
+- `./scripts/ci/check-release-artifacts.sh`: exit 0.
+- `sh -n ...`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0; metadata, fmt, workspace clippy,
+  workspace tests/doc-tests, license, runbook, workflow, release-readiness,
+  release artifact, signing evidence, release SBOM, macOS package,
+  Windows-package skip on non-Windows, and public-repo guards passed.
+
+Sub-agent orchestration:
+
+- `fw-build` and Superpowers subagent-driven guidance were used as local
+  implementation discipline only. No separate execution owner or external
+  sub-agent was spawned for this narrowly scoped release evidence gate.
+
+Scope note:
+
+- S239 adds a fail-closed signing evidence validator only. It does not obtain
+  production signing certificates, sign binaries or installers, validate a
+  certificate chain, prove private-key custody, notarize artifacts, validate
+  installer lifecycle, clear release blockers, or make the full product
+  complete.
 
 ### S238
 

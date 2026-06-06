@@ -45,6 +45,30 @@ release criterion has current local evidence:
 resume-cli --data-dir <local-data-dir> release-readiness --json
 ```
 
+Release dry-runs must also produce a blocked signing evidence manifest, not a
+fake signature result. The manifest schema is `release.signing_evidence.v1` and
+must contain only artifact names, byte counts, hashes, and blocked signing
+evidence status. It must not contain private keys, certificate passwords,
+signing tokens, local paths, resume data, diagnostics, indexes, or model caches.
+
+```bash
+scripts/release/create-artifact-manifest.sh \
+  --version v0.0.0 \
+  --target-dir target/release \
+  --out-dir release-dry-run
+
+scripts/release/create-signing-evidence.sh \
+  --version v0.0.0 \
+  --artifact-manifest release-dry-run/release-artifacts.json \
+  --out-dir release-dry-run
+```
+
+This signing evidence manifest is a fail-closed release evidence validator. It
+does not sign artifacts, does not validate a certificate chain, does not prove
+private key custody, and cannot clear the signing certificates blocker until
+production signing certificates and per-artifact signature verification evidence
+exist.
+
 Run the benchmark smoke only as smoke evidence, not as production performance
 proof:
 

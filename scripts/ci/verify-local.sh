@@ -15,6 +15,7 @@ fi
 ./scripts/ci/check-workflows.sh
 ./scripts/ci/check-release-readiness.sh
 ./scripts/ci/check-release-artifacts.sh
+./scripts/ci/check-signing-evidence.sh
 ./scripts/ci/check-release-sbom.sh
 ./scripts/ci/check-macos-package.sh
 ./scripts/ci/check-windows-package.sh
