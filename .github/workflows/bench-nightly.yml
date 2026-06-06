@@ -74,6 +74,24 @@ jobs:
       - name: Labeled vector benchmark gate
         run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- vector-gate --report vector-benchmark-smoke.json --min-samples 2 --min-recall-at-k 0.99 --min-mrr 0.99 --min-ndcg-at-k 0.99 --max-zero-recall-queries 0
 
+      - name: Check benchmark artifact boundary
+        run: |
+          test -f benchmark-smoke.json
+          test -f ocr-benchmark-smoke.json
+          test -f vector-benchmark-smoke.json
+          if grep -Eq '/Users/|/home/|[A-Za-z]:\\|local-data|diagnostics|model-cache' benchmark-smoke.json; then
+            echo "nightly benchmark smoke report leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq '/Users/|/home/|[A-Za-z]:\\|local-data|diagnostics|model-cache' ocr-benchmark-smoke.json; then
+            echo "nightly OCR benchmark smoke report leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq '/Users/|/home/|[A-Za-z]:\\|local-data|diagnostics|model-cache' vector-benchmark-smoke.json; then
+            echo "nightly vector benchmark smoke report leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+
       - name: Upload benchmark smoke artifact
         uses: actions/upload-artifact@v7
         with:

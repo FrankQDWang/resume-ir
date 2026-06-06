@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, and S246 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, and S247 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -744,8 +744,72 @@ obsolete preliminary files and checklists are not product scope.
 | S244 | Product macOS release artifact upload boundary complete locally | Focused RED guard first failed because the Release workflow did not require upload-before-boundary leak scans for `macos-package.json`, `macos-installer-evidence.json`, or `notarization-evidence.json`, unlike the Windows package job. After implementation, the hosted macOS package dry-run boundary step rejects local path and runtime-data markers before uploading macOS package/evidence artifacts, and the workflow policy guard now requires those fail-closed messages. Focused RED/GREEN, macOS package, macOS installer evidence, notarization evidence, shell syntax, diff check, public guard, and full local verification passed locally. | This slice hardens the macOS hosted release artifact upload privacy boundary only. It does not sign, notarize, install pkg/dmg artifacts, prove installer lifecycle, create a GitHub Release, upload production release artifacts, clear release blockers, or make stable release ready. |
 | S245 | Product release dry-run upload boundary complete locally | Focused RED guard first failed because the Ubuntu Release workflow did not require upload-before-boundary leak scans for `release-artifacts.json`, `signing-evidence.json`, or `release-sbom.json`. After implementation, the release dry-run boundary step rejects local path and runtime-data markers before uploading dry-run release JSON artifacts, and the workflow policy guard now requires those fail-closed messages. Focused RED/GREEN, release artifact, signing evidence, release SBOM, shell syntax, diff check, public guard, and full local verification passed locally. | This slice hardens the hosted release dry-run artifact upload privacy boundary only. It does not sign, notarize, create or upload a GitHub Release, upload production release binaries, validate installer lifecycle, clear release blockers, or make stable release ready. |
 | S246 | Product Windows release artifact upload boundary policy complete locally | Focused RED guards first failed because `scripts/ci/check-workflows.sh` did not require the hosted Windows dry-run upload-before-boundary leak scan messages for `windows-package.json`, `windows-installer-evidence.json`, or `windows-service-evidence.json`, even though the Release workflow contained the scans. After implementation, the workflow policy guard now requires those three fail-closed Windows messages so a future workflow edit cannot silently remove the Windows package/evidence privacy boundary before upload. Focused RED/GREEN, Windows package, Windows installer evidence, Windows service evidence, shell syntax, diff check, public guard, and full local verification passed locally. | This slice hardens the Windows hosted release dry-run artifact upload policy guard only. It does not sign MSI artifacts, run `msiexec`, install/register/start/stop a Windows service, prove installer or service lifecycle, upload production release artifacts, clear Windows/platform blockers, or make stable release ready. |
+| S247 | Product nightly benchmark artifact upload boundary complete locally | Focused RED guards first failed because the nightly benchmark workflow did not require upload-before-boundary leak scans for `benchmark-smoke.json`, `ocr-benchmark-smoke.json`, or `vector-benchmark-smoke.json`. After implementation, the nightly workflow checks those three synthetic smoke reports for local path and runtime-data markers before artifact upload, and the workflow policy guard now requires those fail-closed messages. Focused RED/GREEN, workflow guard, shell syntax, diff check, public guard, and full local verification passed locally. | This slice hardens hosted nightly synthetic benchmark smoke artifact upload privacy only. It does not run private real-corpus 100k/1M benchmarks, prove `<200ms` P95 on representative hardware, clear OCR/vector/field/dedupe quality blockers, upload production evidence, or make stable release ready. |
 
 ## Command Log
+
+### S247
+
+Design target:
+
+- Harden the hosted nightly benchmark smoke artifact upload boundary so
+  synthetic query, OCR, and vector report JSON files are scanned for local path
+  and runtime-data markers immediately before `actions/upload-artifact`.
+- Keep nightly benchmark smoke as synthetic evidence only; do not treat it as
+  private real-corpus performance, OCR throughput, or vector-quality release
+  proof.
+
+Observed RED:
+
+```bash
+rg -q 'nightly benchmark smoke report leaked a local path or runtime-data marker' scripts/ci/check-workflows.sh
+rg -q 'nightly OCR benchmark smoke report leaked a local path or runtime-data marker' scripts/ci/check-workflows.sh
+rg -q 'nightly vector benchmark smoke report leaked a local path or runtime-data marker' scripts/ci/check-workflows.sh
+```
+
+Output summary:
+
+- All three focused checks exited 1 before implementation because the workflow
+  policy guard did not require nightly benchmark artifact upload-boundary leak
+  failure messages.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-workflows.sh
+sh -n scripts/ci/check-workflows.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `./scripts/ci/check-workflows.sh`: exit 0; the workflow policy now requires
+  the nightly benchmark artifact boundary step plus fail-closed query, OCR, and
+  vector smoke report leak messages.
+- `sh -n scripts/ci/check-workflows.sh`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0; metadata, fmt, workspace clippy,
+  workspace tests/doc-tests, license, runbook, workflow, release-readiness,
+  release artifact, signing evidence, notarization evidence, release SBOM,
+  macOS package, macOS installer evidence, Windows package, Windows installer
+  evidence, Windows service evidence, and public-repo guards passed.
+
+Sub-agent orchestration:
+
+- `fw-build` and Superpowers subagent-driven guidance were used as local
+  implementation discipline only. No separate execution owner or external
+  sub-agent was spawned for this narrowly scoped nightly artifact boundary
+  hardening slice.
+
+Scope note:
+
+- S247 hardens hosted nightly synthetic benchmark smoke artifact upload privacy
+  only. It does not run private real-corpus 100k/1M benchmarks, prove production
+  latency, clear OCR/vector/field/dedupe quality blockers, produce release
+  evidence, or make the full product complete.
 
 ### S246
 
