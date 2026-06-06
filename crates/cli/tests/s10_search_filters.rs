@@ -498,6 +498,78 @@ needle
 }
 
 #[test]
+fn filtered_search_accepts_chinese_present_date_range_without_query_or_path_leak() {
+    let data_dir = temp_dir("search-filter-chinese-present-date-data");
+    let resume_root = temp_dir("search-filter-chinese-present-date-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..4 {
+        fs::write(
+            resume_root.join(format!("present-date-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Present Date Decoy {index}
+Email: present-date-decoy-{index}@example.test
+Experience
+2018年1月 - 2020年12月
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("present-date-target.txt"),
+        "\
+Candidate Present Date Target
+Email: present-date-target@example.test
+Experience
+2020年1月 - 至今
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--date-range-overlaps",
+            "2024-01/至今",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run Chinese present date range filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("present-date-target.txt"));
+    assert!(!stdout.contains("present-date-decoy-"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("present-date-target@example.test"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn filtered_search_prefilters_company_and_title_before_fulltext_top_k_cutoff() {
     let data_dir = temp_dir("search-filter-company-title-data");
     let resume_root = temp_dir("search-filter-company-title-resumes");

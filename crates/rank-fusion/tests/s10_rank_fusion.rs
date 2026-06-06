@@ -256,6 +256,20 @@ fn field_filters_match_overlapping_date_range() {
 }
 
 #[test]
+fn date_range_filter_accepts_chinese_present_aliases() {
+    let filters = SearchFilters::default().with_date_range_overlaps("2024-01/至今");
+    let active = ResumeProfile::new("doc_active").with_date_ranges(["2020-03/PRESENT"]);
+    let ended = ResumeProfile::new("doc_ended").with_date_ranges(["2020-03/2023-12"]);
+
+    assert_eq!(
+        filters.date_range_overlaps().unwrap().canonical(),
+        "2024-01/PRESENT"
+    );
+    assert!(filters.matches(&active));
+    assert!(!filters.matches(&ended));
+}
+
+#[test]
 fn field_filters_match_any_school() {
     let filters = SearchFilters::default()
         .with_schools_any(["Synthetic Institute of Technology", "Other University"]);

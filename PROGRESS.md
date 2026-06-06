@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, S254, S255, S256, S257, and S258 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, S254, S255, S256, S257, S258, and S259 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -229,6 +229,10 @@ obsolete preliminary files and checklists are not product scope.
   as `2020年1月 - 至今`, `Jan 2021 - Present`, and
   `2022.03 - Current`, normalizes them to `YYYY-MM/PRESENT`, preserves exact
   span evidence, and derives years-experience against the current local month.
+  Date-range search filtering now also accepts Chinese open-ended user-input
+  aliases such as `至今`, `现在`, `当前`, `目前`, and `进行中` as the end of
+  `--date-range-overlaps`, mapping them to the same canonical `PRESENT` value
+  used by persisted extracted date ranges.
   Phone extraction now also handles China mainland mobile numbers with or
   without `+86`/`0086` and common separators, normalizing them to E.164
   `+86...` before privacy-preserving import persists redacted phone mentions.
@@ -281,8 +285,8 @@ obsolete preliminary files and checklists are not product scope.
   forms and long-tail degree aliases, school-tier inference beyond explicit
   aliases, remaining address forms beyond
   current high-signal labeled address city substring extraction,
-  Chinese explicit/open-ended date ranges, China mobile phone formats, and
-  labeled company/title forms, real
+  remaining long-tail date range forms, additional phone locale formats, and
+  remaining labeled company/title forms, real
   business labeled field and dedupe quality datasets/results, remaining future
   non-cache PII surface purge coverage outside the current residual marker set,
   and forensic erase proof.
@@ -793,8 +797,59 @@ obsolete preliminary files and checklists are not product scope.
 | S256 | Product purge residual scan complete locally | Focused RED first failed because `resume-cli purge --deleted` did not report a residual scan after deleting tombstoned metadata, OCR cache, vector records, and old snapshots. After implementation, purge collects deleted-scope markers from document IDs, source paths/file names, resume raw/clean text, persisted entity values, and OCR cache text/word boxes before cleanup; after metadata `VACUUM` and index/cache/vector cleanup it stream-scans the local data directory, reports only aggregate residual marker/file/byte counts when clear, and fails closed with a redacted generic error if a retained marker is found. | This slice proves synthetic/local best-effort residual scanning of the current data directory only. It does not prove forensic erase, SSD/filesystem free-space overwrite, OS snapshots/backups cleanup, real-resume purge witnesses, every future PII surface, or stable release readiness. |
 | S257 | Product purge import-root residual marker coverage complete locally | Focused RED first failed because a synthetic retained import-root path marker inside the local data directory did not block `resume-cli purge --deleted`; S256 collected document paths but not the import task root or scan-scope root paths being purged. After implementation, `MetaStore` exposes the import task root paths plus requested/canonical scan-scope root paths that deleted-document purge will remove, and the CLI residual probe includes those markers before cleanup while keeping purge output and retained-marker errors redacted. | This slice proves synthetic/local import-root path residual marker coverage only. It does not prove forensic erase, OS backups/snapshots cleanup, real-resume purge witnesses, every future PII surface, or stable release readiness. |
 | S258 | Product Chinese degree filter alias coverage complete locally | Focused RED first failed because `DegreeLevel::parse("本科")` returned `None`, and direct CLI search with `--degree 本科` rejected the filter even though import persisted a Chinese `学历：本科` mention as canonical `bachelor`. After implementation, degree filter parsing accepts Chinese high-school, associate, bachelor, master, and doctor aliases and maps them to the existing canonical degree levels; the CLI integration test imports synthetic Chinese degree resumes, filters with `--degree 本科`, returns only the canonical bachelor target, and keeps paths/emails/decoy degree text out of output. | This slice proves synthetic/local Chinese degree filter alias coverage only. It does not prove complete field dictionaries, real labeled field-quality metrics, long-tail education phrasing, private corpus recall, or stable release readiness. |
+| S259 | Product Chinese present date-range filter alias coverage complete locally | Focused RED first failed because `SearchFilters::with_date_range_overlaps("2024-01/至今")` produced no parsed range, and direct CLI search with `--date-range-overlaps 2024-01/至今` rejected the filter even though import persists Chinese `2020年1月 - 至今` ranges as canonical `YYYY-MM/PRESENT`. After implementation, date range filter parsing accepts Chinese open-ended aliases `至今`, `现在`, `当前`, `目前`, and `进行中` as canonical `PRESENT`; the CLI integration test imports synthetic Chinese present-date resumes, filters with `--date-range-overlaps 2024-01/至今`, returns only the active target, and keeps query echo, local paths, emails, and decoy files out of output. | This slice proves synthetic/local Chinese present date-range filter alias coverage only. It does not prove complete date parsing dictionaries, real labeled field-quality metrics, long-tail work-history phrasing, private corpus recall, or stable release readiness. |
 
 ## Command Log
+
+### S259
+
+Design target:
+
+- Align user-entered date-range filters with the Chinese open-ended date ranges
+  already extracted and persisted as canonical `YYYY-MM/PRESENT`.
+- Preserve the existing date-filter privacy boundary: filter failures and
+  outputs must not print local paths, emails, query echo, or decoy files.
+
+TDD RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion date_range_filter_accepts_chinese_present_aliases --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_accepts_chinese_present_date_range_without_query_or_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- `date_range_filter_accepts_chinese_present_aliases` failed because the parsed
+  filter range was `None` for `2024-01/至今`.
+- The CLI test failed because `resume-cli search --date-range-overlaps
+  2024-01/至今` reported `search date range filter is invalid` after importing
+  a synthetic Chinese present-date resume.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion date_range_filter_accepts_chinese_present_aliases --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_accepts_chinese_present_date_range_without_query_or_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters --locked
+```
+
+Output summary:
+
+- Focused GREEN passed for Chinese present-date filter parsing.
+- Focused CLI GREEN passed for importing synthetic Chinese present-date ranges
+  and filtering with `--date-range-overlaps 2024-01/至今`.
+- `cargo fmt --check`, full rank-fusion tests, and full CLI search-filter tests
+  passed.
+
+Scope note:
+
+- S259 proves only synthetic local date-range filter alias coverage for common
+  Chinese open-ended terms. It does not prove complete date dictionaries,
+  representative field-quality metrics, private real-corpus recall, all
+  work-history date forms, or stable release readiness.
+- Full product is still not complete.
 
 ### S258
 

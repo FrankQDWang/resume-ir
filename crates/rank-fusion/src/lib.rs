@@ -126,7 +126,8 @@ impl DateRange {
         let end_month = if matches!(
             end.to_ascii_lowercase().as_str(),
             "present" | "current" | "now" | "ongoing"
-        ) {
+        ) || matches!(end, "至今" | "现在" | "当前" | "目前" | "进行中")
+        {
             None
         } else {
             Some(parse_year_month(end)?)
