@@ -146,6 +146,18 @@ jobs:
           grep -F '"launch_agent_validation_status": "blocked"' macos-package-dry-run/macos-installer-evidence.json
           grep -F '"notarization_status": "blocked"' macos-package-dry-run/notarization-evidence.json
           grep -F '"evidence_boundary": "dry_run_no_notarization_credentials"' macos-package-dry-run/notarization-evidence.json
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' macos-package-dry-run/macos-package.json; then
+            echo "macOS package manifest leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' macos-package-dry-run/macos-installer-evidence.json; then
+            echo "macOS installer evidence manifest leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' macos-package-dry-run/notarization-evidence.json; then
+            echo "macOS notarization evidence manifest leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
 
       - name: Upload unsigned macOS package dry run
         uses: actions/upload-artifact@v7
