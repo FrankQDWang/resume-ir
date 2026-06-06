@@ -796,6 +796,148 @@ Skills: Java
 }
 
 #[test]
+fn import_persists_expanded_production_alias_mentions_without_output_leaks() {
+    let data_dir = temp_dir("persisted-expanded-alias-data");
+    let resume_root = temp_dir("persisted-expanded-alias-resumes");
+    fs::write(
+        resume_root.join("synthetic-expanded-alias-candidate.txt"),
+        "\
+Synthetic Expanded Alias Candidate
+Email: expanded-alias-candidate@example.test
+Technical Skills
+Apache Spark / Hadoop / Airflow
+TensorFlow, PyTorch, scikit-learn
+Vue.js, Angular, GraphQL
+Certifications
+AWS Certified Security - Specialty
+Google Professional Data Engineer
+CCNA
+Experience
+Role: Platform Engineer
+职位：信息安全工程师
+Position: Mobile Engineer
+Title: Business Analyst
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import expanded production aliases");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("expanded-alias-candidate@example.test"));
+    assert!(!stdout.contains("Apache Spark"));
+    assert!(!stdout.contains("AWS Certified"));
+    assert!(!stdout.contains("Platform Engineer"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-expanded-alias-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+
+    let mut skills = mentions
+        .iter()
+        .filter(|mention| mention.entity_type == EntityType::Skill)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("Apache Spark"));
+            mention.normalized_value.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    skills.sort();
+    assert_eq!(
+        skills,
+        vec![
+            "Airflow",
+            "Angular",
+            "GraphQL",
+            "Hadoop",
+            "PyTorch",
+            "Spark",
+            "TensorFlow",
+            "Vue.js",
+            "scikit-learn"
+        ]
+    );
+
+    let mut certificates = mentions
+        .iter()
+        .filter(|mention| mention.entity_type == EntityType::Certificate)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("AWS Certified"));
+            mention.normalized_value.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    certificates.sort();
+    assert_eq!(
+        certificates,
+        vec![
+            "aws_security_specialty",
+            "ccna",
+            "gcp_professional_data_engineer"
+        ]
+    );
+
+    let title_mentions = mentions
+        .iter()
+        .filter(|mention| mention.entity_type == EntityType::Title)
+        .collect::<Vec<_>>();
+    let titles = title_mentions
+        .iter()
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!mention.raw_value.contains(':'));
+            assert!(!mention.raw_value.contains('：'));
+            assert!(!format!("{mention:?}").contains("Platform Engineer"));
+            mention.normalized_value.as_deref().unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        titles,
+        vec![
+            "platform_engineer",
+            "security_engineer",
+            "mobile_engineer",
+            "business_analyst"
+        ]
+    );
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_chinese_date_range_and_years_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-chinese-date-data");
     let resume_root = temp_dir("persisted-chinese-date-resumes");

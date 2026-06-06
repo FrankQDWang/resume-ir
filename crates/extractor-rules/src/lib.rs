@@ -1093,8 +1093,19 @@ fn push_skill_alias_matches(
     }
 }
 
-fn skill_alias_patterns() -> [(&'static str, &'static str); 17] {
+fn skill_alias_patterns() -> [(&'static str, &'static str); 26] {
     [
+        ("Spark", r"(?i)\b(?:apache\s+)?spark\b"),
+        ("Hadoop", r"(?i)\b(?:apache\s+)?hadoop\b"),
+        ("Airflow", r"(?i)\b(?:apache\s+)?airflow\b"),
+        ("TensorFlow", r"(?i)\btensor\s*flow\b"),
+        ("PyTorch", r"(?i)\bpy\s*torch\b"),
+        ("scikit-learn", r"(?i)\b(?:scikit[-\s]?learn|sklearn)\b"),
+        ("Vue.js", r"(?i)\bvue(?:\.js)?\b"),
+        ("Angular", r"(?i)\bangular\b"),
+        ("GraphQL", r"(?i)\bgraph\s*ql\b"),
+        ("React", r"(?i)\breact(?:\.js)?\b"),
+        ("Node.js", r"(?i)\bnode(?:\.js|js)?\b"),
         ("Spring Cloud", r"(?i)\bspring\s+cloud\b"),
         ("JavaScript", r"(?i)\b(?:java\s*script|javascript|js)\b"),
         ("TypeScript", r"(?i)\b(?:type\s*script|typescript|ts)\b"),
@@ -1112,8 +1123,6 @@ fn skill_alias_patterns() -> [(&'static str, &'static str); 17] {
         ("Java", r"(?i)\bjava\b"),
         ("Go", r"(?i)\b(?:go|golang)\b"),
         ("Redis", r"(?i)\bredis\b"),
-        ("React", r"(?i)\breact(?:\.js)?\b"),
-        ("Node.js", r"(?i)\bnode(?:\.js|js)?\b"),
         ("SQL", r"(?i)\bsql\b"),
     ]
 }
@@ -1321,8 +1330,31 @@ fn is_title_label(label: &str) -> bool {
 
 fn normalize_title(value: &str) -> Option<(&'static str, f32)> {
     let lower = value.to_lowercase();
-    if looks_like_certificate(value) || looks_like_skill_line(value) {
+    if looks_like_certificate(value)
+        || looks_like_certificate_alias(value)
+        || looks_like_skill_line(value)
+    {
         return None;
+    }
+    if lower.contains("platform engineer") || lower.contains("平台工程师") {
+        return Some(("platform_engineer", 0.83));
+    }
+    if lower.contains("security engineer")
+        || lower.contains("信息安全工程师")
+        || lower.contains("安全工程师")
+    {
+        return Some(("security_engineer", 0.83));
+    }
+    if lower.contains("mobile engineer")
+        || lower.contains("ios engineer")
+        || lower.contains("android engineer")
+        || lower.contains("移动端工程师")
+        || lower.contains("移动开发")
+    {
+        return Some(("mobile_engineer", 0.82));
+    }
+    if lower.contains("business analyst") || lower.contains("业务分析师") {
+        return Some(("business_analyst", 0.80));
     }
     if (lower.contains("frontend") || lower.contains("front-end") || lower.contains("前端"))
         && has_engineering_role_marker(&lower)
@@ -1666,7 +1698,7 @@ fn ranges_overlap(left: (usize, usize), right: (usize, usize)) -> bool {
     left.0 < right.1 && right.0 < left.1
 }
 
-fn certificate_alias_patterns() -> [(&'static str, f32, &'static str); 10] {
+fn certificate_alias_patterns() -> [(&'static str, f32, &'static str); 13] {
     [
         (
             "aws_solutions_architect",
@@ -1679,9 +1711,19 @@ fn certificate_alias_patterns() -> [(&'static str, f32, &'static str); 10] {
             r"(?i)\baws\s+(?:certified\s+)?developer(?:\s+associate)?\b|\bdva-c0[12]\b",
         ),
         (
+            "aws_security_specialty",
+            0.9,
+            r"(?i)\baws\s+(?:certified\s+)?security(?:\s*-\s*|\s+)specialty\b|\bscs-c0[12]\b",
+        ),
+        (
             "azure_administrator",
             0.88,
             r"(?i)\bazure\s+administrator\b|\baz-104\b",
+        ),
+        (
+            "gcp_professional_data_engineer",
+            0.9,
+            r"(?i)\b(?:google\s+(?:cloud\s+)?|gcp\s+)?professional\s+data\s+engineer\b",
         ),
         (
             "cka",
@@ -1698,7 +1740,18 @@ fn certificate_alias_patterns() -> [(&'static str, f32, &'static str); 10] {
         ("cfa_level_1", 0.88, r"(?i)\bcfa\s+level\s+(?:i|1)\b"),
         ("cfa", 0.86, r"(?i)\bcfa\b"),
         ("cpa", 0.86, r"(?i)\bcpa\b|注册会计师"),
+        (
+            "ccna",
+            0.88,
+            r"(?i)\b(?:ccna|cisco\s+certified\s+network\s+associate)\b",
+        ),
     ]
+}
+
+fn looks_like_certificate_alias(value: &str) -> bool {
+    certificate_alias_patterns()
+        .iter()
+        .any(|(_, _, pattern)| Regex::new(pattern).unwrap().is_match(value))
 }
 
 fn normalize_certificate_line(value: &str) -> String {

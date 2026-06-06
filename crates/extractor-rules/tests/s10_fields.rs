@@ -620,3 +620,99 @@ fn extracts_fullwidth_labeled_certificate_alias_with_exact_span() {
     assert_eq!(&text[certificate.span_start..certificate.span_end], "PMP");
     assert!(!format!("{certificate:?}").contains("PMP"));
 }
+
+#[test]
+fn extracts_expanded_production_skill_certificate_and_title_aliases() {
+    let text = "\
+Technical Skills
+Apache Spark / Hadoop / Airflow
+TensorFlow, PyTorch, scikit-learn
+Vue.js, Angular, GraphQL
+Certifications
+AWS Certified Security - Specialty
+Google Professional Data Engineer
+CCNA
+Experience
+Platform Engineer
+信息安全工程师
+Mobile Engineer
+Business Analyst";
+
+    let matches = extract_strong_fields(text);
+
+    let skills = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Skill)
+        .collect::<Vec<_>>();
+    let skill_normalized = skills
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        skill_normalized,
+        vec![
+            "Spark",
+            "Hadoop",
+            "Airflow",
+            "TensorFlow",
+            "PyTorch",
+            "scikit-learn",
+            "Vue.js",
+            "Angular",
+            "GraphQL"
+        ]
+    );
+    assert!(skills
+        .iter()
+        .all(|field| text[field.span_start..field.span_end] == field.raw_value));
+    assert!(!skills
+        .iter()
+        .any(|field| field.raw_value == "Technical Skills"));
+    assert!(!format!("{:?}", skills[0]).contains("Apache Spark"));
+
+    let certificates = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Certificate)
+        .collect::<Vec<_>>();
+    let certificate_normalized = certificates
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        certificate_normalized,
+        vec![
+            "aws_security_specialty",
+            "gcp_professional_data_engineer",
+            "ccna"
+        ]
+    );
+    assert!(certificates
+        .iter()
+        .all(|field| text[field.span_start..field.span_end] == field.raw_value));
+    assert!(!format!("{:?}", certificates[0]).contains("AWS Certified"));
+
+    let titles = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Title)
+        .collect::<Vec<_>>();
+    let title_normalized = titles
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        title_normalized,
+        vec![
+            "platform_engineer",
+            "security_engineer",
+            "mobile_engineer",
+            "business_analyst"
+        ]
+    );
+    assert!(titles
+        .iter()
+        .all(|field| text[field.span_start..field.span_end] == field.raw_value));
+    assert!(!titles
+        .iter()
+        .any(|field| field.raw_value.contains("AWS Certified")));
+    assert!(!format!("{:?}", titles[0]).contains("Platform Engineer"));
+}

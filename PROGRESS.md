@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, and S214 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, and S215 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -175,11 +175,18 @@ obsolete preliminary files and checklists are not product scope.
   ASCII or fullwidth colons, and extracts high-signal certificate aliases such
   as PMP, CKA, CISSP, CFA Level I, AWS/Azure/Kubernetes certifications, and CPA
   with canonical normalized values and span evidence that import persists.
+  Certificate extraction now also recognizes AWS Security Specialty, Google
+  Professional Data Engineer, and CCNA aliases while preventing those known
+  certificate lines from being misclassified as titles.
   Skill extraction now also treats skill section headers as bounded context,
   suppresses header values, handles labeled skill lines with ASCII or fullwidth
   colons, and extracts high-signal aliases such as TypeScript, PostgreSQL,
   K8s/Kubernetes, Go/Golang, Redis, React, and Node.js with canonical normalized
   values and span evidence that import persists.
+  Skill extraction now also recognizes expanded high-signal data, ML, and
+  frontend aliases such as Spark, Hadoop, Airflow, TensorFlow, PyTorch,
+  scikit-learn, Vue.js, Angular, and GraphQL, while avoiding `.js` suffixes
+  being separately extracted as JavaScript.
   Date-range extraction now also handles Chinese year/month ranges such as
   `2020年1月 - 2024年3月`, normalizes them to the existing `YYYY-MM/YYYY-MM`
   schema, preserves exact span evidence, and keeps years-experience derivation
@@ -199,6 +206,9 @@ obsolete preliminary files and checklists are not product scope.
   aliases for frontend, full-stack, machine-learning, data-science, DevOps, QA,
   engineering-manager, and solutions-architect families while avoiding
   certificate-line title false positives.
+  Title extraction now also maps platform, security, mobile, and business
+  analyst role families, and suppresses known certificate aliases such as Google
+  Professional Data Engineer from title extraction.
   Location extraction now handles explicitly labeled English and Chinese
   location lines such as `Location:`, `Base:`, and `所在地：`, canonicalizes
   common city aliases, persists span-backed `location` entity mentions, and
@@ -666,8 +676,77 @@ obsolete preliminary files and checklists are not product scope.
 | S212 | Product location field-quality release gate complete locally | Focused RED tests first failed because private-business field-quality reports missing `location` metrics were accepted by both library and CLI field gates. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `location` metrics, complete strict private-business fixtures include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, complete private-business acceptance regressions, full `benchmark-runner`, focused clippy, fmt, runbook guard, diff check, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create or upload private labels, run real business location-quality evaluation, prove production location recall/F1 on representative resumes, broaden geography/address parsing, clear field-quality blockers, or make stable release ready. |
 | S213 | Product certificate field-quality release gate complete locally | Focused RED tests first failed because private-business field-quality reports missing `certificate` metrics were accepted by both library and CLI field gates. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `certificate` metrics, complete strict private-business fixtures include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, complete private-business acceptance regressions, full `benchmark-runner`, focused clippy, fmt, and runbook guard passed locally. | This slice tightens release-evidence validation only. It does not create or upload private labels, run real business certificate-quality evaluation, prove production certificate recall/F1 on representative resumes, broaden certificate dictionaries, clear field-quality blockers, or make stable release ready. |
 | S214 | Product years-experience field-quality release gate complete locally | Focused RED tests first failed because private-business field-quality reports missing `years_experience` metrics were accepted by both library and CLI field gates. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `years_experience` metrics, complete strict private-business fixtures include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, complete private-business acceptance regressions, full `benchmark-runner`, focused clippy, fmt, and runbook guard passed locally. | This slice tightens release-evidence validation only. It does not create or upload private labels, run real business years-experience quality evaluation, prove production years-experience recall/F1 on representative resumes, improve date arithmetic coverage, clear field-quality blockers, or make stable release ready. |
+| S215 | Product expanded field-alias extraction complete locally | Focused RED tests first failed because high-signal production aliases for Spark, Hadoop, Airflow, TensorFlow, PyTorch, scikit-learn, Vue.js, Angular, GraphQL, AWS Security Specialty, Google Professional Data Engineer, CCNA, platform engineer, security engineer, mobile engineer, and business analyst were not extracted and `Vue.js` was misclassified as JavaScript through the old `js` suffix alias. After implementation, extractor-rules maps these aliases with span-backed evidence, prevents known certificate aliases from being title mentions, and import persists the new skill/certificate/title entity mentions without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full `extractor-rules`, full `resume-cli --test s16_persisted_fields`, full `resume-cli`, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice broadens high-signal rule dictionaries only. It does not prove real business field-quality metrics, create/upload private labels, complete broad multilingual dictionaries, clear private field-quality blockers, validate million-scale behavior, or make stable release ready. |
 
 ## Command Log
+
+### S215
+
+Design target:
+
+- Close part of the P2 field-extraction dictionary gap from the system design:
+  high-confidence skill, certificate, and title aliases should normalize to
+  stable structured values with evidence spans and confidence.
+- Preserve precision and privacy: avoid extracting `.js` suffixes in framework
+  names as JavaScript, avoid classifying known certificate aliases as titles,
+  and keep import output free of local paths, contacts, and raw field values.
+- Use synthetic fixtures only.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p extractor-rules --test s10_fields extracts_expanded_production_skill_certificate_and_title_aliases --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s16_persisted_fields import_persists_expanded_production_alias_mentions_without_output_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The extractor exact test failed before implementation because the only skill
+  extracted from the expanded fixture was `JavaScript`, caused by `Vue.js`
+  matching the old `js` suffix alias.
+- The import exact test failed for the same reason: persisted skill mentions
+  contained only `JavaScript` instead of the expanded skill set, and the new
+  certificate/title aliases were absent.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p extractor-rules --test s10_fields extracts_expanded_production_skill_certificate_and_title_aliases --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s16_persisted_fields import_persists_expanded_production_alias_mentions_without_output_leaks --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p extractor-rules --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s16_persisted_fields --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --all --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p extractor-rules -p resume-cli --all-targets --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --locked
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused RED tests passed after expanding skill/certificate/title alias
+  dictionaries, ordering framework aliases before the generic `js` alias, and
+  suppressing title extraction for known certificate aliases.
+- Full `extractor-rules` passed: 22 tests/doc-tests total, including the new
+  expanded alias coverage.
+- Full `resume-cli --test s16_persisted_fields` passed: 13 tests, including
+  import persistence for the new aliases without output/path/contact leaks.
+- Full `resume-cli` passed locally.
+- `cargo fmt --all --check` and focused clippy passed locally.
+- `git diff --check` and `guard-public-repo.sh` passed locally.
+- Full local verification passed locally, including workspace tests and
+  doc-tests, license/runbook/workflow/release-readiness checks, release
+  artifact and SBOM checks, macOS package check, and the final public
+  repository guard. Windows package check was skipped on this non-Windows host.
+
+Scope note:
+
+- S215 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, vectors, raw contact
+  values, contact hashes, private labels, field values, certificate values,
+  skill values, title values, or private corpus evidence.
 
 ### S214
 
