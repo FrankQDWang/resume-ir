@@ -2143,7 +2143,7 @@ fn ranges_overlap(left: (usize, usize), right: (usize, usize)) -> bool {
     left.0 < right.1 && right.0 < left.1
 }
 
-fn certificate_alias_patterns() -> [(&'static str, f32, &'static str); 13] {
+fn certificate_alias_patterns() -> [(&'static str, f32, &'static str); 18] {
     [
         (
             "aws_solutions_architect",
@@ -2179,6 +2179,31 @@ fn certificate_alias_patterns() -> [(&'static str, f32, &'static str); 13] {
             "ckad",
             0.9,
             r"(?i)\b(?:ckad|certified\s+kubernetes\s+application\s+developer)\b",
+        ),
+        (
+            "cks",
+            0.9,
+            r"(?i)\b(?:cks|certified\s+kubernetes\s+security\s+specialist)\b",
+        ),
+        (
+            "hashicorp_terraform_associate",
+            0.88,
+            r"(?i)\b(?:hashicorp\s+certified\s+)?terraform\s+associate\b",
+        ),
+        (
+            "gcp_associate_cloud_engineer",
+            0.88,
+            r"(?i)\b(?:(?:google\s+(?:cloud\s+)?)|gcp\s+)?associate\s+cloud\s+engineer\b",
+        ),
+        (
+            "azure_developer",
+            0.88,
+            r"(?i)\b(?:azure\s+developer(?:\s+associate)?|az-204)\b",
+        ),
+        (
+            "rhcsa",
+            0.86,
+            r"(?i)\b(?:rhcsa|red\s+hat\s+certified\s+system\s+administrator)\b",
         ),
         ("cissp", 0.9, r"(?i)\bcissp\b"),
         ("pmp", 0.9, r"(?i)\bpmp\b"),

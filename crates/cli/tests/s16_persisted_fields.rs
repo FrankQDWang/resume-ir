@@ -149,6 +149,131 @@ Skills: Java
 }
 
 #[test]
+fn import_persists_broader_certificate_aliases_and_filters_without_output_leaks() {
+    let data_dir = temp_dir("persisted-broader-certificate-data");
+    let resume_root = temp_dir("persisted-broader-certificate-resumes");
+    fs::write(
+        resume_root.join("synthetic-broader-cert-target.txt"),
+        "\
+Synthetic Broader Cert Target
+Email: broader-cert-target@example.test
+Certifications
+Certified Kubernetes Security Specialist
+HashiCorp Certified Terraform Associate
+Google Associate Cloud Engineer
+AZ-204
+RHCSA
+Skills: needle Java
+",
+    )
+    .unwrap();
+    fs::write(
+        resume_root.join("synthetic-broader-cert-decoy.txt"),
+        "\
+Synthetic Broader Cert Decoy
+Email: broader-cert-decoy@example.test
+Certifications
+CKA
+Skills: needle Java
+",
+    )
+    .unwrap();
+
+    let import_output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import broader certificate aliases");
+    assert!(
+        import_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import_output.stdout),
+        String::from_utf8_lossy(&import_output.stderr)
+    );
+    assert!(import_output.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import_output.stdout);
+    assert!(!import_stdout.contains(path_str(&data_dir)));
+    assert!(!import_stdout.contains(path_str(&resume_root)));
+    assert!(!import_stdout.contains("Terraform Associate"));
+    assert!(!import_stdout.contains("Security Specialist"));
+    assert!(!import_stdout.contains("broader-cert-target@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let target = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-broader-cert-target.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&target.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let certificates = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Certificate)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("Terraform Associate"));
+            assert!(!format!("{mention:?}").contains("Security Specialist"));
+            mention.normalized_value.unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        certificates,
+        vec![
+            "cks",
+            "hashicorp_terraform_associate",
+            "gcp_associate_cloud_engineer",
+            "azure_developer",
+            "rhcsa"
+        ]
+    );
+
+    let search_output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--certificate",
+            "Terraform Associate",
+            "--top-k",
+            "5",
+        ])
+        .output()
+        .expect("run broader certificate filtered search");
+    assert!(
+        search_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&search_output.stdout),
+        String::from_utf8_lossy(&search_output.stderr)
+    );
+    assert!(search_output.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search_output.stdout);
+    assert!(search_stdout.contains("synthetic-broader-cert-target.txt"));
+    assert!(!search_stdout.contains("synthetic-broader-cert-decoy.txt"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&resume_root)));
+    assert!(!search_stdout.contains("Terraform Associate"));
+    assert!(!search_stdout.contains("broader-cert-target@example.test"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_labeled_location_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-location-data");
     let resume_root = temp_dir("persisted-location-resumes");

@@ -994,6 +994,64 @@ Senior Backend Engineer";
 }
 
 #[test]
+fn extracts_broader_certificate_aliases_with_exact_spans() {
+    let text = "\
+Certifications
+Certified Kubernetes Security Specialist
+HashiCorp Certified Terraform Associate
+Google Associate Cloud Engineer
+AZ-204
+RHCSA
+Skills
+Built Terraform modules in delivery work";
+
+    let matches = extract_strong_fields(text);
+    let certificates = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Certificate)
+        .collect::<Vec<_>>();
+    let normalized = certificates
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        normalized,
+        vec![
+            "cks",
+            "hashicorp_terraform_associate",
+            "gcp_associate_cloud_engineer",
+            "azure_developer",
+            "rhcsa"
+        ]
+    );
+    assert_eq!(
+        &text[certificates[0].span_start..certificates[0].span_end],
+        "Certified Kubernetes Security Specialist"
+    );
+    assert_eq!(
+        &text[certificates[1].span_start..certificates[1].span_end],
+        "HashiCorp Certified Terraform Associate"
+    );
+    assert_eq!(
+        &text[certificates[2].span_start..certificates[2].span_end],
+        "Google Associate Cloud Engineer"
+    );
+    assert_eq!(
+        &text[certificates[3].span_start..certificates[3].span_end],
+        "AZ-204"
+    );
+    assert_eq!(
+        &text[certificates[4].span_start..certificates[4].span_end],
+        "RHCSA"
+    );
+    assert!(!certificates
+        .iter()
+        .any(|field| field.raw_value.contains("modules")));
+    assert!(!format!("{:?}", certificates[0]).contains("Security Specialist"));
+}
+
+#[test]
 fn extracts_fullwidth_labeled_certificate_alias_with_exact_span() {
     let text = "认证：PMP";
 

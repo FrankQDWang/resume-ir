@@ -1381,9 +1381,18 @@ fn normalize_certificate(certificate: &str) -> String {
             "aws_developer".to_string()
         }
         "az_104" => "azure_administrator".to_string(),
+        "azure_developer" | "azure_developer_associate" | "az_204" => "azure_developer".to_string(),
         "certified_kubernetes_administrator" => "cka".to_string(),
         "certified_kubernetes_application_developer" => "ckad".to_string(),
+        "certified_kubernetes_security_specialist" => "cks".to_string(),
+        "hashicorp_certified_terraform_associate" | "terraform_associate" => {
+            "hashicorp_terraform_associate".to_string()
+        }
+        "google_associate_cloud_engineer"
+        | "google_cloud_associate_cloud_engineer"
+        | "gcp_associate_cloud_engineer" => "gcp_associate_cloud_engineer".to_string(),
         "cfa_level_i" | "cfa_level_1" => "cfa_level_1".to_string(),
+        "red_hat_certified_system_administrator" => "rhcsa".to_string(),
         "注册会计师" => "cpa".to_string(),
         _ => normalized,
     }

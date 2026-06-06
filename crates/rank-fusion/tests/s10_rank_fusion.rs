@@ -119,6 +119,38 @@ fn field_filters_match_any_certificate() {
 }
 
 #[test]
+fn field_filters_normalize_broader_certificate_aliases() {
+    let filters = SearchFilters::default().with_certificates_any([
+        "Certified Kubernetes Security Specialist",
+        "Terraform Associate",
+        "Google Associate Cloud Engineer",
+        "AZ-204",
+        "RHCSA",
+    ]);
+    let matching = ResumeProfile::new("doc_certified").with_certificates([
+        "cks",
+        "hashicorp_terraform_associate",
+        "gcp_associate_cloud_engineer",
+        "azure_developer",
+        "rhcsa",
+    ]);
+    let decoy = ResumeProfile::new("doc_decoy").with_certificates(["cka"]);
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&decoy));
+    assert_eq!(
+        filters.certificates_any(),
+        &[
+            "azure_developer",
+            "cks",
+            "gcp_associate_cloud_engineer",
+            "hashicorp_terraform_associate",
+            "rhcsa"
+        ]
+    );
+}
+
+#[test]
 fn field_filters_match_overlapping_date_range() {
     let filters = SearchFilters::default().with_date_range_overlaps("2021-01/2021-12");
     let matching =
