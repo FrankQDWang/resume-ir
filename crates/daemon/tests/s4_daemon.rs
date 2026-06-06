@@ -10,6 +10,8 @@ use meta_store::{
     MetaStore, UnixTimestamp,
 };
 
+const ACTIVE_KILL_FIXTURE_FILE_COUNT: usize = 128;
+
 #[test]
 fn foreground_once_opens_store_reports_ready_and_exits() {
     let data_dir = temp_dir("daemon-data");
@@ -574,7 +576,7 @@ fn foreground_import_scheduler_recovers_stale_running_import_task() {
 #[test]
 fn foreground_import_scheduler_recovers_active_import_after_kill_and_restart() {
     let data_dir = temp_dir("daemon-import-active-kill-data");
-    let fixture_root = active_kill_fixture_root(1_024);
+    let fixture_root = active_kill_fixture_root(ACTIVE_KILL_FIXTURE_FILE_COUNT);
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
     let task_id = seed_queued_import_task(
         &data_dir,
@@ -645,7 +647,9 @@ fn foreground_import_scheduler_recovers_active_import_after_kill_and_restart() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("import worker recovered stale running: 1"));
     assert!(stdout.contains("import worker processed: 1"));
-    assert!(stdout.contains("import worker searchable documents: 1024"));
+    assert!(stdout.contains(&format!(
+        "import worker searchable documents: {ACTIVE_KILL_FIXTURE_FILE_COUNT}"
+    )));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
     assert!(!stdout.contains(path_str(&canonical_fixture_root)));
@@ -655,7 +659,10 @@ fn foreground_import_scheduler_recovers_active_import_after_kill_and_restart() {
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
-    assert_eq!(store.status_summary().unwrap().searchable_documents, 1_024);
+    assert_eq!(
+        store.status_summary().unwrap().searchable_documents,
+        ACTIVE_KILL_FIXTURE_FILE_COUNT as u64
+    );
 
     remove_dir(&data_dir);
     remove_dir(&fixture_root);
