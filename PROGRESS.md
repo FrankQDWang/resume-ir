@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, and S251 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, and S252 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -407,7 +407,8 @@ obsolete preliminary files and checklists are not product scope.
 - P6 performance/stability: synthetic benchmark runner, status/doctor/export
   diagnostics, redacted resource telemetry for the data-disk volume, current
   process memory, CPU cores, OCR page-budget remediation, and OCR runtime
-  availability, snapshot fallback, explicit obsolete
+  availability, snapshot fallback, full-text active-snapshot corruption/
+  last-good recovery fault probes, explicit obsolete
   full-text snapshot and staging cleanup for deleted-document purge, safe fault
   simulation for disk-space budget, permission-denied probes, file-lock
   contention probes, metadata migration failure probes against synthetic broken
@@ -752,8 +753,65 @@ obsolete preliminary files and checklists are not product scope.
 | S249 | Product daemon IPC closed-loop acceptance gate complete locally | Focused RED guard first failed because `scripts/ci/verify-local.sh`, `scripts/ci/check-workflows.sh`, and the PR workflow did not require a daemon IPC closed-loop script covering a real daemon process, auto-discovered IPC manifest/token, import-over-IPC, worker-loop import/OCR/embedding/index completion, status-over-IPC, search-over-IPC, and detail-over-IPC. After implementation, `scripts/ci/check-daemon-closed-loop.sh` starts `resume-daemon` with local import/OCR/embedding/index worker loops plus loopback IPC, submits the synthetic fixture import through `resume-cli import --ipc auto`, waits until status reports three searchable documents, empty OCR queue, full-text snapshot, and HNSW vector snapshot, searches Java and OCR tokens through IPC, retrieves redacted detail through IPC, rejects local paths and OCR text in outputs, and is required by local verification plus the PR workflow. | This slice adds a synthetic daemon/IPC acceptance gate only. It does not prove installed service lifecycle, platform installer behavior, real-resume OCR quality, production embedding model license/distribution, private semantic quality, million-scale performance, signing, notarization, or stable release readiness. |
 | S250 | Product benchmark smoke acceptance gate complete locally | Focused RED guard first failed because the repository had PR-inline benchmark smoke commands but no reusable `scripts/ci/check-benchmark-smoke.sh` required by local verification, workflow policy, and the PR workflow. After implementation, `scripts/ci/check-benchmark-smoke.sh` runs synthetic query benchmark plus gate, synthetic OCR throughput plus gate, and synthetic vector-quality plus gate in a private temporary workspace, validates report JSON, rejects temporary paths, local path markers, runtime-data markers, command markers, and fixture payloads from reports, runs Cargo quietly to avoid temporary-path logs, and is required by `verify-local.sh` plus the PR workflow. | This slice adds a synthetic benchmark acceptance gate only. It does not run private real-corpus 100k/1M benchmarks, prove `<200ms` P95 on representative hardware, prove real scanned-resume OCR throughput/quality, prove real semantic/vector quality, choose or license a production embedding model, clear platform blockers, upload production evidence, or make stable release ready. |
 | S251 | Product daemon semantic/hybrid search IPC complete locally | Focused RED first failed because authenticated daemon `/search` IPC returned 400 for `mode: semantic`, and the daemon closed-loop script did not require semantic or hybrid IPC search. After implementation, daemon search IPC parses `fulltext`, `semantic`, and `hybrid` modes, uses daemon startup embedding configuration rather than accepting command paths from CLI search requests, embeds semantic queries through the local embedding protocol, searches the persisted model-scoped HNSW vector snapshot, applies existing field prefilters, candidate folding, visibility filtering, soft-dedupe hints, and hybrid RRF, returns redacted `daemon.search.v1` results, and the daemon closed-loop gate now verifies semantic plus hybrid IPC searches against synthetic imported PDF/DOCX/scanned-PDF fixtures. | This slice adds synthetic daemon semantic/hybrid IPC functionality only. It does not choose/license/distribute a production embedding model, prove private semantic quality, prove real ANN recall/latency at 100k/1M scale, validate Windows semantic IPC with an executable embedding runtime, clear model/vector-quality blockers, or make stable release ready. |
+| S252 | Product full-text index corruption fault probe complete locally | Focused RED first failed because `resume-cli fault-simulate --case index-snapshot-corrupt` returned the fault-simulate usage error even though doctor/export advertised `index_snapshot_corrupt` as an available hook. After implementation, the safe local probe publishes two synthetic encrypted full-text snapshots in a private scratch directory, corrupts the active snapshot envelope, verifies last-good published-snapshot recovery through `FullTextIndex::open_active`, checks a synthetic query still resolves only through the recovered snapshot, cleans the probe directory, redacts paths and synthetic payloads from stdout, and the fault-injection runbook plus runbook guard now document the case. | This slice proves only a safe synthetic full-text active-snapshot corruption/recovery probe. It does not perform destructive disk faults, corrupt real user indexes, prove service-manager kill recovery, validate Windows/macOS filesystem behavior, prove large-corpus recovery latency, or clear release readiness blockers. |
 
 ## Command Log
+
+### S252
+
+Design target:
+
+- Make the advertised `index_snapshot_corrupt` fault hook executable through
+  `resume-cli fault-simulate --case index-snapshot-corrupt`.
+- Use only synthetic full-text index data in a scratch directory, corrupt the
+  active encrypted snapshot, prove last-good snapshot recovery, and keep stdout
+  free of local paths, file names, probe text, and resume payloads.
+- Keep the fault-injection runbook and CI runbook guard aligned with the CLI
+  surface.
+
+Observed RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s71_fault_injection fault_simulate_index_snapshot_corrupt_recovers_without_payload_or_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- Exit 101 before implementation: the focused test failed because
+  `fault-simulate --case index-snapshot-corrupt` returned the usage error.
+
+Implementation verification:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s71_fault_injection fault_simulate_index_snapshot_corrupt_recovers_without_payload_or_path_leak --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s71_fault_injection --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s13_diagnostics --locked
+./scripts/ci/check-runbooks.sh
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- Focused RED/GREEN exact: exit 0 after implementation.
+- Full fault-injection CLI suite: exit 0; 13 tests passed.
+- Full diagnostics CLI suite: exit 0; 14 tests passed.
+- Runbook guard: exit 0.
+- `cargo fmt --check`: exit 0 after formatting one line.
+- Focused resume-cli clippy: exit 0.
+- `git diff --check`: exit 0.
+- `verify-local.sh`: exit 0; full local gate passed after this slice.
+- Public repository guard: exit 0.
+
+Scope note:
+
+- S252 proves a synthetic local full-text active-snapshot corruption/recovery
+  fault probe only. It does not corrupt user data, fill disks, perform
+  destructive service-level drills, prove cross-platform filesystem behavior,
+  prove large-corpus recovery latency, or make the complete product ready.
 
 ### S251
 

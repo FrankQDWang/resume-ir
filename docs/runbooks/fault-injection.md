@@ -23,6 +23,7 @@ Canonical probe forms:
 - `resume-cli fault-simulate --case disk-space-low`
 - `resume-cli fault-simulate --case permission-denied`
 - `resume-cli fault-simulate --case file-lock`
+- `resume-cli fault-simulate --case index-snapshot-corrupt`
 - `resume-cli fault-simulate --case model-checksum`
 - `resume-cli fault-simulate --case daemon-kill`
 - `resume-cli fault-simulate --case ocr-crash`
@@ -55,6 +56,14 @@ Run file-lock contention simulation:
 ```bash
 resume-cli --data-dir "$data_dir" fault-simulate \
   --case file-lock \
+  --scratch-dir "$scratch"
+```
+
+Run full-text index active-snapshot corruption simulation:
+
+```bash
+resume-cli --data-dir "$data_dir" fault-simulate \
+  --case index-snapshot-corrupt \
   --scratch-dir "$scratch"
 ```
 
@@ -106,10 +115,10 @@ resume-cli --data-dir "$data_dir" fault-simulate \
 ```
 
 Expected safe output includes `paths: <redacted>` and does not include the
-scratch path, data path, command path, model bytes, OCR stdout, OCR stderr, or
-probe bytes. Checksum output is limited to short digest prefixes. Battery and
-external-drive probes are safe state simulations only; their output must say
-`real hardware drill: blocked`.
+scratch path, data path, command path, model bytes, OCR stdout, OCR stderr,
+synthetic index probe text, or probe bytes. Checksum output is limited to short
+digest prefixes. Battery and external-drive probes are safe state simulations
+only; their output must say `real hardware drill: blocked`.
 
 ## Unsafe Faults
 

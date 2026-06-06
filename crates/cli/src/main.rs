@@ -20,8 +20,9 @@ use import_pipeline::{
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{
-    inspect_snapshot_root, purge_obsolete_snapshots, redact_contact_values, FullTextIndex,
-    SearchHit, SearchQuery, SnapshotReadTarget, SnapshotRootState,
+    inspect_snapshot_root, publish_snapshot, purge_obsolete_snapshots, redact_contact_values,
+    FullTextIndex, IndexDocument, IndexSection, SearchHit, SearchQuery, SnapshotReadTarget,
+    SnapshotRootState,
 };
 use index_vector::{
     inspect_persistent_vector_snapshot, PersistentVectorIndex, PersistentVectorSnapshotInspection,
@@ -2283,6 +2284,41 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
             println!("paths: <redacted>");
             Ok(())
         }
+        FaultSimulationCase::IndexSnapshotCorrupt => {
+            println!("fault: index_snapshot_corrupt");
+            let result = simulate_index_snapshot_corrupt_probe(&scratch_dir)?;
+            if result.reproduced {
+                println!("status: reproduced");
+            } else {
+                println!("status: not reproduced");
+            }
+            println!(
+                "active snapshot: {}",
+                if result.active_snapshot_corrupt {
+                    "corrupt"
+                } else {
+                    "not_corrupt"
+                }
+            );
+            println!(
+                "fallback snapshot: {}",
+                if result.fallback_recovered {
+                    "recovered"
+                } else {
+                    "not_recovered"
+                }
+            );
+            println!(
+                "query after recovery: {}",
+                if result.query_after_recovery_passed {
+                    "passed"
+                } else {
+                    "failed"
+                }
+            );
+            println!("paths: <redacted>");
+            Ok(())
+        }
         FaultSimulationCase::MetadataMigration => {
             println!("fault: metadata_migration");
             let result = simulate_metadata_migration_failure_probe(&scratch_dir)
@@ -2430,6 +2466,7 @@ enum FaultSimulationCase {
     DiskSpaceLow,
     PermissionDenied,
     FileLock,
+    IndexSnapshotCorrupt,
     MetadataMigration,
     ModelChecksum,
     DaemonKill,
@@ -2566,6 +2603,7 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
         }
         FaultSimulationCase::PermissionDenied
         | FaultSimulationCase::FileLock
+        | FaultSimulationCase::IndexSnapshotCorrupt
         | FaultSimulationCase::MetadataMigration => {
             if required_bytes.is_some()
                 || available_bytes.is_some()
@@ -2665,6 +2703,9 @@ fn parse_fault_case(value: &str) -> Result<FaultSimulationCase> {
         "disk-space-low" => Ok(FaultSimulationCase::DiskSpaceLow),
         "permission-denied" => Ok(FaultSimulationCase::PermissionDenied),
         "file-lock" => Ok(FaultSimulationCase::FileLock),
+        "index-snapshot-corrupt" | "index_snapshot_corrupt" => {
+            Ok(FaultSimulationCase::IndexSnapshotCorrupt)
+        }
         "migration-failure" | "metadata-migration" => Ok(FaultSimulationCase::MetadataMigration),
         "model-checksum" => Ok(FaultSimulationCase::ModelChecksum),
         "daemon-kill" => Ok(FaultSimulationCase::DaemonKill),
@@ -2818,6 +2859,117 @@ fn contend_file_lock_probe_file(path: &Path) -> std::io::Result<FileLockProbeRes
 
     holder.unlock()?;
     result
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct IndexSnapshotCorruptProbeResult {
+    reproduced: bool,
+    active_snapshot_corrupt: bool,
+    fallback_recovered: bool,
+    query_after_recovery_passed: bool,
+}
+
+fn simulate_index_snapshot_corrupt_probe(
+    scratch_dir: &Path,
+) -> Result<IndexSnapshotCorruptProbeResult> {
+    fs::create_dir_all(scratch_dir).map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let probe_dir = scratch_dir.join(format!(
+        ".resume-ir-index-corrupt-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&probe_dir).map_err(|_| CliError::user("fault simulation probe failed"))?;
+
+    let result = simulate_index_snapshot_corrupt_probe_dir(&probe_dir);
+    let _ = fs::remove_dir_all(&probe_dir);
+    result
+}
+
+fn simulate_index_snapshot_corrupt_probe_dir(
+    probe_dir: &Path,
+) -> Result<IndexSnapshotCorruptProbeResult> {
+    const QUERY_TOKEN: &str = "SYNTHETIC_INDEX_CORRUPT_PRIVATE_TOKEN";
+    const GOOD_SNAPSHOT: &str = "fulltext-1800003000-good";
+    const ACTIVE_SNAPSHOT: &str = "fulltext-1800003001-active";
+
+    let index_root = probe_dir.join("search-index");
+    publish_snapshot(
+        &index_root,
+        GOOD_SNAPSHOT,
+        [index_corrupt_probe_document(
+            "doc_recovered",
+            "ver_recovered",
+            "synthetic-recovered.pdf",
+            QUERY_TOKEN,
+        )],
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    publish_snapshot(
+        &index_root,
+        ACTIVE_SNAPSHOT,
+        [index_corrupt_probe_document(
+            "doc_active",
+            "ver_active",
+            "synthetic-corrupt-active.pdf",
+            "active snapshot text that should disappear after corruption",
+        )],
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+
+    fs::write(
+        index_root
+            .join("snapshots")
+            .join(ACTIVE_SNAPSHOT)
+            .join("fulltext.snapshot.enc"),
+        b"not a valid encrypted full-text snapshot",
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+
+    let inspection = inspect_snapshot_root(&index_root)
+        .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let active_snapshot_corrupt = inspection.active_snapshot().is_some()
+        && inspection.state() == SnapshotRootState::Recovered;
+    let fallback_recovered = inspection.fallback_snapshot().is_some()
+        && inspection.read_target() == Some(SnapshotReadTarget::PublishedSnapshot);
+    let query_after_recovery_passed = FullTextIndex::open_active(&index_root)
+        .map_err(|_| CliError::user("fault simulation probe failed"))?
+        .map(|index| {
+            index
+                .search(SearchQuery::new(QUERY_TOKEN).with_limit(5))
+                .map(|hits| hits.len() == 1 && hits[0].doc_id == "doc_recovered")
+        })
+        .transpose()
+        .map_err(|_| CliError::user("fault simulation probe failed"))?
+        .unwrap_or(false);
+
+    Ok(IndexSnapshotCorruptProbeResult {
+        reproduced: active_snapshot_corrupt && fallback_recovered && query_after_recovery_passed,
+        active_snapshot_corrupt,
+        fallback_recovered,
+        query_after_recovery_passed,
+    })
+}
+
+fn index_corrupt_probe_document(
+    doc_id: &str,
+    version_id: &str,
+    file_name: &str,
+    clean_text: &str,
+) -> IndexDocument {
+    IndexDocument {
+        doc_id: doc_id.to_string(),
+        version_id: version_id.to_string(),
+        file_name: file_name.to_string(),
+        clean_text: clean_text.to_string(),
+        sections: vec![IndexSection {
+            section_type: "summary".to_string(),
+            text: clean_text.to_string(),
+        }],
+        is_deleted: false,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3037,7 +3189,7 @@ fn simulate_ocr_crash_probe(scratch_dir: &Path, ocr_command: &Path) -> Result<Oc
 }
 
 fn fault_simulate_usage() -> &'static str {
-    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case battery-mode --battery-state <battery|ac> [--scratch-dir <path>] OR resume-cli fault-simulate --case external-drive-disconnect --drive-state <disconnected|mounted> [--scratch-dir <path>]"
+    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case index-snapshot-corrupt [--scratch-dir <path>] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case battery-mode --battery-state <battery|ac> [--scratch-dir <path>] OR resume-cli fault-simulate --case external-drive-disconnect --drive-state <disconnected|mounted> [--scratch-dir <path>]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {

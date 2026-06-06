@@ -172,6 +172,49 @@ fn fault_simulate_file_lock_reproduces_contention_without_path_leak() {
 }
 
 #[test]
+fn fault_simulate_index_snapshot_corrupt_recovers_without_payload_or_path_leak() {
+    let data_dir = temp_path("fault-index-corrupt-private-data");
+    let scratch_dir = temp_path("fault-index-corrupt-private-scratch");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--case",
+            "index-snapshot-corrupt",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+        ])
+        .output()
+        .expect("run index-snapshot-corrupt fault simulation");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("fault: index_snapshot_corrupt"));
+    assert!(stdout.contains("status: reproduced"));
+    assert!(stdout.contains("active snapshot: corrupt"));
+    assert!(stdout.contains("fallback snapshot: recovered"));
+    assert!(stdout.contains("query after recovery: passed"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains("SYNTHETIC_INDEX_CORRUPT_PRIVATE_TOKEN"));
+    assert!(!stdout.contains("synthetic-corrupt-active.pdf"));
+    assert!(!stdout.contains("synthetic-recovered.pdf"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(scratch_dir.exists());
+    assert!(fs::read_dir(&scratch_dir).unwrap().next().is_none());
+
+    remove_dir(&scratch_dir);
+}
+
+#[test]
 fn fault_simulate_battery_mode_reproduces_degradation_without_path_leak() {
     let data_dir = temp_path("fault-battery-private-data");
     let scratch_dir = temp_path("fault-battery-private-scratch");
