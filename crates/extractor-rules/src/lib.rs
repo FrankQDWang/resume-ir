@@ -1113,7 +1113,7 @@ fn first_major_alias_match(value: &str) -> Option<(String, f32, usize, usize)> {
     None
 }
 
-fn major_alias_patterns() -> [(&'static str, f32, &'static str); 10] {
+fn major_alias_patterns() -> [(&'static str, f32, &'static str); 20] {
     [
         (
             "computer_science",
@@ -1144,6 +1144,44 @@ fn major_alias_patterns() -> [(&'static str, f32, &'static str); 10] {
             "business_administration",
             0.88,
             r"(?i)\bbusiness\s+administration\b|工商管理",
+        ),
+        (
+            "artificial_intelligence",
+            0.92,
+            r"(?i)\bartificial\s+intelligence\b|人工智能",
+        ),
+        (
+            "computer_engineering",
+            0.91,
+            r"(?i)\bcomputer\s+engineering\b|计算机工程",
+        ),
+        (
+            "cybersecurity",
+            0.9,
+            r"(?i)\bcyber\s*security\b|网络安全|信息安全",
+        ),
+        (
+            "network_engineering",
+            0.9,
+            r"(?i)\bnetwork\s+engineering\b|网络工程",
+        ),
+        (
+            "communication_engineering",
+            0.9,
+            r"(?i)\bcommunications?\s+engineering\b|通信工程",
+        ),
+        (
+            "mechanical_engineering",
+            0.9,
+            r"(?i)\bmechanical\s+engineering\b|机械工程",
+        ),
+        ("automation", 0.88, r"(?i)\bautomation\b|自动化"),
+        ("accounting", 0.88, r"(?i)\baccount(?:ing|ancy)\b|会计学?"),
+        ("marketing", 0.88, r"(?i)\bmarketing\b|市场营销"),
+        (
+            "human_resources",
+            0.88,
+            r"(?i)\bhuman\s+resources?(?:\s+management)?\b|人力资源管理",
         ),
     ]
 }

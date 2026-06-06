@@ -135,6 +135,30 @@ fn field_filters_match_any_major() {
 }
 
 #[test]
+fn field_filters_normalize_broader_major_aliases() {
+    let filters = SearchFilters::default().with_majors_any(["人工智能", "网络工程", "会计学"]);
+    let artificial_intelligence =
+        ResumeProfile::new("doc_ai").with_majors(["artificial_intelligence"]);
+    let network_engineering =
+        ResumeProfile::new("doc_network").with_majors(["network_engineering"]);
+    let accounting = ResumeProfile::new("doc_accounting").with_majors(["accounting"]);
+    let other_major = ResumeProfile::new("doc_other").with_majors(["computer_science"]);
+
+    assert!(filters.matches(&artificial_intelligence));
+    assert!(filters.matches(&network_engineering));
+    assert!(filters.matches(&accounting));
+    assert!(!filters.matches(&other_major));
+    assert_eq!(
+        filters.majors_any(),
+        &[
+            "accounting",
+            "artificial_intelligence",
+            "network_engineering"
+        ]
+    );
+}
+
+#[test]
 fn field_filters_match_company_and_title() {
     let filters = SearchFilters::default()
         .with_companies_any(["Synthetic Payments Inc.", "Other Co"])

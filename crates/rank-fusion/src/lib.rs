@@ -1183,6 +1183,20 @@ fn normalize_major(major: &str) -> String {
         "finance" | "金融" | "金融学" => "finance".to_string(),
         "economics" | "economic" | "经济" | "经济学" => "economics".to_string(),
         "businessadministration" | "工商管理" => "business_administration".to_string(),
+        "artificialintelligence" | "人工智能" => "artificial_intelligence".to_string(),
+        "computerengineering" | "计算机工程" => "computer_engineering".to_string(),
+        "cybersecurity" | "网络安全" | "信息安全" => "cybersecurity".to_string(),
+        "networkengineering" | "网络工程" => "network_engineering".to_string(),
+        "communicationengineering" | "communicationsengineering" | "通信工程" => {
+            "communication_engineering".to_string()
+        }
+        "mechanicalengineering" | "机械工程" => "mechanical_engineering".to_string(),
+        "automation" | "自动化" => "automation".to_string(),
+        "accounting" | "accountancy" | "会计" | "会计学" => "accounting".to_string(),
+        "marketing" | "市场营销" => "marketing".to_string(),
+        "humanresources" | "humanresourcemanagement" | "人力资源管理" => {
+            "human_resources".to_string()
+        }
         _ => value
             .split(|character: char| !character.is_alphanumeric())
             .filter(|part| !part.is_empty())

@@ -203,6 +203,62 @@ Field of Study: Software Engineering
 }
 
 #[test]
+fn extracts_broader_major_aliases_inside_education_context() {
+    let text = "\
+Education
+Artificial Intelligence
+Computer Engineering
+Cybersecurity
+教育经历
+网络工程
+通信工程
+机械工程
+自动化
+会计学
+市场营销
+人力资源管理
+Skills
+Built artificial intelligence dashboards";
+
+    let matches = extract_strong_fields(text);
+
+    let majors = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Major)
+        .collect::<Vec<_>>();
+    let normalized = majors
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        normalized,
+        vec![
+            "artificial_intelligence",
+            "computer_engineering",
+            "cybersecurity",
+            "network_engineering",
+            "communication_engineering",
+            "mechanical_engineering",
+            "automation",
+            "accounting",
+            "marketing",
+            "human_resources"
+        ]
+    );
+    assert_eq!(
+        &text[majors[0].span_start..majors[0].span_end],
+        "Artificial Intelligence"
+    );
+    assert_eq!(&text[majors[3].span_start..majors[3].span_end], "网络工程");
+    assert!(majors.iter().all(|field| field.confidence >= 0.86));
+    assert!(!majors
+        .iter()
+        .any(|field| field.span_start > text.find("Skills").unwrap()));
+    assert!(!format!("{:?}", majors[0]).contains("Artificial Intelligence"));
+}
+
+#[test]
 fn extracts_school_tier_values_inside_education_context() {
     let text = "\
 Education

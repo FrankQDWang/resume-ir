@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, and S217 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, and S218 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -89,6 +89,7 @@ obsolete preliminary files and checklists are not product scope.
   update performance proof.
 - P2 fields/dedupe/privacy: high-confidence rules for name, contacts/date/
   education/major/school-tier/company/title/skills/certs/years, persisted entity mentions,
+  broadened high-signal major aliases,
   metadata-indexed field prefiltering before the full-text TopDocs cutoff,
   contact HMAC assignment, hash-only exact email/phone search filtering through
   local CLI and daemon IPC without raw contact or contact-hash output, candidate
@@ -679,8 +680,80 @@ obsolete preliminary files and checklists are not product scope.
 | S215 | Product expanded field-alias extraction complete locally | Focused RED tests first failed because high-signal production aliases for Spark, Hadoop, Airflow, TensorFlow, PyTorch, scikit-learn, Vue.js, Angular, GraphQL, AWS Security Specialty, Google Professional Data Engineer, CCNA, platform engineer, security engineer, mobile engineer, and business analyst were not extracted and `Vue.js` was misclassified as JavaScript through the old `js` suffix alias. After implementation, extractor-rules maps these aliases with span-backed evidence, prevents known certificate aliases from being title mentions, and import persists the new skill/certificate/title entity mentions without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full `extractor-rules`, full `resume-cli --test s16_persisted_fields`, full `resume-cli`, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice broadens high-signal rule dictionaries only. It does not prove real business field-quality metrics, create/upload private labels, complete broad multilingual dictionaries, clear private field-quality blockers, validate million-scale behavior, or make stable release ready. |
 | S216 | Product major extraction and filtering complete locally | Focused RED tests first failed because `FieldType::Major` was missing and rank-fusion lacked `with_majors` / `with_majors_any`. After implementation, labeled `Major:`, `Field of Study:`, and `专业：` lines extract span-backed normalized `major` mentions, SQLite schema v19 accepts and indexes `major` entity mentions, import persists them without output/path/contact/raw-value leaks, CLI supports `--major`/`--majors-any`, CLI/daemon IPC carry `majors_any`, local plus daemon full-text search prefilter matching document IDs before top-k truncation, and benchmark field-quality scoring accepts `major` as an ordinary labeled field. Focused RED/GREEN, full extractor/rank/meta/import/benchmark tests, full `resume-cli`, full `resume-daemon`, fmt, focused clippy, and diff check passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business major-field F1, broaden all education-major dictionaries, add major to private field-quality release gates, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make the complete product ready. |
 | S217 | Product major field-quality release gate complete locally | Focused RED tests first failed because private-business field-quality reports missing `major` metrics were accepted by both the library gate and CLI gate. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `major` metrics for private business release evidence, complete strict private-business fixtures include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create or upload private labels, run real business major-quality evaluation, prove production major recall/F1 on representative resumes, broaden major dictionaries, clear field-quality blockers, or make stable release ready. |
+| S218 | Product broader major alias extraction complete locally | Focused RED tests first failed because high-signal major aliases such as artificial intelligence, computer engineering, cybersecurity, network engineering, communication engineering, mechanical engineering, automation, accounting, marketing, and human resources were not extracted inside education context, and search filters did not normalize Chinese major inputs such as `人工智能` / `网络工程` / `会计学` to canonical values. After implementation, extractor-rules maps those aliases with span-backed evidence, rank-fusion normalizes matching filter/profile aliases, and import persists broader major mentions without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business major-field F1, complete all education-major dictionaries, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 
 ## Command Log
+
+### S218
+
+Design target:
+
+- Broaden `major` extraction and search-filter normalization for high-signal
+  English and Chinese major aliases while preserving evidence spans.
+- Keep extraction bounded to education context for unlabeled aliases so skill or
+  experience text does not become major evidence.
+- Preserve privacy: no CLI output should include local paths, contacts, or raw
+  major values.
+- Use synthetic fixtures only.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --test s10_fields extracts_broader_major_aliases_inside_education_context --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion field_filters_normalize_broader_major_aliases --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_broader_major_aliases_without_output_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The extractor exact failed before implementation with no broader major
+  matches for the new education-context aliases.
+- The rank-fusion exact failed before implementation because `人工智能` did not
+  normalize to `artificial_intelligence`.
+- The CLI persisted-field exact failed before implementation because the
+  broader major aliases were not persisted as `major` entity mentions.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --test s10_fields extracts_broader_major_aliases_inside_education_context --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --test s10_rank_fusion field_filters_normalize_broader_major_aliases --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_broader_major_aliases_without_output_leaks --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p rank-fusion -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused GREEN tests passed after adding broader major aliases to
+  extractor-rules and rank-fusion normalization.
+- Full `extractor-rules` passed: 19 S10 tests plus 5 S7 tests and doc-tests.
+- Full `rank-fusion` passed: 14 S10 tests plus 2 S11 tests and doc-tests.
+- Full `resume-cli --test s16_persisted_fields` passed: 15 tests.
+- Full `import-pipeline` passed: 7 tests plus doc-tests.
+- `cargo fmt --all` and focused clippy passed.
+- `cargo fmt --all --check`, `git diff --check`, and the public repo guard
+  passed.
+- Full local verification passed, including workspace clippy/tests/doc-tests,
+  license, runbook, workflow, release readiness, release artifact, SBOM, macOS
+  package, and public-repo guard checks. Windows package check was skipped on
+  the non-Windows host.
+
+Scope note:
+
+- S218 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, vectors, raw contact
+  values, contact hashes, private labels, field values, major values, or
+  private corpus evidence.
 
 ### S217
 
