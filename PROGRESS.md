@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, S254, and S255 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, S254, S255, and S256 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -177,6 +177,14 @@ obsolete preliminary files and checklists are not product scope.
   verbatim canonical roots, drive-letter case, and path separators before
   comparing roots with document paths, preserving the same redacted purge output
   on hosted Windows.
+  Deleted-document purge now also performs a default local-only residual scan:
+  before cleanup it collects deleted-scope document IDs, document path/file-name
+  markers, resume raw/clean text, persisted entity values, and OCR cache text
+  plus word-box markers; after metadata `VACUUM` and index/cache/vector cleanup
+  it scans the current data directory for those markers, reports only aggregate
+  marker/file/byte counts when clear, and fails with a redacted generic error if
+  any marker remains. This is best-effort local residual proof, not forensic
+  erase.
   Certificate extraction now treats certificate section headers as bounded
   context, suppresses header values, handles labeled certificate lines with
   ASCII or fullwidth colons, and extracts high-signal certificate aliases such
@@ -267,7 +275,8 @@ obsolete preliminary files and checklists are not product scope.
   Chinese explicit/open-ended date ranges, China mobile phone formats, and
   labeled company/title forms, real
   business labeled field and dedupe quality datasets/results, remaining future
-  non-cache PII surface purge coverage, and forensic erase proof.
+  non-cache PII surface purge coverage outside the current residual marker set,
+  and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
   snapshot, in-memory linear KNN, persistent HNSW ANN query backend, RRF
   helpers, embedding worker, model/dimension-scoped durable per-version
@@ -772,8 +781,66 @@ obsolete preliminary files and checklists are not product scope.
 | S253 | Product vector snapshot recovery complete locally | Focused RED first failed because the persistent vector snapshot surface had no `Recovered` state and doctor did not report a recovered vector index after a corrupt active snapshot. After implementation, `PersistentVectorIndex` writes an encrypted `vector.snapshot.last-good` before replacing the active snapshot, open/search/inspect recover from a corrupt active snapshot, no-backup corrupt snapshots remain corrupt rather than silently empty, CLI and daemon semantic paths treat recovered snapshots as usable, and doctor plus redacted diagnostics report recovered state without paths, vector IDs, or float values. | This slice proves synthetic/local vector snapshot last-good recovery only. It does not choose/license/distribute a production embedding model, prove private semantic quality, prove real ANN recall/latency at 100k/1M scale, validate cross-platform filesystem behavior, clear model/vector-quality blockers, or make stable release ready. |
 | S254 | Product full-text snapshot schema recovery complete locally | Focused RED first failed because published full-text snapshots had no `snapshot-manifest.json`, so active snapshot schema mismatch could not be detected before decrypt/open. After implementation, each encrypted published full-text snapshot writes an owner-only manifest with current full-text snapshot schema, index schema, and encrypted envelope version; open/inspect require that manifest; future/incompatible manifest values make the active snapshot unusable so inspection recovers to the last-good snapshot when available, and the daemon index worker rebuilds from metadata when the active snapshot has no compatible fallback. | This slice proves synthetic/local full-text snapshot schema-mismatch recovery and daemon rebuild only. It does not perform real program upgrade rollback, prove large-corpus migration latency, validate production installer upgrade/uninstall behavior, validate all future schema transitions, or clear release readiness blockers. |
 | S255 | Product vector snapshot schema recovery complete locally | Focused RED first failed because encrypted persistent vector snapshots had no `vector.snapshot.manifest`, so active vector snapshot schema mismatch could not be detected before decrypt/open, and the daemon embedding worker could not rebuild a mismatched no-fallback vector snapshot from completed jobs. After implementation, vector snapshots write an owner-only manifest with current vector snapshot schema, HNSW index schema, dimension, backend, and encrypted envelope version; open/inspect require that manifest; incompatible active manifests recover to encrypted last-good when available; and the daemon embedding worker resets incompatible no-fallback vector snapshots, requeues completed version jobs by model/dimension, and rebuilds through the configured local embedding command without leaking manifest payloads, paths, command paths, text, vectors, or model IDs in output. | This slice proves synthetic/local vector snapshot schema-mismatch fallback and daemon completed-job rebuild only. It does not choose/license/distribute a production embedding model, prove private semantic quality, prove real ANN recall/latency at 100k/1M scale, validate production installer upgrade/uninstall behavior, validate all future vector schema transitions, clear model/vector-quality blockers, or make stable release ready. |
+| S256 | Product purge residual scan complete locally | Focused RED first failed because `resume-cli purge --deleted` did not report a residual scan after deleting tombstoned metadata, OCR cache, vector records, and old snapshots. After implementation, purge collects deleted-scope markers from document IDs, source paths/file names, resume raw/clean text, persisted entity values, and OCR cache text/word boxes before cleanup; after metadata `VACUUM` and index/cache/vector cleanup it stream-scans the local data directory, reports only aggregate residual marker/file/byte counts when clear, and fails closed with a redacted generic error if a retained marker is found. | This slice proves synthetic/local best-effort residual scanning of the current data directory only. It does not prove forensic erase, SSD/filesystem free-space overwrite, OS snapshots/backups cleanup, real-resume purge witnesses, every future PII surface, or stable release readiness. |
 
 ## Command Log
+
+### S256
+
+Design target:
+
+- Add a default local-only `purge --deleted` residual scan after best-effort
+  metadata/index/vector/OCR cleanup.
+- Collect deleted-scope markers before purge and scan only the current local
+  data directory after purge; never print markers, local paths, resume text,
+  OCR text, entity values, or diagnostic payloads.
+- Fail closed with a redacted generic error if any deleted marker remains, while
+  continuing to label the purge as local best-effort and not forensic erase.
+
+TDD RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- Failed before implementation because stdout did not contain
+  `residual scan: clear`.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search purge_deleted_blocks_when_local_data_artifact_retains_deleted_marker_without_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s14_delete_search --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p resume-cli -p meta-store --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused GREEN passed for the clear residual-scan path.
+- Focused retained-marker test passed, proving a synthetic retained deleted
+  marker in the local data directory blocks purge without printing the marker,
+  data-dir path, fixture-root path, or deleted file name.
+- Full `s14_delete_search`, full `meta-store`, focused clippy, diff check,
+  public-repo guard, and full local verification passed.
+- The first `cargo fmt --check` after implementation reported formatting
+  differences; `/Users/frankqdwang/.cargo/bin/cargo fmt` was run, then the
+  listed formatting check passed.
+
+Scope note:
+
+- S256 proves only synthetic local best-effort residual scanning of the current
+  data directory after deleted-document purge. It does not prove forensic erase,
+  SSD/filesystem free-space overwrite, OS snapshots/backups cleanup, real-resume
+  purge witnesses, every future PII surface, cross-platform erase behavior, or
+  stable release readiness.
 
 ### S255
 

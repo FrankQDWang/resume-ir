@@ -87,6 +87,8 @@ const WITNESS_CLEANUP_RETRY_ATTEMPTS: usize = 6;
 const WITNESS_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(25);
 const WITNESS_SEARCH_PROBE_LIMIT: usize = 5;
 const WITNESS_SEARCH_PROBE_MAX_CANDIDATES: usize = 64;
+const PURGE_RESIDUAL_MARKER_MIN_BYTES: usize = 8;
+const PURGE_RESIDUAL_SCAN_CHUNK_BYTES: usize = 64 * 1024;
 const WITNESS_FIELD_LABELS: &[&str] = &[
     "name",
     "email",
@@ -6502,6 +6504,9 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .filter_map(|document| document.content_hash)
         .collect::<BTreeSet<_>>();
     deleted_content_hashes.retain(|content_hash| !live_content_hashes.contains(content_hash));
+    let ocr_cache_hashes = deleted_content_hashes.into_iter().collect::<Vec<_>>();
+    let residual_probe =
+        PurgeResidualProbe::collect(&store, &deleted_document_ids, &ocr_cache_hashes)?;
 
     let vector_documents_purged = purge_vector_documents(data_dir, &deleted_doc_id_set)?;
     let import_task_purge = store
@@ -6510,7 +6515,6 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let ingest_job_purge = store
         .purge_ingest_jobs_for_documents(&deleted_document_ids)
         .map_err(CliError::store)?;
-    let ocr_cache_hashes = deleted_content_hashes.into_iter().collect::<Vec<_>>();
     let ocr_cache_purge = store
         .purge_ocr_page_cache_by_content_hashes(&ocr_cache_hashes)
         .map_err(CliError::store)?;
@@ -6523,6 +6527,12 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let snapshot_purge =
         purge_obsolete_snapshots(&data_dir.join("search-index")).map_err(CliError::fulltext)?;
     let purged_documents = store.purge_deleted_documents().map_err(CliError::store)?;
+    let residual_scan = residual_probe.scan_data_dir(data_dir)?;
+    if residual_scan.retained_markers > 0 {
+        return Err(CliError::user(
+            "purge residual scan detected retained deleted material",
+        ));
+    }
 
     println!("purge completed");
     println!("scope: deleted");
@@ -6564,10 +6574,203 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
     println!("ocr cache entries purged: {}", ocr_cache_purge.entries());
     println!("ocr word boxes purged: {}", ocr_cache_purge.word_boxes());
+    println!("residual scan: clear");
+    println!(
+        "residual markers checked: {}",
+        residual_scan.markers_checked
+    );
+    println!("residual files scanned: {}", residual_scan.files_scanned);
+    println!("residual bytes scanned: {}", residual_scan.bytes_scanned);
     println!("metadata vacuum: yes");
     println!("physical purge scope: local best-effort, not forensic erase");
 
     Ok(())
+}
+
+#[derive(Default)]
+struct PurgeResidualProbe {
+    markers: BTreeSet<Vec<u8>>,
+}
+
+impl PurgeResidualProbe {
+    fn collect(
+        store: &MetaStore,
+        document_ids: &[DocumentId],
+        ocr_cache_hashes: &[String],
+    ) -> Result<Self> {
+        let mut probe = Self::default();
+
+        for document_id in document_ids {
+            probe.add_marker(document_id.as_str());
+            let Some(document) = store.document_by_id(document_id).map_err(CliError::store)? else {
+                continue;
+            };
+            probe.add_marker(&document.source_uri);
+            probe.add_marker(&document.normalized_path);
+            probe.add_marker(&document.file_name);
+
+            for version in store
+                .resume_versions_for_document(&document.id)
+                .map_err(CliError::store)?
+            {
+                probe.add_marker(version.id.as_str());
+                if let Some(raw_text) = &version.raw_text {
+                    probe.add_marker(raw_text);
+                }
+                if let Some(clean_text) = &version.clean_text {
+                    probe.add_marker(clean_text);
+                }
+
+                for mention in store
+                    .entity_mentions_for_version(&version.id)
+                    .map_err(CliError::store)?
+                {
+                    probe.add_marker(&mention.raw_value);
+                    if let Some(normalized_value) = &mention.normalized_value {
+                        probe.add_marker(normalized_value);
+                    }
+                }
+            }
+        }
+
+        for entry in store
+            .ocr_page_cache_entries_for_content_hashes(ocr_cache_hashes)
+            .map_err(CliError::store)?
+        {
+            if let Some(text) = entry.text() {
+                probe.add_marker(text);
+            }
+            for word_box in entry.word_boxes() {
+                probe.add_marker(word_box.text());
+            }
+        }
+
+        Ok(probe)
+    }
+
+    fn add_marker(&mut self, value: &str) {
+        let marker = value.trim().as_bytes();
+        if marker.len() >= PURGE_RESIDUAL_MARKER_MIN_BYTES {
+            self.markers.insert(marker.to_vec());
+        }
+    }
+
+    fn scan_data_dir(&self, data_dir: &Path) -> Result<PurgeResidualScan> {
+        let markers_checked = self.markers.len();
+        let Some(max_marker_len) = self.markers.iter().map(Vec::len).max() else {
+            return Ok(PurgeResidualScan {
+                markers_checked,
+                ..PurgeResidualScan::default()
+            });
+        };
+
+        let mut scan = PurgeResidualScan {
+            markers_checked,
+            ..PurgeResidualScan::default()
+        };
+        let mut pending_dirs = vec![data_dir.to_path_buf()];
+        while let Some(dir) = pending_dirs.pop() {
+            let entries = fs::read_dir(&dir)
+                .map_err(|_| CliError::user("purge residual scan could not read local artifact"))?;
+            for entry in entries {
+                let entry = entry.map_err(|_| {
+                    CliError::user("purge residual scan could not read local artifact")
+                })?;
+                let file_type = entry.file_type().map_err(|_| {
+                    CliError::user("purge residual scan could not read local artifact")
+                })?;
+                if file_type.is_dir() {
+                    pending_dirs.push(entry.path());
+                } else if file_type.is_file() {
+                    scan.files_scanned += 1;
+                    let file_scan = scan_file_for_purge_residual_markers(
+                        &entry.path(),
+                        &self.markers,
+                        max_marker_len,
+                    )?;
+                    scan.bytes_scanned = scan
+                        .bytes_scanned
+                        .checked_add(file_scan.bytes_scanned)
+                        .ok_or_else(|| {
+                            CliError::user("purge residual scan byte count overflowed")
+                        })?;
+                    if file_scan.retained_marker {
+                        scan.retained_markers += 1;
+                    }
+                } else {
+                    return Err(CliError::user(
+                        "purge residual scan blocked by unsupported local artifact",
+                    ));
+                }
+            }
+        }
+
+        Ok(scan)
+    }
+}
+
+#[derive(Default)]
+struct PurgeResidualScan {
+    markers_checked: usize,
+    files_scanned: usize,
+    bytes_scanned: u64,
+    retained_markers: usize,
+}
+
+#[derive(Default)]
+struct PurgeResidualFileScan {
+    bytes_scanned: u64,
+    retained_marker: bool,
+}
+
+fn scan_file_for_purge_residual_markers(
+    path: &Path,
+    markers: &BTreeSet<Vec<u8>>,
+    max_marker_len: usize,
+) -> Result<PurgeResidualFileScan> {
+    let mut file = fs::File::open(path)
+        .map_err(|_| CliError::user("purge residual scan could not read local artifact"))?;
+    let mut scan = PurgeResidualFileScan::default();
+    let mut buffer = vec![0_u8; PURGE_RESIDUAL_SCAN_CHUNK_BYTES];
+    let mut carry = Vec::new();
+    let carry_len = max_marker_len.saturating_sub(1);
+
+    loop {
+        let bytes_read = file
+            .read(&mut buffer)
+            .map_err(|_| CliError::user("purge residual scan could not read local artifact"))?;
+        if bytes_read == 0 {
+            return Ok(scan);
+        }
+
+        scan.bytes_scanned = scan
+            .bytes_scanned
+            .checked_add(
+                u64::try_from(bytes_read)
+                    .map_err(|_| CliError::user("purge residual scan byte count overflowed"))?,
+            )
+            .ok_or_else(|| CliError::user("purge residual scan byte count overflowed"))?;
+        let mut window = Vec::with_capacity(carry.len() + bytes_read);
+        window.extend_from_slice(&carry);
+        window.extend_from_slice(&buffer[..bytes_read]);
+
+        if purge_residual_window_contains_marker(&window, markers) {
+            scan.retained_marker = true;
+            return Ok(scan);
+        }
+
+        carry.clear();
+        if carry_len > 0 {
+            let start = window.len().saturating_sub(carry_len);
+            carry.extend_from_slice(&window[start..]);
+        }
+    }
+}
+
+fn purge_residual_window_contains_marker(buffer: &[u8], markers: &BTreeSet<Vec<u8>>) -> bool {
+    markers.iter().any(|marker| {
+        marker.len() <= buffer.len() && buffer.windows(marker.len()).any(|window| window == marker)
+    })
 }
 
 fn purge_vector_documents(data_dir: &Path, doc_ids: &BTreeSet<String>) -> Result<usize> {

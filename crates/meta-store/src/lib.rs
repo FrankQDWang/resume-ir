@@ -1897,6 +1897,43 @@ impl MetaStore {
         }
     }
 
+    pub fn ocr_page_cache_entries_for_content_hashes(
+        &self,
+        content_hashes: &[String],
+    ) -> Result<Vec<OcrPageCacheEntry>> {
+        if content_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders = (0..content_hashes.len())
+            .map(|index| format!("?{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "\
+            SELECT {OCR_PAGE_CACHE_COLUMNS}
+            FROM ocr_page_cache
+            WHERE file_content_hash IN ({placeholders})
+            ORDER BY file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile"
+        );
+        let query_params = content_hashes
+            .iter()
+            .map(|content_hash| Value::Text(content_hash.clone()))
+            .collect::<Vec<_>>();
+        let connection = self.connection.borrow();
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params_from_iter(query_params))
+            .map_err(MetaStoreError::storage)?;
+        let mut entries = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            entries.push(read_ocr_page_cache_entry(row)?);
+        }
+
+        Ok(entries)
+    }
+
     pub fn worker_task_control(&self, task: WorkerTaskKind) -> Result<WorkerTaskControl> {
         let connection = self.connection.borrow();
         let sql = format!(

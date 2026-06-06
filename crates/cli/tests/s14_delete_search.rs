@@ -411,6 +411,15 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     assert!(stdout.contains("embedding job specs purged: 1"));
     assert!(stdout.contains("ocr cache entries purged: 1"));
     assert!(stdout.contains("ocr word boxes purged: 1"));
+    assert!(stdout.contains("residual scan: clear"));
+    let residual_markers_checked: usize = stdout_value(&stdout, "residual markers checked: ")
+        .parse()
+        .unwrap();
+    assert!(residual_markers_checked >= 4);
+    let residual_files_scanned: usize = stdout_value(&stdout, "residual files scanned: ")
+        .parse()
+        .unwrap();
+    assert!(residual_files_scanned > 0);
     assert!(stdout.contains("metadata vacuum: yes"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
@@ -441,6 +450,52 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     assert!(after.contains("results: 1"));
     assert!(!after.contains("synthetic-java-engineer.docx"));
     assert!(after.contains("synthetic-java-platform.pdf"));
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn purge_deleted_blocks_when_local_data_artifact_retains_deleted_marker_without_leak() {
+    let _guard = s14_test_lock();
+    let data_dir = temp_dir("purge-deleted-residual-data");
+    let fixture_root = fixture_root();
+    import_fixtures(&data_dir, &fixture_root);
+
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 2"));
+    let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
+
+    let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "delete",
+            "--doc-id",
+            &deleted_doc_id,
+        ])
+        .output()
+        .expect("run resume-cli delete before retained marker purge");
+    assert!(delete.status.success());
+
+    fs::write(
+        data_dir.join("retained-deleted-marker.bin"),
+        &deleted_doc_id,
+    )
+    .unwrap();
+    let purge = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "purge", "--deleted"])
+        .output()
+        .expect("run resume-cli purge with retained marker");
+
+    assert!(!purge.status.success());
+    let stdout = String::from_utf8_lossy(&purge.stdout);
+    let stderr = String::from_utf8_lossy(&purge.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("purge residual scan detected retained deleted material"));
+    assert!(!stderr.contains(&deleted_doc_id));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+    assert!(!stderr.contains("synthetic-java-engineer.docx"));
 
     remove_dir(&data_dir);
 }
