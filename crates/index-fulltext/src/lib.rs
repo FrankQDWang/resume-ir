@@ -33,6 +33,9 @@ const ACTIVE_SNAPSHOT_FILE: &str = "active-snapshot";
 const SNAPSHOTS_DIR: &str = "snapshots";
 const STAGING_DIR: &str = "staging";
 const ENCRYPTED_SNAPSHOT_FILE: &str = "fulltext.snapshot.enc";
+const SNAPSHOT_MANIFEST_FILE: &str = "snapshot-manifest.json";
+const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "fulltext.snapshot.v1";
+const FULLTEXT_INDEX_SCHEMA_VERSION: &str = "tantivy.fulltext.v1";
 const SNAPSHOT_KEY_FILE: &str = "fulltext.snapshot.key-v1";
 const SNAPSHOT_HEADER_ENCRYPTED_V1: &str = "resume-ir-fulltext-snapshot-encrypted-v1";
 const SNAPSHOT_ARCHIVE_HEADER_V1: &[u8] = b"resume-ir-fulltext-snapshot-archive-v1\n";
@@ -636,6 +639,7 @@ fn publish_encrypted_staging_snapshot(
         &index_root.join(SNAPSHOT_KEY_FILE),
         &archive,
     )?;
+    write_snapshot_manifest(&temp_published_dir)?;
     remove_snapshot_dir_all(staging_dir)?;
 
     let publish_result = publish_staging_snapshot_with(
@@ -777,6 +781,7 @@ fn validate_snapshot_contents(snapshot_dir: &Path) -> Result<()> {
 }
 
 fn open_published_snapshot(snapshot_dir: &Path) -> Result<FullTextIndex> {
+    validate_snapshot_manifest(snapshot_dir)?;
     let encrypted_path = snapshot_dir.join(ENCRYPTED_SNAPSHOT_FILE);
     if !encrypted_path.exists() {
         return Err(FullTextError::internal(
@@ -794,6 +799,36 @@ fn open_published_snapshot(snapshot_dir: &Path) -> Result<FullTextIndex> {
     let mut index = FullTextIndex::open(temp_dir.path())?;
     index._decrypted_snapshot_dir = Some(temp_dir);
     Ok(index)
+}
+
+fn write_snapshot_manifest(snapshot_dir: &Path) -> Result<()> {
+    let manifest = format!(
+        "{{\"schema_version\":\"{SNAPSHOT_MANIFEST_SCHEMA_VERSION}\",\"index_schema\":\"{FULLTEXT_INDEX_SCHEMA_VERSION}\",\"encrypted_snapshot\":\"{SNAPSHOT_HEADER_ENCRYPTED_V1}\"}}\n"
+    );
+    write_private_file(
+        &snapshot_dir.join(SNAPSHOT_MANIFEST_FILE),
+        manifest.as_bytes(),
+    )
+}
+
+fn validate_snapshot_manifest(snapshot_dir: &Path) -> Result<()> {
+    let manifest_path = snapshot_dir.join(SNAPSHOT_MANIFEST_FILE);
+    let manifest = String::from_utf8(read_snapshot_file(&manifest_path)?)
+        .map_err(|_| FullTextError::internal("full-text snapshot manifest corrupt"))?;
+
+    if !manifest.contains(&format!(
+        "\"schema_version\":\"{SNAPSHOT_MANIFEST_SCHEMA_VERSION}\""
+    )) || !manifest.contains(&format!(
+        "\"index_schema\":\"{FULLTEXT_INDEX_SCHEMA_VERSION}\""
+    )) || !manifest.contains(&format!(
+        "\"encrypted_snapshot\":\"{SNAPSHOT_HEADER_ENCRYPTED_V1}\""
+    )) {
+        return Err(FullTextError::internal(
+            "full-text snapshot schema mismatch",
+        ));
+    }
+
+    Ok(())
 }
 
 fn write_encrypted_snapshot(path: &Path, key_path: &Path, plaintext: &[u8]) -> Result<()> {
@@ -1581,7 +1616,8 @@ fn snapshot_exists(snapshot_dir: &Path) -> bool {
 }
 
 fn snapshot_metadata_looks_valid(snapshot_dir: &Path) -> bool {
-    encrypted_snapshot_header_looks_valid(snapshot_dir)
+    validate_snapshot_manifest(snapshot_dir).is_ok()
+        && encrypted_snapshot_header_looks_valid(snapshot_dir)
 }
 
 fn encrypted_snapshot_header_looks_valid(snapshot_dir: &Path) -> bool {

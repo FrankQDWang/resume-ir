@@ -400,6 +400,70 @@ fn published_snapshot_encrypts_payload_at_rest() {
 }
 
 #[test]
+fn published_snapshot_schema_mismatch_falls_back_to_last_good_snapshot() {
+    let index_root = temp_dir("snapshot-schema-mismatch");
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800003100-1-0-0",
+        [java_payment_document(false)],
+    )
+    .unwrap();
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800003200-1-0-0",
+        [IndexDocument {
+            doc_id: "doc_future_schema".to_string(),
+            version_id: "ver_future_schema".to_string(),
+            file_name: "synthetic-future-schema.pdf".to_string(),
+            clean_text: "future schema active snapshot".to_string(),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: "future schema active snapshot".to_string(),
+            }],
+            is_deleted: false,
+        }],
+    )
+    .unwrap();
+
+    let manifest_path = index_root
+        .join("snapshots")
+        .join("fulltext-1800003200-1-0-0")
+        .join("snapshot-manifest.json");
+    let manifest = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest.contains("\"schema_version\":\"fulltext.snapshot.v1\""));
+    assert!(!manifest.contains("Java payment"));
+    fs::write(
+        &manifest_path,
+        "{\"schema_version\":\"fulltext.snapshot.v999\",\"index_schema\":\"future-fulltext-schema\",\"payload\":\"PRIVATE future schema text\"}\n",
+    )
+    .unwrap();
+
+    let inspection = inspect_snapshot_root(&index_root).unwrap();
+    assert_eq!(inspection.state(), SnapshotRootState::Recovered);
+    assert_eq!(
+        inspection.active_snapshot(),
+        Some("fulltext-1800003200-1-0-0")
+    );
+    assert_eq!(
+        inspection.fallback_snapshot(),
+        Some("fulltext-1800003100-1-0-0")
+    );
+
+    let index = FullTextIndex::open_active(&index_root).unwrap().unwrap();
+    let recovered_hits = index
+        .search(SearchQuery::new("Java payment").with_limit(5))
+        .unwrap();
+    assert_eq!(recovered_hits.len(), 1);
+    assert_eq!(recovered_hits[0].doc_id, "doc_java_payment");
+    assert!(index
+        .search(SearchQuery::new("future schema").with_limit(5))
+        .unwrap()
+        .is_empty());
+
+    remove_dir(&index_root);
+}
+
+#[test]
 fn incremental_snapshot_inherits_replaces_and_excludes_documents() {
     let index_root = temp_dir("incremental-snapshot");
 

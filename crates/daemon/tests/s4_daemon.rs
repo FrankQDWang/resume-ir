@@ -137,6 +137,67 @@ fn foreground_once_index_worker_rebuilds_missing_full_text_snapshot_without_path
 }
 
 #[test]
+fn foreground_once_index_worker_rebuilds_schema_mismatched_full_text_snapshot_without_path_leak() {
+    let data_dir = temp_dir("daemon-index-worker-schema-mismatch-data");
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    seed_queued_import_task(
+        &data_dir,
+        "daemon-index-worker-schema-mismatch-import",
+        &canonical_fixture_root,
+        1_700_000_000,
+    );
+    run_import_worker_once(&data_dir);
+
+    let index_root = data_dir.join("search-index");
+    let active_snapshot = fs::read_to_string(index_root.join("active-snapshot"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let manifest_path = index_root
+        .join("snapshots")
+        .join(&active_snapshot)
+        .join("snapshot-manifest.json");
+    let manifest = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest.contains("\"schema_version\":\"fulltext.snapshot.v1\""));
+    fs::write(
+        &manifest_path,
+        "{\"schema_version\":\"fulltext.snapshot.v999\",\"index_schema\":\"future-fulltext-schema\",\"payload\":\"PRIVATE schema mismatch path\"}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--once",
+            "--work-index-once",
+        ])
+        .output()
+        .expect("run resume-daemon index worker once after schema mismatch");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("index worker rebuilt: yes"));
+    assert!(stdout.contains("index worker indexed documents: 2"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains(path_str(&canonical_fixture_root)));
+    assert!(!stdout.contains("PRIVATE schema mismatch"));
+    assert!(!search_fulltext(&data_dir, "java").is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn foreground_index_worker_loop_repairs_missing_snapshot_once_per_health_change() {
     let data_dir = temp_dir("daemon-index-loop-data");
     let fixture_root = fixture_root();

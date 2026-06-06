@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, and S253 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, and S254 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -63,8 +63,9 @@ obsolete preliminary files and checklists are not product scope.
   polling background rescan for completed import roots, OS filesystem watcher
   integration that requeues completed roots through the existing durable import
   task path on local file changes, encrypted full-text published snapshot
-  publish/recover with extended Windows transient read-open, snapshot-publish,
-  and directory-cleanup filesystem retries, incremental full-text snapshot
+  publish/recover with an owner-only schema manifest, schema-mismatch fallback/
+  rebuild behavior, extended Windows transient read-open, snapshot-publish, and
+  directory-cleanup filesystem retries, incremental full-text snapshot
   updates for import, OCR text indexing, and soft-delete removals, delete rebuild,
   redacted snippets, and an
   isolated local PDF/Word witness command
@@ -413,7 +414,8 @@ obsolete preliminary files and checklists are not product scope.
   process memory, CPU cores, OCR page-budget remediation, and OCR runtime
   availability, snapshot fallback, full-text active-snapshot corruption/
   last-good recovery fault probes, persistent vector active-snapshot
-  corruption/last-good recovery, explicit obsolete
+  corruption/last-good recovery, full-text snapshot schema-mismatch recovery
+  and daemon rebuild proof, explicit obsolete
   full-text snapshot and staging cleanup for deleted-document purge, safe fault
   simulation for disk-space budget, permission-denied probes, file-lock
   contention probes, metadata migration failure probes against synthetic broken
@@ -760,8 +762,71 @@ obsolete preliminary files and checklists are not product scope.
 | S251 | Product daemon semantic/hybrid search IPC complete locally | Focused RED first failed because authenticated daemon `/search` IPC returned 400 for `mode: semantic`, and the daemon closed-loop script did not require semantic or hybrid IPC search. After implementation, daemon search IPC parses `fulltext`, `semantic`, and `hybrid` modes, uses daemon startup embedding configuration rather than accepting command paths from CLI search requests, embeds semantic queries through the local embedding protocol, searches the persisted model-scoped HNSW vector snapshot, applies existing field prefilters, candidate folding, visibility filtering, soft-dedupe hints, and hybrid RRF, returns redacted `daemon.search.v1` results, and the daemon closed-loop gate now verifies semantic plus hybrid IPC searches against synthetic imported PDF/DOCX/scanned-PDF fixtures. | This slice adds synthetic daemon semantic/hybrid IPC functionality only. It does not choose/license/distribute a production embedding model, prove private semantic quality, prove real ANN recall/latency at 100k/1M scale, validate Windows semantic IPC with an executable embedding runtime, clear model/vector-quality blockers, or make stable release ready. |
 | S252 | Product full-text index corruption fault probe complete locally | Focused RED first failed because `resume-cli fault-simulate --case index-snapshot-corrupt` returned the fault-simulate usage error even though doctor/export advertised `index_snapshot_corrupt` as an available hook. After implementation, the safe local probe publishes two synthetic encrypted full-text snapshots in a private scratch directory, corrupts the active snapshot envelope, verifies last-good published-snapshot recovery through `FullTextIndex::open_active`, checks a synthetic query still resolves only through the recovered snapshot, cleans the probe directory, redacts paths and synthetic payloads from stdout, and the fault-injection runbook plus runbook guard now document the case. | This slice proves only a safe synthetic full-text active-snapshot corruption/recovery probe. It does not perform destructive disk faults, corrupt real user indexes, prove service-manager kill recovery, validate Windows/macOS filesystem behavior, prove large-corpus recovery latency, or clear release readiness blockers. |
 | S253 | Product vector snapshot recovery complete locally | Focused RED first failed because the persistent vector snapshot surface had no `Recovered` state and doctor did not report a recovered vector index after a corrupt active snapshot. After implementation, `PersistentVectorIndex` writes an encrypted `vector.snapshot.last-good` before replacing the active snapshot, open/search/inspect recover from a corrupt active snapshot, no-backup corrupt snapshots remain corrupt rather than silently empty, CLI and daemon semantic paths treat recovered snapshots as usable, and doctor plus redacted diagnostics report recovered state without paths, vector IDs, or float values. | This slice proves synthetic/local vector snapshot last-good recovery only. It does not choose/license/distribute a production embedding model, prove private semantic quality, prove real ANN recall/latency at 100k/1M scale, validate cross-platform filesystem behavior, clear model/vector-quality blockers, or make stable release ready. |
+| S254 | Product full-text snapshot schema recovery complete locally | Focused RED first failed because published full-text snapshots had no `snapshot-manifest.json`, so active snapshot schema mismatch could not be detected before decrypt/open. After implementation, each encrypted published full-text snapshot writes an owner-only manifest with current full-text snapshot schema, index schema, and encrypted envelope version; open/inspect require that manifest; future/incompatible manifest values make the active snapshot unusable so inspection recovers to the last-good snapshot when available, and the daemon index worker rebuilds from metadata when the active snapshot has no compatible fallback. | This slice proves synthetic/local full-text snapshot schema-mismatch recovery and daemon rebuild only. It does not perform real program upgrade rollback, prove large-corpus migration latency, validate production installer upgrade/uninstall behavior, validate all future schema transitions, or clear release readiness blockers. |
 
 ## Command Log
+
+### S254
+
+Design target:
+
+- Add a local, redacted full-text published-snapshot manifest that records the
+  current snapshot schema, Tantivy index schema boundary, and encrypted envelope
+  version without storing resume text, paths, or query payloads.
+- Treat incompatible active snapshot manifests as `SCHEMA_MISMATCH`: recover
+  to last-good when available and otherwise let the daemon index worker rebuild
+  from persisted metadata.
+- Keep all tests synthetic/local and avoid claiming real program-upgrade,
+  installer rollback, or future schema-transition release evidence.
+
+Observed RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p index-fulltext published_snapshot_schema_mismatch_falls_back_to_last_good_snapshot --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s4_daemon foreground_once_index_worker_rebuilds_schema_mismatched_full_text_snapshot_without_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- Both focused tests failed before implementation because
+  `snapshot-manifest.json` did not exist under encrypted full-text published
+  snapshots.
+
+Implementation verification:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p index-fulltext published_snapshot_schema_mismatch_falls_back_to_last_good_snapshot --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s4_daemon foreground_once_index_worker_rebuilds_schema_mismatched_full_text_snapshot_without_path_leak --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p index-fulltext --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s4_daemon --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s13_diagnostics --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s71_fault_injection --locked
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo clippy -p index-fulltext -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings
+git diff --check
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- Focused RED/GREEN exact tests: exit 0 after implementation.
+- Full index-fulltext suite: exit 0; 15 tests passed plus doc-tests.
+- Full daemon foreground/index-worker suite: exit 0; 14 tests passed.
+- Full diagnostics and fault-injection CLI suites: exit 0.
+- `cargo fmt --check`: exit 0 after formatting the touched files.
+- Focused clippy: exit 0.
+- `git diff --check`: exit 0.
+- `verify-local.sh`: exit 0; full local gate passed after this slice.
+- Public repository guard: exit 0.
+
+Scope note:
+
+- S254 proves only synthetic local full-text snapshot schema-mismatch fallback
+  and daemon rebuild behavior. It does not prove real upgrade rollback, future
+  schema migrations, installer lifecycle, large-corpus rebuild latency,
+  Windows/macOS release-platform migration behavior, or stable release
+  readiness.
 
 ### S253
 
