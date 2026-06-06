@@ -109,6 +109,8 @@ require_text "$daemon_closed_loop_script" "import --ipc auto --root"
 require_text "$daemon_closed_loop_script" "status --ipc auto"
 require_text "$daemon_closed_loop_script" "search Java --ipc auto --top-k 20"
 require_text "$daemon_closed_loop_script" "search DaemonClosedLoopOCRToken --ipc auto --top-k 20"
+require_text "$daemon_closed_loop_script" "--mode semantic"
+require_text "$daemon_closed_loop_script" "--mode hybrid"
 require_text "$daemon_closed_loop_script" "detail --doc-id"
 require_text "$daemon_closed_loop_script" "daemon closed-loop check passed"
 

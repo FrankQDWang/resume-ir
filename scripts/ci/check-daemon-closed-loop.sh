@@ -122,6 +122,23 @@ wait_for_indexed_daemon_status() {
   fail "daemon closed-loop daemon workers did not reach indexed status"
 }
 
+wait_for_semantic_daemon_search() {
+  count=0
+  while [ "$count" -lt 120 ]; do
+    semantic_poll_out="$tmpdir/semantic-search-poll-$count.out"
+    run_cli "semantic search ipc poll" "$semantic_poll_out" search SemanticOnlyToken --ipc auto --mode semantic --top-k 20
+    if grep -Fq "results: 3" "$semantic_poll_out"; then
+      cp "$semantic_poll_out" "$semantic_search_out"
+      return 0
+    fi
+    reject_text "$semantic_poll_out" "SemanticOnlyToken" "semantic raw query"
+    reject_paths "$semantic_poll_out"
+    count=$((count + 1))
+    sleep 0.25
+  done
+  fail "daemon closed-loop semantic search did not become ready"
+}
+
 CARGO_BIN="${CARGO:-cargo}"
 if ! command -v "$CARGO_BIN" >/dev/null 2>&1 && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
   CARGO_BIN=/Users/frankqdwang/.cargo/bin/cargo
@@ -142,6 +159,7 @@ embedding_command="$tmpdir/daemon-embedding-fixture.sh"
 daemon_stdout="$tmpdir/daemon.out"
 daemon_stderr="$tmpdir/daemon.err"
 ready_status_out="$tmpdir/status-ready.out"
+semantic_search_out="$tmpdir/semantic-search-ipc.out"
 daemon_pid=""
 
 cat >"$ocr_command" <<'SH'
@@ -224,6 +242,23 @@ run_cli "ocr search ipc" "$ocr_search_out" search DaemonClosedLoopOCRToken --ipc
 require_text "$ocr_search_out" "results: 1"
 require_text "$ocr_search_out" "synthetic-scanned-resume.pdf"
 reject_paths "$ocr_search_out"
+
+wait_for_semantic_daemon_search
+require_text "$semantic_search_out" "results: 3"
+require_text "$semantic_search_out" "synthetic-java-platform.pdf"
+require_text "$semantic_search_out" "synthetic-java-engineer.docx"
+require_text "$semantic_search_out" "synthetic-scanned-resume.pdf"
+reject_text "$semantic_search_out" "SemanticOnlyToken" "semantic raw query"
+reject_paths "$semantic_search_out"
+
+hybrid_search_out="$tmpdir/hybrid-search-ipc.out"
+run_cli "hybrid search ipc" "$hybrid_search_out" search SemanticOnlyToken --ipc auto --mode hybrid --top-k 20
+require_text "$hybrid_search_out" "results: 3"
+require_text "$hybrid_search_out" "synthetic-java-platform.pdf"
+require_text "$hybrid_search_out" "synthetic-java-engineer.docx"
+require_text "$hybrid_search_out" "synthetic-scanned-resume.pdf"
+reject_text "$hybrid_search_out" "SemanticOnlyToken" "hybrid raw query"
+reject_paths "$hybrid_search_out"
 
 doc_id="$(awk '/^doc_id: / { print $2; exit }' "$search_out")"
 if [ -z "$doc_id" ]; then

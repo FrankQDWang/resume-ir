@@ -26,9 +26,12 @@ use index_fulltext::{
     inspect_snapshot_root, redact_contact_values, FullTextIndex, SearchHit, SearchQuery,
     SnapshotReadTarget, SnapshotRootState,
 };
-use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
+use index_vector::{
+    inspect_persistent_vector_snapshot, PersistentVectorIndex, PersistentVectorSnapshotState,
+    QueryVector, VectorDocument, VectorHit, VectorIndex,
+};
 use meta_store::{
-    ContactHash, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
+    ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
     ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
     ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobFailureKind,
     IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey,
@@ -46,8 +49,8 @@ use ocr_client::{
     RenderedPage, TesseractLanguageAvailability, TesseractOcrClient, TesseractOcrSpec,
 };
 use rank_fusion::{
-    soft_dedupe_score, DateRange, DedupeProfile, DegreeLevel, ResumeProfile, SchoolTier,
-    SearchFilters,
+    fuse_hybrid_rrf, soft_dedupe_score, DateRange, DedupeProfile, DegreeLevel, HybridRecall,
+    RankedHit, ResumeProfile, SchoolTier, SearchFilters,
 };
 use search_planner::plan_search;
 use sectionizer::Sectionizer;
@@ -295,7 +298,7 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Ok(());
     }
     if let Some(ipc_addr) = options.ipc_listen {
-        serve_ipc(data_dir, ipc_addr, options.max_requests)?;
+        serve_ipc(data_dir, ipc_addr, options.max_requests, &options)?;
         if options.max_requests.is_some() {
             return Ok(());
         }
@@ -640,6 +643,7 @@ fn run_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
         &ipc_store,
         &listener,
         options.max_requests,
+        options,
         &worker_result_receiver,
     );
     remove_ipc_endpoint_manifest(data_dir);
@@ -1896,9 +1900,14 @@ fn parse_loopback_addr(value: &str) -> Result<SocketAddr> {
     Ok(addr)
 }
 
-fn serve_ipc(data_dir: &Path, addr: SocketAddr, max_requests: Option<usize>) -> Result<()> {
+fn serve_ipc(
+    data_dir: &Path,
+    addr: SocketAddr,
+    max_requests: Option<usize>,
+    options: &RunOptions,
+) -> Result<()> {
     let listener = bind_ipc_listener(data_dir, addr)?;
-    let result = serve_ipc_listener(data_dir, &listener, max_requests);
+    let result = serve_ipc_listener(data_dir, &listener, max_requests, options);
     remove_ipc_endpoint_manifest(data_dir);
     result
 }
@@ -1999,6 +2008,7 @@ fn serve_ipc_listener(
     data_dir: &Path,
     listener: &TcpListener,
     max_requests: Option<usize>,
+    options: &RunOptions,
 ) -> Result<()> {
     let request_limit = max_requests.unwrap_or(usize::MAX);
     let ipc_store = open_store(data_dir)?;
@@ -2006,7 +2016,7 @@ fn serve_ipc_listener(
         let (stream, _) = listener
             .accept()
             .map_err(|_| DaemonError::user("unable to accept daemon ipc request"))?;
-        handle_ipc_stream(data_dir, &ipc_store, stream)?;
+        handle_ipc_stream(data_dir, &ipc_store, stream, options)?;
     }
 
     Ok(())
@@ -2017,6 +2027,7 @@ fn serve_ipc_listener_with_worker_monitor(
     ipc_store: &MetaStore,
     listener: &TcpListener,
     max_requests: Option<usize>,
+    options: &RunOptions,
     worker_result_receiver: &Receiver<Result<()>>,
 ) -> Result<()> {
     let request_limit = max_requests.unwrap_or(usize::MAX);
@@ -2040,7 +2051,7 @@ fn serve_ipc_listener_with_worker_monitor(
 
         match listener.accept() {
             Ok((stream, _)) => {
-                handle_ipc_stream(data_dir, ipc_store, stream)?;
+                handle_ipc_stream(data_dir, ipc_store, stream, options)?;
                 handled_requests += 1;
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -2053,7 +2064,12 @@ fn serve_ipc_listener_with_worker_monitor(
     Ok(())
 }
 
-fn handle_ipc_stream(data_dir: &Path, ipc_store: &MetaStore, mut stream: TcpStream) -> Result<()> {
+fn handle_ipc_stream(
+    data_dir: &Path,
+    ipc_store: &MetaStore,
+    mut stream: TcpStream,
+    options: &RunOptions,
+) -> Result<()> {
     stream
         .set_nonblocking(false)
         .map_err(|_| DaemonError::user("unable to configure daemon ipc stream"))?;
@@ -2103,7 +2119,7 @@ fn handle_ipc_stream(data_dir: &Path, ipc_store: &MetaStore, mut stream: TcpStre
         && request.path == "/search"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        return handle_search_command_ipc(data_dir, &request, &mut stream);
+        return handle_search_command_ipc(data_dir, &request, &mut stream, options);
     }
 
     if request.method == "POST"
@@ -2356,6 +2372,7 @@ fn handle_search_command_ipc(
     data_dir: &Path,
     request: &IpcRequest,
     stream: &mut TcpStream,
+    options: &RunOptions,
 ) -> Result<()> {
     if !ipc_command_authorized(data_dir, &request.headers)? {
         let body = serde_json::json!({
@@ -2366,7 +2383,7 @@ fn handle_search_command_ipc(
         return write_http_response(stream, 401, "application/json", &body);
     }
 
-    match execute_search_command(data_dir, &request.body) {
+    match execute_search_command(data_dir, &request.body, options) {
         Ok(body) => write_http_response(stream, 200, "application/json", &body),
         Err(IpcCommandError::BadRequest(message)) => {
             let body = serde_json::json!({
@@ -2448,34 +2465,61 @@ fn handle_detail_command_ipc(
 fn execute_search_command(
     data_dir: &Path,
     body: &[u8],
+    options: &RunOptions,
 ) -> std::result::Result<String, IpcCommandError> {
     let payload = serde_json::from_slice::<serde_json::Value>(body)
         .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
     let args = parse_search_command(&payload)?;
-    if args.mode != "fulltext" {
-        return Err(IpcCommandError::BadRequest(
-            "daemon search ipc supports fulltext mode only",
-        ));
-    }
-
     let query_started = Instant::now();
-    let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
-        .map_err(DaemonError::fulltext)
-        .map_err(IpcCommandError::Internal)?
-    else {
-        let body = serde_json::json!({
-            "schema_version": "daemon.search.v1",
-            "status": "ok",
-            "mode": "fulltext",
-            "search_index": "not_ready",
-            "result_count": 0,
-            "results": [],
-        });
-        return Ok(body.to_string());
-    };
     let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
-    let hits = daemon_fulltext_search(&index, &store, &args)?;
-    record_daemon_query_observation(&store, query_started.elapsed(), hits.len());
+    let hits = match args.mode {
+        DaemonSearchMode::FullText => {
+            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+                .map_err(DaemonError::fulltext)
+                .map_err(IpcCommandError::Internal)?
+            else {
+                return Ok(daemon_search_not_ready_body(args.mode));
+            };
+            daemon_fulltext_search(&index, &store, &args)?
+        }
+        DaemonSearchMode::Semantic => {
+            let Some(hits) = daemon_semantic_search(data_dir, &store, &args, options)? else {
+                return Ok(daemon_search_not_ready_body(args.mode));
+            };
+            hits
+        }
+        DaemonSearchMode::Hybrid => {
+            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+                .map_err(DaemonError::fulltext)
+                .map_err(IpcCommandError::Internal)?
+            else {
+                return Ok(daemon_search_not_ready_body(args.mode));
+            };
+            let fulltext_hits = daemon_fulltext_search(&index, &store, &args)?;
+            let Some(vector_hits) = daemon_semantic_search(data_dir, &store, &args, options)?
+            else {
+                return Ok(daemon_search_not_ready_body(args.mode));
+            };
+            daemon_fuse_hybrid_hits(fulltext_hits, vector_hits, args.top_k)
+        }
+    };
+    record_daemon_query_observation(&store, args.mode, query_started.elapsed(), hits.len());
+    Ok(daemon_search_ok_body(args.mode, &hits))
+}
+
+fn daemon_search_not_ready_body(mode: DaemonSearchMode) -> String {
+    serde_json::json!({
+        "schema_version": "daemon.search.v1",
+        "status": "ok",
+        "mode": mode.label(),
+        "search_index": "not_ready",
+        "result_count": 0,
+        "results": [],
+    })
+    .to_string()
+}
+
+fn daemon_search_ok_body(mode: DaemonSearchMode, hits: &[DaemonSearchHit]) -> String {
     let results = hits
         .iter()
         .map(|hit| {
@@ -2496,15 +2540,15 @@ fn execute_search_command(
             result
         })
         .collect::<Vec<_>>();
-    let body = serde_json::json!({
+    serde_json::json!({
         "schema_version": "daemon.search.v1",
         "status": "ok",
-        "mode": "fulltext",
+        "mode": mode.label(),
         "search_index": "available",
         "result_count": results.len(),
         "results": results,
-    });
-    Ok(body.to_string())
+    })
+    .to_string()
 }
 
 fn parse_search_command(
@@ -2521,8 +2565,9 @@ fn parse_search_command(
     let mode = payload
         .get("mode")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("fulltext")
-        .to_string();
+        .unwrap_or("fulltext");
+    let mode =
+        DaemonSearchMode::parse(mode).ok_or(IpcCommandError::BadRequest("mode is invalid"))?;
     let top_k = match payload.get("top_k") {
         Some(value) => value
             .as_u64()
@@ -2807,6 +2852,187 @@ fn daemon_fulltext_search(
     daemon_visible_hits(store, hits, &args.filters, args.top_k)
 }
 
+fn daemon_semantic_search(
+    data_dir: &Path,
+    store: &MetaStore,
+    args: &DaemonSearchArgs,
+    options: &RunOptions,
+) -> std::result::Result<Option<Vec<DaemonSearchHit>>, IpcCommandError> {
+    let Some(snapshot_dimension) = daemon_vector_snapshot_dimension(data_dir) else {
+        return Ok(None);
+    };
+    let command = options
+        .embedding_command
+        .clone()
+        .ok_or(IpcCommandError::BadRequest(
+            "semantic search blocked: local embedding command not configured",
+        ))?;
+    let model_id = options
+        .embedding_model_id
+        .as_deref()
+        .ok_or(IpcCommandError::BadRequest(
+            "semantic search blocked: embedding model id not configured",
+        ))?;
+    let dimension = options
+        .embedding_dimension
+        .ok_or(IpcCommandError::BadRequest(
+            "semantic search blocked: embedding dimension not configured",
+        ))?;
+    if dimension != snapshot_dimension {
+        return Err(IpcCommandError::BadRequest(
+            "semantic search blocked: embedding dimension does not match vector index",
+        ));
+    }
+
+    let embedder = LocalEmbeddingCommandEmbedder::new(
+        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
+            .map_err(DaemonError::embedding)
+            .map_err(IpcCommandError::Internal)?
+            .with_timeout_ms(options.embedding_timeout_ms)
+            .map_err(DaemonError::embedding)
+            .map_err(IpcCommandError::Internal)?,
+    );
+    let input = EmbeddingInput::new("query", args.query.as_str());
+    let query_vectors = embedder
+        .embed_batch(&[input], EmbeddingBudget::new(1, args.query.len().max(1)))
+        .map_err(DaemonError::embedding)
+        .map_err(IpcCommandError::Internal)?;
+    let query_vector = query_vectors
+        .into_iter()
+        .next()
+        .ok_or(IpcCommandError::BadRequest(
+            "semantic search query embedding is unavailable",
+        ))?;
+    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
+        .map_err(DaemonError::vector)
+        .map_err(IpcCommandError::Internal)?;
+    let candidate_limit = args.top_k.saturating_mul(5).clamp(args.top_k, 100);
+    let allowed_doc_ids = daemon_field_filter_doc_id_prefilter(store, &args.filters)?;
+    let vector_hits = vector_index
+        .knn_for_model(
+            QueryVector::new(query_vector.values().to_vec())
+                .map_err(DaemonError::vector)
+                .map_err(IpcCommandError::Internal)?,
+            candidate_limit,
+            model_id,
+        )
+        .map_err(DaemonError::vector)
+        .map_err(IpcCommandError::Internal)?;
+
+    daemon_vector_hits(
+        store,
+        vector_hits,
+        &args.filters,
+        allowed_doc_ids.as_ref(),
+        args.top_k,
+    )
+    .map(Some)
+}
+
+fn daemon_vector_snapshot_dimension(data_dir: &Path) -> Option<usize> {
+    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
+    match (inspection.state(), inspection.snapshot()) {
+        (PersistentVectorSnapshotState::Ready, Some(snapshot)) => Some(snapshot.dimension()),
+        _ => None,
+    }
+}
+
+fn daemon_vector_hits(
+    store: &MetaStore,
+    hits: Vec<VectorHit>,
+    filters: &SearchFilters,
+    allowed_doc_ids: Option<&BTreeSet<String>>,
+    top_k: usize,
+) -> std::result::Result<Vec<DaemonSearchHit>, IpcCommandError> {
+    let mut visible = Vec::new();
+    let mut seen_candidate_keys = BTreeSet::new();
+
+    for (rank, hit) in hits.into_iter().enumerate() {
+        if let Some(allowed_doc_ids) = allowed_doc_ids {
+            if !allowed_doc_ids.contains(hit.doc_id()) {
+                continue;
+            }
+        }
+        let Some((document, version)) =
+            daemon_hydrate_visible_document_version(store, hit.doc_id())?
+        else {
+            continue;
+        };
+        if !filters.is_empty()
+            && !filters.matches(&daemon_persisted_profile(store, hit.doc_id(), &version)?)
+        {
+            continue;
+        }
+        let candidate_key = daemon_candidate_fold_key(&version);
+        if !seen_candidate_keys.insert(candidate_key.clone()) {
+            continue;
+        }
+
+        visible.push(DaemonSearchHit {
+            rank: rank + 1,
+            score: hit.score(),
+            doc_id: document.id.to_string(),
+            version_id: version.id.to_string(),
+            file_name: redact_contact_values(&document.file_name),
+            snippet: "semantic match".to_string(),
+            candidate_key,
+            soft_dedupe_hint: None,
+        });
+        if visible.len() == top_k {
+            break;
+        }
+    }
+
+    daemon_attach_soft_dedupe_hints(store, daemon_rerank_search_hits(visible))
+}
+
+fn daemon_fuse_hybrid_hits(
+    fulltext_hits: Vec<DaemonSearchHit>,
+    vector_hits: Vec<DaemonSearchHit>,
+    top_k: usize,
+) -> Vec<DaemonSearchHit> {
+    let mut by_doc = BTreeMap::<String, DaemonSearchHit>::new();
+    for hit in vector_hits.iter().chain(fulltext_hits.iter()) {
+        by_doc.insert(hit.doc_id.clone(), hit.clone());
+    }
+    let fused = fuse_hybrid_rrf(
+        HybridRecall::new(
+            daemon_ranked_hits_from_output(&fulltext_hits),
+            daemon_ranked_hits_from_output(&vector_hits),
+        ),
+        60.0,
+        top_k.saturating_mul(5).max(top_k),
+    );
+    let mut output = Vec::new();
+    let mut seen_candidate_keys = BTreeSet::new();
+    for ranked in fused {
+        let Some(hit) = by_doc.get(ranked.doc_id()) else {
+            continue;
+        };
+        if !seen_candidate_keys.insert(hit.candidate_key.clone()) {
+            continue;
+        }
+        let mut hit = hit.clone();
+        hit.rank = output.len() + 1;
+        hit.score = ranked.score();
+        output.push(hit);
+        if output.len() == top_k {
+            break;
+        }
+    }
+    output
+}
+
+fn daemon_ranked_hits_from_output(hits: &[DaemonSearchHit]) -> Vec<RankedHit> {
+    hits.iter()
+        .enumerate()
+        .map(|(index, hit)| {
+            RankedHit::new(hit.doc_id.clone(), index + 1, hit.score)
+                .with_candidate_key(hit.candidate_key.clone())
+        })
+        .collect()
+}
+
 fn daemon_field_filter_doc_id_prefilter(
     store: &MetaStore,
     filters: &SearchFilters,
@@ -3058,11 +3284,16 @@ fn daemon_degree_filter_values(min_degree: DegreeLevel) -> Vec<String> {
     .collect()
 }
 
-fn record_daemon_query_observation(store: &MetaStore, duration: Duration, result_count: usize) {
+fn record_daemon_query_observation(
+    store: &MetaStore,
+    mode: DaemonSearchMode,
+    duration: Duration,
+    result_count: usize,
+) {
     let Ok(observed_at) = current_timestamp() else {
         return;
     };
-    let _ = store.record_query_observation("fulltext", duration, result_count, observed_at);
+    let _ = store.record_query_observation(mode.label(), duration, result_count, observed_at);
 }
 
 fn daemon_visible_hits(
@@ -3090,6 +3321,7 @@ fn daemon_visible_hits(
 
         visible.push(DaemonSearchHit {
             rank: visible.len() + 1,
+            score: hit.score,
             doc_id: hit.doc_id,
             version_id: hit.version_id,
             file_name: redact_contact_values(&hit.file_name),
@@ -3103,6 +3335,13 @@ fn daemon_visible_hits(
     }
 
     daemon_attach_soft_dedupe_hints(store, visible)
+}
+
+fn daemon_rerank_search_hits(mut hits: Vec<DaemonSearchHit>) -> Vec<DaemonSearchHit> {
+    for (index, hit) in hits.iter_mut().enumerate() {
+        hit.rank = index + 1;
+    }
+    hits
 }
 
 fn daemon_attach_soft_dedupe_hints(
@@ -3161,6 +3400,7 @@ fn daemon_soft_dedupe_hint_for_hit(
             }
             let other_hit = DaemonSearchHit {
                 rank: 0,
+                score: 0.0,
                 doc_id: version.document_id.to_string(),
                 version_id: version.id.to_string(),
                 file_name: String::new(),
@@ -3306,6 +3546,41 @@ fn daemon_hydrate_visible_version(
     }
 
     Ok(Some(version))
+}
+
+fn daemon_hydrate_visible_document_version(
+    store: &MetaStore,
+    doc_id: &str,
+) -> std::result::Result<Option<(Document, ResumeVersion)>, IpcCommandError> {
+    let Ok(document_id) = DocumentId::from_str(doc_id) else {
+        return Ok(None);
+    };
+    let Some(document) = store
+        .document_by_id(&document_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Ok(None);
+    };
+    if document.is_deleted
+        || !matches!(
+            document.status,
+            DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+        )
+    {
+        return Ok(None);
+    }
+    let Some(version) = store
+        .latest_visible_resume_version_for_document(&document_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Ok(None);
+    };
+    if version.visibility != ResumeVisibility::Searchable {
+        return Ok(None);
+    }
+    Ok(Some((document, version)))
 }
 
 fn daemon_persisted_profile(
@@ -4041,13 +4316,41 @@ struct CanonicalImportRoot {
 
 struct DaemonSearchArgs {
     query: String,
-    mode: String,
+    mode: DaemonSearchMode,
     top_k: usize,
     filters: SearchFilters,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DaemonSearchMode {
+    FullText,
+    Semantic,
+    Hybrid,
+}
+
+impl DaemonSearchMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "fulltext" | "keyword" => Some(Self::FullText),
+            "semantic" => Some(Self::Semantic),
+            "hybrid" => Some(Self::Hybrid),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::FullText => "fulltext",
+            Self::Semantic => "semantic",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}
+
+#[derive(Clone)]
 struct DaemonSearchHit {
     rank: usize,
+    score: f32,
     doc_id: String,
     version_id: String,
     file_name: String,
@@ -4056,6 +4359,7 @@ struct DaemonSearchHit {
     soft_dedupe_hint: Option<DaemonSoftDedupeHint>,
 }
 
+#[derive(Clone)]
 struct DaemonSoftDedupeHint {
     suspected_versions: usize,
     max_confidence: f32,

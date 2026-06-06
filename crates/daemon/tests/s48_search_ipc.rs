@@ -6,6 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{FullTextIndex, IndexDocument, IndexSection};
+use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{
     Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
     EntityMentionId, EntityType, FileExtension, MetaStore, ResumeVersion, ResumeVersionId,
@@ -258,6 +259,166 @@ fn daemon_search_ipc_includes_redacted_soft_dedupe_hints() {
             > 0.70
     );
     assert_eq!(results[0]["soft_dedupe"]["folded"], false);
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_search_ipc_supports_semantic_and_hybrid_with_configured_embedding_runtime() {
+    let data_dir = temp_dir("search-ipc-semantic-hybrid-data");
+    let target_doc = DocumentId::from_non_secret_parts(&["s48", "semantic-target"]);
+    let target_version =
+        ResumeVersionId::from_non_secret_parts(&["s48", "semantic-target-version"]);
+    let decoy_doc = DocumentId::from_non_secret_parts(&["s48", "semantic-decoy"]);
+    let decoy_version = ResumeVersionId::from_non_secret_parts(&["s48", "semantic-decoy-version"]);
+
+    seed_searchable_resume(SeedResume {
+        data_dir: &data_dir,
+        document_id: &target_doc,
+        version_id: &target_version,
+        file_name: "semantic-target.pdf",
+        clean_text: "Vector target profile",
+        degree: "bachelor",
+        skill: "Kubernetes",
+        years: 4.0,
+        school: "",
+        school_tier: "",
+        certificate: "",
+        company: "",
+        title: "",
+    });
+    seed_searchable_resume(SeedResume {
+        data_dir: &data_dir,
+        document_id: &decoy_doc,
+        version_id: &decoy_version,
+        file_name: "semantic-decoy.pdf",
+        clean_text: "Vector decoy profile",
+        degree: "bachelor",
+        skill: "Rust",
+        years: 4.0,
+        school: "",
+        school_tier: "",
+        certificate: "",
+        company: "",
+        title: "",
+    });
+    seed_fulltext_index(
+        &data_dir,
+        [
+            IndexDocument {
+                doc_id: target_doc.to_string(),
+                version_id: target_version.to_string(),
+                file_name: "semantic-target.pdf".to_string(),
+                clean_text: "Vector target profile".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: "Vector target profile".to_string(),
+                }],
+                is_deleted: false,
+            },
+            IndexDocument {
+                doc_id: decoy_doc.to_string(),
+                version_id: decoy_version.to_string(),
+                file_name: "semantic-decoy.pdf".to_string(),
+                clean_text: "Vector decoy profile".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: "Vector decoy profile".to_string(),
+                }],
+                is_deleted: false,
+            },
+        ],
+    );
+    seed_vector_index(
+        &data_dir,
+        [
+            (
+                &target_doc,
+                &target_version,
+                vec![1.0_f32, 0.0_f32, 0.0_f32, 0.0_f32],
+            ),
+            (
+                &decoy_doc,
+                &decoy_version,
+                vec![0.0_f32, 1.0_f32, 0.0_f32, 0.0_f32],
+            ),
+        ],
+    );
+    let embedding_command = write_fixture_executable_in(
+        &data_dir.join("command-bin"),
+        "semantic-query-embedding",
+        r#"#!/usr/bin/env sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0,0\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--embedding-command",
+            path_str(&embedding_command),
+            "--embedding-model-id",
+            "fixture-local-model",
+            "--embedding-dimension",
+            "4",
+            "--max-requests",
+            "2",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+
+    for mode in ["semantic", "hybrid"] {
+        let response = http_post_search_command(
+            &endpoint,
+            Some(&token),
+            serde_json::json!({
+                "query": "SecretSemanticOnlyToken",
+                "mode": mode,
+                "top_k": 5,
+                "filters": {
+                    "skills_any": ["kubernetes"]
+                }
+            }),
+        );
+
+        assert!(response.contains("HTTP/1.1 200 OK"), "{mode}: {response}");
+        assert!(!response.contains("SecretSemanticOnlyToken"));
+        assert!(!response.contains(path_str(&data_dir)));
+        assert!(!response.contains(path_str(&embedding_command)));
+        assert!(!response.contains(&token));
+        let body = response.split("\r\n\r\n").nth(1).unwrap_or_default();
+        let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(payload["schema_version"], "daemon.search.v1");
+        assert_eq!(payload["status"], "ok");
+        assert_eq!(payload["mode"], mode);
+        assert_eq!(payload["search_index"], "available");
+        assert_eq!(payload["result_count"], 1);
+        let results = payload["results"].as_array().unwrap();
+        assert_eq!(results[0]["rank"], 1);
+        assert_eq!(results[0]["doc_id"], target_doc.to_string());
+        assert_eq!(results[0]["version_id"], target_version.to_string());
+        assert!(!response.contains("semantic-decoy.pdf"));
+    }
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
@@ -1517,7 +1678,7 @@ fn daemon_search_ipc_rejects_invalid_requests_without_leaking_query() {
         Some(&token),
         serde_json::json!({
             "query": "secret-query",
-            "mode": "semantic",
+            "mode": "bogus",
             "top_k": 1
         }),
     );
@@ -1923,6 +2084,30 @@ fn seed_fulltext_index_vec(data_dir: &Path, documents: Vec<IndexDocument>) {
     index.commit().unwrap();
 }
 
+#[cfg(unix)]
+fn seed_vector_index<const N: usize>(
+    data_dir: &Path,
+    documents: [(&DocumentId, &ResumeVersionId, Vec<f32>); N],
+) {
+    let index = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
+    index
+        .upsert(
+            documents
+                .into_iter()
+                .map(|(document_id, version_id, vector)| {
+                    VectorDocument::new_for_model(
+                        "fixture-local-model",
+                        format!("fixture-local-model:{version_id}"),
+                        document_id.to_string(),
+                        vector,
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        )
+        .unwrap();
+}
+
 fn http_post_search_command(
     endpoint: &str,
     token: Option<&str>,
@@ -2037,4 +2222,17 @@ fn path_str(path: &Path) -> &str {
 
 fn remove_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
+}
+
+#[cfg(unix)]
+fn write_fixture_executable_in(directory: &Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::create_dir_all(directory).unwrap();
+    let path = directory.join(name);
+    fs::write(&path, body).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
 }
