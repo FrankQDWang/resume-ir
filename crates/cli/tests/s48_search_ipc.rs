@@ -47,6 +47,10 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             serde_json::json!(["synthetic institute of technology"])
         );
         assert_eq!(
+            payload["filters"]["majors_any"],
+            serde_json::json!(["computer_science"])
+        );
+        assert_eq!(
             payload["filters"]["certificates_any"],
             serde_json::json!(["cka", "pmp"])
         );
@@ -113,6 +117,8 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             "985,双一流",
             "--school",
             "Synthetic Institute of Technology",
+            "--major",
+            "Computer Science",
             "--certificate",
             "PMP,CKA",
             "--date-range-overlaps",

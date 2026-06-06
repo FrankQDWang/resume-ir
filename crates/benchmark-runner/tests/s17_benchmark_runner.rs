@@ -239,14 +239,15 @@ fn benchmark_gate_rejects_million_release_gate_without_million_proof() {
 #[test]
 fn field_quality_report_scores_labeled_samples_without_raw_value_leakage() {
     let dataset = concat!(
-        "{\"sample_id\":\"case-a\",\"text\":\"Name: Synthetic Candidate\\nEmail: candidate@example.test\\nPhone: +1 (415) 555-0132\\nEducation\\nBachelor of Science\\nSkills: Rust, Java\",",
+        "{\"sample_id\":\"case-a\",\"text\":\"Name: Synthetic Candidate\\nEmail: candidate@example.test\\nPhone: +1 (415) 555-0132\\nEducation\\nBachelor of Science\\nMajor: Computer Science\\nSkills: Rust, Java\",",
         "\"expected\":[",
         "{\"type\":\"name\",\"normalized\":\"synthetic candidate\"},",
         "{\"type\":\"email\",\"normalized\":\"candidate@example.test\"},",
         "{\"type\":\"phone\",\"normalized\":\"+14155550132\"},",
         "{\"type\":\"skill\",\"normalized\":\"Rust\"},",
         "{\"type\":\"skill\",\"normalized\":\"Java\"},",
-        "{\"type\":\"degree\",\"normalized\":\"bachelor\"}",
+        "{\"type\":\"degree\",\"normalized\":\"bachelor\"},",
+        "{\"type\":\"major\",\"normalized\":\"computer_science\"}",
         "]}\n",
         "{\"sample_id\":\"case-b\",\"text\":\"Education\\nSynthetic University\\nSkills: SQLite\",",
         "\"expected\":[",
@@ -259,11 +260,12 @@ fn field_quality_report_scores_labeled_samples_without_raw_value_leakage() {
 
     assert_eq!(report.dataset_kind(), "labeled");
     assert_eq!(report.sample_count(), 2);
-    assert_eq!(report.expected_mentions(), 8);
+    assert_eq!(report.expected_mentions(), 9);
     assert!(report.overall().f1() >= 0.95);
     assert!(report.field_metric("email").unwrap().f1() >= 0.99);
     assert!(report.field_metric("phone").unwrap().f1() >= 0.99);
     assert!(report.field_metric("skill").unwrap().f1() >= 0.99);
+    assert!(report.field_metric("major").unwrap().f1() >= 0.99);
     let json = report.to_redacted_json();
     assert!(json.contains("\"schema_version\":\"field-quality.v1\""));
     assert!(json.contains("\"dataset_kind\":\"labeled\""));
@@ -273,6 +275,7 @@ fn field_quality_report_scores_labeled_samples_without_raw_value_leakage() {
     assert!(!json.contains("candidate@example.test"));
     assert!(!json.contains("+1 (415) 555-0132"));
     assert!(!json.contains("+14155550132"));
+    assert!(!json.contains("Computer Science"));
     assert!(!json.contains("case-a"));
 }
 

@@ -404,6 +404,128 @@ Skills: Java
 }
 
 #[test]
+fn import_persists_labeled_major_mentions_and_filters_search_without_output_leaks() {
+    let data_dir = temp_dir("persisted-major-data");
+    let resume_root = temp_dir("persisted-major-resumes");
+    fs::write(
+        resume_root.join("synthetic-major-candidate.txt"),
+        "\
+Synthetic Major Candidate
+Email: major-candidate@example.test
+Education
+School: Synthetic Institute of Technology
+Major: Computer Science
+Field of Study: Software Engineering
+教育经历
+专业：数据科学
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+    fs::write(
+        resume_root.join("synthetic-major-decoy.txt"),
+        "\
+Synthetic Major Decoy
+Email: major-decoy@example.test
+Education
+School: Synthetic Search College
+Major: Economics
+Skills: Java
+needle needle needle needle needle needle needle needle needle needle
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import major fields");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("Computer Science"));
+    assert!(!stdout.contains("数据科学"));
+    assert!(!stdout.contains("major-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-major-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let majors = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Major)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!mention.raw_value.contains(':'));
+            assert!(!mention.raw_value.contains('：'));
+            assert!(!format!("{mention:?}").contains("Computer Science"));
+            mention.normalized_value.unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        majors,
+        vec!["computer_science", "software_engineering", "data_science"]
+    );
+
+    let filtered = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--major",
+            "Computer Science",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run major filtered search");
+    assert!(
+        filtered.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&filtered.stdout),
+        String::from_utf8_lossy(&filtered.stderr)
+    );
+    assert!(filtered.stderr.is_empty());
+    let filtered_stdout = String::from_utf8_lossy(&filtered.stdout);
+    assert!(filtered_stdout.contains("results: 1"));
+    assert!(filtered_stdout.contains("synthetic-major-candidate.txt"));
+    assert!(!filtered_stdout.contains("synthetic-major-decoy.txt"));
+    assert!(!filtered_stdout.contains("Computer Science"));
+    assert!(!filtered_stdout.contains("major-candidate@example.test"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_school_tier_mentions_and_filters_search_without_output_leaks() {
     let data_dir = temp_dir("persisted-school-tier-data");
     let resume_root = temp_dir("persisted-school-tier-resumes");

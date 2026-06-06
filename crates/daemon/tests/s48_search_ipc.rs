@@ -639,6 +639,130 @@ fn daemon_search_ipc_prefilters_school_before_fulltext_top_k_cutoff() {
 }
 
 #[test]
+fn daemon_search_ipc_prefilters_major_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-ipc-major-data");
+    let target_doc = DocumentId::from_non_secret_parts(&["s48", "major-target"]);
+    let target_version = ResumeVersionId::from_non_secret_parts(&["s48", "major-target-version"]);
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut index_documents = Vec::new();
+
+    for index in 0..5 {
+        let document_id =
+            DocumentId::from_non_secret_parts(&["s48", &format!("major-decoy-{index}")]);
+        let version_id =
+            ResumeVersionId::from_non_secret_parts(&["s48", &format!("major-decoy-{index}")]);
+        let file_name = format!("major-decoy-{index}.pdf");
+        let clean_text = format!("Major decoy {index} {noisy_query_text}");
+        seed_searchable_resume(SeedResume {
+            data_dir: &data_dir,
+            document_id: &document_id,
+            version_id: &version_id,
+            file_name: &file_name,
+            clean_text: &clean_text,
+            degree: "bachelor",
+            skill: "Java",
+            years: 4.0,
+            school: "",
+            school_tier: "",
+            certificate: "",
+            company: "",
+            title: "",
+        });
+        append_major_mention(&data_dir, &version_id, "economics");
+        index_documents.push(IndexDocument {
+            doc_id: document_id.to_string(),
+            version_id: version_id.to_string(),
+            file_name,
+            clean_text: clean_text.clone(),
+            sections: vec![IndexSection {
+                section_type: "education".to_string(),
+                text: clean_text,
+            }],
+            is_deleted: false,
+        });
+    }
+
+    seed_searchable_resume(SeedResume {
+        data_dir: &data_dir,
+        document_id: &target_doc,
+        version_id: &target_version,
+        file_name: "major-target.pdf",
+        clean_text: "Major target needle",
+        degree: "bachelor",
+        skill: "Java",
+        years: 4.0,
+        school: "",
+        school_tier: "",
+        certificate: "",
+        company: "",
+        title: "",
+    });
+    append_major_mention(&data_dir, &target_version, "computer_science");
+    index_documents.push(IndexDocument {
+        doc_id: target_doc.to_string(),
+        version_id: target_version.to_string(),
+        file_name: "major-target.pdf".to_string(),
+        clean_text: "Major target needle".to_string(),
+        sections: vec![IndexSection {
+            section_type: "education".to_string(),
+            text: "needle".to_string(),
+        }],
+        is_deleted: false,
+    });
+    seed_fulltext_index_vec(&data_dir, index_documents);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "needle",
+            "mode": "fulltext",
+            "top_k": 1,
+            "filters": {
+                "majors_any": ["computer_science"]
+            }
+        }),
+    );
+
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or_default();
+    let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(payload["result_count"], 1);
+    let results = payload["results"].as_array().unwrap();
+    assert_eq!(results[0]["doc_id"], target_doc.to_string());
+    assert_eq!(results[0]["version_id"], target_version.to_string());
+    assert!(!response.contains("major-decoy-"));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn daemon_search_ipc_prefilters_date_range_before_fulltext_top_k_cutoff() {
     let data_dir = temp_dir("search-ipc-date-range-data");
     let target_doc = DocumentId::from_non_secret_parts(&["s48", "date-range-target"]);
@@ -1497,6 +1621,22 @@ fn append_location_mention(data_dir: &Path, version_id: &ResumeVersionId, normal
         version_id,
         "location",
         EntityType::Location,
+        normalized_value,
+        0.95,
+    ));
+    store
+        .replace_entity_mentions(version_id, &mentions)
+        .unwrap();
+}
+
+fn append_major_mention(data_dir: &Path, version_id: &ResumeVersionId, normalized_value: &str) {
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let mut mentions = store.entity_mentions_for_version(version_id).unwrap();
+    mentions.push(entity_mention(
+        version_id,
+        "major",
+        EntityType::Major,
         normalized_value,
         0.95,
     ));

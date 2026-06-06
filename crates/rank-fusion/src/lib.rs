@@ -147,6 +147,7 @@ pub struct ResumeProfile {
     degree: Option<DegreeLevel>,
     schools: Vec<String>,
     school_tiers: Vec<SchoolTier>,
+    majors: Vec<String>,
     certificates: Vec<String>,
     date_ranges: Vec<DateRange>,
     companies: Vec<String>,
@@ -163,6 +164,7 @@ impl ResumeProfile {
             degree: None,
             schools: Vec::new(),
             school_tiers: Vec::new(),
+            majors: Vec::new(),
             certificates: Vec::new(),
             date_ranges: Vec::new(),
             companies: Vec::new(),
@@ -199,6 +201,21 @@ impl ResumeProfile {
             .into_iter()
             .map(|school| normalize_school(school.as_ref()))
             .filter(|school| !school.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
+    pub fn with_majors<I, S>(mut self, majors: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.majors = majors
+            .into_iter()
+            .map(|major| normalize_major(major.as_ref()))
+            .filter(|major| !major.is_empty())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -311,6 +328,10 @@ impl ResumeProfile {
         &self.schools
     }
 
+    pub fn majors(&self) -> &[String] {
+        &self.majors
+    }
+
     pub fn certificates(&self) -> &[String] {
         &self.certificates
     }
@@ -348,6 +369,7 @@ impl fmt::Debug for ResumeProfile {
             .field("degree", &self.degree)
             .field("school_count", &self.schools.len())
             .field("school_tier_count", &self.school_tiers.len())
+            .field("major_count", &self.majors.len())
             .field("certificate_count", &self.certificates.len())
             .field("date_range_count", &self.date_ranges.len())
             .field("company_count", &self.companies.len())
@@ -364,6 +386,7 @@ pub struct SearchFilters {
     degree_min: Option<DegreeLevel>,
     schools_any: Vec<String>,
     school_tiers_any: Vec<SchoolTier>,
+    majors_any: Vec<String>,
     certificates_any: Vec<String>,
     date_range_overlaps: Option<DateRange>,
     companies_any: Vec<String>,
@@ -401,6 +424,21 @@ impl SearchFilters {
             .into_iter()
             .map(|school| normalize_school(school.as_ref()))
             .filter(|school| !school.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
+    pub fn with_majors_any<I, S>(mut self, majors: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.majors_any = majors
+            .into_iter()
+            .map(|major| normalize_major(major.as_ref()))
+            .filter(|major| !major.is_empty())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -510,6 +548,7 @@ impl SearchFilters {
         self.degree_min.is_none()
             && self.schools_any.is_empty()
             && self.school_tiers_any.is_empty()
+            && self.majors_any.is_empty()
             && self.certificates_any.is_empty()
             && self.date_range_overlaps.is_none()
             && self.companies_any.is_empty()
@@ -534,6 +573,10 @@ impl SearchFilters {
 
     pub fn schools_any(&self) -> &[String] {
         &self.schools_any
+    }
+
+    pub fn majors_any(&self) -> &[String] {
+        &self.majors_any
     }
 
     pub fn certificates_any(&self) -> &[String] {
@@ -583,6 +626,17 @@ impl SearchFilters {
                 .schools_any
                 .iter()
                 .any(|school| profile_schools.contains(school))
+            {
+                return false;
+            }
+        }
+
+        if !self.majors_any.is_empty() {
+            let profile_majors = profile.majors().iter().collect::<BTreeSet<_>>();
+            if !self
+                .majors_any
+                .iter()
+                .any(|major| profile_majors.contains(major))
             {
                 return false;
             }
@@ -688,6 +742,7 @@ impl fmt::Debug for SearchFilters {
             .field("degree_min", &self.degree_min)
             .field("schools_any_count", &self.schools_any.len())
             .field("school_tiers_any_count", &self.school_tiers_any.len())
+            .field("majors_any_count", &self.majors_any.len())
             .field("certificates_any_count", &self.certificates_any.len())
             .field(
                 "date_range_overlaps",
@@ -1106,6 +1161,34 @@ fn is_supported_month_index(month_index: i32) -> bool {
 
 fn normalize_school(school: &str) -> String {
     normalize_dedupe_value(school)
+}
+
+fn normalize_major(major: &str) -> String {
+    let value = major.trim().to_lowercase();
+    let compact = value.replace([' ', '-', '_'], "");
+    match compact.as_str() {
+        "computerscience" | "计算机科学" | "计算机科学与技术" => {
+            "computer_science".to_string()
+        }
+        "softwareengineering" | "软件工程" => "software_engineering".to_string(),
+        "datascience" | "数据科学" => "data_science".to_string(),
+        "informationsystem" | "informationsystems" | "信息系统" => {
+            "information_systems".to_string()
+        }
+        "electronicengineering" | "electronicsengineering" | "电子工程" | "电子信息工程" => {
+            "electronic_engineering".to_string()
+        }
+        "mathematics" | "math" | "数学" => "mathematics".to_string(),
+        "statistics" | "statistic" | "统计" | "统计学" => "statistics".to_string(),
+        "finance" | "金融" | "金融学" => "finance".to_string(),
+        "economics" | "economic" | "经济" | "经济学" => "economics".to_string(),
+        "businessadministration" | "工商管理" => "business_administration".to_string(),
+        _ => value
+            .split(|character: char| !character.is_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("_"),
+    }
 }
 
 fn normalize_company(company: &str) -> String {

@@ -91,6 +91,7 @@ const WITNESS_FIELD_LABELS: &[&str] = &[
     "email",
     "phone",
     "school",
+    "major",
     "degree",
     "company",
     "title",
@@ -4405,6 +4406,7 @@ fn witness_field_label(entity_type: &EntityType) -> Option<&'static str> {
         EntityType::School => Some("school"),
         EntityType::SchoolTier => Some("school_tier"),
         EntityType::Degree => Some("degree"),
+        EntityType::Major => Some("major"),
         EntityType::Company => Some("company"),
         EntityType::Title => Some("title"),
         EntityType::Education => Some("education"),
@@ -5608,6 +5610,7 @@ fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
             .map(|school_tier| school_tier.canonical())
             .collect::<Vec<_>>(),
         "schools_any": filters.schools_any(),
+        "majors_any": filters.majors_any(),
         "certificates_any": filters.certificates_any(),
         "date_range_overlaps": filters
             .date_range_overlaps()
@@ -5734,6 +5737,19 @@ fn field_filter_doc_id_prefilter(
                 .searchable_document_ids_with_entity_values(
                     EntityType::School,
                     filters.schools_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.majors_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Major,
+                    filters.majors_any(),
                     FIELD_FILTER_CONFIDENCE_THRESHOLD,
                     true,
                 )
@@ -6149,6 +6165,7 @@ fn is_valid_detail_field_type_label(value: &str) -> bool {
             | "phone"
             | "school"
             | "degree"
+            | "major"
             | "company"
             | "title"
             | "education"
@@ -8240,6 +8257,21 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
                 filters = filters.with_schools_any(schools);
                 index += 2;
             }
+            "--major" | "--majors-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let majors = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|major| !major.is_empty())
+                    .collect::<Vec<_>>();
+                if majors.is_empty() {
+                    return Err(CliError::user("search major filter is invalid"));
+                }
+                filters = filters.with_majors_any(majors);
+                index += 2;
+            }
             "--certificate" | "--certificates-any" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -8416,7 +8448,7 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--location <location[,location...]>] [--locations-any <location[,location...]>] [--skills-any <skill[,skill...]>] [--email <email[,email...]>] [--phone <phone[,phone...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--major <major[,major...]>] [--majors-any <major[,major...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--location <location[,location...]>] [--locations-any <location[,location...]>] [--skills-any <skill[,skill...]>] [--email <email[,email...]>] [--phone <phone[,phone...]>] [--years-experience-min <years>] [--top-k <n>]"
 }
 
 fn comma_values(value: &str) -> Vec<&str> {
@@ -9064,6 +9096,11 @@ fn persisted_profile(
         .filter(|field| field.entity_type == EntityType::School && field.confidence >= 0.75)
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let majors = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Major && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let companies = fields
         .iter()
         .filter(|field| field.entity_type == EntityType::Company && field.confidence >= 0.75)
@@ -9095,6 +9132,7 @@ fn persisted_profile(
     let mut profile = ResumeProfile::new(doc_id)
         .with_school_tiers(school_tiers)
         .with_schools(schools)
+        .with_majors(majors)
         .with_certificates(certificates)
         .with_date_ranges(date_ranges)
         .with_companies(companies)
@@ -9565,6 +9603,7 @@ fn entity_type_label(entity_type: &EntityType) -> String {
         EntityType::School => "school".to_string(),
         EntityType::SchoolTier => "school_tier".to_string(),
         EntityType::Degree => "degree".to_string(),
+        EntityType::Major => "major".to_string(),
         EntityType::Company => "company".to_string(),
         EntityType::Title => "title".to_string(),
         EntityType::Education => "education".to_string(),

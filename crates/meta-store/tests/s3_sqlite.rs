@@ -24,9 +24,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,]
     );
-    assert_eq!(store.schema_version().unwrap(), 18);
+    assert_eq!(store.schema_version().unwrap(), 19);
 
     for table_name in [
         "candidate",
@@ -50,7 +50,7 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 18);
+    assert_eq!(store.schema_version().unwrap(), 19);
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 18);
+        assert_eq!(store.schema_version().unwrap(), 19);
     }
 
     let encrypted_bytes = fs::read(&db_path).unwrap();
@@ -131,7 +131,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         plaintext.run_migrations().unwrap();
         plaintext.upsert_document(&document).unwrap();
         plaintext.upsert_resume_version(&version).unwrap();
-        assert_eq!(plaintext.schema_version().unwrap(), 18);
+        assert_eq!(plaintext.schema_version().unwrap(), 19);
         assert_eq!(
             plaintext.metadata_encryption_state(),
             MetadataEncryptionState::Plaintext
@@ -146,7 +146,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         migrated.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(migrated.schema_version().unwrap(), 18);
+    assert_eq!(migrated.schema_version().unwrap(), 19);
     assert_eq!(
         migrated.document_by_id(&document.id).unwrap().unwrap().id,
         document.id
@@ -1584,6 +1584,64 @@ fn entity_mentions_replace_query_and_redact_values() {
 }
 
 #[test]
+fn entity_mentions_accept_major_values_for_searchable_prefilter() {
+    let store = migrated_store();
+    let target_document = document("major-target-document", false, DocumentStatus::Searchable);
+    let target_version = resume_version("major-target-version", target_document.id.clone());
+    let decoy_document = document("major-decoy-document", false, DocumentStatus::Searchable);
+    let decoy_version = resume_version("major-decoy-version", decoy_document.id.clone());
+    store.upsert_document(&target_document).unwrap();
+    store.upsert_resume_version(&target_version).unwrap();
+    store.upsert_document(&decoy_document).unwrap();
+    store.upsert_resume_version(&decoy_version).unwrap();
+
+    let target_major = entity_mention(
+        "major-target",
+        &target_version.id,
+        EntityType::Major,
+        "Computer Science",
+        Some("computer_science"),
+        20..36,
+        0.92,
+    );
+    let decoy_major = entity_mention(
+        "major-decoy",
+        &decoy_version.id,
+        EntityType::Major,
+        "Economics",
+        Some("economics"),
+        20..29,
+        0.92,
+    );
+    store
+        .replace_entity_mentions(&target_version.id, &[target_major])
+        .unwrap();
+    store
+        .replace_entity_mentions(&decoy_version.id, &[decoy_major])
+        .unwrap();
+
+    let mentions = store
+        .entity_mentions_for_version(&target_version.id)
+        .unwrap();
+    assert_eq!(mentions[0].entity_type, EntityType::Major);
+    assert_eq!(
+        mentions[0].normalized_value.as_deref(),
+        Some("computer_science")
+    );
+    assert!(!format!("{:?}", mentions[0]).contains("Computer Science"));
+
+    let document_ids = store
+        .searchable_document_ids_with_entity_values(
+            EntityType::Major,
+            &["computer_science".to_string()],
+            0.75,
+            true,
+        )
+        .unwrap();
+    assert_eq!(document_ids, vec![target_document.id]);
+}
+
+#[test]
 fn searchable_document_ids_without_entity_type_matches_visible_versions_only() {
     let store = migrated_store();
     let no_tier_document = document("without-school-tier", false, DocumentStatus::Searchable);
@@ -1954,7 +2012,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7, 15]);
-        assert_eq!(reopened.schema_version().unwrap(), 18);
+        assert_eq!(reopened.schema_version().unwrap(), 19);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -2358,7 +2416,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 18);
+        assert_eq!(reopened.schema_version().unwrap(), 19);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -2888,7 +2946,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             report.applied_versions(),
             &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 18);
+        assert_eq!(reopened.schema_version().unwrap(), 19);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -2920,7 +2978,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 18);
+        assert_eq!(reopened.schema_version().unwrap(), 19);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

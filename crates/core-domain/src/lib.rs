@@ -521,6 +521,7 @@ pub enum EntityType {
     School,
     SchoolTier,
     Degree,
+    Major,
     Company,
     Title,
     Education,

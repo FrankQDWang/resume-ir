@@ -118,6 +118,23 @@ fn field_filters_match_any_school() {
 }
 
 #[test]
+fn field_filters_match_any_major() {
+    let filters =
+        SearchFilters::default().with_majors_any(["Computer Science", "Software Engineering"]);
+    let matching = ResumeProfile::new("doc_major").with_majors(["computer_science"]);
+    let other_major = ResumeProfile::new("doc_other_major").with_majors(["data_science"]);
+    let missing_major = ResumeProfile::new("doc_missing_major");
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&other_major));
+    assert!(!filters.matches(&missing_major));
+    assert_eq!(
+        filters.majors_any(),
+        &["computer_science", "software_engineering"]
+    );
+}
+
+#[test]
 fn field_filters_match_company_and_title() {
     let filters = SearchFilters::default()
         .with_companies_any(["Synthetic Payments Inc.", "Other Co"])

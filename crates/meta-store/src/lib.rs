@@ -38,6 +38,7 @@ const SCHEMA_VERSION_V15: u32 = 15;
 const SCHEMA_VERSION_V16: u32 = 16;
 const SCHEMA_VERSION_V17: u32 = 17;
 const SCHEMA_VERSION_V18: u32 = 18;
+const SCHEMA_VERSION_V19: u32 = 19;
 const QUERY_OBSERVATION_RETENTION_ROWS: i64 = 10_000;
 const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
@@ -777,6 +778,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V16, SCHEMA_V16),
             (SCHEMA_VERSION_V17, SCHEMA_V17),
             (SCHEMA_VERSION_V18, SCHEMA_V18),
+            (SCHEMA_VERSION_V19, SCHEMA_V19),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -4807,6 +4809,7 @@ CREATE TABLE entity_mention (
             'school',
             'school_tier',
             'degree',
+            'major',
             'company',
             'title',
             'education',
@@ -5081,6 +5084,66 @@ CREATE TABLE candidate_contact_conflict (
 
 CREATE INDEX candidate_contact_conflict_updated_idx
     ON candidate_contact_conflict(updated_at_seconds);
+"#;
+
+const SCHEMA_V19: &str = r#"
+ALTER TABLE entity_mention RENAME TO entity_mention_v18;
+
+CREATE TABLE entity_mention (
+    id TEXT PRIMARY KEY,
+    resume_version_id TEXT NOT NULL,
+    section_id TEXT,
+    entity_type TEXT NOT NULL CHECK (
+        entity_type IN (
+            'name',
+            'email',
+            'phone',
+            'school',
+            'school_tier',
+            'degree',
+            'major',
+            'company',
+            'title',
+            'education',
+            'skills',
+            'skill',
+            'certificate',
+            'date',
+            'date_range',
+            'years_experience',
+            'location'
+        )
+        OR entity_type LIKE 'other:%'
+    ),
+    raw_value TEXT NOT NULL,
+    normalized_value TEXT,
+    span_start INTEGER CHECK (span_start IS NULL OR span_start >= 0),
+    span_end INTEGER CHECK (span_end IS NULL OR span_end >= 0),
+    confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    extractor TEXT NOT NULL,
+    CHECK (
+        span_start IS NULL
+        OR span_end IS NULL
+        OR span_start <= span_end
+    ),
+    FOREIGN KEY (resume_version_id) REFERENCES resume_version(id) ON DELETE CASCADE
+);
+
+INSERT INTO entity_mention (
+    id, resume_version_id, section_id, entity_type, raw_value,
+    normalized_value, span_start, span_end, confidence, extractor
+)
+SELECT
+    id, resume_version_id, section_id, entity_type, raw_value,
+    normalized_value, span_start, span_end, confidence, extractor
+FROM entity_mention_v18;
+
+DROP TABLE entity_mention_v18;
+
+CREATE INDEX entity_mention_version_idx
+    ON entity_mention(resume_version_id, entity_type);
+CREATE INDEX entity_mention_type_value_idx
+    ON entity_mention(entity_type, normalized_value, confidence);
 "#;
 
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
@@ -6352,6 +6415,7 @@ fn entity_type_to_storage(entity_type: &EntityType) -> String {
         EntityType::School => "school".to_string(),
         EntityType::SchoolTier => "school_tier".to_string(),
         EntityType::Degree => "degree".to_string(),
+        EntityType::Major => "major".to_string(),
         EntityType::Company => "company".to_string(),
         EntityType::Title => "title".to_string(),
         EntityType::Education => "education".to_string(),
@@ -6374,6 +6438,7 @@ fn entity_type_from_storage(value: &str) -> Result<EntityType> {
         "school" => Ok(EntityType::School),
         "school_tier" => Ok(EntityType::SchoolTier),
         "degree" => Ok(EntityType::Degree),
+        "major" => Ok(EntityType::Major),
         "company" => Ok(EntityType::Company),
         "title" => Ok(EntityType::Title),
         "education" => Ok(EntityType::Education),

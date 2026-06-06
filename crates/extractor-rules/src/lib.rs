@@ -17,6 +17,7 @@ pub enum FieldType {
     School,
     SchoolTier,
     Degree,
+    Major,
     Company,
     Title,
     Location,
@@ -67,6 +68,7 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     extract_schools(text, &mut matches);
     extract_school_tiers(text, &mut matches);
     extract_degrees(text, &mut matches);
+    extract_majors(text, &mut matches);
     extract_companies(text, &mut matches);
     extract_titles(text, &mut matches);
     extract_locations(text, &mut matches);
@@ -981,6 +983,193 @@ fn degree_alias_patterns() -> [(&'static str, f32, &'static str); 5] {
         ),
         ("high_school", 0.9, r"(?i)\bhigh\s+school\b|高中"),
     ]
+}
+
+fn extract_majors(text: &str, matches: &mut Vec<RuleMatch>) {
+    let mut education_context_lines = 0_usize;
+    let mut seen = BTreeSet::new();
+
+    for (line_start, line) in indexed_lines(text) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            education_context_lines = education_context_lines.saturating_sub(1);
+            continue;
+        }
+
+        if is_education_section_header(trimmed) {
+            education_context_lines = 8;
+            continue;
+        }
+
+        if education_context_lines > 0 && looks_like_section_header(trimmed) {
+            education_context_lines = 0;
+            continue;
+        }
+
+        if trimmed.len() > 140 {
+            education_context_lines = education_context_lines.saturating_sub(1);
+            continue;
+        }
+
+        let leading = line.len() - line.trim_start().len();
+        let trimmed_span_start = line_start + leading;
+        if let Some(segment) = major_segment(trimmed, trimmed_span_start) {
+            push_first_major_match(segment, matches, &mut seen, true);
+            education_context_lines = education_context_lines.saturating_sub(1);
+            continue;
+        }
+
+        if education_context_lines > 0 {
+            push_first_major_match(
+                LabeledSegment {
+                    text: trimmed,
+                    span_start: trimmed_span_start,
+                },
+                matches,
+                &mut seen,
+                false,
+            );
+        }
+
+        education_context_lines = education_context_lines.saturating_sub(1);
+    }
+}
+
+fn major_segment<'a>(
+    trimmed_line: &'a str,
+    trimmed_span_start: usize,
+) -> Option<LabeledSegment<'a>> {
+    let (label, value, delimiter_len) = split_labeled_value_line(trimmed_line, is_major_label)?;
+    let value_leading = value.len() - value.trim_start().len();
+    let value = value.trim();
+    (!value.is_empty()).then_some(LabeledSegment {
+        text: value,
+        span_start: trimmed_span_start + label.len() + delimiter_len + value_leading,
+    })
+}
+
+fn is_major_label(label: &str) -> bool {
+    matches!(
+        label.to_lowercase().as_str(),
+        "major"
+            | "field"
+            | "field of study"
+            | "study field"
+            | "specialization"
+            | "specialisation"
+            | "concentration"
+            | "专业"
+            | "所学专业"
+            | "主修"
+            | "主修专业"
+            | "专业方向"
+            | "研究方向"
+    )
+}
+
+fn push_first_major_match(
+    segment: LabeledSegment<'_>,
+    matches: &mut Vec<RuleMatch>,
+    seen: &mut BTreeSet<String>,
+    allow_freeform_labeled_value: bool,
+) -> bool {
+    let major_match = first_major_alias_match(segment.text).or_else(|| {
+        allow_freeform_labeled_value.then(|| {
+            let normalized = normalize_freeform_major(segment.text)?;
+            Some((normalized, 0.86, 0, segment.text.len()))
+        })?
+    });
+    let Some((normalized, confidence, relative_start, relative_end)) = major_match else {
+        return false;
+    };
+    if !seen.insert(normalized.clone()) {
+        return false;
+    }
+
+    matches.push(RuleMatch {
+        field_type: FieldType::Major,
+        raw_value: segment.text[relative_start..relative_end].to_string(),
+        normalized_value: Some(normalized),
+        span_start: segment.span_start + relative_start,
+        span_end: segment.span_start + relative_end,
+        confidence,
+    });
+    true
+}
+
+fn first_major_alias_match(value: &str) -> Option<(String, f32, usize, usize)> {
+    for (normalized, confidence, pattern) in major_alias_patterns() {
+        let regex = Regex::new(pattern).unwrap();
+        if let Some(found) = regex.find(value) {
+            return Some((
+                normalized.to_string(),
+                confidence,
+                found.start(),
+                found.end(),
+            ));
+        }
+    }
+
+    None
+}
+
+fn major_alias_patterns() -> [(&'static str, f32, &'static str); 10] {
+    [
+        (
+            "computer_science",
+            0.94,
+            r"(?i)\bcomputer\s+science\b|计算机科学(?:与技术)?",
+        ),
+        (
+            "software_engineering",
+            0.94,
+            r"(?i)\bsoftware\s+engineering\b|软件工程",
+        ),
+        ("data_science", 0.94, r"(?i)\bdata\s+science\b|数据科学"),
+        (
+            "information_systems",
+            0.9,
+            r"(?i)\binformation\s+systems?\b|信息系统",
+        ),
+        (
+            "electronic_engineering",
+            0.9,
+            r"(?i)\belectronic(?:s)?\s+engineering\b|电子(?:信息)?工程",
+        ),
+        ("mathematics", 0.9, r"(?i)\bmathematics?\b|数学"),
+        ("statistics", 0.9, r"(?i)\bstatistics?\b|统计学?"),
+        ("finance", 0.88, r"(?i)\bfinance\b|金融学?"),
+        ("economics", 0.88, r"(?i)\beconomics?\b|经济学?"),
+        (
+            "business_administration",
+            0.88,
+            r"(?i)\bbusiness\s+administration\b|工商管理",
+        ),
+    ]
+}
+
+fn normalize_freeform_major(value: &str) -> Option<String> {
+    let value = value
+        .trim()
+        .trim_matches(|character: char| {
+            matches!(character, ',' | ';' | '|' | '/' | '\\' | '，' | '；' | '、')
+        })
+        .trim();
+    if value.is_empty()
+        || value.len() > 80
+        || value.contains('@')
+        || looks_like_contact_line(value)
+        || looks_like_section_header(value)
+    {
+        return None;
+    }
+    let normalized = value
+        .to_lowercase()
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    (!normalized.is_empty()).then_some(normalized)
 }
 
 fn extract_skills(text: &str, matches: &mut Vec<RuleMatch>) {

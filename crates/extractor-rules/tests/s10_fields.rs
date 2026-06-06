@@ -163,6 +163,46 @@ Degree: MSc Computer Science
 }
 
 #[test]
+fn extracts_labeled_major_values_with_alias_normalization() {
+    let text = "\
+Education
+Major: Computer Science
+Field of Study: Software Engineering
+教育经历
+专业：数据科学
+";
+
+    let matches = extract_strong_fields(text);
+
+    let majors = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Major)
+        .collect::<Vec<_>>();
+    let normalized = majors
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        normalized,
+        vec!["computer_science", "software_engineering", "data_science"]
+    );
+    assert_eq!(
+        &text[majors[0].span_start..majors[0].span_end],
+        "Computer Science"
+    );
+    assert_eq!(
+        &text[majors[1].span_start..majors[1].span_end],
+        "Software Engineering"
+    );
+    assert_eq!(&text[majors[2].span_start..majors[2].span_end], "数据科学");
+    assert!(majors.iter().all(|field| field.confidence >= 0.86));
+    assert!(majors.iter().all(|field| !field.raw_value.contains(':')));
+    assert!(majors.iter().all(|field| !field.raw_value.contains('：')));
+    assert!(!format!("{:?}", majors[0]).contains("Computer Science"));
+}
+
+#[test]
 fn extracts_school_tier_values_inside_education_context() {
     let text = "\
 Education
