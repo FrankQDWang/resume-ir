@@ -1692,16 +1692,25 @@ fn location_segment<'a>(
     trimmed_line: &'a str,
     trimmed_span_start: usize,
 ) -> Option<LabeledSegment<'a>> {
-    let (label, value, delimiter_len) = split_labeled_value_line(trimmed_line, is_location_label)?;
+    let (label, value, delimiter_len) =
+        split_labeled_value_line(trimmed_line, is_location_or_address_label)?;
     let value_leading = value.len() - value.trim_start().len();
     let value = value.trim();
     if value.is_empty() {
         return None;
     }
+    let value_span_start = trimmed_span_start + label.len() + delimiter_len + value_leading;
+    if is_address_location_label(label.trim()) {
+        return location_segment_from_address_value(value, value_span_start);
+    }
     Some(LabeledSegment {
         text: value,
-        span_start: trimmed_span_start + label.len() + delimiter_len + value_leading,
+        span_start: value_span_start,
     })
+}
+
+fn is_location_or_address_label(label: &str) -> bool {
+    is_location_label(label) || is_address_location_label(label)
 }
 
 fn is_location_label(label: &str) -> bool {
@@ -1722,6 +1731,116 @@ fn is_location_label(label: &str) -> bool {
             | "工作地点"
             | "期望城市"
     )
+}
+
+fn is_address_location_label(label: &str) -> bool {
+    matches!(
+        label.to_lowercase().as_str(),
+        "address"
+            | "current address"
+            | "mailing address"
+            | "residential address"
+            | "home address"
+            | "地址"
+            | "现居住地址"
+            | "居住地址"
+            | "通讯地址"
+    )
+}
+
+fn location_segment_from_address_value<'a>(
+    value: &'a str,
+    value_span_start: usize,
+) -> Option<LabeledSegment<'a>> {
+    let mut component_start = 0;
+    for (index, character) in value.char_indices() {
+        if matches!(character, ',' | '，' | ';' | '；' | '|' | '/' | '\\' | '、') {
+            if let Some(segment) =
+                address_component_location_segment(value, value_span_start, component_start, index)
+            {
+                return Some(segment);
+            }
+            component_start = index + character.len_utf8();
+        }
+    }
+
+    if let Some(segment) =
+        address_component_location_segment(value, value_span_start, component_start, value.len())
+    {
+        return Some(segment);
+    }
+
+    location_alias_substring(value, value_span_start)
+}
+
+fn address_component_location_segment<'a>(
+    value: &'a str,
+    value_span_start: usize,
+    component_start: usize,
+    component_end: usize,
+) -> Option<LabeledSegment<'a>> {
+    let component = &value[component_start..component_end];
+    let leading = component.len() - component.trim_start().len();
+    let text = component.trim();
+    if text.is_empty() || normalize_location(text).is_none() {
+        return None;
+    }
+    Some(LabeledSegment {
+        text,
+        span_start: value_span_start + component_start + leading,
+    })
+}
+
+fn location_alias_substring<'a>(
+    value: &'a str,
+    value_span_start: usize,
+) -> Option<LabeledSegment<'a>> {
+    for alias in address_location_alias_substrings() {
+        let Some(offset) = value.find(alias) else {
+            continue;
+        };
+        return Some(LabeledSegment {
+            text: &value[offset..offset + alias.len()],
+            span_start: value_span_start + offset,
+        });
+    }
+    None
+}
+
+fn address_location_alias_substrings() -> [&'static str; 31] {
+    [
+        "San Francisco",
+        "New York City",
+        "New York",
+        "Hong Kong",
+        "Los Angeles",
+        "San Jose",
+        "Singapore",
+        "Chongqing",
+        "Shanghai",
+        "Hangzhou",
+        "Shenzhen",
+        "Beijing",
+        "Guangzhou",
+        "Suzhou",
+        "Nanjing",
+        "Chengdu",
+        "Wuhan",
+        "Tianjin",
+        "Changsha",
+        "Qingdao",
+        "Toronto",
+        "Vancouver",
+        "Seattle",
+        "Austin",
+        "Boston",
+        "北京市",
+        "上海市",
+        "深圳市",
+        "广州市",
+        "香港",
+        "重庆市",
+    ]
 }
 
 fn normalize_location(value: &str) -> Option<String> {

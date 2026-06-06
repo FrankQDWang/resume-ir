@@ -683,6 +683,51 @@ Supported Bay Area customers without declaring a location label";
 }
 
 #[test]
+fn extracts_city_evidence_from_labeled_address_values_without_street_spans() {
+    let text = "\
+Candidate Address Location Target
+Address: 123 Market St, San Francisco, CA 94105
+地址：北京市海淀区中关村大街1号
+Current Address: 88 Queen's Road, Hong Kong
+Experience
+Delivered projects at 123 Market St without a location label";
+
+    let matches = extract_strong_fields(text);
+    let locations = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Location)
+        .collect::<Vec<_>>();
+    let normalized = locations
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(normalized, vec!["san_francisco", "beijing", "hong_kong"]);
+    assert_eq!(
+        &text[locations[0].span_start..locations[0].span_end],
+        "San Francisco"
+    );
+    assert_eq!(
+        &text[locations[1].span_start..locations[1].span_end],
+        "北京市"
+    );
+    assert_eq!(
+        &text[locations[2].span_start..locations[2].span_end],
+        "Hong Kong"
+    );
+    assert!(locations
+        .iter()
+        .all(|field| !field.raw_value.contains("123")));
+    assert!(locations
+        .iter()
+        .all(|field| !field.raw_value.contains("Queen")));
+    assert!(!format!("{:?}", locations[0]).contains("Market St"));
+    assert!(!locations
+        .iter()
+        .any(|field| field.raw_value.contains("projects")));
+}
+
+#[test]
 fn extracts_broader_title_aliases_without_certificate_title_noise() {
     let text = "\
 Experience
