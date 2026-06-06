@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, and S227 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, and S228 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -114,7 +114,7 @@ obsolete preliminary files and checklists are not product scope.
   Private business labeled field-quality release evidence is now accepted only
   as strict redacted local aggregate JSON with dataset/annotation manifest
   digests, explicit false raw-data/path/value/sample-ID booleans, a fixed field
-  taxonomy, and production field metrics for email, phone, school,
+  taxonomy, and production field metrics for name, email, phone, school,
   school_tier, degree, major, company, title, location, skill, certificate, date
   ranges, and years experience.
   Soft-dedupe scoring now compares
@@ -717,8 +717,86 @@ obsolete preliminary files and checklists are not product scope.
 | S225 | Product broader certificate alias normalization complete locally | Focused RED tests first failed because CKS, Terraform Associate, Google Associate Cloud Engineer, AZ-204, and RHCSA aliases were not extracted as the intended canonical certificate mentions, rank-fusion preserved raw normalized aliases such as `terraform_associate` and `az_204`, and `--certificate "Terraform Associate"` could not match the persisted target. After implementation, extractor-rules maps CKS/Certified Kubernetes Security Specialist, HashiCorp Certified Terraform Associate/Terraform Associate, Google/GCP Associate Cloud Engineer, AZ-204/Azure Developer, and RHCSA/Red Hat Certified System Administrator to canonical certificate values with exact span evidence, and rank-fusion normalizes the same aliases for filters/profiles. Import/search persists the broader certificate aliases without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business certificate-field F1, complete all global certification dictionaries, infer certification levels or dates, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S226 | Product broader skill alias extraction and filtering complete locally | Focused RED tests first failed because high-signal cloud/data/DevOps skill aliases such as Amazon Web Services, Microsoft Azure, Google Cloud Platform, Terraform, Ansible, Jenkins, GitLab CI, Kafka, Flink, Elastic Search, Mongo DB, and Snowflake were not extracted as skill mentions, rank-fusion did not normalize user skill aliases such as K8s, Golang, Postgres, NodeJS, React.js, TS, sklearn, Amazon Web Services, Google Cloud Platform, Elastic Search, Mongo DB, and GitLab CI/CD to persisted canonical skill keys, and `--skills-any "Amazon Web Services"` could not match the persisted target. After implementation, extractor-rules maps those high-signal skill aliases to canonical skill values with exact span evidence, rank-fusion normalizes common filter/profile aliases to the same keys, and import/search persists broader skill aliases without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business skill-field F1, complete all global skill dictionaries, infer skills from arbitrary prose, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S227 | Product candidate-name field filtering complete locally | Focused RED tests first failed because rank-fusion had no `with_names`/`with_names_any` API, direct CLI search rejected `--name`, CLI IPC did not transmit `names_any`, and daemon IPC ignored name filters until after full-text top-k retrieval. After implementation, rank-fusion normalizes persisted and requested names, CLI supports `--name`/`--names-any`, CLI IPC emits canonical `names_any`, daemon IPC parses `names_any`, and both CLI plus daemon prefilter `EntityType::Name` document IDs before the full-text top-k cutoff while hydrated profiles still verify the name match. Focused RED/GREEN, full rank-fusion, full CLI search-filter and search-IPC suites, full daemon search-IPC suite, full `resume-cli`, full `resume-daemon`, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business name-field precision/recall, add fuzzy/person-alias matching, change search snippet redaction, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
+| S228 | Product name field-quality release gate complete locally | Focused RED tests first failed because private-business field-quality reports missing `name` metrics were accepted by both the library gate and CLI gate. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `name` metrics for private business release evidence, complete strict private-business fixtures include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create or upload private labels, run real business name-quality evaluation, prove production name precision/recall/F1 on representative resumes, add fuzzy/person-alias matching, clear field-quality blockers, or make stable release ready. |
 
 ## Command Log
+
+### S228
+
+Design target:
+
+- Require `name` metrics in strict private-business field-quality release
+  evidence now that candidate-name filtering is production-visible.
+- Keep the report boundary local/redacted aggregate only, with no raw field
+  values, sample IDs, local paths, or resume text.
+- Use synthetic fixtures only; this slice validates the release gate shape and
+  does not claim real business name-quality evidence exists.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_rejects_private_business_report_without_name_metric --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_gate_requires_private_business_name_metric --locked -- --exact
+```
+
+Output summary:
+
+- The library exact test failed because `evaluate_field_quality_gate_json`
+  accepted a strict private-business report that lacked `name` metrics.
+- The CLI exact test failed because `resume-benchmark field-gate
+  --require-private-business-labeled` exited successfully for the same missing
+  `name` evidence.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_rejects_private_business_report_without_name_metric --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_gate_requires_private_business_name_metric --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+```
+
+Output summary:
+
+- The exact library and CLI tests passed after adding `name` to
+  `PRODUCTION_FIELD_QUALITY_THRESHOLDS` and the complete strict
+  private-business field-quality fixtures.
+- `cargo test -p benchmark-runner --locked`: exit 0; 21 CLI benchmark tests, 43
+  runner tests, and doc-tests passed.
+- `cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings`:
+  exit 0.
+
+Final local gate:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --all --check
+git diff --check
+./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --all --check`: exit 0.
+- `git diff --check`: exit 0.
+- `check-runbooks.sh`: exit 0.
+- `guard-public-repo.sh`: exit 0, `public repo guard passed`.
+- `verify-local.sh`: exit 0; workspace clippy/tests/doc-tests, license/runbook/
+  workflow/release-readiness checks, release artifact and SBOM checks, macOS
+  package DMG verification, and public repository guard passed. Windows package
+  check was skipped on this non-Windows host.
+
+Scope note:
+
+- S228 uses synthetic fixtures only. It does not read, print, commit, or upload
+  real resumes, local data directories, tokens, diagnostics, model caches, or
+  raw personal data.
+- This slice requires private business release evidence to include `name`
+  metrics. It does not create private labels, run private evaluation, prove real
+  business name precision/recall/F1, clear field-quality blockers, validate
+  million-scale behavior, clear platform/signing/model/OCR blockers, or make
+  the complete product ready.
 
 ### S227
 

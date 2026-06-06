@@ -1582,6 +1582,7 @@ const PRIVATE_BUSINESS_FIELD_QUALITY_SCOPE: &str =
     "private business field-quality benchmark; aggregate redacted report only";
 const PRIVATE_BUSINESS_FIELD_QUALITY_TARGET_CLAIM: &str = "field_quality_target_met";
 const PRODUCTION_FIELD_QUALITY_THRESHOLDS: &[(&str, f64)] = &[
+    ("name", 0.95),
     ("email", 0.995),
     ("phone", 0.995),
     ("school", 0.93),

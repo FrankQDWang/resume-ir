@@ -104,8 +104,8 @@ reports. The report must use `dataset_kind: "private-business-labeled"`,
 `privacy_boundary: "redacted_local_aggregate"`, `field_taxonomy:
 "resume-ir.fields.v1"`, false raw-data/path/field-value/sample-ID booleans, and
 sha256 digests for both the dataset and annotation manifests. It must include
-production field metrics for email, phone, school, school_tier, degree, major,
-company, title, location, skill, certificate, date ranges, and years
+production field metrics for name, email, phone, school, school_tier, degree,
+major, company, title, location, skill, certificate, date ranges, and years
 experience. Do not upload reports if they contain raw resume text, local paths,
 field values, sample IDs, filenames, or notes.
 
