@@ -74,6 +74,18 @@ jobs:
           test -f release-dry-run/release-sbom.json
           grep -F '"signing_status": "blocked"' release-dry-run/signing-evidence.json
           grep -F '"evidence_boundary": "dry_run_no_signing_material"' release-dry-run/signing-evidence.json
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/release-artifacts.json; then
+            echo "release artifact manifest leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/signing-evidence.json; then
+            echo "signing evidence manifest leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/release-sbom.json; then
+            echo "release SBOM leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
 
       - name: Upload release dry-run manifest
         uses: actions/upload-artifact@v7
