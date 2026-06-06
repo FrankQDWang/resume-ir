@@ -26,6 +26,7 @@ const MAX_TOP_K: usize = 100;
 const DEFAULT_SYNTHETIC_OCR_RENDER_DPI: u32 = 150;
 const DEFAULT_VECTOR_QUALITY_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_VECTOR_QUALITY_TEXT_BYTES: usize = 128 * 1024;
+const PRIVATE_REAL_RELEASE_QUERY_SAMPLE_MIN: usize = 500;
 
 pub type Result<T> = std::result::Result<T, BenchmarkError>;
 
@@ -2881,6 +2882,14 @@ pub fn evaluate_benchmark_gate_json(
     {
         return Err(BenchmarkGateError::failed(
             "million-scale release benchmark requires release confidence",
+        ));
+    }
+    if config.require_private_real_corpus
+        && (query_count < PRIVATE_REAL_RELEASE_QUERY_SAMPLE_MIN
+            || samples < PRIVATE_REAL_RELEASE_QUERY_SAMPLE_MIN)
+    {
+        return Err(BenchmarkGateError::failed(
+            "private real-corpus benchmark requires release query sample count",
         ));
     }
     if target_claim != "not_evaluated" && !config.require_private_real_corpus {

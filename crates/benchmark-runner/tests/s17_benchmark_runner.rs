@@ -102,15 +102,27 @@ fn benchmark_gate_rejects_unproven_million_scale_claims() {
 
 #[test]
 fn benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence() {
-    let report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false);
-    let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
+    let report = minimal_private_real_benchmark_json(100_000, 500, 150.0, false);
+    let config = BenchmarkGateConfig::new(100_000, 500, 200.0).require_private_real_corpus();
 
     let evaluation = evaluate_benchmark_gate_json(&report, config).unwrap();
 
     assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
     assert_eq!(evaluation.document_count(), 100_000);
-    assert_eq!(evaluation.query_count(), 200);
+    assert_eq!(evaluation.query_count(), 500);
     assert_eq!(evaluation.p95_ms(), 150.0);
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_release_with_too_few_query_samples() {
+    let report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false);
+    let config = BenchmarkGateConfig::new(100_000, 100, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires release query sample count"));
 }
 
 #[test]

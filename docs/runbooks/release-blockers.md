@@ -91,6 +91,11 @@ The 1M release gate is stricter than sampled private evidence:
 with `percentile_confidence: "sampled"` can document local exploratory evidence
 but cannot clear the million-scale release blocker.
 
+Private real-corpus release gates are fail-closed to at least 500 query latency
+samples. A lower CLI/config `--min-queries` value is valid only for non-release
+local checks; it cannot make a private real-corpus release report with fewer
+than 500 queries clear the 100k or 1M benchmark blockers.
+
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   gate --report private-benchmark-100k.json \
