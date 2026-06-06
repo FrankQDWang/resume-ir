@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, and S235 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, and S236 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -733,8 +733,77 @@ obsolete preliminary files and checklists are not product scope.
 | S233 | Product query benchmark consistency gate complete locally | Focused RED tests first failed because strict private real-corpus query benchmark reports could claim latency sample counts different from query count, impossible total hit counts above `query_count * top_k`, or QPS inconsistent with `query_count / query_total_ms`, and both library plus CLI gates accepted them. After implementation, private query benchmark reports must have positive document/query/top-k counts, latency samples matching query count, feasible zero-result and total-hit counts, ordered latency summaries, positive `query_total_ms`, and QPS matching `query_count / (query_total_ms / 1000)` within rounding tolerance. The release blocker runbook documents this evidence rule. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, diff check, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not run private 100k/1M query benchmarks, create/upload private benchmark evidence, prove `<200ms` P95 on representative hardware, prevent fabricated aggregate counts beyond consistency checks, clear benchmark/model/platform blockers, or make stable release ready. |
 | S234 | Product million-scale benchmark confidence gate complete locally | Focused RED tests first failed because a strict private real-corpus query benchmark report with `million_scale_verified: true`, `document_count: 1000000`, and `percentile_confidence: "sampled"` was accepted by both the library gate and CLI gate under `--require-million-scale`. After implementation, million-scale release gates require `percentile_confidence: "release"` in addition to the existing private real-corpus, hot-index hybrid, target-claim, scale, and aggregate consistency checks. The release blocker runbook documents that sampled private evidence cannot clear the 1M release blocker. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, diff check, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not run private 100k/1M query benchmarks, create/upload private benchmark evidence, prove `<200ms` P95 on representative hardware, generate release-grade percentile confidence from real corpus runs, clear benchmark/model/platform blockers, or make stable release ready. |
 | S235 | Product private benchmark query-sample floor gate complete locally | Focused RED tests first failed because private real-corpus release benchmark reports with only 200 query latency samples were accepted when the caller lowered the configured query minimum to 100. After implementation, `require_private_real_corpus()` gates enforce at least 500 query count and latency samples independent of a lower CLI/config `--min-queries` value, while existing private boundary, hot-index hybrid, million-scale proof, and million-scale confidence checks remain intact. The release blocker runbook documents this fail-closed release sample floor. Focused RED/GREEN, full benchmark-runner runner/CLI suites, focused clippy, fmt, runbook guard, diff check, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not run private 100k/1M query benchmarks, create/upload private benchmark evidence, prove `<200ms` P95 on representative hardware, generate a representative private business query set, prevent fabricated aggregate reports beyond consistency/sample-floor checks, clear benchmark/model/platform blockers, or make stable release ready. |
+| S236 | Product release-readiness benchmark detail gate complete locally | Focused RED tests first failed because the release-readiness text and JSON benchmark blocker only said representative private hot-index hybrid evidence was missing, without exposing the stricter release evidence gates for at least 500 query samples, `--require-million-scale`, and `percentile_confidence: release`. After implementation, the `100k/1M real-corpus benchmarks` blocker detail carries those concrete evidence requirements, and the release-readiness CI guard checks for them while continuing to reject local path leaks. Focused RED/GREEN, release-readiness guard, focused clippy, fmt, diff check, public guard, and full local verification passed locally. | This slice improves fail-closed release-readiness reporting only. It does not run private 100k/1M query benchmarks, create/upload private benchmark reports, prove `<200ms` P95, generate release-grade percentile evidence, clear benchmark/model/platform blockers, or make stable release ready. |
 
 ## Command Log
+
+### S236
+
+Design target:
+
+- Make release-readiness report the concrete private real-corpus query benchmark
+  evidence requirements already enforced by benchmark gates: hot-index hybrid
+  private evidence, at least 500 query samples, and 1M release evidence with
+  `--require-million-scale` plus `percentile_confidence: release`.
+- Keep stable release blocked and keep text/JSON output aggregate and redacted,
+  without local data-dir paths, private benchmark reports, query sets, model
+  caches, diagnostics, or resume text.
+- Do not run or simulate private benchmark evidence in this slice.
+
+Observed RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+```
+
+Output summary:
+
+- Both release-readiness tests failed before implementation because the text
+  and JSON blocker detail did not contain `500 query samples`.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+./scripts/ci/check-release-readiness.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --all --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --all-targets --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo test -p resume-cli --test s161_release_readiness --locked`: exit 0;
+  both text and JSON release-readiness tests passed with the concrete benchmark
+  evidence requirements and no local path leaks.
+- `./scripts/ci/check-release-readiness.sh`: exit 0; the local CI guard now
+  checks for `500 query samples`, `--require-million-scale`, and
+  `percentile_confidence: release` in the JSON blocker detail.
+- `cargo fmt --all --check`: exit 0.
+- `cargo clippy -p resume-cli --all-targets --locked -- -D warnings`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/guard-public-repo.sh`: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0; metadata, fmt, workspace clippy,
+  workspace tests/doc-tests, license, runbook, workflow, release-readiness,
+  release artifact, release SBOM, macOS package, Windows-package skip on
+  non-Windows, and public-repo guards passed.
+
+Sub-agent orchestration:
+
+- `fw-build` and Superpowers subagent-driven guidance were used as local
+  implementation discipline only. No separate execution owner or external
+  sub-agent was spawned for this narrowly scoped release-readiness report
+  change.
+
+Scope note:
+
+- S236 improves release-readiness blocker specificity only. It does not run
+  private 100k/1M benchmarks, create/upload private benchmark evidence, prove
+  `<200ms` P95 on representative hardware, generate release-grade percentile
+  confidence, select/license a production model, validate platform installers,
+  clear release blockers, or make the full product complete.
 
 ### S235
 

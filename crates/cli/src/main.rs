@@ -127,7 +127,7 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "100k/1M real-corpus benchmarks",
-        "representative private real-corpus hot-index hybrid performance evidence is not available",
+        "representative private real-corpus hot-index hybrid performance evidence is not available; release evidence requires at least 500 query samples, and 1M evidence must pass --require-million-scale with percentile_confidence: release",
     ),
     (
         "field extraction quality",

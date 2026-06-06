@@ -22,6 +22,10 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("Windows service lifecycle: blocked"));
     assert!(stdout.contains("macOS installer lifecycle: blocked"));
     assert!(stdout.contains("100k/1M real-corpus benchmarks: blocked"));
+    assert!(stdout.contains("hot-index hybrid"));
+    assert!(stdout.contains("500 query samples"));
+    assert!(stdout.contains("percentile_confidence: release"));
+    assert!(stdout.contains("--require-million-scale"));
     assert!(stdout.contains("field extraction quality: blocked"));
     assert!(stdout.contains("dedupe quality: blocked"));
     assert!(stdout.contains("vector quality: blocked"));
@@ -97,6 +101,16 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     let fault_drill_detail = fault_drill_blocker["detail"].as_str().unwrap();
     assert!(fault_drill_detail.contains("actual ENOSPC"));
     assert!(fault_drill_detail.contains("service-level daemon kill"));
+
+    let benchmark_blocker = blockers
+        .iter()
+        .find(|blocker| blocker["label"] == "100k/1M real-corpus benchmarks")
+        .expect("benchmark blocker");
+    let benchmark_detail = benchmark_blocker["detail"].as_str().unwrap();
+    assert!(benchmark_detail.contains("hot-index hybrid"));
+    assert!(benchmark_detail.contains("500 query samples"));
+    assert!(benchmark_detail.contains("percentile_confidence: release"));
+    assert!(benchmark_detail.contains("--require-million-scale"));
 
     assert!(stderr.contains("release readiness blocked"));
     assert!(!stdout.contains(path_str(&data_dir)));
