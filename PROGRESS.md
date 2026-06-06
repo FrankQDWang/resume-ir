@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, and S210 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, and S211 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -198,6 +198,11 @@ obsolete preliminary files and checklists are not product scope.
   aliases for frontend, full-stack, machine-learning, data-science, DevOps, QA,
   engineering-manager, and solutions-architect families while avoiding
   certificate-line title false positives.
+  Location extraction now handles explicitly labeled English and Chinese
+  location lines such as `Location:`, `Base:`, and `所在地：`, canonicalizes
+  common city aliases, persists span-backed `location` entity mentions, and
+  supports location filtering through direct CLI search plus CLI/daemon IPC
+  with metadata prefiltering before full-text top-k truncation.
   School/degree extraction now strips common English and Chinese education
   labels such as `School:`, `Degree:`, `学校：`, and `学历：` from field evidence,
   normalizes school whitespace/case, maps degree aliases such as MSc, BSc, PhD,
@@ -214,8 +219,9 @@ obsolete preliminary files and checklists are not product scope.
   Missing production work
   includes broader dictionaries and normalization beyond the current
   high-signal certificate/skill/title aliases, labeled school/degree forms and
-  degree aliases, explicit school-tier aliases, Chinese explicit/open-ended
-  date ranges, China mobile phone formats, and labeled company/title forms, real
+  degree aliases, explicit school-tier aliases, location aliases/address forms,
+  Chinese explicit/open-ended date ranges, China mobile phone formats, and
+  labeled company/title forms, real
   business labeled field and dedupe quality datasets/results, remaining future
   non-cache PII surface purge coverage, and forensic erase proof.
 - P3 semantic/hybrid: local embedding command protocol, persisted vector
@@ -655,8 +661,82 @@ obsolete preliminary files and checklists are not product scope.
 | S208 | Product date-range search filtering complete locally | Focused tests first failed because rank-fusion had no date-range profile/filter API, metadata could not return searchable document IDs by overlapping `date_range` evidence, CLI search rejected `--date-range-overlaps`, CLI IPC did not emit `date_range_overlaps`, and daemon IPC ignored date ranges until after full-text top-k retrieval. After implementation, `DateRange` supports `YYYY-MM/YYYY-MM`, `YYYY-MM..YYYY-MM`, and `YYYY-MM/PRESENT`; metadata prefilters visible searchable documents by overlapping persisted `date_range` mentions; CLI supports `--date-range-overlaps`; CLI/daemon IPC carry and parse `date_range_overlaps`; persisted profiles hydrate date ranges; and both CLI and daemon prefilter date-range document IDs before full-text top-k truncation. Focused RED/GREEN, related meta/rank/CLI/daemon suites, fmt, and focused clippy passed locally. | This slice uses synthetic/temp fixtures only. It does not add separate `edu_start`/`edu_end`/`work_start`/`work_end`/`certificate_date` columns, infer certificate-specific dates, prove real business date-range F1, evaluate private resume corpora, clear broad multilingual date coverage, or make stable release ready. |
 | S209 | Product contact search filtering complete locally | Focused tests first failed because metadata could not return searchable document IDs from candidate contact hashes, CLI search rejected `--email`/`--phone`, CLI IPC could not hash contact filters before submitting a request, and daemon IPC ignored `contact_hashes_any` until after full-text top-k retrieval. After implementation, CLI contact filters normalize email/phone locally, hash them with the existing data-dir contact HMAC key, never put raw contacts in `SearchFilters` or IPC, CLI/daemon IPC carry only `contact_hashes_any`, metadata prefilters visible searchable candidate-assigned documents by email/phone hash, and full-text/semantic/hybrid local search plus daemon full-text IPC apply the metadata prefilter before result filtering. Focused RED/GREEN, related meta/rank/CLI/daemon suites, fmt, diff check, public guard, focused clippy, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not expose fuzzy contact matching, prove real business contact recall, evaluate private resume corpora, guarantee manual IPC against a different data-dir contact key, clear broader field-quality evidence blockers, or make stable release ready. |
 | S210 | Hosted Rust workspace contact IPC assertion stability complete locally | PR #9 hosted `rust workspace` failed in `search_ipc_hashes_contact_filters_before_submitting_request` because the test compared `contact_hashes_any` arrays in exact order. The filter is an ANY set, and production only requires raw contacts to be hashed locally and transmitted without raw contact leakage. After implementation, the test compares sorted actual and expected hashes while keeping the raw email/phone and hash output leak checks. Hosted-failing exact test, full CLI search IPC test file, fmt, diff check, public guard, and full local verification passed locally. | This is a test-only stability fix for S209's IPC assertion. It does not change production search behavior, prove hosted CI has passed until PR #9 reruns, read private resumes, evaluate real contact recall, clear field-quality blockers, or make stable release ready. |
+| S211 | Product location extraction and filtering complete locally | Focused tests first failed because extractor-rules had no `FieldType::Location`, rank-fusion had no profile/filter API for locations, CLI search rejected `--location`, CLI IPC did not emit `locations_any`, and daemon IPC ignored location filters until after full-text top-k retrieval. After implementation, explicitly labeled location lines are extracted with span-backed evidence and canonical common city aliases, import persists `location` entity mentions, benchmark field labels include location, rank-fusion hydrates and matches location profiles, CLI supports `--location`/`--locations-any`, CLI/daemon IPC carry `locations_any`, and both CLI and daemon prefilter matching document IDs before full-text top-k truncation. Focused RED/GREEN, related extractor/rank/import/benchmark/CLI/daemon suites, fmt, diff check, public guard, focused clippy, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not parse arbitrary addresses or unlabeled city mentions, prove real business location recall/F1, evaluate private resume corpora, broaden multilingual geography coverage beyond common aliases, clear field-quality evidence blockers, or make stable release ready. |
 
 ## Command Log
+
+### S211
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_labeled_location_values_with_exact_spans -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_any_location -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_location_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_location_before_fulltext_top_k_cutoff -- --exact
+```
+
+Output summary:
+
+- The extractor focused test failed before implementation because
+  `FieldType::Location` did not exist.
+- The rank-fusion focused test failed before implementation because
+  `SearchFilters::with_locations_any`, `ResumeProfile::with_locations`, and
+  `locations_any()` did not exist.
+- The direct CLI focused test failed before implementation because search
+  rejected `--location` and printed the existing usage.
+- The CLI IPC focused test failed before implementation because the CLI never
+  connected to the fake daemon after rejecting the new location flag.
+- The daemon IPC focused test failed before implementation because the
+  unhandled `locations_any` filter allowed high-BM25 decoys to win the top-k
+  window.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules extracts_labeled_location_values_with_exact_spans -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion field_filters_match_any_location -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_labeled_location_mentions_without_output_leaks -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters filtered_search_prefilters_location_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_prefilters_location_before_fulltext_top_k_cutoff -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules
+/Users/frankqdwang/.cargo/bin/cargo test -p rank-fusion
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-daemon --test s48_search_ipc
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p rank-fusion -p import-pipeline -p resume-cli -p resume-daemon -p benchmark-runner --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused extractor, rank-fusion, CLI persisted-field, direct CLI filtered
+  search, CLI IPC, and daemon IPC location tests passed after implementation.
+- Full related suites passed: extractor-rules, rank-fusion, import-pipeline,
+  benchmark-runner, CLI search filters, CLI persisted fields, CLI search IPC,
+  and daemon search IPC.
+- Focused clippy passed for the touched packages.
+- `cargo fmt --all --check`, `git diff --check`, and
+  `guard-public-repo.sh` passed locally.
+- Full local verification passed locally, including workspace tests and
+  doc-tests, license/runbook/workflow/release-readiness checks, release
+  artifact and SBOM checks, macOS package check, and the final public
+  repository guard. Windows package check was skipped on this non-Windows host.
+
+Scope note:
+
+- S211 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, vectors, raw contact
+  values, contact hashes, or location values from private resumes.
 
 ### S210
 

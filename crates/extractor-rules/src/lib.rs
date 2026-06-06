@@ -19,6 +19,7 @@ pub enum FieldType {
     Degree,
     Company,
     Title,
+    Location,
     Skill,
     Certificate,
     YearsExperience,
@@ -68,6 +69,7 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     extract_degrees(text, &mut matches);
     extract_companies(text, &mut matches);
     extract_titles(text, &mut matches);
+    extract_locations(text, &mut matches);
     extract_skills(text, &mut matches);
     extract_certificates(text, &mut matches);
     matches.sort_by_key(|field| field.span_start);
@@ -1395,6 +1397,127 @@ fn has_engineering_role_marker(lower: &str) -> bool {
         || lower.contains("developer")
         || lower.contains("工程师")
         || lower.contains("开发")
+}
+
+fn extract_locations(text: &str, matches: &mut Vec<RuleMatch>) {
+    let mut seen = BTreeSet::new();
+    for (line_start, line) in indexed_lines(text) {
+        let trimmed = line.trim();
+        if trimmed.len() > 120 {
+            continue;
+        }
+
+        let leading = line.len() - line.trim_start().len();
+        let trimmed_span_start = line_start + leading;
+        let Some(segment) = location_segment(trimmed, trimmed_span_start) else {
+            continue;
+        };
+        let Some(normalized) = normalize_location(segment.text) else {
+            continue;
+        };
+        if !seen.insert(normalized.clone()) {
+            continue;
+        }
+        matches.push(RuleMatch {
+            field_type: FieldType::Location,
+            raw_value: segment.text.to_string(),
+            normalized_value: Some(normalized),
+            span_start: segment.span_start,
+            span_end: segment.span_start + segment.text.len(),
+            confidence: 0.86,
+        });
+    }
+}
+
+fn location_segment<'a>(
+    trimmed_line: &'a str,
+    trimmed_span_start: usize,
+) -> Option<LabeledSegment<'a>> {
+    let (label, value, delimiter_len) = split_labeled_value_line(trimmed_line, is_location_label)?;
+    let value_leading = value.len() - value.trim_start().len();
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(LabeledSegment {
+        text: value,
+        span_start: trimmed_span_start + label.len() + delimiter_len + value_leading,
+    })
+}
+
+fn is_location_label(label: &str) -> bool {
+    matches!(
+        label.to_lowercase().as_str(),
+        "location"
+            | "current location"
+            | "base"
+            | "city"
+            | "base city"
+            | "preferred city"
+            | "work location"
+            | "所在地"
+            | "地点"
+            | "城市"
+            | "现居地"
+            | "居住地"
+            | "工作地点"
+            | "期望城市"
+    )
+}
+
+fn normalize_location(value: &str) -> Option<String> {
+    let value = value
+        .trim()
+        .trim_matches(|character: char| {
+            matches!(character, ',' | ';' | '|' | '/' | '\\' | '，' | '；' | '、')
+        })
+        .trim();
+    if value.is_empty() || value.len() > 80 || value.contains('@') {
+        return None;
+    }
+
+    let primary = value
+        .split([',', '，', ';', '；', '|', '/', '\\', '、'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if primary.is_empty() || looks_like_section_header(primary) || looks_like_company(primary) {
+        return None;
+    }
+
+    let normalized = primary
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    if let Some(canonical) = canonical_location_alias(&normalized) {
+        return Some(canonical.to_string());
+    }
+
+    let looks_like_plain_place = normalized.chars().all(|character| {
+        character.is_ascii_alphabetic()
+            || character.is_whitespace()
+            || character == '-'
+            || ('\u{4e00}'..='\u{9fff}').contains(&character)
+    });
+    (looks_like_plain_place && normalized.len() <= 48).then_some(normalized)
+}
+
+fn canonical_location_alias(value: &str) -> Option<&'static str> {
+    let compact = value.replace([' ', '-', '_'], "");
+    match compact.as_str() {
+        "shanghai" | "上海" | "上海市" => Some("shanghai"),
+        "hangzhou" | "杭州" | "杭州市" => Some("hangzhou"),
+        "shenzhen" | "深圳" | "深圳市" => Some("shenzhen"),
+        "beijing" | "北京" | "北京市" => Some("beijing"),
+        "guangzhou" | "广州" | "广州市" => Some("guangzhou"),
+        "suzhou" | "苏州" | "苏州市" => Some("suzhou"),
+        "nanjing" | "南京" | "南京市" => Some("nanjing"),
+        "chengdu" | "成都" | "成都市" => Some("chengdu"),
+        "wuhan" | "武汉" | "武汉市" => Some("wuhan"),
+        "remote" | "远程" => Some("remote"),
+        _ => None,
+    }
 }
 
 fn extract_certificates(text: &str, matches: &mut Vec<RuleMatch>) {

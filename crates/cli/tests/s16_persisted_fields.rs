@@ -149,6 +149,79 @@ Skills: Java
 }
 
 #[test]
+fn import_persists_labeled_location_mentions_without_output_leaks() {
+    let data_dir = temp_dir("persisted-location-data");
+    let resume_root = temp_dir("persisted-location-resumes");
+    fs::write(
+        resume_root.join("synthetic-location-candidate.txt"),
+        "\
+Synthetic Location Candidate
+Email: location-candidate@example.test
+Location: Shanghai, China
+所在地：杭州
+Skills: Java
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import location aliases");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("Shanghai"));
+    assert!(!stdout.contains("location-candidate@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let document = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-location-candidate.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&document.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mut normalized = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Location)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!format!("{mention:?}").contains("Shanghai"));
+            mention.normalized_value.unwrap()
+        })
+        .collect::<Vec<_>>();
+    normalized.sort();
+
+    assert_eq!(normalized, vec!["hangzhou", "shanghai"]);
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_sectioned_skill_alias_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-skill-alias-data");
     let resume_root = temp_dir("persisted-skill-alias-resumes");

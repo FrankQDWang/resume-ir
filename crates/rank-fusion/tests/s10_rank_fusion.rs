@@ -146,6 +146,19 @@ fn field_filters_match_company_and_title() {
 }
 
 #[test]
+fn field_filters_match_any_location() {
+    let filters = SearchFilters::default().with_locations_any(["Shanghai", "杭州"]);
+    let matching = ResumeProfile::new("doc_shanghai").with_locations(["上海"]);
+    let other_location = ResumeProfile::new("doc_beijing").with_locations(["Beijing"]);
+    let missing_location = ResumeProfile::new("doc_missing_location");
+
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&other_location));
+    assert!(!filters.matches(&missing_location));
+    assert_eq!(filters.locations_any(), &["hangzhou", "shanghai"]);
+}
+
+#[test]
 fn candidate_fold_keeps_best_ranked_version_per_candidate() {
     let hits = vec![
         RankedHit::new("doc_old", 1, 9.5).with_candidate_key("cand_same"),

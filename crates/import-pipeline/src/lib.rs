@@ -1028,6 +1028,7 @@ fn entity_type_from_field_type(field_type: &FieldType) -> EntityType {
         FieldType::Degree => EntityType::Degree,
         FieldType::Company => EntityType::Company,
         FieldType::Title => EntityType::Title,
+        FieldType::Location => EntityType::Location,
         FieldType::Skill => EntityType::Skill,
         FieldType::Certificate => EntityType::Certificate,
         FieldType::YearsExperience => EntityType::YearsExperience,

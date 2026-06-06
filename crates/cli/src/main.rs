@@ -5614,6 +5614,7 @@ fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
             .map(|date_range| date_range.canonical()),
         "companies_any": filters.companies_any(),
         "titles_any": filters.titles_any(),
+        "locations_any": filters.locations_any(),
         "skills_any": filters.skills_any(),
         "contact_hashes_any": filters.contact_hashes_any(),
         "years_experience_min": filters.years_experience_min(),
@@ -5784,6 +5785,19 @@ fn field_filter_doc_id_prefilter(
                 .searchable_document_ids_with_entity_values(
                     EntityType::Title,
                     filters.titles_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.locations_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Location,
+                    filters.locations_any(),
                     FIELD_FILTER_CONFIDENCE_THRESHOLD,
                     true,
                 )
@@ -8281,6 +8295,21 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
                 filters = filters.with_titles_any(titles);
                 index += 2;
             }
+            "--location" | "--locations-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let locations = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|location| !location.is_empty())
+                    .collect::<Vec<_>>();
+                if locations.is_empty() {
+                    return Err(CliError::user("search location filter is invalid"));
+                }
+                filters = filters.with_locations_any(locations);
+                index += 2;
+            }
             "--skills-any" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -8387,7 +8416,7 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--skills-any <skill[,skill...]>] [--email <email[,email...]>] [--phone <phone[,phone...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--location <location[,location...]>] [--locations-any <location[,location...]>] [--skills-any <skill[,skill...]>] [--email <email[,email...]>] [--phone <phone[,phone...]>] [--years-experience-min <years>] [--top-k <n>]"
 }
 
 fn comma_values(value: &str) -> Vec<&str> {
@@ -9045,6 +9074,11 @@ fn persisted_profile(
         .filter(|field| field.entity_type == EntityType::Title && field.confidence >= 0.75)
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let locations = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Location && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let school_tiers = fields
         .iter()
         .filter(|field| field.entity_type == EntityType::SchoolTier && field.confidence >= 0.75)
@@ -9065,6 +9099,7 @@ fn persisted_profile(
         .with_date_ranges(date_ranges)
         .with_companies(companies)
         .with_titles(titles)
+        .with_locations(locations)
         .with_skills(skills);
     if let Some(degree) = degree {
         profile = profile.with_degree(degree);

@@ -2696,6 +2696,7 @@ fn field_type_label(field_type: &FieldType) -> &'static str {
         FieldType::Degree => "degree",
         FieldType::Company => "company",
         FieldType::Title => "title",
+        FieldType::Location => "location",
         FieldType::Skill => "skill",
         FieldType::Certificate => "certificate",
         FieldType::YearsExperience => "years_experience",

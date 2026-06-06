@@ -489,6 +489,45 @@ Title: Product Manager
 }
 
 #[test]
+fn extracts_labeled_location_values_with_exact_spans() {
+    let text = "\
+Candidate Location Target
+Location: Shanghai, China
+所在地：杭州
+Base: Shenzhen";
+
+    let matches = extract_strong_fields(text);
+    let locations = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::Location)
+        .collect::<Vec<_>>();
+    let normalized = locations
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(normalized, vec!["shanghai", "hangzhou", "shenzhen"]);
+    assert_eq!(
+        &text[locations[0].span_start..locations[0].span_end],
+        "Shanghai, China"
+    );
+    assert_eq!(
+        &text[locations[1].span_start..locations[1].span_end],
+        "杭州"
+    );
+    assert_eq!(
+        &text[locations[2].span_start..locations[2].span_end],
+        "Shenzhen"
+    );
+    assert!(locations.iter().all(|field| field.confidence >= 0.82));
+    assert!(locations.iter().all(|field| !field.raw_value.contains(':')));
+    assert!(locations
+        .iter()
+        .all(|field| !field.raw_value.contains('：')));
+    assert!(!format!("{:?}", locations[0]).contains("Shanghai"));
+}
+
+#[test]
 fn extracts_broader_title_aliases_without_certificate_title_noise() {
     let text = "\
 Experience

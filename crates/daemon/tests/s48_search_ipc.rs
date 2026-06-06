@@ -892,6 +892,133 @@ fn daemon_search_ipc_prefilters_company_and_title_before_fulltext_top_k_cutoff()
 }
 
 #[test]
+fn daemon_search_ipc_prefilters_location_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-ipc-location-data");
+    let target_doc = DocumentId::from_non_secret_parts(&["s48", "location-target"]);
+    let target_version =
+        ResumeVersionId::from_non_secret_parts(&["s48", "location-target-version"]);
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut index_documents = Vec::new();
+
+    for index in 0..5 {
+        let document_id =
+            DocumentId::from_non_secret_parts(&["s48", &format!("location-decoy-{index}")]);
+        let version_id = ResumeVersionId::from_non_secret_parts(&[
+            "s48",
+            &format!("location-decoy-version-{index}"),
+        ]);
+        let file_name = format!("location-decoy-{index}.pdf");
+        let clean_text = format!("Location decoy {index} {noisy_query_text}");
+        seed_searchable_resume(SeedResume {
+            data_dir: &data_dir,
+            document_id: &document_id,
+            version_id: &version_id,
+            file_name: &file_name,
+            clean_text: &clean_text,
+            degree: "bachelor",
+            skill: "Java",
+            years: 4.0,
+            school: "",
+            school_tier: "",
+            certificate: "",
+            company: "",
+            title: "",
+        });
+        append_location_mention(&data_dir, &version_id, "beijing");
+        index_documents.push(IndexDocument {
+            doc_id: document_id.to_string(),
+            version_id: version_id.to_string(),
+            file_name,
+            clean_text: clean_text.clone(),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: clean_text,
+            }],
+            is_deleted: false,
+        });
+    }
+
+    seed_searchable_resume(SeedResume {
+        data_dir: &data_dir,
+        document_id: &target_doc,
+        version_id: &target_version,
+        file_name: "location-target.pdf",
+        clean_text: "Location target needle",
+        degree: "bachelor",
+        skill: "Java",
+        years: 4.0,
+        school: "",
+        school_tier: "",
+        certificate: "",
+        company: "",
+        title: "",
+    });
+    append_location_mention(&data_dir, &target_version, "shanghai");
+    index_documents.push(IndexDocument {
+        doc_id: target_doc.to_string(),
+        version_id: target_version.to_string(),
+        file_name: "location-target.pdf".to_string(),
+        clean_text: "Location target needle".to_string(),
+        sections: vec![IndexSection {
+            section_type: "experience".to_string(),
+            text: "needle".to_string(),
+        }],
+        is_deleted: false,
+    });
+    seed_fulltext_index_vec(&data_dir, index_documents);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-daemon ipc");
+
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = BufReader::new(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_post_search_command(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "query": "needle",
+            "mode": "fulltext",
+            "top_k": 1,
+            "filters": {
+                "locations_any": ["shanghai"]
+            }
+        }),
+    );
+
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or_default();
+    let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(payload["result_count"], 1);
+    let results = payload["results"].as_array().unwrap();
+    assert_eq!(results[0]["doc_id"], target_doc.to_string());
+    assert_eq!(results[0]["version_id"], target_version.to_string());
+    assert!(!response.contains("location-decoy-"));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn daemon_search_ipc_prefilters_contact_hash_before_fulltext_top_k_cutoff() {
     let data_dir = temp_dir("search-ipc-contact-data");
     let target_hash = ContactHash::from_keyed_digest("a".repeat(64)).unwrap();
@@ -1354,6 +1481,22 @@ fn append_date_range_mention(
         version_id,
         "date-range",
         EntityType::DateRange,
+        normalized_value,
+        0.95,
+    ));
+    store
+        .replace_entity_mentions(version_id, &mentions)
+        .unwrap();
+}
+
+fn append_location_mention(data_dir: &Path, version_id: &ResumeVersionId, normalized_value: &str) {
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let mut mentions = store.entity_mentions_for_version(version_id).unwrap();
+    mentions.push(entity_mention(
+        version_id,
+        "location",
+        EntityType::Location,
         normalized_value,
         0.95,
     ));

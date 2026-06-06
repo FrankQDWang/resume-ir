@@ -62,6 +62,10 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             payload["filters"]["titles_any"],
             serde_json::json!(["backend_engineer"])
         );
+        assert_eq!(
+            payload["filters"]["locations_any"],
+            serde_json::json!(["shanghai"])
+        );
 
         let response = serde_json::json!({
             "schema_version": "daemon.search.v1",
@@ -117,6 +121,8 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             "Synthetic Payments Inc.",
             "--title",
             "Backend Engineer",
+            "--location",
+            "Shanghai",
         ])
         .output()
         .expect("run resume-cli search --ipc");

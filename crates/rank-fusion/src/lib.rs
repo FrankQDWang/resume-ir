@@ -151,6 +151,7 @@ pub struct ResumeProfile {
     date_ranges: Vec<DateRange>,
     companies: Vec<String>,
     titles: Vec<String>,
+    locations: Vec<String>,
     skills: Vec<String>,
     years_experience: Option<f32>,
 }
@@ -166,6 +167,7 @@ impl ResumeProfile {
             date_ranges: Vec::new(),
             companies: Vec::new(),
             titles: Vec::new(),
+            locations: Vec::new(),
             skills: Vec::new(),
             years_experience: None,
         }
@@ -262,6 +264,21 @@ impl ResumeProfile {
         self
     }
 
+    pub fn with_locations<I, S>(mut self, locations: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.locations = locations
+            .into_iter()
+            .map(|location| normalize_location(location.as_ref()))
+            .filter(|location| !location.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
     pub fn with_skills<I, S>(mut self, skills: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -310,6 +327,10 @@ impl ResumeProfile {
         &self.titles
     }
 
+    pub fn locations(&self) -> &[String] {
+        &self.locations
+    }
+
     pub fn skills(&self) -> &[String] {
         &self.skills
     }
@@ -331,6 +352,7 @@ impl fmt::Debug for ResumeProfile {
             .field("date_range_count", &self.date_ranges.len())
             .field("company_count", &self.companies.len())
             .field("title_count", &self.titles.len())
+            .field("location_count", &self.locations.len())
             .field("skill_count", &self.skills.len())
             .field("years_experience", &self.years_experience)
             .finish()
@@ -346,6 +368,7 @@ pub struct SearchFilters {
     date_range_overlaps: Option<DateRange>,
     companies_any: Vec<String>,
     titles_any: Vec<String>,
+    locations_any: Vec<String>,
     skills_any: Vec<String>,
     contact_hashes_any: Vec<String>,
     years_experience_min: Option<f32>,
@@ -434,6 +457,21 @@ impl SearchFilters {
         self
     }
 
+    pub fn with_locations_any<I, S>(mut self, locations: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.locations_any = locations
+            .into_iter()
+            .map(|location| normalize_location(location.as_ref()))
+            .filter(|location| !location.is_empty())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self
+    }
+
     pub fn with_skills_any<I, S>(mut self, skills: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -476,6 +514,7 @@ impl SearchFilters {
             && self.date_range_overlaps.is_none()
             && self.companies_any.is_empty()
             && self.titles_any.is_empty()
+            && self.locations_any.is_empty()
             && self.skills_any.is_empty()
             && self.contact_hashes_any.is_empty()
             && self.years_experience_min.is_none()
@@ -511,6 +550,10 @@ impl SearchFilters {
 
     pub fn titles_any(&self) -> &[String] {
         &self.titles_any
+    }
+
+    pub fn locations_any(&self) -> &[String] {
+        &self.locations_any
     }
 
     pub fn contact_hashes_any(&self) -> &[String] {
@@ -588,6 +631,17 @@ impl SearchFilters {
             }
         }
 
+        if !self.locations_any.is_empty() {
+            let profile_locations = profile.locations().iter().collect::<BTreeSet<_>>();
+            if !self
+                .locations_any
+                .iter()
+                .any(|location| profile_locations.contains(location))
+            {
+                return false;
+            }
+        }
+
         if !self.skills_any.is_empty() {
             let profile_skills = profile.skills().iter().collect::<BTreeSet<_>>();
             if !self
@@ -641,6 +695,7 @@ impl fmt::Debug for SearchFilters {
             )
             .field("companies_any_count", &self.companies_any.len())
             .field("titles_any_count", &self.titles_any.len())
+            .field("locations_any_count", &self.locations_any.len())
             .field("skills_any_count", &self.skills_any.len())
             .field("contact_hashes_any_count", &self.contact_hashes_any.len())
             .field("years_experience_min", &self.years_experience_min)
@@ -1109,6 +1164,32 @@ fn normalize_title(title: &str) -> String {
         "devops_engineer" | "dev_ops_engineer" => "devops_engineer".to_string(),
         "engineering_manager" | "工程经理" => "engineering_manager".to_string(),
         _ => normalized,
+    }
+}
+
+fn normalize_location(location: &str) -> String {
+    let primary = location
+        .trim()
+        .split([',', '，', ';', '；', '|', '/', '\\', '、'])
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    let compact = primary.replace([' ', '-', '_'], "");
+    match compact.as_str() {
+        "shanghai" | "上海" | "上海市" => "shanghai".to_string(),
+        "hangzhou" | "杭州" | "杭州市" => "hangzhou".to_string(),
+        "shenzhen" | "深圳" | "深圳市" => "shenzhen".to_string(),
+        "beijing" | "北京" | "北京市" => "beijing".to_string(),
+        "guangzhou" | "广州" | "广州市" => "guangzhou".to_string(),
+        "suzhou" | "苏州" | "苏州市" => "suzhou".to_string(),
+        "nanjing" | "南京" | "南京市" => "nanjing".to_string(),
+        "chengdu" | "成都" | "成都市" => "chengdu".to_string(),
+        "wuhan" | "武汉" | "武汉市" => "wuhan".to_string(),
+        "remote" | "远程" => "remote".to_string(),
+        _ => primary,
     }
 }
 
