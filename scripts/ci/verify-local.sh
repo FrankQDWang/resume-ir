@@ -12,6 +12,7 @@ fi
 "$CARGO_BIN" test --workspace --locked
 ./scripts/ci/check-cli-closed-loop.sh
 ./scripts/ci/check-daemon-closed-loop.sh
+./scripts/ci/check-benchmark-smoke.sh
 ./scripts/ci/check-licenses.sh
 ./scripts/ci/check-runbooks.sh
 ./scripts/ci/check-workflows.sh
