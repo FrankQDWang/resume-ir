@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, and S220 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, and S221 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -218,7 +218,9 @@ obsolete preliminary files and checklists are not product scope.
   Taipei, major North American technology hubs, and several international
   hubs, extracts city-level evidence from explicitly labeled address lines
   without persisting full street-address spans for the current high-signal
-  alias set, persists span-backed `location` entity mentions, and supports
+  alias set, handles case-insensitive English address city substrings and
+  Chinese district-style address city substrings such as `北京海淀区` and
+  `深圳南山区`, persists span-backed `location` entity mentions, and supports
   location filtering through direct CLI search plus CLI/daemon IPC with
   metadata prefiltering before full-text top-k truncation.
   School/degree extraction now strips common English and Chinese education
@@ -238,7 +240,7 @@ obsolete preliminary files and checklists are not product scope.
   includes broader dictionaries and normalization beyond the current
   high-signal certificate/skill/title aliases, labeled school/degree forms and
   degree aliases, explicit school-tier aliases, remaining address forms beyond
-  current high-signal labeled address city extraction,
+  current high-signal labeled address city substring extraction,
   Chinese explicit/open-ended date ranges, China mobile phone formats, and
   labeled company/title forms, real
   business labeled field and dedupe quality datasets/results, remaining future
@@ -690,8 +692,77 @@ obsolete preliminary files and checklists are not product scope.
 | S218 | Product broader major alias extraction complete locally | Focused RED tests first failed because high-signal major aliases such as artificial intelligence, computer engineering, cybersecurity, network engineering, communication engineering, mechanical engineering, automation, accounting, marketing, and human resources were not extracted inside education context, and search filters did not normalize Chinese major inputs such as `人工智能` / `网络工程` / `会计学` to canonical values. After implementation, extractor-rules maps those aliases with span-backed evidence, rank-fusion normalizes matching filter/profile aliases, and import persists broader major mentions without CLI output, path, contact, or raw-value leaks. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business major-field F1, complete all education-major dictionaries, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S219 | Product broader location alias normalization complete locally | Focused RED tests first failed because high-signal labeled location values such as San Francisco Bay Area, New York City, Hong Kong, Singapore, and Chongqing were persisted as raw normalized strings or Chinese text, and search filters such as `SF Bay Area`, `纽约`, and `Hong Kong` did not match equivalent profile locations. After implementation, extractor-rules and rank-fusion normalize those aliases to stable canonical location keys while keeping extraction limited to explicit location labels, and import persists the canonical aliases with span evidence so `--location "SF Bay Area"` prefilters before full-text top-k truncation. Focused RED/GREEN, full extractor/rank/import/CLI persisted-field/search-filter suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not prove real business location-field F1, complete arbitrary address parsing, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 | S220 | Product labeled-address city extraction complete locally | Focused RED tests first failed because explicit address lines such as `Address: 123 Market St, San Francisco, CA`, `地址：北京市海淀区...`, and `Current Address: 88 Queen's Road, Hong Kong` produced no location evidence. After implementation, address labels are recognized separately from ordinary location labels, extractor-rules scans delimited address components and high-signal city substrings, persists only the city evidence span such as `San Francisco`, `北京市`, or `Hong Kong`, and import/search can filter those documents by canonical location without storing the full street-address span as location raw evidence. Focused RED/GREEN, full extractor/CLI persisted-field/search-filter/import suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not parse arbitrary unlabeled addresses, complete all global address formats, prove real business location-field F1, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
+| S221 | Product address city substring normalization complete locally | Focused RED tests first failed because explicit address labels containing lowercase/no-delimiter English city substrings such as `123 market st san francisco ca` and `88 queen's road hong kong`, plus Chinese district-style values such as `北京海淀区...` and `深圳南山区...`, produced no location evidence. After implementation, address city substring matching is case-insensitive for English aliases, recognizes high-signal Chinese city aliases without requiring `市`, preserves the original matched city span, and import/search persists canonical city locations without storing full street-address spans as location raw evidence. Focused RED/GREEN, full extractor/CLI persisted-field/search-filter/import suites, fmt, focused clippy, diff check, public guard, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not parse arbitrary unlabeled addresses, complete all global address formats, prove real business location-field F1, create/upload private labels, evaluate private resume corpora, validate million-scale behavior, clear platform/signing/model/OCR blockers, or make stable release ready. |
 
 ## Command Log
+
+### S221
+
+Design target:
+
+- Extend explicit address-label city extraction to case-insensitive English
+  city substrings and Chinese district-style city substrings without requiring
+  `市`.
+- Preserve original city-only evidence spans and avoid persisting full
+  street-address spans as location raw evidence.
+- Preserve the conservative boundary: no location inference from unlabeled
+  experience text.
+- Use synthetic fixtures only.
+
+Observed RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --test s10_fields extracts_case_insensitive_and_district_city_evidence_from_address_values --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_case_insensitive_and_district_address_city_locations --locked -- --exact
+```
+
+Output summary:
+
+- The extractor exact failed before implementation with zero `location`
+  matches from lowercase/no-delimiter English address city substrings and
+  Chinese district-style address values.
+- The CLI persisted-field exact failed before implementation because the target
+  document had no canonical city `location` mentions from those address lines.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --test s10_fields extracts_case_insensitive_and_district_city_evidence_from_address_values --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_case_insensitive_and_district_address_city_locations --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s10_search_filters --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --all
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused GREEN tests passed after making address city substring matching
+  case-insensitive for English and adding district-style Chinese city aliases.
+- Full `extractor-rules` passed: 22 S10 tests plus 5 S7 tests and doc-tests.
+- Full `resume-cli --test s16_persisted_fields` passed: 18 tests.
+- Full `resume-cli --test s10_search_filters` passed: 9 tests.
+- Full `import-pipeline` passed: 7 tests plus doc-tests.
+- `cargo fmt --all`, `cargo fmt --all --check`, and focused clippy passed.
+- `git diff --check`, the public repo guard, and full local verification
+  passed. Full local verification included workspace clippy/tests/doc-tests,
+  license, runbook, workflow, release readiness, release artifact, SBOM, macOS
+  package, and public-repo guard checks. Windows package check was skipped on
+  the non-Windows host.
+
+Scope note:
+
+- S221 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, vectors, street
+  addresses, raw contact values, contact hashes, private labels, field values,
+  location values, or private corpus evidence.
 
 ### S220
 

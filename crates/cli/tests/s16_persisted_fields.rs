@@ -454,6 +454,123 @@ Skills: needle Rust
 }
 
 #[test]
+fn import_persists_case_insensitive_and_district_address_city_locations() {
+    let data_dir = temp_dir("persisted-address-city-alias-data");
+    let resume_root = temp_dir("persisted-address-city-alias-resumes");
+    fs::write(
+        resume_root.join("synthetic-address-city-alias-target.txt"),
+        "\
+Synthetic Address City Alias Target
+Email: address-city-alias-target@example.test
+Address: 123 market st san francisco ca 94105
+Current Address: 88 queen's road hong kong
+地址：北京海淀区中关村大街1号
+通讯地址：深圳南山区科技园1号
+Skills: needle Rust
+",
+    )
+    .unwrap();
+    fs::write(
+        resume_root.join("synthetic-address-city-alias-decoy.txt"),
+        "\
+Synthetic Address City Alias Decoy
+Email: address-city-alias-decoy@example.test
+Address: 9 pike st seattle wa
+Skills: needle Rust
+",
+    )
+    .unwrap();
+
+    let import_output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&resume_root),
+        ])
+        .output()
+        .expect("import address city aliases");
+    assert!(
+        import_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import_output.stdout),
+        String::from_utf8_lossy(&import_output.stderr)
+    );
+    assert!(import_output.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import_output.stdout);
+    assert!(!import_stdout.contains(path_str(&data_dir)));
+    assert!(!import_stdout.contains(path_str(&resume_root)));
+    assert!(!import_stdout.contains("market st"));
+    assert!(!import_stdout.contains("queen's road"));
+    assert!(!import_stdout.contains("address-city-alias-target@example.test"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let target = store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-address-city-alias-target.txt")
+        .unwrap();
+    let version = store
+        .resume_versions_for_document(&target.id)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let mut locations = store
+        .entity_mentions_for_version(&version.id)
+        .unwrap()
+        .into_iter()
+        .filter(|mention| mention.entity_type == EntityType::Location)
+        .map(|mention| {
+            assert!(mention.span_start.is_some());
+            assert!(mention.span_end.is_some());
+            assert!(!mention.raw_value.contains("market"));
+            assert!(!mention.raw_value.contains("queen"));
+            assert!(!format!("{mention:?}").contains("market st"));
+            mention.normalized_value.unwrap()
+        })
+        .collect::<Vec<_>>();
+    locations.sort();
+    assert_eq!(
+        locations,
+        vec!["beijing", "hong_kong", "san_francisco", "shenzhen"]
+    );
+
+    let search_output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--location",
+            "San Francisco",
+            "--top-k",
+            "5",
+        ])
+        .output()
+        .expect("run address city alias filtered search");
+    assert!(
+        search_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&search_output.stdout),
+        String::from_utf8_lossy(&search_output.stderr)
+    );
+    assert!(search_output.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search_output.stdout);
+    assert!(search_stdout.contains("synthetic-address-city-alias-target.txt"));
+    assert!(!search_stdout.contains("synthetic-address-city-alias-decoy.txt"));
+    assert!(!search_stdout.contains(path_str(&data_dir)));
+    assert!(!search_stdout.contains(path_str(&resume_root)));
+    assert!(!search_stdout.contains("address-city-alias-target@example.test"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn import_persists_sectioned_skill_alias_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-skill-alias-data");
     let resume_root = temp_dir("persisted-skill-alias-resumes");

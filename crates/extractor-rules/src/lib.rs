@@ -1795,8 +1795,10 @@ fn location_alias_substring<'a>(
     value: &'a str,
     value_span_start: usize,
 ) -> Option<LabeledSegment<'a>> {
-    for alias in address_location_alias_substrings() {
-        let Some(offset) = value.find(alias) else {
+    let lower_value = value.to_lowercase();
+    for &alias in address_location_alias_substrings() {
+        let needle = alias.to_lowercase();
+        let Some(offset) = lower_value.find(&needle) else {
             continue;
         };
         return Some(LabeledSegment {
@@ -1807,8 +1809,8 @@ fn location_alias_substring<'a>(
     None
 }
 
-fn address_location_alias_substrings() -> [&'static str; 31] {
-    [
+fn address_location_alias_substrings() -> &'static [&'static str] {
+    &[
         "San Francisco",
         "New York City",
         "New York",
@@ -1835,11 +1837,36 @@ fn address_location_alias_substrings() -> [&'static str; 31] {
         "Austin",
         "Boston",
         "北京市",
+        "北京",
         "上海市",
+        "上海",
         "深圳市",
+        "深圳",
         "广州市",
+        "广州",
+        "杭州市",
+        "杭州",
+        "南京市",
+        "南京",
+        "苏州市",
+        "苏州",
+        "成都市",
+        "成都",
+        "武汉市",
+        "武汉",
         "香港",
         "重庆市",
+        "重庆",
+        "天津市",
+        "天津",
+        "长沙市",
+        "长沙",
+        "青岛市",
+        "青岛",
+        "合肥市",
+        "合肥",
+        "西安市",
+        "西安",
     ]
 }
 
