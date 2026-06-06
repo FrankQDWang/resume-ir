@@ -78,12 +78,23 @@ require_text "$stdout_file" "--require-million-scale"
 require_text "$stdout_file" "percentile_confidence: release"
 require_text "$stdout_file" '"label": "field extraction quality"'
 require_text "$stdout_file" "private business labeled field-quality evidence is not available"
+require_text "$stdout_file" "min-samples 1000"
+require_text "$stdout_file" "precision/recall/F1 >= 0.93"
 require_text "$stdout_file" '"label": "dedupe quality"'
 require_text "$stdout_file" "private business labeled dedupe-quality evidence is not available"
+require_text "$stdout_file" "min-pairs 1000"
+require_text "$stdout_file" "min-positive-pairs 100"
+require_text "$stdout_file" "precision/recall/F1 >= 0.90"
 require_text "$stdout_file" '"label": "vector quality"'
 require_text "$stdout_file" "private business labeled vector-quality evidence is not available"
+require_text "$stdout_file" "recall@k >= 0.90"
+require_text "$stdout_file" "MRR >= 0.85"
+require_text "$stdout_file" "NDCG@k >= 0.90"
 require_text "$stdout_file" '"label": "OCR throughput"'
 require_text "$stdout_file" "private real-corpus OCR throughput evidence is not available"
+require_text "$stdout_file" "min-pages 500"
+require_text "$stdout_file" "OCR p95 <= 1000ms"
+require_text "$stdout_file" "pages_per_second >= 1"
 require_text "$stdout_file" '"label": "OCR engine license/distribution"'
 require_text "$stdout_file" '"label": "embedding model license/distribution"'
 require_text "$stdout_file" '"label": "cross-platform release validation"'

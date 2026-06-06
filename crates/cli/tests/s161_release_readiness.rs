@@ -27,9 +27,20 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("percentile_confidence: release"));
     assert!(stdout.contains("--require-million-scale"));
     assert!(stdout.contains("field extraction quality: blocked"));
+    assert!(stdout.contains("min-samples 1000"));
+    assert!(stdout.contains("precision/recall/F1 >= 0.93"));
     assert!(stdout.contains("dedupe quality: blocked"));
+    assert!(stdout.contains("min-pairs 1000"));
+    assert!(stdout.contains("min-positive-pairs 100"));
+    assert!(stdout.contains("precision/recall/F1 >= 0.90"));
     assert!(stdout.contains("vector quality: blocked"));
+    assert!(stdout.contains("recall@k >= 0.90"));
+    assert!(stdout.contains("MRR >= 0.85"));
+    assert!(stdout.contains("NDCG@k >= 0.90"));
     assert!(stdout.contains("OCR throughput: blocked"));
+    assert!(stdout.contains("min-pages 500"));
+    assert!(stdout.contains("OCR p95 <= 1000ms"));
+    assert!(stdout.contains("pages_per_second >= 1"));
     assert!(stdout.contains("OCR engine license/distribution: blocked"));
     assert!(stdout.contains("embedding model license/distribution: blocked"));
     assert!(stdout.contains("cross-platform release validation: blocked"));
@@ -111,6 +122,42 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(benchmark_detail.contains("500 query samples"));
     assert!(benchmark_detail.contains("percentile_confidence: release"));
     assert!(benchmark_detail.contains("--require-million-scale"));
+
+    let field_blocker = blockers
+        .iter()
+        .find(|blocker| blocker["label"] == "field extraction quality")
+        .expect("field quality blocker");
+    let field_detail = field_blocker["detail"].as_str().unwrap();
+    assert!(field_detail.contains("min-samples 1000"));
+    assert!(field_detail.contains("precision/recall/F1 >= 0.93"));
+
+    let dedupe_blocker = blockers
+        .iter()
+        .find(|blocker| blocker["label"] == "dedupe quality")
+        .expect("dedupe quality blocker");
+    let dedupe_detail = dedupe_blocker["detail"].as_str().unwrap();
+    assert!(dedupe_detail.contains("min-pairs 1000"));
+    assert!(dedupe_detail.contains("min-positive-pairs 100"));
+    assert!(dedupe_detail.contains("precision/recall/F1 >= 0.90"));
+
+    let vector_blocker = blockers
+        .iter()
+        .find(|blocker| blocker["label"] == "vector quality")
+        .expect("vector quality blocker");
+    let vector_detail = vector_blocker["detail"].as_str().unwrap();
+    assert!(vector_detail.contains("min-samples 1000"));
+    assert!(vector_detail.contains("recall@k >= 0.90"));
+    assert!(vector_detail.contains("MRR >= 0.85"));
+    assert!(vector_detail.contains("NDCG@k >= 0.90"));
+
+    let ocr_blocker = blockers
+        .iter()
+        .find(|blocker| blocker["label"] == "OCR throughput")
+        .expect("OCR throughput blocker");
+    let ocr_detail = ocr_blocker["detail"].as_str().unwrap();
+    assert!(ocr_detail.contains("min-pages 500"));
+    assert!(ocr_detail.contains("OCR p95 <= 1000ms"));
+    assert!(ocr_detail.contains("pages_per_second >= 1"));
 
     assert!(stderr.contains("release readiness blocked"));
     assert!(!stdout.contains(path_str(&data_dir)));

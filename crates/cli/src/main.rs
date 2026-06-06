@@ -131,19 +131,19 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "field extraction quality",
-        "private business labeled field-quality evidence is not available",
+        "private business labeled field-quality evidence is not available; release evidence requires min-samples 1000 and precision/recall/F1 >= 0.93 across required production fields",
     ),
     (
         "dedupe quality",
-        "private business labeled dedupe-quality evidence is not available",
+        "private business labeled dedupe-quality evidence is not available; release evidence requires min-pairs 1000, min-positive-pairs 100, and precision/recall/F1 >= 0.90",
     ),
     (
         "vector quality",
-        "private business labeled vector-quality evidence is not available",
+        "private business labeled vector-quality evidence is not available; release evidence requires min-samples 1000, recall@k >= 0.90, MRR >= 0.85, NDCG@k >= 0.90, and zero-recall queries blocked",
     ),
     (
         "OCR throughput",
-        "private real-corpus OCR throughput evidence is not available",
+        "private real-corpus OCR throughput evidence is not available; release evidence requires min-pages 500, OCR p95 <= 1000ms, pages_per_second >= 1, and reviewed OCR runtime/renderer/language-pack manifests",
     ),
     (
         "OCR engine license/distribution",
