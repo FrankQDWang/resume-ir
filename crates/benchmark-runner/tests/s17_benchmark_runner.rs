@@ -276,6 +276,38 @@ fn benchmark_gate_rejects_million_release_gate_without_million_proof() {
 }
 
 #[test]
+fn benchmark_gate_rejects_million_release_gate_with_sampled_confidence() {
+    let report = minimal_private_real_benchmark_json(1_000_000, 500, 150.0, true);
+    let config = BenchmarkGateConfig::new(1_000_000, 500, 200.0)
+        .require_private_real_corpus()
+        .require_million_scale();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("million-scale release benchmark requires release confidence"));
+}
+
+#[test]
+fn benchmark_gate_accepts_million_release_gate_with_release_confidence() {
+    let report = minimal_private_real_benchmark_json(1_000_000, 500, 150.0, true).replace(
+        "\"percentile_confidence\":\"sampled\"",
+        "\"percentile_confidence\":\"release\"",
+    );
+    let config = BenchmarkGateConfig::new(1_000_000, 500, 200.0)
+        .require_private_real_corpus()
+        .require_million_scale();
+
+    let evaluation = evaluate_benchmark_gate_json(&report, config).unwrap();
+
+    assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
+    assert_eq!(evaluation.document_count(), 1_000_000);
+    assert_eq!(evaluation.query_count(), 500);
+    assert_eq!(evaluation.p95_ms(), 150.0);
+}
+
+#[test]
 fn field_quality_report_scores_labeled_samples_without_raw_value_leakage() {
     let dataset = concat!(
         "{\"sample_id\":\"case-a\",\"text\":\"Name: Synthetic Candidate\\nEmail: candidate@example.test\\nPhone: +1 (415) 555-0132\\nEducation\\nBachelor of Science\\nMajor: Computer Science\\nSkills: Rust, Java\",",

@@ -85,6 +85,12 @@ positive, and reported QPS matches `query_count / (query_total_ms / 1000)`
 within rounding tolerance. Do not upload reports if they contain raw resume text,
 local paths, queries, sample IDs, or filenames.
 
+The 1M release gate is stricter than sampled private evidence:
+`--require-million-scale` requires `million_scale_verified: true`,
+`document_count >= 1000000`, and `percentile_confidence: "release"`. Reports
+with `percentile_confidence: "sampled"` can document local exploratory evidence
+but cannot clear the million-scale release blocker.
+
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   gate --report private-benchmark-100k.json \

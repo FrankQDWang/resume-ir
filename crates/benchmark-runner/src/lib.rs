@@ -2877,6 +2877,12 @@ pub fn evaluate_benchmark_gate_json(
             "million-scale benchmark required",
         ));
     }
+    if config.require_million_scale && required_str(&report, "percentile_confidence")? != "release"
+    {
+        return Err(BenchmarkGateError::failed(
+            "million-scale release benchmark requires release confidence",
+        ));
+    }
     if target_claim != "not_evaluated" && !config.require_private_real_corpus {
         return Err(BenchmarkGateError::failed("target claim is not proven"));
     }
