@@ -308,6 +308,27 @@ hashes, unsigned status, and still-blocked release steps. The pkg/dmg files are
 local evidence only. They are not signed, not notarized, not uploaded, and do
 not prove install, upgrade, uninstall, rollback, or Gatekeeper behavior.
 
+Release dry-runs must also produce a blocked macOS installer lifecycle evidence
+manifest. The manifest schema is `release.macos_installer_evidence.v1` and must
+contain only pkg/dmg artifact names, byte counts, hashes, planned installer and
+LaunchAgent lifecycle actions, blocked evidence status, and the macOS package
+manifest digest. It must not contain installer tokens, administrator passwords,
+local paths, raw installer logs, resume data, diagnostics, indexes, or model
+caches.
+
+```bash
+scripts/release/create-macos-installer-evidence.sh \
+  --version v0.1.0 \
+  --macos-package-manifest release-dry-run/macos-package.json \
+  --out-dir release-dry-run
+```
+
+This macOS installer evidence manifest is a fail-closed release evidence
+validator. It does not run `installer`, mount or install a dmg, install,
+upgrade, uninstall, prove rollback, start/stop a LaunchAgent, or clear the macOS
+installer lifecycle blocker until administrator-elevated release-runner
+evidence exists.
+
 On Windows only, generate an unsigned MSI dry-run artifact after release
 binaries have been built and the WiX .NET tool is installed:
 

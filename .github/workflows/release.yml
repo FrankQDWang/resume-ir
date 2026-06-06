@@ -113,6 +113,13 @@ jobs:
             --target-dir target/release \
             --out-dir macos-package-dry-run
 
+      - name: Create blocked macOS installer evidence manifest
+        run: |
+          scripts/release/create-macos-installer-evidence.sh \
+            --version "${{ inputs.version }}" \
+            --macos-package-manifest macos-package-dry-run/macos-package.json \
+            --out-dir macos-package-dry-run
+
       - name: Create blocked macOS notarization evidence manifest
         run: |
           scripts/release/create-notarization-evidence.sh \
@@ -126,6 +133,7 @@ jobs:
           test ! -d diagnostics
           test ! -d model-cache
           test -f macos-package-dry-run/macos-package.json
+          test -f macos-package-dry-run/macos-installer-evidence.json
           test -f macos-package-dry-run/notarization-evidence.json
           test -f macos-package-dry-run/resume-ir-${{ inputs.version }}-macos.pkg
           test -f macos-package-dry-run/resume-ir-${{ inputs.version }}-macos.dmg
@@ -133,6 +141,9 @@ jobs:
           grep -F '"packaging_status": "unsigned_dry_run"' macos-package-dry-run/macos-package.json
           grep -F '"signing_status": "unsigned"' macos-package-dry-run/macos-package.json
           grep -F '"notarization_status": "not_requested"' macos-package-dry-run/macos-package.json
+          grep -F '"installer_lifecycle_status": "blocked"' macos-package-dry-run/macos-installer-evidence.json
+          grep -F '"evidence_boundary": "dry_run_no_macos_installer_execution"' macos-package-dry-run/macos-installer-evidence.json
+          grep -F '"launch_agent_validation_status": "blocked"' macos-package-dry-run/macos-installer-evidence.json
           grep -F '"notarization_status": "blocked"' macos-package-dry-run/notarization-evidence.json
           grep -F '"evidence_boundary": "dry_run_no_notarization_credentials"' macos-package-dry-run/notarization-evidence.json
 

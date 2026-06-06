@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, and S242 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, and S243 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -740,8 +740,77 @@ obsolete preliminary files and checklists are not product scope.
 | S240 | Product notarization-evidence release gate complete locally | Focused RED guard first failed because `scripts/release/create-notarization-evidence.sh` did not exist, so macOS package dry-runs had no machine-readable evidence boundary for Apple Developer ID credentials, notary submission, notarization ticket, ticket stapling, or Gatekeeper validation. After implementation, macOS package dry-runs can generate `notarization-evidence.json` with schema `release.notarization_evidence.v1`, `notarization_status: blocked`, macOS package manifest digest, per-pkg/dmg missing ticket/blocked staple/blocked Gatekeeper records, required notarization evidence, and prohibited public notary material markers. Local CI, workflow policy, the hosted macOS package dry-run workflow, and the release blockers runbook now require the notarization-evidence dry-run while continuing to reject temp paths, local data markers, diagnostics, model caches, and notary secret markers. Focused RED/GREEN, workflow guard, runbook guard, macOS package guard, shell syntax checks, diff check, public guard, and full local verification passed locally. | This slice adds a fail-closed notarization evidence validator only. It does not obtain Apple Developer ID credentials, submit artifacts to the notary service, staple tickets, validate Gatekeeper behavior, clear signing/installer/platform blockers, or make stable release ready. |
 | S241 | Product Windows service evidence release gate complete locally | Focused RED guard first failed because `scripts/release/create-windows-service-evidence.sh` did not exist, so Windows package dry-runs had no machine-readable evidence boundary for administrator-elevated service install/start/status/stop/uninstall/recovery validation. After implementation, Windows package dry-runs can generate `windows-service-evidence.json` with schema `release.windows_service_evidence.v1`, `service_lifecycle_status: blocked`, Windows package manifest digest, MSI artifact references, `sc.exe` service-manager scope, not-registered status, required admin elevation, blocked recovery validation, and blocked lifecycle action records for install/start/status/stop/uninstall/recovery. Local CI, workflow policy, the hosted Windows package dry-run workflow, and the release blockers runbook now require the Windows service evidence dry-run while continuing to reject temp paths, local data markers, diagnostics, model caches, service tokens, and administrator password markers. Focused RED/GREEN, workflow guard, runbook guard, shell syntax checks, diff check, public guard, and full local verification passed locally. | This slice adds a fail-closed Windows service lifecycle evidence validator only. It does not register a Windows service, start/stop/query it, configure recovery, uninstall it, prove rollback or upgrade behavior, clear Windows installer/service/platform blockers, or make stable release ready. |
 | S242 | Product Windows installer evidence release gate complete locally | Focused RED guard first failed because `scripts/release/create-windows-installer-evidence.sh` did not exist, so Windows MSI dry-runs had no machine-readable evidence boundary for administrator-elevated MSI install, upgrade, repair, uninstall, and rollback validation. After implementation, Windows package dry-runs can generate `windows-installer-evidence.json` with schema `release.windows_installer_evidence.v1`, `installer_lifecycle_status: blocked`, Windows package manifest digest, MSI artifact references, `msiexec.exe` installer scope, not-installed status, required admin elevation, blocked rollback validation, and blocked lifecycle action records for install/upgrade/repair/uninstall/rollback. Local CI, workflow policy, the hosted Windows package dry-run workflow, and the release blockers runbook now require the Windows installer evidence dry-run while continuing to reject temp paths, local data markers, diagnostics, model caches, installer tokens, and administrator password markers. Focused RED/GREEN, workflow guard, runbook guard, shell syntax checks, diff check, public guard, and full local verification passed locally. | This slice adds a fail-closed Windows installer lifecycle evidence validator only. It does not run `msiexec`, install an MSI, upgrade a prior version, repair an installation, uninstall, prove rollback behavior, clear Windows installer/platform blockers, or make stable release ready. |
+| S243 | Product macOS installer evidence release gate complete locally | Focused RED guard first failed because `scripts/release/create-macos-installer-evidence.sh` did not exist, so macOS pkg/dmg dry-runs had no machine-readable evidence boundary for administrator-elevated pkg install, upgrade, uninstall, rollback, and LaunchAgent start/stop validation. After implementation, macOS package dry-runs can generate `macos-installer-evidence.json` with schema `release.macos_installer_evidence.v1`, `installer_lifecycle_status: blocked`, macOS package manifest digest, pkg/dmg artifact references, `installer` plus `pkgutil`/`hdiutil`/`launchctl` scope, not-installed status, required admin elevation, blocked rollback validation, blocked LaunchAgent validation, and blocked lifecycle action records for install/upgrade/uninstall/rollback/LaunchAgent start/stop. Local CI, workflow policy, the hosted macOS package dry-run workflow, and the release blockers runbook now require the macOS installer evidence dry-run while continuing to reject temp paths, local data markers, diagnostics, model caches, installer tokens, and administrator password markers. Focused RED/GREEN, workflow guard, runbook guard, shell syntax checks, diff check, and full local verification passed locally. | This slice adds a fail-closed macOS installer lifecycle evidence validator only. It does not run `installer`, mount or install a dmg, install, upgrade, uninstall, start/stop a LaunchAgent, prove rollback behavior, clear macOS installer/platform blockers, or make stable release ready. |
 
 ## Command Log
+
+### S243
+
+Design target:
+
+- Add a machine-readable blocked macOS installer lifecycle evidence dry-run
+  manifest so package dry-runs track administrator-elevated pkg install,
+  upgrade, uninstall, rollback, and LaunchAgent start/stop evidence requirements
+  without fabricating macOS installer validation.
+- Keep the manifest aggregate and redacted: pkg/dmg artifact names, byte counts,
+  hashes, planned lifecycle actions, package manifest digest, and blocked
+  evidence status only, with no local paths, installer tokens, administrator
+  passwords, diagnostics, model caches, indexes, or resume data.
+- Wire the new installer evidence guard into local CI and the hosted macOS
+  package dry-run workflow, while keeping stable release blocked.
+
+Observed RED:
+
+```bash
+sh scripts/ci/check-macos-installer-evidence.sh
+```
+
+Output summary:
+
+- The new guard failed before implementation with `missing required macOS
+  installer evidence file:
+  scripts/release/create-macos-installer-evidence.sh`.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-macos-installer-evidence.sh
+./scripts/ci/check-workflows.sh
+./scripts/ci/check-runbooks.sh
+sh -n scripts/ci/check-macos-installer-evidence.sh scripts/release/create-macos-installer-evidence.sh scripts/ci/verify-local.sh scripts/ci/check-workflows.sh
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `./scripts/ci/check-macos-installer-evidence.sh`: exit 0; the guard
+  generated a blocked `release.macos_installer_evidence.v1` manifest from a
+  synthetic macOS pkg/dmg package manifest, verified required installer
+  lifecycle and LaunchAgent evidence fields, rejected local path and macOS
+  installer secret markers, and confirmed workflow/runbook/local verify wiring.
+- `./scripts/ci/check-workflows.sh`: exit 0.
+- `./scripts/ci/check-runbooks.sh`: exit 0.
+- `sh -n ...`: exit 0.
+- `git diff --check`: exit 0.
+- `./scripts/ci/verify-local.sh`: exit 0; metadata, fmt, workspace clippy,
+  workspace tests/doc-tests, license, runbook, workflow, release-readiness,
+  release artifact, signing evidence, notarization evidence, release SBOM,
+  macOS package, macOS installer evidence, Windows package, Windows installer
+  evidence, Windows service evidence, and public-repo guards passed.
+
+Sub-agent orchestration:
+
+- `fw-build` and Superpowers subagent-driven guidance were used as local
+  implementation discipline only. No separate execution owner or external
+  sub-agent was spawned for this narrowly scoped release evidence gate.
+
+Scope note:
+
+- S243 adds a fail-closed macOS installer lifecycle evidence validator only. It
+  does not run `installer`, mount or install a dmg, install, upgrade, uninstall,
+  start/stop a LaunchAgent, prove rollback behavior, clear release blockers, or
+  make the full product complete.
 
 ### S242
 
