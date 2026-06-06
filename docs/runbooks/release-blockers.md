@@ -325,6 +325,26 @@ MSI file is local evidence only. It is not signed, not uploaded, and does not
 prove install, upgrade, uninstall, rollback, Windows service registration, or
 service lifecycle behavior.
 
+Release dry-runs must also produce a blocked Windows installer lifecycle
+evidence manifest. The manifest schema is
+`release.windows_installer_evidence.v1` and must contain only MSI artifact
+names, byte counts, hashes, planned installer lifecycle actions, blocked
+evidence status, and the Windows package manifest digest. It must not contain
+installer tokens, administrator passwords, local paths, raw installer logs,
+resume data, diagnostics, indexes, or model caches.
+
+```bash
+scripts/release/create-windows-installer-evidence.sh \
+  --version v0.1.0 \
+  --windows-package-manifest release-dry-run/windows-package.json \
+  --out-dir release-dry-run
+```
+
+This Windows installer evidence manifest is a fail-closed release evidence
+validator. It does not run `msiexec`, install, upgrade, repair, uninstall,
+prove rollback, or clear the Windows installer lifecycle blocker until
+administrator-elevated release-runner evidence exists.
+
 Generate local Windows Service dry-run evidence without registering a service:
 
 ```bash

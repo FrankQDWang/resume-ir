@@ -185,6 +185,14 @@ jobs:
             -TargetDir target/release `
             -OutDir windows-package-dry-run
 
+      - name: Create blocked Windows installer evidence manifest
+        shell: bash
+        run: |
+          scripts/release/create-windows-installer-evidence.sh \
+            --version "${{ inputs.version }}" \
+            --windows-package-manifest windows-package-dry-run/windows-package.json \
+            --out-dir windows-package-dry-run
+
       - name: Create blocked Windows service evidence manifest
         shell: bash
         run: |
@@ -203,18 +211,26 @@ jobs:
             }
           }
           $manifest = "windows-package-dry-run/windows-package.json"
+          $installerEvidence = "windows-package-dry-run/windows-installer-evidence.json"
           $serviceEvidence = "windows-package-dry-run/windows-service-evidence.json"
           $msi = "windows-package-dry-run/resume-ir-${{ inputs.version }}-windows.msi"
           if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) { exit 1 }
+          if (-not (Test-Path -LiteralPath $installerEvidence -PathType Leaf)) { exit 1 }
           if (-not (Test-Path -LiteralPath $serviceEvidence -PathType Leaf)) { exit 1 }
           if (-not (Test-Path -LiteralPath $msi -PathType Leaf)) { exit 1 }
           Select-String -LiteralPath $manifest -SimpleMatch '"packaging_status": "unsigned_dry_run"'
           Select-String -LiteralPath $manifest -SimpleMatch '"installer_kind": "msi"'
           Select-String -LiteralPath $manifest -SimpleMatch '"signing_status": "unsigned"'
+          Select-String -LiteralPath $installerEvidence -SimpleMatch '"installer_lifecycle_status": "blocked"'
+          Select-String -LiteralPath $installerEvidence -SimpleMatch '"evidence_boundary": "dry_run_no_windows_installer_execution"'
           Select-String -LiteralPath $serviceEvidence -SimpleMatch '"service_lifecycle_status": "blocked"'
           Select-String -LiteralPath $serviceEvidence -SimpleMatch '"evidence_boundary": "dry_run_no_windows_service_registration"'
           if (Select-String -LiteralPath $manifest -Pattern 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' -Quiet) {
             Write-Error "Windows package manifest leaked a local path or runtime-data marker"
+            exit 1
+          }
+          if (Select-String -LiteralPath $installerEvidence -Pattern 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' -Quiet) {
+            Write-Error "Windows installer evidence manifest leaked a local path or runtime-data marker"
             exit 1
           }
           if (Select-String -LiteralPath $serviceEvidence -Pattern 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' -Quiet) {

@@ -20,5 +20,6 @@ fi
 ./scripts/ci/check-release-sbom.sh
 ./scripts/ci/check-macos-package.sh
 ./scripts/ci/check-windows-package.sh
+./scripts/ci/check-windows-installer-evidence.sh
 ./scripts/ci/check-windows-service-evidence.sh
 ./scripts/ci/guard-public-repo.sh
