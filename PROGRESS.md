@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, and S212 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, and S213 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -113,7 +113,8 @@ obsolete preliminary files and checklists are not product scope.
   as strict redacted local aggregate JSON with dataset/annotation manifest
   digests, explicit false raw-data/path/value/sample-ID booleans, a fixed field
   taxonomy, and production field metrics for email, phone, school,
-  school_tier, degree, company, title, location, skill, and date ranges.
+  school_tier, degree, company, title, location, skill, certificate, and date
+  ranges.
   Soft-dedupe scoring now compares
   same-name profiles with bounded non-contact evidence overlap and surfaces
   redacted suspected-duplicate hints in local CLI and daemon search results
@@ -663,8 +664,57 @@ obsolete preliminary files and checklists are not product scope.
 | S210 | Hosted Rust workspace contact IPC assertion stability complete locally | PR #9 hosted `rust workspace` failed in `search_ipc_hashes_contact_filters_before_submitting_request` because the test compared `contact_hashes_any` arrays in exact order. The filter is an ANY set, and production only requires raw contacts to be hashed locally and transmitted without raw contact leakage. After implementation, the test compares sorted actual and expected hashes while keeping the raw email/phone and hash output leak checks. Hosted-failing exact test, full CLI search IPC test file, fmt, diff check, public guard, and full local verification passed locally. | This is a test-only stability fix for S209's IPC assertion. It does not change production search behavior, prove hosted CI has passed until PR #9 reruns, read private resumes, evaluate real contact recall, clear field-quality blockers, or make stable release ready. |
 | S211 | Product location extraction and filtering complete locally | Focused tests first failed because extractor-rules had no `FieldType::Location`, rank-fusion had no profile/filter API for locations, CLI search rejected `--location`, CLI IPC did not emit `locations_any`, and daemon IPC ignored location filters until after full-text top-k retrieval. After implementation, explicitly labeled location lines are extracted with span-backed evidence and canonical common city aliases, import persists `location` entity mentions, benchmark field labels include location, rank-fusion hydrates and matches location profiles, CLI supports `--location`/`--locations-any`, CLI/daemon IPC carry `locations_any`, and both CLI and daemon prefilter matching document IDs before full-text top-k truncation. Focused RED/GREEN, related extractor/rank/import/benchmark/CLI/daemon suites, fmt, diff check, public guard, focused clippy, and full local verification passed locally. | This slice uses synthetic/temp fixtures only. It does not parse arbitrary addresses or unlabeled city mentions, prove real business location recall/F1, evaluate private resume corpora, broaden multilingual geography coverage beyond common aliases, clear field-quality evidence blockers, or make stable release ready. |
 | S212 | Product location field-quality release gate complete locally | Focused RED tests first failed because private-business field-quality reports missing `location` metrics were accepted by both library and CLI field gates. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `location` metrics, complete strict private-business fixtures include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, complete private-business acceptance regressions, full `benchmark-runner`, focused clippy, fmt, runbook guard, diff check, public guard, and full local verification passed locally. | This slice tightens release-evidence validation only. It does not create or upload private labels, run real business location-quality evaluation, prove production location recall/F1 on representative resumes, broaden geography/address parsing, clear field-quality blockers, or make stable release ready. |
+| S213 | Product certificate field-quality release gate complete locally | Focused RED tests first failed because private-business field-quality reports missing `certificate` metrics were accepted by both library and CLI field gates. After implementation, `PRODUCTION_FIELD_QUALITY_THRESHOLDS` requires `certificate` metrics, complete strict private-business fixtures include the metric, reports missing it are rejected, and the release blockers runbook documents the updated field evidence boundary. Focused RED/GREEN, complete private-business acceptance regressions, full `benchmark-runner`, focused clippy, fmt, and runbook guard passed locally. | This slice tightens release-evidence validation only. It does not create or upload private labels, run real business certificate-quality evaluation, prove production certificate recall/F1 on representative resumes, broaden certificate dictionaries, clear field-quality blockers, or make stable release ready. |
 
 ## Command Log
+
+### S213
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_rejects_private_business_report_without_certificate_metric -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_gate_requires_private_business_certificate_metric -- --exact
+```
+
+Output summary:
+
+- The library exact test failed before implementation because removing
+  `certificate` metrics from a strict private-business field-quality report
+  still returned `Ok(FieldQualityGateEvaluation { ... })`.
+- The CLI exact test failed before implementation because
+  `resume-benchmark field-gate --require-private-business-labeled` exited
+  successfully for a private-business report missing `certificate` metrics.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_rejects_private_business_report_without_certificate_metric -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_gate_requires_private_business_certificate_metric -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner field_quality_gate_accepts_private_business_labeled_release_evidence -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_field_gate_accepts_private_business_labeled_report -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner --all-targets -- -D warnings
+/Users/frankqdwang/.cargo/bin/cargo fmt --all --check
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- Missing-`certificate` private-business field-quality reports are now rejected
+  by both the library gate and CLI gate without printing the report path.
+- Complete strict private-business field-quality reports still pass for both
+  the library and CLI acceptance regressions.
+- Full `benchmark-runner`, focused clippy, `cargo fmt --all --check`, and
+  `check-runbooks.sh` passed locally.
+
+Scope note:
+
+- S213 uses synthetic/temp fixtures only. It does not read, print, commit, or
+  upload private resumes, filenames, paths, raw text, diagnostics, tokens,
+  model caches, OCR text, page images, command paths, vectors, raw contact
+  values, contact hashes, private labels, field values, certificate values, or
+  location values from private resumes.
 
 ### S212
 

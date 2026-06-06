@@ -1591,6 +1591,7 @@ const PRODUCTION_FIELD_QUALITY_THRESHOLDS: &[(&str, f64)] = &[
     ("title", 0.88),
     ("location", 0.90),
     ("skill", 0.92),
+    ("certificate", 0.90),
     ("date_range", 0.93),
 ];
 
