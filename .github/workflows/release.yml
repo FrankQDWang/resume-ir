@@ -113,18 +113,28 @@ jobs:
             --target-dir target/release \
             --out-dir macos-package-dry-run
 
+      - name: Create blocked macOS notarization evidence manifest
+        run: |
+          scripts/release/create-notarization-evidence.sh \
+            --version "${{ inputs.version }}" \
+            --macos-package-manifest macos-package-dry-run/macos-package.json \
+            --out-dir macos-package-dry-run
+
       - name: Check macOS package boundary
         run: |
           test ! -d local-data
           test ! -d diagnostics
           test ! -d model-cache
           test -f macos-package-dry-run/macos-package.json
+          test -f macos-package-dry-run/notarization-evidence.json
           test -f macos-package-dry-run/resume-ir-${{ inputs.version }}-macos.pkg
           test -f macos-package-dry-run/resume-ir-${{ inputs.version }}-macos.dmg
           scripts/release/verify-macos-dmg.sh macos-package-dry-run/resume-ir-${{ inputs.version }}-macos.dmg
           grep -F '"packaging_status": "unsigned_dry_run"' macos-package-dry-run/macos-package.json
           grep -F '"signing_status": "unsigned"' macos-package-dry-run/macos-package.json
           grep -F '"notarization_status": "not_requested"' macos-package-dry-run/macos-package.json
+          grep -F '"notarization_status": "blocked"' macos-package-dry-run/notarization-evidence.json
+          grep -F '"evidence_boundary": "dry_run_no_notarization_credentials"' macos-package-dry-run/notarization-evidence.json
 
       - name: Upload unsigned macOS package dry run
         uses: actions/upload-artifact@v7

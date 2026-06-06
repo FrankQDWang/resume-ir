@@ -69,6 +69,25 @@ private key custody, and cannot clear the signing certificates blocker until
 production signing certificates and per-artifact signature verification evidence
 exist.
 
+macOS package dry-runs must also produce a blocked notarization evidence
+manifest. The manifest schema is `release.notarization_evidence.v1` and must
+contain only macOS package artifact names, byte counts, hashes, and blocked
+notarization evidence status. It must not contain notary credentials, notary
+passwords, local paths, resume data, diagnostics, indexes, or model caches.
+
+```bash
+scripts/release/create-notarization-evidence.sh \
+  --version v0.0.0 \
+  --macos-package-manifest macos-package-dry-run/macos-package.json \
+  --out-dir macos-package-dry-run
+```
+
+This notarization evidence manifest is a fail-closed release evidence
+validator. It does not submit artifacts through `notarytool`, staple
+notarization tickets, validate Gatekeeper with `spctl`, or clear the macOS
+notarization blocker until Apple Developer ID credentials and per-artifact
+notarization ticket/Gatekeeper evidence exist.
+
 Run the benchmark smoke only as smoke evidence, not as production performance
 proof:
 
