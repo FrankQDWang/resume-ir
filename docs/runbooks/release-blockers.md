@@ -132,7 +132,13 @@ reports. The report must use `dataset_kind: "private-business-labeled"`,
 "resume-ir.dedupe.v1"`, false raw-data/path/profile-value/sample-ID/document-ID
 booleans, and sha256 digests for both the dataset and annotation manifests. Do
 not upload reports if they contain names, schools, companies, skills, document
-IDs, sample IDs, filenames, local paths, raw resume text, or notes.
+IDs, sample IDs, filenames, local paths, raw resume text, or notes. The
+aggregate pair counts must be internally consistent:
+`pair_count == true_positive + false_positive + false_negative + true_negative`,
+`positive_pair_count == true_positive + false_negative`, and
+`predicted_duplicate_pairs == true_positive + false_positive`. The reported
+precision, recall, and F1 must match those aggregate counts within rounding
+tolerance.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \

@@ -1913,6 +1913,7 @@ fn private_business_field_metric_error() -> BenchmarkGateError {
 const PRIVATE_BUSINESS_DEDUPE_QUALITY_SCOPE: &str =
     "private business dedupe-quality benchmark; aggregate redacted report only";
 const PRIVATE_BUSINESS_DEDUPE_QUALITY_TARGET_CLAIM: &str = "dedupe_quality_target_met";
+const DEDUPE_QUALITY_SCORE_TOLERANCE: f64 = 0.000_5;
 
 pub fn evaluate_dedupe_quality_gate_json(
     report_json: &str,
@@ -2045,16 +2046,35 @@ fn validate_private_business_dedupe_quality_shape(
     private_dedupe_quality_str(report, "run_id")?;
     private_dedupe_quality_str(report, "platform")?;
     private_dedupe_quality_str(report, "dataset_kind")?;
-    private_dedupe_quality_usize(report, "pair_count")?;
-    private_dedupe_quality_usize(report, "positive_pair_count")?;
-    private_dedupe_quality_usize(report, "predicted_duplicate_pairs")?;
-    private_dedupe_quality_usize(report, "true_positive")?;
-    private_dedupe_quality_usize(report, "false_positive")?;
-    private_dedupe_quality_usize(report, "false_negative")?;
-    private_dedupe_quality_usize(report, "true_negative")?;
-    private_dedupe_quality_number(report, "precision")?;
-    private_dedupe_quality_number(report, "recall")?;
-    private_dedupe_quality_number(report, "f1")?;
+    let pair_count = private_dedupe_quality_usize(report, "pair_count")?;
+    let positive_pair_count = private_dedupe_quality_usize(report, "positive_pair_count")?;
+    let predicted_duplicate_pairs =
+        private_dedupe_quality_usize(report, "predicted_duplicate_pairs")?;
+    let counts = DedupeQualityCounts {
+        true_positive: private_dedupe_quality_usize(report, "true_positive")?,
+        false_positive: private_dedupe_quality_usize(report, "false_positive")?,
+        false_negative: private_dedupe_quality_usize(report, "false_negative")?,
+        true_negative: private_dedupe_quality_usize(report, "true_negative")?,
+    };
+    if pair_count != counts.pair_count()
+        || positive_pair_count != counts.positive_pair_count()
+        || predicted_duplicate_pairs != counts.predicted_duplicate_pairs()
+    {
+        return Err(BenchmarkGateError::failed(
+            "private business dedupe quality counts are inconsistent",
+        ));
+    }
+    let precision = private_dedupe_quality_number(report, "precision")?;
+    let recall = private_dedupe_quality_number(report, "recall")?;
+    let f1 = private_dedupe_quality_number(report, "f1")?;
+    if !dedupe_quality_score_matches(precision, counts.precision())
+        || !dedupe_quality_score_matches(recall, counts.recall())
+        || !dedupe_quality_score_matches(f1, counts.f1())
+    {
+        return Err(BenchmarkGateError::failed(
+            "private business dedupe quality metric counts do not match scores",
+        ));
+    }
     private_dedupe_quality_str(report, "target_claim")?;
     private_dedupe_quality_str(report, "corpus_origin")?;
     private_dedupe_quality_str(report, "privacy_boundary")?;
@@ -2068,6 +2088,10 @@ fn validate_private_business_dedupe_quality_shape(
     private_dedupe_quality_str(report, "dedupe_taxonomy")?;
     private_dedupe_quality_str(report, "scope")?;
     Ok(())
+}
+
+fn dedupe_quality_score_matches(reported: f64, expected: f64) -> bool {
+    (reported - expected).abs() <= DEDUPE_QUALITY_SCORE_TOLERANCE
 }
 
 fn is_allowed_private_business_dedupe_quality_key(key: &str) -> bool {

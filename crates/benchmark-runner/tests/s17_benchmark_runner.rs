@@ -652,6 +652,40 @@ fn dedupe_quality_gate_accepts_private_business_labeled_release_evidence() {
 }
 
 #[test]
+fn dedupe_quality_gate_rejects_private_business_report_with_inconsistent_metric_counts() {
+    let report = minimal_private_business_dedupe_quality_json().replace(
+        "\"true_positive\":100,\"false_positive\":0,\"false_negative\":0,\"true_negative\":900,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0",
+        "\"true_positive\":50,\"false_positive\":50,\"false_negative\":50,\"true_negative\":850,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0",
+    );
+    let config = DedupeQualityGateConfig::new(0.90, 0.90, 0.90)
+        .with_min_pairs(1_000)
+        .with_min_positive_pairs(100)
+        .require_private_business_labeled();
+
+    let error = evaluate_dedupe_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business dedupe quality metric counts do not match scores"));
+}
+
+#[test]
+fn dedupe_quality_gate_rejects_private_business_report_with_inconsistent_pair_counts() {
+    let report = minimal_private_business_dedupe_quality_json()
+        .replace("\"positive_pair_count\":100", "\"positive_pair_count\":200");
+    let config = DedupeQualityGateConfig::new(0.90, 0.90, 0.90)
+        .with_min_pairs(1_000)
+        .with_min_positive_pairs(100)
+        .require_private_business_labeled();
+
+    let error = evaluate_dedupe_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business dedupe quality counts are inconsistent"));
+}
+
+#[test]
 fn dedupe_quality_gate_rejects_private_business_report_with_extra_payload_field() {
     let mut report = minimal_private_business_dedupe_quality_json();
     report.pop();

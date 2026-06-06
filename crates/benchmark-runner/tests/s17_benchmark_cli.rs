@@ -804,6 +804,47 @@ fn resume_benchmark_dedupe_gate_accepts_private_business_labeled_report() {
 }
 
 #[test]
+fn resume_benchmark_dedupe_gate_rejects_private_business_inconsistent_counts() {
+    let dataset_dir = temp_dir("dedupe-quality-private-business-inconsistent");
+    let report_path = dataset_dir.join("dedupe-report.json");
+    fs::write(
+        &report_path,
+        minimal_private_business_dedupe_quality_json().replace(
+            "\"true_positive\":100,\"false_positive\":0,\"false_negative\":0,\"true_negative\":900,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0",
+            "\"true_positive\":50,\"false_positive\":50,\"false_negative\":50,\"true_negative\":850,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0",
+        ),
+    )
+    .unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "dedupe-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-business-labeled",
+            "--min-pairs",
+            "1000",
+            "--min-positive-pairs",
+            "100",
+            "--min-precision",
+            "0.90",
+            "--min-recall",
+            "0.90",
+            "--min-f1",
+            "0.90",
+        ])
+        .output()
+        .expect("run private business dedupe quality gate");
+
+    assert!(!gate.status.success());
+    assert!(String::from_utf8_lossy(&gate.stderr)
+        .contains("private business dedupe quality metric counts do not match scores"));
+    assert!(!String::from_utf8_lossy(&gate.stderr).contains(path_str(&report_path)));
+
+    remove_dir(&dataset_dir);
+}
+
+#[test]
 fn resume_benchmark_ocr_throughput_outputs_redacted_report_and_gate() {
     let command = ocr_fixture_script("ocr-throughput-cli-private-command");
     let report_dir = temp_dir("ocr-throughput-cli-report");
