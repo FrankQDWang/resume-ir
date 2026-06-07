@@ -1260,7 +1260,14 @@ fn normalize_name(name: &str) -> String {
 }
 
 fn parse_year_month(value: &str) -> Option<i32> {
-    let (year, month) = value.trim().split_once('-')?;
+    let value = value.trim();
+    let (year, month) = if let Some((year, month)) = value.split_once('-') {
+        (year.trim(), month.trim())
+    } else {
+        let (year, remainder) = value.split_once('年')?;
+        let month = remainder.trim().strip_suffix('月')?;
+        (year.trim(), month.trim())
+    };
     let year = year.parse::<i32>().ok()?;
     let month = month.parse::<i32>().ok()?;
     if !(1900..=2100).contains(&year) || !(1..=12).contains(&month) {

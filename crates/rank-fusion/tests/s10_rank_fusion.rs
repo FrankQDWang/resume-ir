@@ -270,6 +270,20 @@ fn date_range_filter_accepts_chinese_present_aliases() {
 }
 
 #[test]
+fn date_range_filter_accepts_chinese_year_month_values() {
+    let filters = SearchFilters::default().with_date_range_overlaps("2020年1月/2024年3月");
+    let matching = ResumeProfile::new("doc_matching").with_date_ranges(["2021-06/2022-08"]);
+    let outside = ResumeProfile::new("doc_outside").with_date_ranges(["2024-04/2025-01"]);
+
+    assert_eq!(
+        filters.date_range_overlaps().unwrap().canonical(),
+        "2020-01/2024-03"
+    );
+    assert!(filters.matches(&matching));
+    assert!(!filters.matches(&outside));
+}
+
+#[test]
 fn field_filters_match_any_school() {
     let filters = SearchFilters::default()
         .with_schools_any(["Synthetic Institute of Technology", "Other University"]);

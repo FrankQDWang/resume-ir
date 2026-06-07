@@ -570,6 +570,78 @@ needle
 }
 
 #[test]
+fn filtered_search_accepts_chinese_year_month_date_range_without_query_or_path_leak() {
+    let data_dir = temp_dir("search-filter-chinese-year-month-date-data");
+    let resume_root = temp_dir("search-filter-chinese-year-month-date-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..4 {
+        fs::write(
+            resume_root.join(format!("year-month-date-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Year Month Date Decoy {index}
+Email: year-month-date-decoy-{index}@example.test
+Experience
+2018年1月 - 2019年12月
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("year-month-date-target.txt"),
+        "\
+Candidate Year Month Date Target
+Email: year-month-date-target@example.test
+Experience
+2020年1月 - 2024年3月
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--date-range-overlaps",
+            "2020年1月/2024年3月",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run Chinese year-month date range filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("year-month-date-target.txt"));
+    assert!(!stdout.contains("year-month-date-decoy-"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("year-month-date-target@example.test"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
 fn filtered_search_prefilters_company_and_title_before_fulltext_top_k_cutoff() {
     let data_dir = temp_dir("search-filter-company-title-data");
     let resume_root = temp_dir("search-filter-company-title-resumes");
