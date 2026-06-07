@@ -33,6 +33,10 @@ production-ready scope source.
   manifests and local Tesseract/Poppler commands; no real resume data,
   filenames, paths, raw OCR text, page images, command paths, or generated
   reports were committed or uploaded.
+  S265 used synthetic/private-shaped query-set fixtures and local query-command
+  fixtures only; no real query set, real resume data, local paths, command
+  paths, raw query text, or generated benchmark report was committed or
+  uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -518,6 +522,13 @@ obsolete preliminary files and checklists are not product scope.
   Hosted Windows full-text commits now also route Tantivy writer commits through
   the bounded transient Windows access-denied retry policy, covering the
   observed `os error 5` commit race during synthetic full-text snippet tests.
+  The benchmark runner can now generate private real-corpus hot-index hybrid
+  query benchmark reports from a local query-set JSONL plus reviewed local query
+  command, passing raw queries through owner-only temporary files and emitting
+  only redacted aggregate `benchmark.v1` fields accepted by the existing private
+  real-corpus gate. Missing production evidence still includes the actual
+  500-query private local benchmark run, production embedding model/license
+  approval, and external 100k/1M real-corpus scale validation.
   Hosted Windows daemon scheduler tests now avoid rerunning metadata migrations
   from the test process after foreground daemon readiness has already proved the
   store is migrated, reducing live worker-loop SQLCipher/SQLite DDL contention
@@ -840,8 +851,71 @@ obsolete preliminary files and checklists are not product scope.
 | S262 | Product release-readiness local benchmark boundary aligned | Focused RED first failed because `resume-cli release-readiness` and its JSON blocker still labeled the performance blocker as `100k/1M real-corpus benchmarks` and required `--require-million-scale`/`percentile_confidence: release` as local release-readiness detail. After implementation, release-readiness reports `private real-corpus performance evidence`, requires local hot-index hybrid evidence over the available private corpus with at least 500 query samples, and keeps external 100k/1M scale validation as future scale evidence rather than a local prerequisite. The release-readiness CI guard and release blocker runbook now enforce the same boundary without local path leaks. | This slice aligns release-readiness reporting with the available local private corpus boundary only. It does not create the private benchmark report, prove `<200ms` P95, complete full-corpus OCR, select/license a production embedding model, validate cross-platform installers/services, or make stable release ready. |
 | S263 | Product witness import failure-kind aggregates complete | Focused RED first failed because a private witness over a corrupted DOCX only reported `failed documents: 1` and did not expose any redacted failure-kind counter. After implementation, import-pipeline carries an `ImportFailureKind` aggregate in `ImportSummary`, witness output prints fixed redacted `import failure <kind>: <count>` lines, and the focused CLI test proves a corrupted private DOCX reports `parser_corrupted: 1` without path, file-name, or payload leaks. The private 10k-scale witness was rerun locally and reported 20 total failures split into 16 `parser_corrupted` and 4 `parser_encrypted`, with private temporary data removed. | This slice improves private witness diagnostics only. It does not repair corrupted/encrypted documents, prove full-corpus OCR completion, run private performance benchmarks, create labeled quality evidence, clear model/OCR licensing blockers, validate release installers, or make stable release ready. |
 | S264 | Product private real-corpus OCR throughput report generator complete locally | Focused RED first failed because `benchmark-runner` had no private OCR throughput report API and `resume-benchmark private-ocr-throughput` was rejected as usage. After implementation, the benchmark runner can scan local PDF files, run a configured local PDF renderer plus OCR engine, and emit a strict `ocr-throughput.v1` private-real-corpus aggregate report accepted by `ocr-gate --require-private-real-corpus` without paths, filenames, OCR text, page images, document IDs, page IDs, or command paths. A private local smoke over the user-authorized sample directory processed 2 pages across 2 documents with local Tesseract/Poppler and passed a smoke OCR gate using redacted aggregate output only. | This slice adds local private OCR throughput report generation and a tiny real-corpus smoke only. It does not complete the release-grade 500-page OCR throughput run, review/distribute OCR runtime manifests, prove OCR quality, run full-corpus OCR, clear OCR licensing, validate platform installers/services, or make stable release ready. |
+| S265 | Product private real-corpus query report generator complete locally | Focused RED first failed because `benchmark-runner` had no private query benchmark API and `resume-benchmark private-query` was rejected as usage. After implementation, the benchmark runner can read a local private query-set JSONL, pass each raw query to a reviewed local query command through an owner-only temporary file instead of argv, parse strict `resume-ir-query-v1`/`hits=<n>` stdout, and emit a `benchmark.v1` private-real-corpus hot-index hybrid aggregate report accepted by `gate --require-private-real-corpus` without query text, sample IDs, query-set paths, command paths, resume text, or filenames. | This slice adds local private query benchmark report generation only. It does not run the actual 500-query private local benchmark, create or review a production private query set, prove `<200ms` P95, select/license/distribute the embedding model, clear private vector-quality blockers, validate platform installers/services, or make stable release ready. |
 
 ## Command Log
+
+### S265
+
+Design target:
+
+- Add a local-only private real-corpus hot-index hybrid query report generator
+  to complement the existing `gate --require-private-real-corpus` validator.
+- Keep raw private queries out of argv, stdout, JSON, errors, and committed
+  files by passing each query through an owner-only temporary local file to a
+  reviewed local command.
+- Preserve the current boundary: local release-readiness can use the available
+  approximately 10k private corpus with 500 query samples, while true 100k/1M
+  real-corpus validation remains future external evidence.
+
+TDD RED:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_query_benchmark_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_outputs_redacted_gateable_report --locked -- --exact
+```
+
+Output summary:
+
+- The library test failed before implementation because
+  `run_private_query_benchmark`, `PrivateQueryBenchmarkCommand`,
+  `PrivateQueryBenchmarkConfig`, and `PrivateQueryManifestDigests` did not
+  exist.
+- The CLI test failed before implementation because `private-query` was
+  rejected by the benchmark runner usage parser.
+
+Implementation checks:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_query_benchmark_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --locked
+cargo fmt --check
+cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The focused library test passed with a 500-query private-shaped JSONL fixture,
+  strict local query-command protocol parsing, redacted aggregate JSON, and a
+  passing `gate --require-private-real-corpus` evaluation.
+- The focused CLI test passed with `resume-benchmark private-query`, wrote a
+  temporary redacted report, and passed the existing private real-corpus gate.
+- `cargo test -p benchmark-runner --locked` passed: 30 CLI tests, 60 library
+  tests, and 0 doctests.
+- Formatting, focused benchmark-runner clippy, the runbook guard, diff
+  whitespace check, public repository guard, and full `verify-local.sh` passed.
+
+Scope note:
+
+- S265 does not run the actual private local 500-query benchmark and does not
+  clear the benchmark blocker. It supplies the local-only report generator that
+  can be used once a reviewed private query set, warmed hot index, and local
+  hybrid query wrapper are available.
 
 ### S264
 

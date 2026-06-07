@@ -6,12 +6,14 @@ use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
     evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
-    run_private_ocr_throughput_benchmark, run_synthetic_ocr_throughput_benchmark,
-    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkGateConfig,
-    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
-    PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests, PrivateOcrThroughputConfig,
-    PrivatePdfRenderEngine, SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig,
-    SyntheticOcrBenchmarkEngine, VectorQualityConfig, VectorQualityGateConfig,
+    run_private_ocr_throughput_benchmark, run_private_query_benchmark,
+    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
+    run_vector_quality_jsonl, BenchmarkGateConfig, DedupeQualityGateConfig, FieldQualityGateConfig,
+    OcrThroughputGateConfig, PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests,
+    PrivateOcrThroughputConfig, PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand,
+    PrivateQueryBenchmarkConfig, PrivateQueryManifestDigests, SyntheticBenchmarkConfig,
+    SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine, VectorQualityConfig,
+    VectorQualityGateConfig,
 };
 
 #[test]
@@ -53,6 +55,71 @@ fn synthetic_query_benchmark_reports_real_percentiles_without_raw_text() {
 fn synthetic_query_benchmark_rejects_empty_workloads() {
     assert!(SyntheticBenchmarkConfig::new(0, 1).is_err());
     assert!(SyntheticBenchmarkConfig::new(1, 0).is_err());
+}
+
+#[test]
+fn private_query_benchmark_outputs_redacted_gateable_report() {
+    let query_set = private_query_set_file("private-query-benchmark-set", 500);
+    let command = query_fixture_script("private-query-benchmark-command");
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
+        8_720,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(500)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap()
+    .with_index_size_bytes(4096);
+
+    let report = run_private_query_benchmark(config).unwrap();
+
+    assert_eq!(report.document_count(), 8_720);
+    assert_eq!(report.query_count(), 500);
+    assert_eq!(report.top_k(), 10);
+    assert_eq!(report.zero_result_queries(), 0);
+    assert_eq!(report.latency().samples(), 500);
+    assert!(report.qps() > 0.0);
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"schema_version\":\"benchmark.v1\""));
+    assert!(json.contains("\"dataset_kind\":\"private-real-corpus\""));
+    assert!(json.contains("\"document_count\":8720"));
+    assert!(json.contains("\"query_count\":500"));
+    assert!(json.contains("\"target_claim\":\"query_latency_target_met\""));
+    assert!(json.contains("\"query_mode\":\"hybrid\""));
+    assert!(json.contains("\"retrieval_layers\":\"fulltext+field+vector+rrf\""));
+    assert!(json.contains("\"hot_index\":true"));
+    assert!(json.contains("\"hot_path_ocr\":false"));
+    assert!(json.contains("\"hot_path_parsing\":false"));
+    assert!(json.contains("\"hot_path_heavy_model_inference\":false"));
+    assert!(json.contains("\"contains_raw_resume_text\":false"));
+    assert!(json.contains("\"contains_resume_paths\":false"));
+    assert!(json.contains("\"contains_queries\":false"));
+    assert!(json.contains(
+        "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\""
+    ));
+    assert!(!json.contains(path_str(&query_set)));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+    assert!(!json.contains("private-query-sample-"));
+
+    let gate = BenchmarkGateConfig::new(8_000, 500, 10_000.0).require_private_real_corpus();
+    let evaluation = evaluate_benchmark_gate_json(&json, gate).unwrap();
+    assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
+    assert_eq!(evaluation.document_count(), 8_720);
+    assert_eq!(evaluation.query_count(), 500);
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
 }
 
 #[test]
@@ -1517,6 +1584,19 @@ fn pdf_render_fixture_script(label: &str) -> PathBuf {
     path
 }
 
+fn query_fixture_script(label: &str) -> PathBuf {
+    let path = temp_dir(label).join(query_fixture_file_name());
+    fs::write(&path, query_fixture_script_body()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
 fn embedding_fixture_script(label: &str) -> PathBuf {
     let path = temp_dir(label).join(embedding_fixture_file_name());
     fs::write(&path, embedding_fixture_script_body()).unwrap();
@@ -1527,6 +1607,18 @@ fn embedding_fixture_script(label: &str) -> PathBuf {
         permissions.set_mode(0o700);
         fs::set_permissions(&path, permissions).unwrap();
     }
+    path
+}
+
+fn private_query_set_file(label: &str, query_count: usize) -> PathBuf {
+    let path = temp_dir(label).join("private-query-set.jsonl");
+    let mut lines = String::new();
+    for index in 0..query_count {
+        lines.push_str(&format!(
+            "{{\"sample_id\":\"private-query-sample-{index:06}\",\"query\":\"REDACTION_SENTINEL_PRIVATE_QUERY backend search {index}\"}}\n"
+        ));
+    }
+    fs::write(&path, lines).unwrap();
     path
 }
 
@@ -1551,6 +1643,16 @@ fn pdf_render_fixture_file_name() -> &'static str {
 }
 
 #[cfg(unix)]
+fn query_fixture_file_name() -> &'static str {
+    "query-fixture.sh"
+}
+
+#[cfg(windows)]
+fn query_fixture_file_name() -> &'static str {
+    "query-fixture.cmd"
+}
+
+#[cfg(unix)]
 fn ocr_fixture_script_body() -> &'static str {
     "#!/bin/sh\nprintf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s REDACTION_SENTINEL_OCR_TEXT\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n"
 }
@@ -1558,6 +1660,18 @@ fn ocr_fixture_script_body() -> &'static str {
 #[cfg(unix)]
 fn pdf_render_fixture_script_body() -> &'static str {
     "#!/bin/sh\nprintf 'REDACTION_SENTINEL_PAGE_IMAGE %s SYNTHETIC_PIXELS' \"$RESUME_IR_PDF_RENDER_PAGE_NO\"\n"
+}
+
+#[cfg(unix)]
+fn query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
+        "  printf 'resume-ir-query-v1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "else\n",
+        "  printf 'resume-ir-query-v1\\nhits=0\\n'\n",
+        "fi\n",
+    )
 }
 
 #[cfg(windows)]
@@ -1578,6 +1692,22 @@ fn pdf_render_fixture_script_body() -> &'static str {
         "@echo off\r\n",
         "echo REDACTION_SENTINEL_PAGE_IMAGE %RESUME_IR_PDF_RENDER_PAGE_NO% SYNTHETIC_PIXELS\r\n",
         "exit /b 0\r\n"
+    )
+}
+
+#[cfg(windows)]
+fn query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
+        "if errorlevel 1 (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo hits=0\r\n",
+        ") else (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
     )
 }
 

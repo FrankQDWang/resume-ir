@@ -1,8 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use embedder::{
     Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
@@ -30,6 +33,8 @@ const DEFAULT_PRIVATE_OCR_MAX_PAGES: usize = 500;
 const DEFAULT_PRIVATE_OCR_PAGES_PER_DOCUMENT: usize = 1;
 const DEFAULT_PRIVATE_OCR_LANG: &str = "eng";
 const DEFAULT_PRIVATE_OCR_PROFILE: &str = "private-real-corpus";
+const DEFAULT_PRIVATE_QUERY_MAX_QUERIES: usize = PRIVATE_REAL_RELEASE_QUERY_SAMPLE_MIN;
+const DEFAULT_PRIVATE_QUERY_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_VECTOR_QUALITY_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_VECTOR_QUALITY_TEXT_BYTES: usize = 128 * 1024;
 const PRIVATE_REAL_RELEASE_QUERY_SAMPLE_MIN: usize = 500;
@@ -85,6 +90,126 @@ impl fmt::Debug for SyntheticBenchmarkConfig {
             .field("query_count", &self.query_count)
             .field("top_k", &self.top_k)
             .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct PrivateQueryBenchmarkCommand {
+    command: PathBuf,
+}
+
+impl PrivateQueryBenchmarkCommand {
+    pub fn local_command(command: impl AsRef<Path>) -> Result<Self> {
+        let command = command.as_ref().to_path_buf();
+        if command.as_os_str().is_empty() {
+            return Err(BenchmarkError::invalid_config("private_query_command"));
+        }
+        Ok(Self { command })
+    }
+}
+
+impl fmt::Debug for PrivateQueryBenchmarkCommand {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateQueryBenchmarkCommand")
+            .field("command", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateQueryManifestDigests {
+    dataset_manifest_sha256: String,
+    query_set_sha256: String,
+}
+
+impl PrivateQueryManifestDigests {
+    pub fn new(
+        dataset_manifest_sha256: impl Into<String>,
+        query_set_sha256: impl Into<String>,
+    ) -> Result<Self> {
+        let digests = Self {
+            dataset_manifest_sha256: dataset_manifest_sha256.into(),
+            query_set_sha256: query_set_sha256.into(),
+        };
+        if !is_sha256_hex(&digests.dataset_manifest_sha256)
+            || !is_sha256_hex(&digests.query_set_sha256)
+        {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_manifest_sha256",
+            ));
+        }
+        Ok(digests)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateQueryBenchmarkConfig {
+    query_set: PathBuf,
+    command: PrivateQueryBenchmarkCommand,
+    document_count: usize,
+    max_queries: usize,
+    top_k: usize,
+    timeout_ms: u64,
+    index_size_bytes: u64,
+    manifests: PrivateQueryManifestDigests,
+}
+
+impl PrivateQueryBenchmarkConfig {
+    pub fn new(
+        query_set: impl AsRef<Path>,
+        command: PrivateQueryBenchmarkCommand,
+        document_count: usize,
+        manifests: PrivateQueryManifestDigests,
+    ) -> Result<Self> {
+        let query_set = query_set.as_ref().to_path_buf();
+        if query_set.as_os_str().is_empty() {
+            return Err(BenchmarkError::invalid_config("private_query_set"));
+        }
+        if document_count == 0 {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_document_count",
+            ));
+        }
+        Ok(Self {
+            query_set,
+            command,
+            document_count,
+            max_queries: DEFAULT_PRIVATE_QUERY_MAX_QUERIES,
+            top_k: DEFAULT_TOP_K,
+            timeout_ms: DEFAULT_PRIVATE_QUERY_TIMEOUT_MS,
+            index_size_bytes: 0,
+            manifests,
+        })
+    }
+
+    pub fn with_max_queries(mut self, max_queries: usize) -> Result<Self> {
+        if max_queries == 0 {
+            return Err(BenchmarkError::invalid_config("private_query_max_queries"));
+        }
+        self.max_queries = max_queries;
+        Ok(self)
+    }
+
+    pub fn with_top_k(mut self, top_k: usize) -> Result<Self> {
+        if top_k == 0 || top_k > MAX_TOP_K {
+            return Err(BenchmarkError::invalid_config("private_query_top_k"));
+        }
+        self.top_k = top_k;
+        Ok(self)
+    }
+
+    pub fn with_timeout_ms(mut self, timeout_ms: u64) -> Result<Self> {
+        if timeout_ms == 0 {
+            return Err(BenchmarkError::invalid_config("private_query_timeout_ms"));
+        }
+        self.timeout_ms = timeout_ms;
+        Ok(self)
+    }
+
+    pub fn with_index_size_bytes(mut self, index_size_bytes: u64) -> Self {
+        self.index_size_bytes = index_size_bytes;
+        self
     }
 }
 
@@ -622,6 +747,143 @@ impl fmt::Debug for BenchmarkReport {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct PrivateQueryBenchmarkReport {
+    run_id: String,
+    platform: String,
+    document_count: usize,
+    query_count: usize,
+    top_k: usize,
+    query_total_ms: f64,
+    index_size_bytes: u64,
+    zero_result_queries: usize,
+    total_hits: usize,
+    latency: LatencySummary,
+    million_scale_verified: bool,
+    percentile_confidence: &'static str,
+    manifests: PrivateQueryManifestDigests,
+}
+
+impl PrivateQueryBenchmarkReport {
+    pub fn document_count(&self) -> usize {
+        self.document_count
+    }
+
+    pub fn query_count(&self) -> usize {
+        self.query_count
+    }
+
+    pub fn top_k(&self) -> usize {
+        self.top_k
+    }
+
+    pub fn qps(&self) -> f64 {
+        if self.query_total_ms <= 0.0 {
+            return 0.0;
+        }
+
+        self.query_count as f64 / (self.query_total_ms / 1000.0)
+    }
+
+    pub fn zero_result_queries(&self) -> usize {
+        self.zero_result_queries
+    }
+
+    pub fn latency(&self) -> &LatencySummary {
+        &self.latency
+    }
+
+    pub fn to_redacted_json(&self) -> String {
+        format!(
+            concat!(
+                "{{",
+                "\"schema_version\":\"benchmark.v1\",",
+                "\"run_id\":\"{}\",",
+                "\"platform\":\"{}\",",
+                "\"dataset_kind\":\"private-real-corpus\",",
+                "\"document_count\":{},",
+                "\"query_count\":{},",
+                "\"top_k\":{},",
+                "\"build_ms\":0.000,",
+                "\"query_total_ms\":{},",
+                "\"qps\":{},",
+                "\"index_size_bytes\":{},",
+                "\"query_latency_ms\":{{",
+                "\"samples\":{},",
+                "\"min\":{},",
+                "\"mean\":{},",
+                "\"p50\":{},",
+                "\"p95\":{},",
+                "\"p99\":{},",
+                "\"max\":{}",
+                "}},",
+                "\"zero_result_queries\":{},",
+                "\"total_hits\":{},",
+                "\"million_scale_verified\":{},",
+                "\"percentile_confidence\":\"{}\",",
+                "\"target_claim\":\"query_latency_target_met\",",
+                "\"corpus_origin\":\"private_local\",",
+                "\"privacy_boundary\":\"redacted_local_aggregate\",",
+                "\"query_mode\":\"hybrid\",",
+                "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+                "\"hot_index\":true,",
+                "\"hot_path_ocr\":false,",
+                "\"hot_path_parsing\":false,",
+                "\"hot_path_heavy_model_inference\":false,",
+                "\"contains_raw_resume_text\":false,",
+                "\"contains_resume_paths\":false,",
+                "\"contains_queries\":false,",
+                "\"dataset_manifest_sha256\":\"{}\",",
+                "\"query_set_sha256\":\"{}\",",
+                "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
+                "}}"
+            ),
+            self.run_id,
+            self.platform,
+            self.document_count,
+            self.query_count,
+            self.top_k,
+            format_consistency_number(self.query_total_ms),
+            format_consistency_number(self.qps()),
+            self.index_size_bytes,
+            self.latency.samples,
+            format_ms(self.latency.min_ms),
+            format_ms(self.latency.mean_ms),
+            format_ms(self.latency.p50_ms),
+            format_ms(self.latency.p95_ms),
+            format_ms(self.latency.p99_ms),
+            format_ms(self.latency.max_ms),
+            self.zero_result_queries,
+            self.total_hits,
+            self.million_scale_verified,
+            self.percentile_confidence,
+            self.manifests.dataset_manifest_sha256,
+            self.manifests.query_set_sha256,
+        )
+    }
+}
+
+impl fmt::Debug for PrivateQueryBenchmarkReport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateQueryBenchmarkReport")
+            .field("run_id", &self.run_id)
+            .field("platform", &self.platform)
+            .field("dataset_kind", &"private-real-corpus")
+            .field("document_count", &self.document_count)
+            .field("query_count", &self.query_count)
+            .field("top_k", &self.top_k)
+            .field("query_total_ms", &self.query_total_ms)
+            .field("index_size_bytes", &self.index_size_bytes)
+            .field("zero_result_queries", &self.zero_result_queries)
+            .field("total_hits", &self.total_hits)
+            .field("latency", &self.latency)
+            .field("million_scale_verified", &self.million_scale_verified)
+            .field("percentile_confidence", &self.percentile_confidence)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub struct OcrThroughputReport {
     run_id: String,
     platform: String,
@@ -1053,6 +1315,63 @@ pub fn run_synthetic_query_benchmark(
         percentile_confidence: percentile_confidence(config.query_count),
         target_claim: "not_evaluated",
     })
+}
+
+pub fn run_private_query_benchmark(
+    config: PrivateQueryBenchmarkConfig,
+) -> Result<PrivateQueryBenchmarkReport> {
+    let queries = load_private_query_set(&config.query_set, config.max_queries)?;
+    let scratch = create_private_query_scratch_dir()?;
+    let _scratch_guard = PrivateQueryScratchGuard(scratch.clone());
+    let query_file = scratch.join("query.txt");
+
+    let mut latencies = Vec::with_capacity(queries.len());
+    let query_batch_started = Instant::now();
+    let mut total_hits = 0_usize;
+    let mut zero_result_queries = 0_usize;
+    for query in &queries {
+        write_private_query_file(&query_file, query)?;
+        let query_started = Instant::now();
+        let hits = run_private_query_command(
+            &config.command,
+            &query_file,
+            config.top_k,
+            config.timeout_ms,
+        )?;
+        latencies.push(elapsed_ms(query_started));
+        if hits == 0 {
+            zero_result_queries += 1;
+        }
+        total_hits = total_hits.saturating_add(hits);
+    }
+    let query_total_ms = elapsed_ms(query_batch_started);
+
+    Ok(PrivateQueryBenchmarkReport {
+        run_id: generate_run_id(),
+        platform: platform_label(),
+        document_count: config.document_count,
+        query_count: queries.len(),
+        top_k: config.top_k,
+        query_total_ms,
+        index_size_bytes: config.index_size_bytes,
+        zero_result_queries,
+        total_hits,
+        latency: LatencySummary::from_samples(latencies)?,
+        million_scale_verified: config.document_count >= 1_000_000,
+        percentile_confidence: private_query_percentile_confidence(
+            config.document_count,
+            queries.len(),
+        ),
+        manifests: config.manifests,
+    })
+}
+
+struct PrivateQueryScratchGuard(PathBuf);
+
+impl Drop for PrivateQueryScratchGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 pub fn run_synthetic_ocr_throughput_benchmark(
@@ -4292,6 +4611,183 @@ fn percentile_confidence(query_count: usize) -> &'static str {
     } else {
         "sampled"
     }
+}
+
+fn private_query_percentile_confidence(document_count: usize, query_count: usize) -> &'static str {
+    if document_count >= 1_000_000 && query_count >= PRIVATE_REAL_RELEASE_QUERY_SAMPLE_MIN {
+        "release"
+    } else {
+        percentile_confidence(query_count)
+    }
+}
+
+fn load_private_query_set(path: &Path, max_queries: usize) -> Result<Vec<String>> {
+    let content = fs::read_to_string(path).map_err(BenchmarkError::io)?;
+    let mut queries = Vec::new();
+    for line in content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if queries.len() >= max_queries {
+            break;
+        }
+        let value = serde_json::from_str::<serde_json::Value>(line)
+            .map_err(|_| BenchmarkError::invalid_config("private_query_jsonl"))?;
+        let query = value
+            .get("query")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|query| !query.is_empty())
+            .ok_or_else(|| BenchmarkError::invalid_config("private_query.query"))?;
+        queries.push(query.to_string());
+    }
+    if queries.is_empty() {
+        return Err(BenchmarkError::invalid_config("private_query_count"));
+    }
+    Ok(queries)
+}
+
+fn create_private_query_scratch_dir() -> Result<PathBuf> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let path = std::env::temp_dir().join(format!(
+        "resume-ir-private-query-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&path).map_err(BenchmarkError::io)?;
+    set_owner_only_dir(&path)?;
+    Ok(path)
+}
+
+fn write_private_query_file(path: &Path, query: &str) -> Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)
+        .map_err(BenchmarkError::io)?;
+    set_owner_only_file(path)?;
+    file.write_all(query.as_bytes())
+        .map_err(BenchmarkError::io)?;
+    file.write_all(b"\n").map_err(BenchmarkError::io)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_owner_only_dir(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path)
+        .map_err(BenchmarkError::io)?
+        .permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(path, permissions).map_err(BenchmarkError::io)
+}
+
+#[cfg(not(unix))]
+fn set_owner_only_dir(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_owner_only_file(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path)
+        .map_err(BenchmarkError::io)?
+        .permissions();
+    permissions.set_mode(0o600);
+    fs::set_permissions(path, permissions).map_err(BenchmarkError::io)
+}
+
+#[cfg(not(unix))]
+fn set_owner_only_file(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn run_private_query_command(
+    command: &PrivateQueryBenchmarkCommand,
+    query_file: &Path,
+    top_k: usize,
+    timeout_ms: u64,
+) -> Result<usize> {
+    let started = Instant::now();
+    let mut child = Command::new(&command.command)
+        .env("RESUME_IR_QUERY_INPUT_PATH", query_file)
+        .env("RESUME_IR_QUERY_TOP_K", top_k.to_string())
+        .env("RESUME_IR_QUERY_MODE", "hybrid")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(BenchmarkError::io)?;
+    let timeout = Duration::from_millis(timeout_ms);
+    loop {
+        if child.try_wait().map_err(BenchmarkError::io)?.is_some() {
+            let output = child.wait_with_output().map_err(BenchmarkError::io)?;
+            if !output.status.success() {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_command_status",
+                ));
+            }
+            return parse_private_query_command_stdout(&output.stdout, top_k);
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(BenchmarkError::invalid_config(
+                "private_query_command_timeout",
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn parse_private_query_command_stdout(stdout: &[u8], top_k: usize) -> Result<usize> {
+    let stdout = std::str::from_utf8(stdout)
+        .map_err(|_| BenchmarkError::invalid_config("private_query_command_stdout"))?;
+    let mut saw_header = false;
+    let mut hits = None;
+    for line in stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if !saw_header {
+            if line != "resume-ir-query-v1" {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_command_stdout",
+                ));
+            }
+            saw_header = true;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("hits=") {
+            if hits.is_some() {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_command_stdout",
+                ));
+            }
+            let parsed = value
+                .parse::<usize>()
+                .map_err(|_| BenchmarkError::invalid_config("private_query_hits"))?;
+            if parsed > top_k {
+                return Err(BenchmarkError::invalid_config("private_query_hits"));
+            }
+            hits = Some(parsed);
+            continue;
+        }
+        return Err(BenchmarkError::invalid_config(
+            "private_query_command_stdout",
+        ));
+    }
+    if !saw_header {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_command_stdout",
+        ));
+    }
+    hits.ok_or_else(|| BenchmarkError::invalid_config("private_query_hits"))
 }
 
 fn directory_size_bytes(path: &Path) -> Result<u64> {

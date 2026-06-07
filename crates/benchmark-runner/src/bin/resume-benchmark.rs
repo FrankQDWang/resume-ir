@@ -5,11 +5,13 @@ use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
     evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
-    run_private_ocr_throughput_benchmark, run_synthetic_ocr_throughput_benchmark,
-    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig,
-    BenchmarkGateError, DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    run_private_ocr_throughput_benchmark, run_private_query_benchmark,
+    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
+    run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig, BenchmarkGateError,
+    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
     PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests, PrivateOcrThroughputConfig,
-    PrivatePdfRenderEngine, SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig,
+    PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand, PrivateQueryBenchmarkConfig,
+    PrivateQueryManifestDigests, SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig,
     SyntheticOcrBenchmarkEngine, VectorQualityConfig, VectorQualityGateConfig,
 };
 
@@ -23,6 +25,7 @@ fn main() {
 fn run() -> Result<(), CliError> {
     match parse_command(std::env::args().skip(1))? {
         CliCommand::SyntheticQuery(args) => run_synthetic_query(args),
+        CliCommand::PrivateQuery(args) => run_private_query(args),
         CliCommand::Gate(args) => run_gate(args),
         CliCommand::FieldQuality(args) => run_field_quality(args),
         CliCommand::FieldGate(args) => run_field_gate(args),
@@ -57,6 +60,24 @@ fn run_synthetic_query(args: SyntheticQueryArgs) -> Result<(), CliError> {
         fs::remove_dir_all(&index_dir)
             .map_err(|_| CliError::user("unable to clean benchmark scratch directory"))?;
     }
+    println!("{}", report.to_redacted_json());
+    Ok(())
+}
+
+fn run_private_query(args: PrivateQueryArgs) -> Result<(), CliError> {
+    let manifests =
+        PrivateQueryManifestDigests::new(args.dataset_manifest_sha256, args.query_set_sha256)
+            .map_err(CliError::benchmark)?;
+    let command =
+        PrivateQueryBenchmarkCommand::local_command(args.command).map_err(CliError::benchmark)?;
+    let config =
+        PrivateQueryBenchmarkConfig::new(args.query_set, command, args.document_count, manifests)
+            .and_then(|config| config.with_max_queries(args.max_queries))
+            .and_then(|config| config.with_top_k(args.top_k))
+            .and_then(|config| config.with_timeout_ms(args.timeout_ms))
+            .map(|config| config.with_index_size_bytes(args.index_size_bytes))
+            .map_err(CliError::benchmark)?;
+    let report = run_private_query_benchmark(config).map_err(CliError::benchmark)?;
     println!("{}", report.to_redacted_json());
     Ok(())
 }
@@ -248,6 +269,7 @@ where
         Some("ocr-throughput") => {
             parse_ocr_throughput_args(&args[1..]).map(CliCommand::OcrThroughput)
         }
+        Some("private-query") => parse_private_query_args(&args[1..]).map(CliCommand::PrivateQuery),
         Some("private-ocr-throughput") => {
             parse_private_ocr_throughput_args(&args[1..]).map(CliCommand::PrivateOcrThroughput)
         }
@@ -314,6 +336,91 @@ fn parse_synthetic_query_args(args: &[String]) -> Result<SyntheticQueryArgs, Cli
         documents,
         queries,
         top_k,
+    })
+}
+
+fn parse_private_query_args(args: &[String]) -> Result<PrivateQueryArgs, CliError> {
+    let mut query_set = None;
+    let mut command = None;
+    let mut document_count = None;
+    let mut max_queries = 500_usize;
+    let mut top_k = 10_usize;
+    let mut timeout_ms = 5_000_u64;
+    let mut index_size_bytes = 0_u64;
+    let mut dataset_manifest_sha256 = None;
+    let mut query_set_sha256 = None;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--query-set" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                query_set = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--document-count" => {
+                document_count = Some(parse_positive_usize(args.get(index + 1))?);
+                index += 2;
+            }
+            "--max-queries" => {
+                max_queries = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--top-k" => {
+                top_k = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--timeout-ms" => {
+                timeout_ms = parse_positive_u64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--index-size-bytes" => {
+                index_size_bytes = parse_nonnegative_u64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--dataset-manifest-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                dataset_manifest_sha256 = Some(value.to_string());
+                index += 2;
+            }
+            "--query-set-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                query_set_sha256 = Some(value.to_string());
+                index += 2;
+            }
+            "--json" => {
+                index += 1;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    Ok(PrivateQueryArgs {
+        query_set: query_set.ok_or_else(CliError::usage)?,
+        command: command.ok_or_else(CliError::usage)?,
+        document_count: document_count.ok_or_else(CliError::usage)?,
+        max_queries,
+        top_k,
+        timeout_ms,
+        index_size_bytes,
+        dataset_manifest_sha256: dataset_manifest_sha256.ok_or_else(CliError::usage)?,
+        query_set_sha256: query_set_sha256.ok_or_else(CliError::usage)?,
     })
 }
 
@@ -996,6 +1103,12 @@ fn parse_nonnegative_usize(value: Option<&String>) -> Result<usize, CliError> {
         .ok_or_else(CliError::usage)
 }
 
+fn parse_nonnegative_u64(value: Option<&String>) -> Result<u64, CliError> {
+    value
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(CliError::usage)
+}
+
 fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
     value
         .and_then(|value| value.parse::<f64>().ok())
@@ -1004,12 +1117,13 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --command <path> --document-count <n> --dataset-manifest-sha256 <sha256> --query-set-sha256 <sha256> [--max-queries <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
 enum CliCommand {
     SyntheticQuery(SyntheticQueryArgs),
+    PrivateQuery(PrivateQueryArgs),
     Gate(GateArgs),
     FieldQuality(FieldQualityArgs),
     FieldGate(FieldGateArgs),
@@ -1030,6 +1144,19 @@ struct SyntheticQueryArgs {
     documents: usize,
     queries: usize,
     top_k: usize,
+}
+
+#[derive(Clone, Debug)]
+struct PrivateQueryArgs {
+    query_set: PathBuf,
+    command: PathBuf,
+    document_count: usize,
+    max_queries: usize,
+    top_k: usize,
+    timeout_ms: u64,
+    index_size_bytes: u64,
+    dataset_manifest_sha256: String,
+    query_set_sha256: String,
 }
 
 #[derive(Clone, Debug)]

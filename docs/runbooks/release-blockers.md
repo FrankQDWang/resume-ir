@@ -136,6 +136,29 @@ query latency samples. External 100k/1M scale validation remains future scale
 evidence for representative user environments, not a local prerequisite for
 this machine.
 
+Generate the private query benchmark report locally only after the target
+private corpus has been imported, indexed, and warmed, and after the local query
+command has been reviewed to run hot hybrid search without OCR, parsing, or
+heavy model inference on the query path. The query-set JSONL stays local and may
+contain raw private queries; the command receives each query through an
+owner-only temporary file path in `RESUME_IR_QUERY_INPUT_PATH` plus
+`RESUME_IR_QUERY_TOP_K` and `RESUME_IR_QUERY_MODE=hybrid`, and must return only
+`resume-ir-query-v1` plus `hits=<n>` on stdout. Do not upload the query-set, the
+report, or command wrappers unless they have been separately reviewed to contain
+no raw queries, filenames, local paths, tokens, or resume data.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  private-query \
+  --query-set private-query-set.jsonl \
+  --command private-query-wrapper \
+  --document-count 8720 \
+  --max-queries 500 --top-k 10 \
+  --dataset-manifest-sha256 <sha256> \
+  --query-set-sha256 <sha256> \
+  --json > private-benchmark-local.json
+```
+
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   gate --report private-benchmark-local.json \

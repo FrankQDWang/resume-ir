@@ -155,6 +155,97 @@ fn resume_benchmark_gate_rejects_synthetic_without_explicit_allowance() {
 }
 
 #[test]
+fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
+    let query_set = private_query_set_file("private-query-cli-set", 500);
+    let command = query_fixture_script("private-query-cli-command");
+    let report_dir = temp_dir("private-query-cli-report");
+    let report_path = report_dir.join("private-query-report.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "private-query",
+            "--query-set",
+            path_str(&query_set),
+            "--command",
+            path_str(&command),
+            "--document-count",
+            "8720",
+            "--max-queries",
+            "500",
+            "--top-k",
+            "10",
+            "--timeout-ms",
+            "5000",
+            "--index-size-bytes",
+            "4096",
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--query-set-sha256",
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--json",
+        ])
+        .output()
+        .expect("run resume-benchmark private-query");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\":\"benchmark.v1\""));
+    assert!(stdout.contains("\"dataset_kind\":\"private-real-corpus\""));
+    assert!(stdout.contains("\"document_count\":8720"));
+    assert!(stdout.contains("\"query_count\":500"));
+    assert!(stdout.contains("\"target_claim\":\"query_latency_target_met\""));
+    assert!(stdout.contains("\"query_mode\":\"hybrid\""));
+    assert!(stdout.contains("\"retrieval_layers\":\"fulltext+field+vector+rrf\""));
+    assert!(stdout.contains("\"hot_index\":true"));
+    assert!(stdout.contains("\"contains_raw_resume_text\":false"));
+    assert!(stdout.contains("\"contains_resume_paths\":false"));
+    assert!(stdout.contains("\"contains_queries\":false"));
+    assert!(!stdout.contains(path_str(&query_set)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+    assert!(!stdout.contains("private-query-sample-"));
+    fs::write(&report_path, &output.stdout).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-real-corpus",
+            "--min-documents",
+            "8000",
+            "--min-queries",
+            "500",
+            "--max-p95-ms",
+            "10000",
+        ])
+        .output()
+        .expect("run resume-benchmark gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "benchmark gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+    remove_dir(&report_dir);
+}
+
+#[test]
 fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
     let report_dir = temp_dir("private-real-benchmark-cli-gate");
     let report_path = report_dir.join("benchmark-report.json");
@@ -1790,6 +1881,19 @@ fn pdf_render_fixture_script(label: &str) -> PathBuf {
     path
 }
 
+fn query_fixture_script(label: &str) -> PathBuf {
+    let path = temp_dir(label).join(query_fixture_file_name());
+    fs::write(&path, query_fixture_script_body()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
 fn embedding_fixture_script(label: &str) -> PathBuf {
     let path = temp_dir(label).join(embedding_fixture_file_name());
     fs::write(&path, embedding_fixture_script_body()).unwrap();
@@ -1800,6 +1904,18 @@ fn embedding_fixture_script(label: &str) -> PathBuf {
         permissions.set_mode(0o700);
         fs::set_permissions(&path, permissions).unwrap();
     }
+    path
+}
+
+fn private_query_set_file(label: &str, query_count: usize) -> PathBuf {
+    let path = temp_dir(label).join("private-query-set.jsonl");
+    let mut lines = String::new();
+    for index in 0..query_count {
+        lines.push_str(&format!(
+            "{{\"sample_id\":\"private-query-sample-{index:06}\",\"query\":\"REDACTION_SENTINEL_PRIVATE_QUERY backend search {index}\"}}\n"
+        ));
+    }
+    fs::write(&path, lines).unwrap();
     path
 }
 
@@ -1824,6 +1940,16 @@ fn pdf_render_fixture_file_name() -> &'static str {
 }
 
 #[cfg(unix)]
+fn query_fixture_file_name() -> &'static str {
+    "query-fixture.sh"
+}
+
+#[cfg(windows)]
+fn query_fixture_file_name() -> &'static str {
+    "query-fixture.cmd"
+}
+
+#[cfg(unix)]
 fn ocr_fixture_script_body() -> &'static str {
     "#!/bin/sh\nprintf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s REDACTION_SENTINEL_OCR_TEXT\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n"
 }
@@ -1831,6 +1957,18 @@ fn ocr_fixture_script_body() -> &'static str {
 #[cfg(unix)]
 fn pdf_render_fixture_script_body() -> &'static str {
     "#!/bin/sh\nprintf 'REDACTION_SENTINEL_PAGE_IMAGE %s SYNTHETIC_PIXELS' \"$RESUME_IR_PDF_RENDER_PAGE_NO\"\n"
+}
+
+#[cfg(unix)]
+fn query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
+        "  printf 'resume-ir-query-v1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "else\n",
+        "  printf 'resume-ir-query-v1\\nhits=0\\n'\n",
+        "fi\n",
+    )
 }
 
 #[cfg(windows)]
@@ -1851,6 +1989,22 @@ fn pdf_render_fixture_script_body() -> &'static str {
         "@echo off\r\n",
         "echo REDACTION_SENTINEL_PAGE_IMAGE %RESUME_IR_PDF_RENDER_PAGE_NO% SYNTHETIC_PIXELS\r\n",
         "exit /b 0\r\n"
+    )
+}
+
+#[cfg(windows)]
+fn query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
+        "if errorlevel 1 (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo hits=0\r\n",
+        ") else (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
     )
 }
 
