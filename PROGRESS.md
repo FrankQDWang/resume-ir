@@ -878,8 +878,56 @@ obsolete preliminary files and checklists are not product scope.
 | S267 | CI semantic closed-loop HNSW under-return fix complete locally | GitHub Actions PR #9 `rust workspace` failed after S266 because the Linux CLI closed-loop semantic search output was missing `results: 3`; local macOS full verification had passed. Root cause was the persistent HNSW backend trusting ANN output cardinality even though small or tied vector sets can under-return on hosted Linux. After implementation, `HnswShard::knn` backfills missing candidates from the same in-memory shard with exact cosine ordering, and a synthetic identical-vector regression proves model-scoped persistent KNN returns the requested `k`. | This slice fixes deterministic small/tied vector result coverage for local and hosted synthetic closed-loop checks only. It does not prove private semantic quality, release model selection/licensing/distribution, real 100k/1M ANN recall or latency, platform installer/service behavior, or stable release readiness. |
 | S268 | Product private business dedupe-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private dedupe-quality report API and `resume-benchmark dedupe-quality` rejected `--private-business-labeled` plus manifest SHA flags. After implementation, `dedupe-quality` can evaluate a local labeled pair JSONL, emit a strict `dedupe-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation manifest digests, and pass `dedupe-gate --require-private-business-labeled` without raw resume text, profile values, names, schools, companies, skills, sample IDs, document IDs, local paths, or filenames. The release blocker runbook now documents the local report generation command before the gate. | This slice adds local private dedupe-quality report generation only. It does not create or review the actual private business labeled dedupe dataset, prove production dedupe precision/recall/F1 on real labels, clear field/vector quality blockers, validate platform installers/services, or make stable release ready. |
 | S269 | Product private business vector-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private vector-quality report API and `resume-benchmark vector-quality` rejected `--private-business-labeled` plus dataset, annotation, and model manifest SHA flags. After implementation, `vector-quality` can evaluate a local labeled query/candidate JSONL through a reviewed local embedding command, emit a strict `vector-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation/model manifest digests, and pass `vector-gate --require-private-business-labeled` without raw queries, candidate text, sample IDs, candidate IDs, vectors, command paths, model paths, local paths, or raw resume text. The private report omits `model_id`, `dimension`, and other non-allowed release-evidence fields; the runbook now documents local report generation before the gate. | This slice adds local private vector-quality report generation only. It does not create or review the actual private business labeled vector dataset, approve or distribute a production embedding model, prove production semantic recall/MRR/NDCG on real labels, clear field/dedupe/vector quality blockers, validate platform installers/services, or make stable release ready. |
+| S270 | CI Windows detail IPC endpoint wait hardening complete locally | GitHub Actions PR #9 `windows-latest` failed after S269 in `resume-daemon --test s49_detail_ipc` because `daemon_detail_ipc_rejects_unauthorized_invalid_and_missing_docs_without_secret_leaks` did not see the daemon IPC endpoint within the test's five-second startup budget. The same test passed locally on macOS, and the same Windows job had already passed earlier daemon IPC tests, so the root cause is the detail IPC test's too-small hosted Windows endpoint wait, not the S269 benchmark-runner product change. After implementation, the s49 detail IPC helper uses a 30-second endpoint startup budget and kills/waits the child on timeout to avoid orphan daemon processes. | This slice hardens one hosted Windows test helper only. It does not change product daemon behavior, prove installed Windows service lifecycle, validate production installer behavior, clear platform blockers, or make stable release ready. |
 
 ## Command Log
+
+### S270
+
+Root-cause evidence:
+
+```bash
+python <gh-fix-ci inspect_pr_checks.py> --repo . --pr 9 --max-lines 200 --context 40
+gh run view 27084815769 --json name,workflowName,conclusion,status,url,event,headBranch,headSha,createdAt,updatedAt
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s49_detail_ipc daemon_detail_ipc_rejects_unauthorized_invalid_and_missing_docs_without_secret_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The hosted `windows-latest` job failed in `resume-daemon --test
+  s49_detail_ipc` at `crates/daemon/tests/s49_detail_ipc.rs:419` with `daemon
+  did not print ipc status endpoint`.
+- The Windows job had already passed earlier daemon IPC tests in the same run,
+  and the focused s49 test passed locally on macOS, so the failure points to a
+  hosted Windows startup timing budget in the test helper rather than the S269
+  benchmark-runner product change.
+
+Implementation checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s49_detail_ipc daemon_detail_ipc_rejects_unauthorized_invalid_and_missing_docs_without_secret_leaks --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s49_detail_ipc --locked
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo clippy -p resume-daemon --test s49_detail_ipc --locked -- -D warnings
+git diff --check
+# changed-file added-line privacy marker scan; private evidence patterns omitted from this public log
+./scripts/ci/guard-public-repo.sh
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The focused detail IPC regression test and full `s49_detail_ipc` test file
+  passed locally after increasing the endpoint startup wait budget and cleaning
+  up the child process on timeout.
+- `cargo fmt --check`, focused s49 detail IPC clippy, diff check, changed-line
+  privacy grep, public-repo guard, and full `verify-local.sh` passed locally.
+
+Scope note:
+
+- S270 does not change daemon product behavior. It is a CI stability hardening
+  fix for a hosted Windows endpoint-startup timeout observed after the S269
+  push.
 
 ### S269
 
