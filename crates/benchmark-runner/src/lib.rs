@@ -144,6 +144,32 @@ impl PrivateQueryManifestDigests {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateFieldQualityManifestDigests {
+    dataset_manifest_sha256: String,
+    annotation_manifest_sha256: String,
+}
+
+impl PrivateFieldQualityManifestDigests {
+    pub fn new(
+        dataset_manifest_sha256: impl Into<String>,
+        annotation_manifest_sha256: impl Into<String>,
+    ) -> Result<Self> {
+        let digests = Self {
+            dataset_manifest_sha256: dataset_manifest_sha256.into(),
+            annotation_manifest_sha256: annotation_manifest_sha256.into(),
+        };
+        if !is_sha256_hex(&digests.dataset_manifest_sha256)
+            || !is_sha256_hex(&digests.annotation_manifest_sha256)
+        {
+            return Err(BenchmarkError::invalid_config(
+                "private_field_quality_manifest_sha256",
+            ));
+        }
+        Ok(digests)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrivateQueryBenchmarkConfig {
     query_set: PathBuf,
     command: PrivateQueryBenchmarkCommand,
@@ -2040,6 +2066,11 @@ impl FieldQualityMetric {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PrivateFieldQualityBoundary {
+    manifests: PrivateFieldQualityManifestDigests,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldQualityReport {
     run_id: String,
@@ -2051,6 +2082,7 @@ pub struct FieldQualityReport {
     overall: FieldQualityMetric,
     fields: BTreeMap<String, FieldQualityMetric>,
     target_claim: &'static str,
+    private_boundary: Option<PrivateFieldQualityBoundary>,
 }
 
 impl FieldQualityReport {
@@ -2081,6 +2113,32 @@ impl FieldQualityReport {
             .map(|(field_type, metric)| format!("\"{field_type}\":{}", field_metric_json(*metric)))
             .collect::<Vec<_>>()
             .join(",");
+        let private_boundary_json = self
+            .private_boundary
+            .as_ref()
+            .map(|boundary| {
+                format!(
+                    concat!(
+                        "\"corpus_origin\":\"private_local\",",
+                        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+                        "\"contains_raw_resume_text\":false,",
+                        "\"contains_resume_paths\":false,",
+                        "\"contains_field_values\":false,",
+                        "\"contains_sample_ids\":false,",
+                        "\"dataset_manifest_sha256\":\"{}\",",
+                        "\"annotation_manifest_sha256\":\"{}\",",
+                        "\"field_taxonomy\":\"resume-ir.fields.v1\","
+                    ),
+                    boundary.manifests.dataset_manifest_sha256,
+                    boundary.manifests.annotation_manifest_sha256,
+                )
+            })
+            .unwrap_or_default();
+        let scope = if self.private_boundary.is_some() {
+            PRIVATE_BUSINESS_FIELD_QUALITY_SCOPE
+        } else {
+            "labeled field extraction quality; no raw resume text, paths, sample ids, or field values included"
+        };
         format!(
             concat!(
                 "{{",
@@ -2094,7 +2152,8 @@ impl FieldQualityReport {
                 "\"overall\":{},",
                 "\"fields\":{{{}}},",
                 "\"target_claim\":\"{}\",",
-                "\"scope\":\"labeled field extraction quality; no raw resume text, paths, sample ids, or field values included\"",
+                "{}",
+                "\"scope\":\"{}\"",
                 "}}"
             ),
             self.run_id,
@@ -2106,6 +2165,8 @@ impl FieldQualityReport {
             field_metric_json(self.overall),
             fields_json,
             self.target_claim,
+            private_boundary_json,
+            scope,
         )
     }
 }
@@ -2285,7 +2346,19 @@ pub fn run_field_quality_jsonl(dataset_jsonl: &str) -> Result<FieldQualityReport
         overall: all_counts.metric(),
         fields,
         target_claim: "not_evaluated",
+        private_boundary: None,
     })
+}
+
+pub fn run_private_business_field_quality_jsonl(
+    dataset_jsonl: &str,
+    manifests: PrivateFieldQualityManifestDigests,
+) -> Result<FieldQualityReport> {
+    let mut report = run_field_quality_jsonl(dataset_jsonl)?;
+    report.dataset_kind = "private-business-labeled";
+    report.target_claim = PRIVATE_BUSINESS_FIELD_QUALITY_TARGET_CLAIM;
+    report.private_boundary = Some(PrivateFieldQualityBoundary { manifests });
+    Ok(report)
 }
 
 pub fn run_dedupe_quality_jsonl(dataset_jsonl: &str) -> Result<DedupeQualityReport> {
@@ -3501,6 +3574,7 @@ fn canonical_field_type(value: &str) -> Option<&'static str> {
         "major" => Some("major"),
         "company" => Some("company"),
         "title" => Some("title"),
+        "location" => Some("location"),
         "skill" => Some("skill"),
         "certificate" => Some("certificate"),
         "years_experience" => Some("years_experience"),

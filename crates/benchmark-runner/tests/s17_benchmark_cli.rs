@@ -632,6 +632,88 @@ fn resume_benchmark_field_quality_outputs_redacted_report_and_gate() {
 }
 
 #[test]
+fn resume_benchmark_private_business_field_quality_outputs_redacted_gateable_report() {
+    let dataset_dir = temp_dir("private-business-field-quality-dataset");
+    let dataset_path = dataset_dir.join("private-field-quality.jsonl");
+    let report_path = dataset_dir.join("private-field-report.json");
+    fs::write(&dataset_path, private_business_field_quality_dataset()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "field-quality",
+            "--dataset",
+            path_str(&dataset_path),
+            "--private-business-labeled",
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--annotation-manifest-sha256",
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--json",
+        ])
+        .output()
+        .expect("run private business field-quality benchmark");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\":\"field-quality.v1\""));
+    assert!(stdout.contains("\"dataset_kind\":\"private-business-labeled\""));
+    assert!(stdout.contains("\"sample_count\":1"));
+    assert!(stdout.contains("\"target_claim\":\"field_quality_target_met\""));
+    assert!(stdout.contains("\"corpus_origin\":\"private_local\""));
+    assert!(stdout.contains("\"privacy_boundary\":\"redacted_local_aggregate\""));
+    assert!(stdout.contains("\"contains_raw_resume_text\":false"));
+    assert!(stdout.contains("\"contains_resume_paths\":false"));
+    assert!(stdout.contains("\"contains_field_values\":false"));
+    assert!(stdout.contains("\"contains_sample_ids\":false"));
+    assert!(stdout.contains("\"field_taxonomy\":\"resume-ir.fields.v1\""));
+    assert!(!stdout.contains(path_str(&dataset_path)));
+    assert!(!stdout.contains("private-field-sample-001"));
+    assert!(!stdout.contains("REDACTION_SENTINEL_FIELD_VALUE"));
+    assert!(!stdout.contains("Synthetic Field Candidate"));
+    assert!(!stdout.contains("field-candidate@example.test"));
+    assert!(!stdout.contains("Synthetic Commerce"));
+    fs::write(&report_path, &output.stdout).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "field-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-business-labeled",
+            "--min-samples",
+            "1",
+            "--min-precision",
+            "0.93",
+            "--min-recall",
+            "0.93",
+            "--min-f1",
+            "0.93",
+        ])
+        .output()
+        .expect("run private business field quality gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "field quality gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(&dataset_dir);
+}
+
+#[test]
 fn resume_benchmark_field_gate_requires_private_business_labeled_flag() {
     let dataset_dir = temp_dir("field-quality-private-business-reject");
     let report_path = dataset_dir.join("field-report.json");
@@ -1917,6 +1999,48 @@ fn private_query_set_file(label: &str, query_count: usize) -> PathBuf {
     }
     fs::write(&path, lines).unwrap();
     path
+}
+
+fn private_business_field_quality_dataset() -> String {
+    concat!(
+        "{\"sample_id\":\"private-field-sample-001\",",
+        "\"text\":\"Name: Synthetic Field Candidate\\n",
+        "Summary: REDACTION_SENTINEL_FIELD_VALUE\\n",
+        "Email: field-candidate@example.test\\n",
+        "Phone: +1 (415) 555-0132\\n",
+        "Education\\n",
+        "School: Synthetic 985 University (985/211/双一流)\\n",
+        "Degree: Bachelor of Engineering\\n",
+        "Major: Computer Science\\n",
+        "Location: Shanghai\\n",
+        "Experience\\n",
+        "Company: Synthetic Commerce Inc.\\n",
+        "Title: Product Manager\\n",
+        "2020年1月 - 2024年3月\\n",
+        "Certifications\\n",
+        "PMP\\n",
+        "Skills: Rust, Java\",",
+        "\"expected\":[",
+        "{\"type\":\"name\",\"normalized\":\"synthetic field candidate\"},",
+        "{\"type\":\"email\",\"normalized\":\"field-candidate@example.test\"},",
+        "{\"type\":\"phone\",\"normalized\":\"+14155550132\"},",
+        "{\"type\":\"school\",\"normalized\":\"synthetic 985 university (985/211/双一流)\"},",
+        "{\"type\":\"school_tier\",\"normalized\":\"985\"},",
+        "{\"type\":\"school_tier\",\"normalized\":\"211\"},",
+        "{\"type\":\"school_tier\",\"normalized\":\"double_first_class\"},",
+        "{\"type\":\"degree\",\"normalized\":\"bachelor\"},",
+        "{\"type\":\"major\",\"normalized\":\"computer_science\"},",
+        "{\"type\":\"location\",\"normalized\":\"shanghai\"},",
+        "{\"type\":\"company\",\"normalized\":\"synthetic commerce\"},",
+        "{\"type\":\"title\",\"normalized\":\"product_manager\"},",
+        "{\"type\":\"date_range\",\"normalized\":\"2020-01/2024-03\"},",
+        "{\"type\":\"years_experience\",\"normalized\":\"4.2\"},",
+        "{\"type\":\"certificate\",\"normalized\":\"pmp\"},",
+        "{\"type\":\"skill\",\"normalized\":\"Rust\"},",
+        "{\"type\":\"skill\",\"normalized\":\"Java\"}",
+        "]}\n"
+    )
+    .to_string()
 }
 
 #[cfg(unix)]

@@ -196,6 +196,21 @@ F1 must match the aggregate counts within rounding tolerance. Do not upload
 reports if they contain raw resume text, local paths, field values, sample IDs,
 filenames, or notes.
 
+Generate the private field-quality aggregate report locally from a reviewed
+business-labeled JSONL dataset. The JSONL may contain raw resume text, sample
+IDs, and field labels, so it must stay local. The generated report is aggregate
+only and still must be reviewed before any upload or public commit.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  field-quality \
+  --dataset private-field-quality.jsonl \
+  --private-business-labeled \
+  --dataset-manifest-sha256 <sha256> \
+  --annotation-manifest-sha256 <sha256> \
+  --json > private-field-quality.json
+```
+
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   field-gate --report private-field-quality.json \

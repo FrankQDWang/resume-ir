@@ -37,6 +37,9 @@ production-ready scope source.
   fixtures only; no real query set, real resume data, local paths, command
   paths, raw query text, or generated benchmark report was committed or
   uploaded.
+  S266 used synthetic/private-shaped field-quality label fixtures only; no real
+  labeled dataset, real resume data, local paths, field values, sample IDs, raw
+  text, or generated quality report was committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -151,6 +154,10 @@ obsolete preliminary files and checklists are not product scope.
   ranges, and years experience, with positive labeled support per production
   field and precision/recall/F1 scores that match the aggregate counts within
   rounding tolerance.
+  The benchmark runner can now generate that private business field-quality
+  aggregate report from a local labeled JSONL plus dataset/annotation manifest
+  digests, while keeping raw resume text, field values, sample IDs, local paths,
+  and labels out of the emitted report.
   Soft-dedupe scoring now compares
   same-name profiles with bounded non-contact evidence overlap and surfaces
   redacted suspected-duplicate hints in local CLI and daemon search results
@@ -852,8 +859,72 @@ obsolete preliminary files and checklists are not product scope.
 | S263 | Product witness import failure-kind aggregates complete | Focused RED first failed because a private witness over a corrupted DOCX only reported `failed documents: 1` and did not expose any redacted failure-kind counter. After implementation, import-pipeline carries an `ImportFailureKind` aggregate in `ImportSummary`, witness output prints fixed redacted `import failure <kind>: <count>` lines, and the focused CLI test proves a corrupted private DOCX reports `parser_corrupted: 1` without path, file-name, or payload leaks. The private 10k-scale witness was rerun locally and reported 20 total failures split into 16 `parser_corrupted` and 4 `parser_encrypted`, with private temporary data removed. | This slice improves private witness diagnostics only. It does not repair corrupted/encrypted documents, prove full-corpus OCR completion, run private performance benchmarks, create labeled quality evidence, clear model/OCR licensing blockers, validate release installers, or make stable release ready. |
 | S264 | Product private real-corpus OCR throughput report generator complete locally | Focused RED first failed because `benchmark-runner` had no private OCR throughput report API and `resume-benchmark private-ocr-throughput` was rejected as usage. After implementation, the benchmark runner can scan local PDF files, run a configured local PDF renderer plus OCR engine, and emit a strict `ocr-throughput.v1` private-real-corpus aggregate report accepted by `ocr-gate --require-private-real-corpus` without paths, filenames, OCR text, page images, document IDs, page IDs, or command paths. A private local smoke over the user-authorized sample directory processed 2 pages across 2 documents with local Tesseract/Poppler and passed a smoke OCR gate using redacted aggregate output only. | This slice adds local private OCR throughput report generation and a tiny real-corpus smoke only. It does not complete the release-grade 500-page OCR throughput run, review/distribute OCR runtime manifests, prove OCR quality, run full-corpus OCR, clear OCR licensing, validate platform installers/services, or make stable release ready. |
 | S265 | Product private real-corpus query report generator complete locally | Focused RED first failed because `benchmark-runner` had no private query benchmark API and `resume-benchmark private-query` was rejected as usage. After implementation, the benchmark runner can read a local private query-set JSONL, pass each raw query to a reviewed local query command through an owner-only temporary file instead of argv, parse strict `resume-ir-query-v1`/`hits=<n>` stdout, and emit a `benchmark.v1` private-real-corpus hot-index hybrid aggregate report accepted by `gate --require-private-real-corpus` without query text, sample IDs, query-set paths, command paths, resume text, or filenames. | This slice adds local private query benchmark report generation only. It does not run the actual 500-query private local benchmark, create or review a production private query set, prove `<200ms` P95, select/license/distribute the embedding model, clear private vector-quality blockers, validate platform installers/services, or make stable release ready. |
+| S266 | Product private business field-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private field-quality report API and `resume-benchmark field-quality` rejected `--private-business-labeled` plus manifest SHA flags. After implementation, `field-quality` can evaluate a local labeled JSONL, emit a strict `field-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation manifest digests, and pass `field-gate --require-private-business-labeled` without raw resume text, field values, sample IDs, local paths, or filenames. The same slice also fixed the quality-label parser so `location` is accepted as a production expected field type. | This slice adds local private field-quality report generation only. It does not create or review the actual private business labeled dataset, prove production field precision/recall/F1 on real labels, clear dedupe/vector quality blockers, validate platform installers/services, or make stable release ready. |
 
 ## Command Log
+
+### S266
+
+Design target:
+
+- Add a local-only private business field-quality report generator to complement
+  the existing `field-gate --require-private-business-labeled` validator.
+- Keep raw labeled dataset contents out of output: no resume text, field values,
+  sample IDs, local paths, filenames, or labels in emitted JSON.
+- Preserve existing `field-quality --dataset` behavior for non-private labeled
+  or synthetic fixture evaluation.
+
+TDD RED:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_business_field_quality_report_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_business_field_quality_outputs_redacted_gateable_report --locked -- --exact
+```
+
+Output summary:
+
+- The library test failed before implementation because
+  `run_private_business_field_quality_jsonl` and
+  `PrivateFieldQualityManifestDigests` did not exist.
+- The CLI test failed before implementation because `field-quality` rejected
+  `--private-business-labeled`, `--dataset-manifest-sha256`, and
+  `--annotation-manifest-sha256` as usage errors.
+
+Implementation checks:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_business_field_quality_report_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_business_field_quality_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --locked
+cargo fmt --check
+cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+# changed-file added-line privacy marker scan; private-local patterns omitted from this public log
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The focused library test passed with a synthetic/private-shaped labeled JSONL
+  fixture covering every production field metric, a redacted aggregate private
+  report, and a passing private business field gate.
+- The focused CLI test passed with `resume-benchmark field-quality
+  --private-business-labeled`, wrote a temporary redacted report, and passed
+  `field-gate --require-private-business-labeled`.
+- `cargo test -p benchmark-runner --locked` passed: 31 CLI tests, 61 library
+  tests, and 0 doctests.
+- `cargo fmt --check`, focused benchmark-runner clippy, runbook guard, diff
+  check, public-repo guard, and full `verify-local.sh` passed.
+- The changed-file privacy grep found no local private corpus paths, sample-root
+  markers, or machine-local tool paths in added lines.
+
+Scope note:
+
+- S266 does not run real private business labels and does not clear the field
+  quality blocker. It supplies the local-only report generator that can be used
+  once a reviewed private labeled dataset and manifests are available.
 
 ### S265
 

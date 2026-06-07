@@ -5,14 +5,15 @@ use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
     evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
-    run_private_ocr_throughput_benchmark, run_private_query_benchmark,
-    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
-    run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig, BenchmarkGateError,
-    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
-    PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests, PrivateOcrThroughputConfig,
-    PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand, PrivateQueryBenchmarkConfig,
-    PrivateQueryManifestDigests, SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig,
-    SyntheticOcrBenchmarkEngine, VectorQualityConfig, VectorQualityGateConfig,
+    run_private_business_field_quality_jsonl, run_private_ocr_throughput_benchmark,
+    run_private_query_benchmark, run_synthetic_ocr_throughput_benchmark,
+    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig,
+    BenchmarkGateError, DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    PrivateFieldQualityManifestDigests, PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests,
+    PrivateOcrThroughputConfig, PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand,
+    PrivateQueryBenchmarkConfig, PrivateQueryManifestDigests, SyntheticBenchmarkConfig,
+    SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine, VectorQualityConfig,
+    VectorQualityGateConfig,
 };
 
 fn main() {
@@ -105,7 +106,21 @@ fn run_gate(args: GateArgs) -> Result<(), CliError> {
 fn run_field_quality(args: FieldQualityArgs) -> Result<(), CliError> {
     let dataset_jsonl = fs::read_to_string(&args.dataset)
         .map_err(|_| CliError::user("unable to read field quality dataset"))?;
-    let report = run_field_quality_jsonl(&dataset_jsonl).map_err(CliError::benchmark)?;
+    let report = if args.private_business_labeled {
+        let manifests = PrivateFieldQualityManifestDigests::new(
+            args.dataset_manifest_sha256.ok_or_else(CliError::usage)?,
+            args.annotation_manifest_sha256
+                .ok_or_else(CliError::usage)?,
+        )
+        .map_err(CliError::benchmark)?;
+        run_private_business_field_quality_jsonl(&dataset_jsonl, manifests)
+            .map_err(CliError::benchmark)?
+    } else {
+        if args.dataset_manifest_sha256.is_some() || args.annotation_manifest_sha256.is_some() {
+            return Err(CliError::usage());
+        }
+        run_field_quality_jsonl(&dataset_jsonl).map_err(CliError::benchmark)?
+    };
     println!("{}", report.to_redacted_json());
     Ok(())
 }
@@ -493,6 +508,9 @@ fn parse_gate_args(args: &[String]) -> Result<GateArgs, CliError> {
 
 fn parse_field_quality_args(args: &[String]) -> Result<FieldQualityArgs, CliError> {
     let mut dataset = None;
+    let mut private_business_labeled = false;
+    let mut dataset_manifest_sha256 = None;
+    let mut annotation_manifest_sha256 = None;
     let mut index = 0_usize;
 
     while index < args.len() {
@@ -502,6 +520,24 @@ fn parse_field_quality_args(args: &[String]) -> Result<FieldQualityArgs, CliErro
                     return Err(CliError::usage());
                 };
                 dataset = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--private-business-labeled" => {
+                private_business_labeled = true;
+                index += 1;
+            }
+            "--dataset-manifest-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                dataset_manifest_sha256 = Some(value.clone());
+                index += 2;
+            }
+            "--annotation-manifest-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                annotation_manifest_sha256 = Some(value.clone());
                 index += 2;
             }
             "--json" => {
@@ -516,6 +552,9 @@ fn parse_field_quality_args(args: &[String]) -> Result<FieldQualityArgs, CliErro
 
     Ok(FieldQualityArgs {
         dataset: dataset.ok_or_else(CliError::usage)?,
+        private_business_labeled,
+        dataset_manifest_sha256,
+        annotation_manifest_sha256,
     })
 }
 
@@ -1117,7 +1156,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --command <path> --document-count <n> --dataset-manifest-sha256 <sha256> --query-set-sha256 <sha256> [--max-queries <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --command <path> --document-count <n> --dataset-manifest-sha256 <sha256> --query-set-sha256 <sha256> [--max-queries <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -1174,6 +1213,9 @@ struct GateArgs {
 #[derive(Clone, Debug)]
 struct FieldQualityArgs {
     dataset: PathBuf,
+    private_business_labeled: bool,
+    dataset_manifest_sha256: Option<String>,
+    annotation_manifest_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug)]

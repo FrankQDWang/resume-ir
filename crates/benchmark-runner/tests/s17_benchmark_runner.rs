@@ -6,10 +6,11 @@ use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
     evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
-    run_private_ocr_throughput_benchmark, run_private_query_benchmark,
-    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
-    run_vector_quality_jsonl, BenchmarkGateConfig, DedupeQualityGateConfig, FieldQualityGateConfig,
-    OcrThroughputGateConfig, PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests,
+    run_private_business_field_quality_jsonl, run_private_ocr_throughput_benchmark,
+    run_private_query_benchmark, run_synthetic_ocr_throughput_benchmark,
+    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkGateConfig,
+    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    PrivateFieldQualityManifestDigests, PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests,
     PrivateOcrThroughputConfig, PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand,
     PrivateQueryBenchmarkConfig, PrivateQueryManifestDigests, SyntheticBenchmarkConfig,
     SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine, VectorQualityConfig,
@@ -486,6 +487,67 @@ fn field_quality_gate_rejects_release_evidence_without_private_business_boundary
     assert!(error
         .to_string()
         .contains("private business field-quality benchmark required"));
+}
+
+#[test]
+fn private_business_field_quality_report_outputs_redacted_gateable_report() {
+    let manifests = PrivateFieldQualityManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    )
+    .unwrap();
+
+    let report = run_private_business_field_quality_jsonl(
+        &private_business_field_quality_dataset(),
+        manifests,
+    )
+    .unwrap();
+
+    assert_eq!(report.dataset_kind(), "private-business-labeled");
+    assert_eq!(report.sample_count(), 1);
+    assert!(report.overall().f1() >= 0.95);
+    assert!(report.field_metric("name").unwrap().f1() >= 0.95);
+    assert!(report.field_metric("email").unwrap().f1() >= 0.995);
+    assert!(report.field_metric("phone").unwrap().f1() >= 0.995);
+    assert!(report.field_metric("school").unwrap().f1() >= 0.93);
+    assert!(report.field_metric("school_tier").unwrap().f1() >= 0.90);
+    assert!(report.field_metric("degree").unwrap().f1() >= 0.95);
+    assert!(report.field_metric("major").unwrap().f1() >= 0.90);
+    assert!(report.field_metric("company").unwrap().f1() >= 0.90);
+    assert!(report.field_metric("title").unwrap().f1() >= 0.88);
+    assert!(report.field_metric("location").unwrap().f1() >= 0.90);
+    assert!(report.field_metric("skill").unwrap().f1() >= 0.92);
+    assert!(report.field_metric("certificate").unwrap().f1() >= 0.90);
+    assert!(report.field_metric("date_range").unwrap().f1() >= 0.93);
+    assert!(report.field_metric("years_experience").unwrap().f1() >= 0.90);
+
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"schema_version\":\"field-quality.v1\""));
+    assert!(json.contains("\"dataset_kind\":\"private-business-labeled\""));
+    assert!(json.contains("\"target_claim\":\"field_quality_target_met\""));
+    assert!(json.contains("\"corpus_origin\":\"private_local\""));
+    assert!(json.contains("\"privacy_boundary\":\"redacted_local_aggregate\""));
+    assert!(json.contains("\"contains_raw_resume_text\":false"));
+    assert!(json.contains("\"contains_resume_paths\":false"));
+    assert!(json.contains("\"contains_field_values\":false"));
+    assert!(json.contains("\"contains_sample_ids\":false"));
+    assert!(json.contains("\"field_taxonomy\":\"resume-ir.fields.v1\""));
+    assert!(json.contains(
+        "\"scope\":\"private business field-quality benchmark; aggregate redacted report only\""
+    ));
+    assert!(!json.contains("private-field-sample-001"));
+    assert!(!json.contains("REDACTION_SENTINEL_FIELD_VALUE"));
+    assert!(!json.contains("Synthetic Field Candidate"));
+    assert!(!json.contains("field-candidate@example.test"));
+    assert!(!json.contains("Synthetic Commerce"));
+
+    let gate = FieldQualityGateConfig::new(0.93, 0.93, 0.93)
+        .with_min_samples(1)
+        .require_private_business_labeled();
+    let evaluation = evaluate_field_quality_gate_json(&json, gate).unwrap();
+    assert_eq!(evaluation.dataset_kind(), "private-business-labeled");
+    assert_eq!(evaluation.sample_count(), 1);
+    assert!(evaluation.f1() >= 0.93);
 }
 
 #[test]
@@ -1620,6 +1682,48 @@ fn private_query_set_file(label: &str, query_count: usize) -> PathBuf {
     }
     fs::write(&path, lines).unwrap();
     path
+}
+
+fn private_business_field_quality_dataset() -> String {
+    concat!(
+        "{\"sample_id\":\"private-field-sample-001\",",
+        "\"text\":\"Name: Synthetic Field Candidate\\n",
+        "Summary: REDACTION_SENTINEL_FIELD_VALUE\\n",
+        "Email: field-candidate@example.test\\n",
+        "Phone: +1 (415) 555-0132\\n",
+        "Education\\n",
+        "School: Synthetic 985 University (985/211/双一流)\\n",
+        "Degree: Bachelor of Engineering\\n",
+        "Major: Computer Science\\n",
+        "Location: Shanghai\\n",
+        "Experience\\n",
+        "Company: Synthetic Commerce Inc.\\n",
+        "Title: Product Manager\\n",
+        "2020年1月 - 2024年3月\\n",
+        "Certifications\\n",
+        "PMP\\n",
+        "Skills: Rust, Java\",",
+        "\"expected\":[",
+        "{\"type\":\"name\",\"normalized\":\"synthetic field candidate\"},",
+        "{\"type\":\"email\",\"normalized\":\"field-candidate@example.test\"},",
+        "{\"type\":\"phone\",\"normalized\":\"+14155550132\"},",
+        "{\"type\":\"school\",\"normalized\":\"synthetic 985 university (985/211/双一流)\"},",
+        "{\"type\":\"school_tier\",\"normalized\":\"985\"},",
+        "{\"type\":\"school_tier\",\"normalized\":\"211\"},",
+        "{\"type\":\"school_tier\",\"normalized\":\"double_first_class\"},",
+        "{\"type\":\"degree\",\"normalized\":\"bachelor\"},",
+        "{\"type\":\"major\",\"normalized\":\"computer_science\"},",
+        "{\"type\":\"location\",\"normalized\":\"shanghai\"},",
+        "{\"type\":\"company\",\"normalized\":\"synthetic commerce\"},",
+        "{\"type\":\"title\",\"normalized\":\"product_manager\"},",
+        "{\"type\":\"date_range\",\"normalized\":\"2020-01/2024-03\"},",
+        "{\"type\":\"years_experience\",\"normalized\":\"4.2\"},",
+        "{\"type\":\"certificate\",\"normalized\":\"pmp\"},",
+        "{\"type\":\"skill\",\"normalized\":\"Rust\"},",
+        "{\"type\":\"skill\",\"normalized\":\"Java\"}",
+        "]}\n"
+    )
+    .to_string()
 }
 
 #[cfg(unix)]
