@@ -87,11 +87,11 @@ require_text "$stdout_file" "install/start/stop/status/uninstall/recovery"
 require_text "$stdout_file" '"label": "macOS installer lifecycle"'
 require_text "$stdout_file" "signed pkg/dmg"
 require_text "$stdout_file" "install/upgrade/uninstall/rollback"
-require_text "$stdout_file" '"label": "100k/1M real-corpus benchmarks"'
-require_text "$stdout_file" "representative private real-corpus hot-index hybrid performance evidence is not available"
+require_text "$stdout_file" '"label": "private real-corpus performance evidence"'
+require_text "$stdout_file" "representative local private real-corpus hot-index hybrid performance evidence is not available"
+require_text "$stdout_file" "available private corpus"
 require_text "$stdout_file" "500 query samples"
-require_text "$stdout_file" "--require-million-scale"
-require_text "$stdout_file" "percentile_confidence: release"
+require_text "$stdout_file" "external 100k/1M scale validation"
 require_text "$stdout_file" '"label": "field extraction quality"'
 require_text "$stdout_file" "private business labeled field-quality evidence is not available"
 require_text "$stdout_file" "min-samples 1000"

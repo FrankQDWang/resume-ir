@@ -8,7 +8,7 @@ production-ready scope source.
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`
-- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, S254, S255, S256, S257, S258, S259, and S260 used synthetic fixtures only.
+- Data policy: S0-S96, S98, S101, S102, S103, S104, S107, S108, S111, S112, S114, S115, S116, S117, S118, S119, S120, S121, S124, S125, S126, S128, S129, S130, S131, S132, S133, S134, S135, S137, S138, S139, S140, S141, S142, S143, S144, S145, S146, S147, S148, S149, S150, S151, S152, S153, S154, S155, S156, S157, S158, S159, S160, S161, S162, S163, S164, S165, S166, S167, S168, S169, S170, S172, S173, S174, S175, S176, S177, S178, S179, S180, S181, S182, S183, S184, S185, S186, S187, S188, S189, S190, S191, S192, S193, S194, S195, S196, S197, S198, S199, S200, S201, S202, S203, S204, S205, S206, S207, S208, S209, S210, S211, S212, S213, S214, S215, S216, S217, S218, S219, S220, S221, S222, S223, S224, S225, S226, S227, S228, S229, S230, S231, S232, S233, S234, S235, S236, S237, S238, S239, S240, S241, S242, S243, S244, S245, S246, S247, S248, S249, S250, S251, S252, S253, S254, S255, S256, S257, S258, S259, S260, and S262 used synthetic fixtures only.
   S97, S99, S100, S105, S106, S109, S110, S113, S122, S123, and S127 also used private local-only witnesses against anonymized temporary copies from a
   user-authorized local resume sample directory; no real resume data, filenames,
   paths, counts, raw text, or diagnostics were committed or uploaded.
@@ -520,8 +520,8 @@ obsolete preliminary files and checklists are not product scope.
   the full-text index instead of pre-collecting the full synthetic document set
   in memory, and redacted synthetic benchmark reports include
   `generation_mode: "streaming"` for runbook audit. Synthetic runs must opt in
-  with `--allow-synthetic` and cannot prove 100k/1M production performance or
-  representative OCR throughput.
+  with `--allow-synthetic` and cannot prove private real-corpus production
+  performance or representative OCR throughput.
   Private real-corpus query
   reports are accepted only as strict redacted local aggregate JSON with local
   corpus/query-set digests, explicit hot-index hybrid query evidence
@@ -550,8 +550,10 @@ obsolete preliminary files and checklists are not product scope.
   and release blockers runbook now include vector quality and OCR throughput as
   separate blocked release criteria instead of relying only on the model and OCR
   license/distribution blockers.
-  Missing or BLOCKED work includes actual 100k/1M real-corpus benchmark runs,
-  real-corpus nightly/release performance evidence, real business labeled field,
+  Missing or BLOCKED work includes private real-corpus hot-index hybrid
+  benchmark evidence over the currently available local corpus, external
+  100k/1M real-corpus scale validation when a representative user environment
+  exists, real business labeled field,
   dedupe, and vector datasets/results, actual representative private
   real-corpus OCR throughput runs, licensed model selection/distribution, real
   semantic/vector quality datasets/results, destructive
@@ -823,8 +825,54 @@ obsolete preliminary files and checklists are not product scope.
 | S259 | Product Chinese present date-range filter alias coverage complete locally | Focused RED first failed because `SearchFilters::with_date_range_overlaps("2024-01/至今")` produced no parsed range, and direct CLI search with `--date-range-overlaps 2024-01/至今` rejected the filter even though import persists Chinese `2020年1月 - 至今` ranges as canonical `YYYY-MM/PRESENT`. After implementation, date range filter parsing accepts Chinese open-ended aliases `至今`, `现在`, `当前`, `目前`, and `进行中` as canonical `PRESENT`; the CLI integration test imports synthetic Chinese present-date resumes, filters with `--date-range-overlaps 2024-01/至今`, returns only the active target, and keeps query echo, local paths, emails, and decoy files out of output. | This slice proves synthetic/local Chinese present date-range filter alias coverage only. It does not prove complete date parsing dictionaries, real labeled field-quality metrics, long-tail work-history phrasing, private corpus recall, or stable release readiness. |
 | S260 | Product Chinese year-month date-range filter alias coverage complete locally | Focused RED first failed because `SearchFilters::with_date_range_overlaps("2020年1月/2024年3月")` produced no parsed range, and direct CLI search with `--date-range-overlaps 2020年1月/2024年3月` rejected the filter even though import persists Chinese `2020年1月 - 2024年3月` ranges as canonical `YYYY-MM/YYYY-MM`. After implementation, date range filter parsing accepts Chinese year/month values as canonical `YYYY-MM`; the CLI integration test imports synthetic Chinese year/month date resumes, filters with `--date-range-overlaps 2020年1月/2024年3月`, returns only the overlapping target, and keeps query echo, local paths, emails, and decoy files out of output. | This slice proves synthetic/local Chinese year/month date-range filter input coverage only. It does not prove complete date parsing dictionaries, real labeled field-quality metrics, long-tail work-history phrasing, private corpus recall, or stable release readiness. |
 | S261 | Product private 10k-scale PDF/Word local witness complete | Authorized local-only PDF/Word witness over the private resume sample root selected 8720 supported PDF/DOCX/DOC files, skipped 49 unsupported entries, reported zero scan errors, completed import without scan-budget exhaustion, produced 146 directly searchable documents, queued 8554 OCR-required documents, reported 20 failed import documents, completed field and search probes, and removed private temporary data. A bounded OCR witness with local Tesseract plus Poppler processed 20 OCR-required documents, wrote 22 OCR cache entries, had zero OCR document failures, and left the remaining OCR queue explicitly budget-exhausted. | This slice proves a local redacted aggregate witness over the available private real corpus only. It does not prove full-corpus OCR completion, OCR quality, private labeled field/dedupe/vector quality, production embedding model licensing/distribution, installer signing/notarization, Windows service validation, or true external million-scale real-corpus latency. |
+| S262 | Product release-readiness local benchmark boundary aligned | Focused RED first failed because `resume-cli release-readiness` and its JSON blocker still labeled the performance blocker as `100k/1M real-corpus benchmarks` and required `--require-million-scale`/`percentile_confidence: release` as local release-readiness detail. After implementation, release-readiness reports `private real-corpus performance evidence`, requires local hot-index hybrid evidence over the available private corpus with at least 500 query samples, and keeps external 100k/1M scale validation as future scale evidence rather than a local prerequisite. The release-readiness CI guard and release blocker runbook now enforce the same boundary without local path leaks. | This slice aligns release-readiness reporting with the available local private corpus boundary only. It does not create the private benchmark report, prove `<200ms` P95, complete full-corpus OCR, select/license a production embedding model, validate cross-platform installers/services, or make stable release ready. |
 
 ## Command Log
+
+### S262
+
+Design target:
+
+- Align release-readiness with the updated local evidence boundary: the local
+  private corpus is approximately ten thousand resumes, so the local benchmark
+  blocker should require private redacted aggregate evidence over the available
+  corpus rather than claiming the current machine must produce 100k/1M evidence.
+- Keep architecture and benchmark gates compatible with external 100k/1M scale
+  validation when a representative larger user environment exists.
+
+TDD RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness --locked
+```
+
+Output summary:
+
+- The focused release-readiness suite failed because stdout and JSON still used
+  `100k/1M real-corpus benchmarks` and did not contain the new
+  `private real-corpus performance evidence` label.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+```
+
+Output summary:
+
+- Focused release-readiness tests passed with the new blocker label and detail,
+  and verified that release-readiness output no longer includes
+  `--require-million-scale` as a local release-readiness condition.
+- The release-readiness CI guard passed against the updated JSON output and
+  runbook policy.
+
+Scope note:
+
+- S262 updates the release-readiness boundary only. It does not run the private
+  real-corpus benchmark, generate release-grade latency evidence, or clear the
+  performance blocker.
+- Full product is still not complete.
 
 ### S261
 

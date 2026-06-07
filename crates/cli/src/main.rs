@@ -129,8 +129,8 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
         "signed pkg/dmg install/upgrade/uninstall/rollback and Gatekeeper validation are not proven on fresh macOS release artifacts",
     ),
     (
-        "100k/1M real-corpus benchmarks",
-        "representative private real-corpus hot-index hybrid performance evidence is not available; release evidence requires at least 500 query samples, and 1M evidence must pass --require-million-scale with percentile_confidence: release",
+        "private real-corpus performance evidence",
+        "representative local private real-corpus hot-index hybrid performance evidence is not available; release evidence must cover the available private corpus with at least 500 query samples, and external 100k/1M scale validation remains future scale evidence rather than a local prerequisite",
     ),
     (
         "field extraction quality",

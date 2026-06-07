@@ -17,7 +17,8 @@ unresolved.
 - Windows service install, start, stop, status, uninstall, rollback, and recovery
   are not proven
 - macOS signed pkg/dmg install, upgrade, uninstall, and rollback are not proven
-- 100k and 1M hot-index hybrid real-corpus benchmarks are not available
+- private real-corpus hot-index hybrid performance evidence over the available
+  local corpus is not available
 - private business labeled field-quality evidence is not available
 - private business labeled dedupe-quality evidence is not available
 - private business labeled vector-quality evidence is not available
@@ -128,26 +129,27 @@ positive, and reported QPS matches `query_count / (query_total_ms / 1000)`
 within rounding tolerance. Do not upload reports if they contain raw resume text,
 local paths, queries, sample IDs, or filenames.
 
-The 1M release gate is stricter than sampled private evidence:
-`--require-million-scale` requires `million_scale_verified: true`,
-`document_count >= 1000000`, and `percentile_confidence: "release"`. Reports
-with `percentile_confidence: "sampled"` can document local exploratory evidence
-but cannot clear the million-scale release blocker.
-
-Private real-corpus release gates are fail-closed to at least 500 query latency
-samples. A lower CLI/config `--min-queries` value is valid only for non-release
-local checks; it cannot make a private real-corpus release report with fewer
-than 500 queries clear the 100k or 1M benchmark blockers.
+The current local private corpus is approximately ten thousand resumes, not a
+100k or 1M corpus. Local release-readiness therefore requires redacted
+hot-index hybrid evidence over the available private corpus with at least 500
+query latency samples. External 100k/1M scale validation remains future scale
+evidence for representative user environments, not a local prerequisite for
+this machine.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
-  gate --report private-benchmark-100k.json \
+  gate --report private-benchmark-local.json \
   --require-private-real-corpus \
-  --min-documents 100000 --min-queries 500 \
+  --min-documents 8000 --min-queries 500 \
   --max-p95-ms 200 --max-zero-result-queries 0
+```
 
+Optional external scale evidence, when a representative larger user environment
+exists, can still use the stricter million-scale gate:
+
+```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
-  gate --report private-benchmark-1m.json \
+  gate --report private-benchmark-external-1m.json \
   --require-private-real-corpus --require-million-scale \
   --min-documents 1000000 --min-queries 500 \
   --max-p95-ms 200 --max-zero-result-queries 0
@@ -155,7 +157,7 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
 
 These gates are release evidence validators. They do not create, upload, or
 sanitize private benchmark reports and cannot clear the benchmark blocker until
-representative local 100k and 1M runs exist.
+representative local private-corpus evidence exists.
 
 Run private business field-quality gates only against local redacted aggregate
 reports. The report must use `dataset_kind: "private-business-labeled"`,

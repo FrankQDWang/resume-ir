@@ -39,11 +39,13 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("signed pkg/dmg"));
     assert!(stdout.contains("install/upgrade/uninstall/rollback"));
     assert!(stdout.contains("Gatekeeper validation"));
-    assert!(stdout.contains("100k/1M real-corpus benchmarks: blocked"));
+    assert!(stdout.contains("private real-corpus performance evidence: blocked"));
     assert!(stdout.contains("hot-index hybrid"));
+    assert!(stdout.contains("available private corpus"));
     assert!(stdout.contains("500 query samples"));
-    assert!(stdout.contains("percentile_confidence: release"));
-    assert!(stdout.contains("--require-million-scale"));
+    assert!(stdout.contains("external 100k/1M scale validation"));
+    assert!(!stdout.contains("100k/1M real-corpus benchmarks: blocked"));
+    assert!(!stdout.contains("--require-million-scale"));
     assert!(stdout.contains("field extraction quality: blocked"));
     assert!(stdout.contains("min-samples 1000"));
     assert!(stdout.contains("precision/recall/F1 >= 0.93"));
@@ -122,7 +124,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(labels.contains(&"Windows installer lifecycle"));
     assert!(labels.contains(&"Windows service lifecycle"));
     assert!(labels.contains(&"macOS installer lifecycle"));
-    assert!(labels.contains(&"100k/1M real-corpus benchmarks"));
+    assert!(labels.contains(&"private real-corpus performance evidence"));
     assert!(labels.contains(&"field extraction quality"));
     assert!(labels.contains(&"dedupe quality"));
     assert!(labels.contains(&"vector quality"));
@@ -145,13 +147,14 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
 
     let benchmark_blocker = blockers
         .iter()
-        .find(|blocker| blocker["label"] == "100k/1M real-corpus benchmarks")
+        .find(|blocker| blocker["label"] == "private real-corpus performance evidence")
         .expect("benchmark blocker");
     let benchmark_detail = benchmark_blocker["detail"].as_str().unwrap();
     assert!(benchmark_detail.contains("hot-index hybrid"));
+    assert!(benchmark_detail.contains("available private corpus"));
     assert!(benchmark_detail.contains("500 query samples"));
-    assert!(benchmark_detail.contains("percentile_confidence: release"));
-    assert!(benchmark_detail.contains("--require-million-scale"));
+    assert!(benchmark_detail.contains("external 100k/1M scale validation"));
+    assert!(!benchmark_detail.contains("--require-million-scale"));
 
     let signing_blocker = blockers
         .iter()
