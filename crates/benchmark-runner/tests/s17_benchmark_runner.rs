@@ -1060,6 +1060,10 @@ fn ocr_throughput_gate_requires_private_real_release_boundary() {
         "\"page_count\":500,",
         "\"document_count\":200,",
         "\"scanned_document_count\":150,",
+        "\"failed_document_count\":50,",
+        "\"render_failure_count\":50,",
+        "\"ocr_failure_count\":0,",
+        "\"run_budget_exhausted\":false,",
         "\"engine_kind\":\"tesseract\",",
         "\"total_ms\":200000.0,",
         "\"page_latency_ms\":{\"samples\":500,\"p50\":250.0,\"p95\":450.0,\"p99\":800.0},",
@@ -1154,6 +1158,9 @@ fn private_ocr_throughput_benchmark_outputs_redacted_gateable_report() {
     assert_eq!(report.page_count(), 2);
     assert_eq!(report.document_count(), 1);
     assert_eq!(report.scanned_document_count(), 1);
+    assert_eq!(report.failed_document_count(), 0);
+    assert_eq!(report.render_failure_count(), 0);
+    assert_eq!(report.ocr_failure_count(), 0);
     assert_eq!(report.engine_kind(), "local-command");
     assert_eq!(report.latency().samples(), 2);
     assert!(report.pages_per_second() > 0.0);
@@ -1162,6 +1169,10 @@ fn private_ocr_throughput_benchmark_outputs_redacted_gateable_report() {
     assert!(json.contains("\"dataset_kind\":\"private-real-corpus\""));
     assert!(json.contains("\"document_count\":1"));
     assert!(json.contains("\"scanned_document_count\":1"));
+    assert!(json.contains("\"failed_document_count\":0"));
+    assert!(json.contains("\"render_failure_count\":0"));
+    assert!(json.contains("\"ocr_failure_count\":0"));
+    assert!(json.contains("\"run_budget_exhausted\":false"));
     assert!(json.contains("\"page_count\":2"));
     assert!(json.contains("\"target_claim\":\"ocr_throughput_target_met\""));
     assert!(json.contains("\"contains_raw_ocr_text\":false"));
@@ -1179,6 +1190,120 @@ fn private_ocr_throughput_benchmark_outputs_redacted_gateable_report() {
     let evaluation = evaluate_ocr_throughput_gate_json(&json, gate).unwrap();
     assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
     assert_eq!(evaluation.page_count(), 2);
+
+    remove_dir(&root);
+    remove_dir(renderer.parent().unwrap());
+    remove_dir(ocr.parent().unwrap());
+}
+
+#[test]
+fn private_ocr_throughput_benchmark_skips_failed_documents_with_redacted_aggregates() {
+    let root = temp_dir("private-ocr-throughput-failures-root");
+    fs::write(root.join("bad-private-sample.pdf"), b"FAIL_RENDER").unwrap();
+    fs::write(
+        root.join("good-private-sample.pdf"),
+        b"%PDF synthetic private sample",
+    )
+    .unwrap();
+    let renderer = flaky_pdf_render_fixture_script("private-ocr-throughput-flaky-renderer");
+    let ocr = ocr_fixture_script("private-ocr-throughput-flaky-ocr");
+    let manifests = PrivateOcrManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+    )
+    .unwrap();
+    let config = PrivateOcrThroughputConfig::new(
+        &root,
+        PrivateOcrBenchmarkEngine::local_command(&ocr).unwrap(),
+        PrivatePdfRenderEngine::local_command(&renderer).unwrap(),
+        manifests,
+    )
+    .unwrap()
+    .with_max_documents(2)
+    .unwrap()
+    .with_max_pages(1)
+    .unwrap()
+    .with_page_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_ocr_throughput_benchmark(config).unwrap();
+
+    assert_eq!(report.page_count(), 1);
+    assert_eq!(report.document_count(), 2);
+    assert_eq!(report.scanned_document_count(), 1);
+    assert_eq!(report.failed_document_count(), 1);
+    assert_eq!(report.render_failure_count(), 1);
+    assert_eq!(report.ocr_failure_count(), 0);
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"failed_document_count\":1"));
+    assert!(json.contains("\"render_failure_count\":1"));
+    assert!(json.contains("\"ocr_failure_count\":0"));
+    assert!(!json.contains(path_str(&root)));
+    assert!(!json.contains(path_str(&renderer)));
+    assert!(!json.contains("bad-private-sample.pdf"));
+    assert!(!json.contains("FAIL_RENDER"));
+
+    let gate = OcrThroughputGateConfig::new(1, 10_000.0, 0.001).require_private_real_corpus();
+    let evaluation = evaluate_ocr_throughput_gate_json(&json, gate).unwrap();
+    assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
+    assert_eq!(evaluation.page_count(), 1);
+
+    remove_dir(&root);
+    remove_dir(renderer.parent().unwrap());
+    remove_dir(ocr.parent().unwrap());
+}
+
+#[test]
+fn private_ocr_throughput_benchmark_reports_run_budget_exhaustion_without_gate_clearance() {
+    let root = temp_dir("private-ocr-throughput-budget-root");
+    fs::write(
+        root.join("private-budget-sample.pdf"),
+        b"%PDF synthetic private sample",
+    )
+    .unwrap();
+    let renderer = pdf_render_fixture_script("private-ocr-throughput-budget-renderer");
+    let ocr = slow_ocr_fixture_script("private-ocr-throughput-budget-ocr");
+    let manifests = PrivateOcrManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+    )
+    .unwrap();
+    let config = PrivateOcrThroughputConfig::new(
+        &root,
+        PrivateOcrBenchmarkEngine::local_command(&ocr).unwrap(),
+        PrivatePdfRenderEngine::local_command(&renderer).unwrap(),
+        manifests,
+    )
+    .unwrap()
+    .with_max_documents(1)
+    .unwrap()
+    .with_max_pages(2)
+    .unwrap()
+    .with_pages_per_document(2)
+    .unwrap()
+    .with_max_run_ms(10)
+    .unwrap()
+    .with_page_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_ocr_throughput_benchmark(config).unwrap();
+
+    assert_eq!(report.page_count(), 1);
+    assert!(report.run_budget_exhausted());
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"run_budget_exhausted\":true"));
+    assert!(!json.contains(path_str(&root)));
+    assert!(!json.contains(path_str(&ocr)));
+
+    let gate = OcrThroughputGateConfig::new(1, 10_000.0, 0.001).require_private_real_corpus();
+    let error = evaluate_ocr_throughput_gate_json(&json, gate).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("private real-corpus OCR benchmark run budget exhausted"));
 
     remove_dir(&root);
     remove_dir(renderer.parent().unwrap());
@@ -1725,6 +1850,10 @@ fn minimal_private_real_ocr_throughput_json(
             "\"page_count\":{},",
             "\"document_count\":{},",
             "\"scanned_document_count\":{},",
+            "\"failed_document_count\":0,",
+            "\"render_failure_count\":0,",
+            "\"ocr_failure_count\":0,",
+            "\"run_budget_exhausted\":false,",
             "\"engine_kind\":\"tesseract\",",
             "\"total_ms\":{},",
             "\"page_latency_ms\":{{\"samples\":{},\"p50\":250.0,\"p95\":450.0,\"p99\":800.0}},",
@@ -1767,9 +1896,35 @@ fn ocr_fixture_script(label: &str) -> PathBuf {
     path
 }
 
+fn slow_ocr_fixture_script(label: &str) -> PathBuf {
+    let path = temp_dir(label).join(ocr_fixture_file_name());
+    fs::write(&path, slow_ocr_fixture_script_body()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
 fn pdf_render_fixture_script(label: &str) -> PathBuf {
     let path = temp_dir(label).join(pdf_render_fixture_file_name());
     fs::write(&path, pdf_render_fixture_script_body()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn flaky_pdf_render_fixture_script(label: &str) -> PathBuf {
+    let path = temp_dir(label).join(pdf_render_fixture_file_name());
+    fs::write(&path, flaky_pdf_render_fixture_script_body()).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1926,8 +2081,28 @@ fn ocr_fixture_script_body() -> &'static str {
 }
 
 #[cfg(unix)]
+fn slow_ocr_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "sleep 0.05\n",
+        "printf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s REDACTION_SENTINEL_OCR_TEXT\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n",
+    )
+}
+
+#[cfg(unix)]
 fn pdf_render_fixture_script_body() -> &'static str {
     "#!/bin/sh\nprintf 'REDACTION_SENTINEL_PAGE_IMAGE %s SYNTHETIC_PIXELS' \"$RESUME_IR_PDF_RENDER_PAGE_NO\"\n"
+}
+
+#[cfg(unix)]
+fn flaky_pdf_render_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "if grep -q FAIL_RENDER \"$RESUME_IR_PDF_RENDER_INPUT_PATH\"; then\n",
+        "  exit 7\n",
+        "fi\n",
+        "printf 'REDACTION_SENTINEL_PAGE_IMAGE %s SYNTHETIC_PIXELS' \"$RESUME_IR_PDF_RENDER_PAGE_NO\"\n",
+    )
 }
 
 #[cfg(unix)]
@@ -1955,11 +2130,35 @@ fn ocr_fixture_script_body() -> &'static str {
 }
 
 #[cfg(windows)]
+fn slow_ocr_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "ping -n 2 127.0.0.1 >nul\r\n",
+        "echo resume-ir-ocr-v1\r\n",
+        "echo confidence=0.97\r\n",
+        "echo text:\r\n",
+        "echo Synthetic OCR Candidate page %RESUME_IR_OCR_PAGE_NO% REDACTION_SENTINEL_OCR_TEXT\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
 fn pdf_render_fixture_script_body() -> &'static str {
     concat!(
         "@echo off\r\n",
         "echo REDACTION_SENTINEL_PAGE_IMAGE %RESUME_IR_PDF_RENDER_PAGE_NO% SYNTHETIC_PIXELS\r\n",
         "exit /b 0\r\n"
+    )
+}
+
+#[cfg(windows)]
+fn flaky_pdf_render_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "findstr /C:FAIL_RENDER \"%RESUME_IR_PDF_RENDER_INPUT_PATH%\" >nul 2>nul\r\n",
+        "if %ERRORLEVEL%==0 exit /b 7\r\n",
+        "echo REDACTION_SENTINEL_PAGE_IMAGE %RESUME_IR_PDF_RENDER_PAGE_NO% SYNTHETIC_PIXELS\r\n",
+        "exit /b 0\r\n",
     )
 }
 

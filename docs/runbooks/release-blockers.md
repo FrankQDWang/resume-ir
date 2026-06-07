@@ -352,11 +352,15 @@ digests for the dataset, OCR runtime, renderer, and language-pack manifests
 reports if they contain raw OCR text, page images, resume text, filenames,
 local paths, document IDs, page IDs, command paths, runtime paths, or notes.
 Private OCR throughput reports must also include `total_ms` so
-`pages_per_second` can be recomputed, and must satisfy `page_count > 0`,
-`document_count > 0`, `scanned_document_count > 0`,
+`pages_per_second` can be recomputed, per-document failure aggregates
+(`failed_document_count`, `render_failure_count`, and `ocr_failure_count`), and
+the total-run budget flag `run_budget_exhausted`. Release evidence must satisfy
+`page_count > 0`, `document_count > 0`, `scanned_document_count > 0`,
 `scanned_document_count <= document_count`, `scanned_document_count <=
-page_count`, `page_latency_ms.samples == page_count`, `total_ms > 0`, and
-`pages_per_second == page_count / (total_ms / 1000)` within rounding tolerance.
+page_count`, `failed_document_count <= document_count`, `render_failure_count +
+ocr_failure_count == failed_document_count`, `page_latency_ms.samples ==
+page_count`, `total_ms > 0`, `pages_per_second == page_count / (total_ms /
+1000)` within rounding tolerance, and `run_budget_exhausted: false`.
 
 Generate the private OCR throughput report locally. The command reads only local
 PDF files under the requested root, runs the configured renderer plus OCR engine,
@@ -371,8 +375,9 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   --root <private-local-root> \
   --pdftoppm-command <pdftoppm> \
   --tesseract-command <tesseract> \
-  --max-documents 500 --max-pages 500 --pages-per-document 1 \
-  --page-timeout-ms 30000 --render-dpi 150 --ocr-lang eng+chi_sim \
+  --max-documents 900 --max-pages 500 --pages-per-document 1 \
+  --page-timeout-ms 30000 --max-run-ms <release-budget-ms> \
+  --render-dpi 150 --ocr-lang eng+chi_sim \
   --dataset-manifest-sha256 <sha256> \
   --ocr-runtime-manifest-sha256 <sha256> \
   --renderer-manifest-sha256 <sha256> \
@@ -381,8 +386,13 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
 ```
 
 Small private smoke reports can prove command wiring, but they do not clear the
-release blocker. Stable-release OCR throughput evidence needs the representative
-page count and reviewed manifests required by the gate below.
+release blocker. Representative evidence should set `--max-documents` above the
+minimum page count so isolated corrupt, encrypted, render-failed, or OCR-failed
+PDFs are counted in the redacted failure aggregates without aborting the whole
+run. A report with `run_budget_exhausted: true`, or a report that misses the
+latency/throughput thresholds below, is diagnostic local evidence only and
+cannot clear the release blocker. Stable-release OCR throughput evidence needs
+the representative page count and reviewed manifests required by the gate below.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \

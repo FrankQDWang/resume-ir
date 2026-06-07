@@ -1501,6 +1501,10 @@ fn resume_benchmark_private_ocr_throughput_outputs_redacted_gateable_report() {
     assert!(stdout.contains("\"page_count\":2"));
     assert!(stdout.contains("\"document_count\":1"));
     assert!(stdout.contains("\"scanned_document_count\":1"));
+    assert!(stdout.contains("\"failed_document_count\":0"));
+    assert!(stdout.contains("\"render_failure_count\":0"));
+    assert!(stdout.contains("\"ocr_failure_count\":0"));
+    assert!(stdout.contains("\"run_budget_exhausted\":false"));
     assert!(stdout.contains("\"target_claim\":\"ocr_throughput_target_met\""));
     assert!(stdout.contains("\"contains_raw_ocr_text\":false"));
     assert!(stdout.contains("\"contains_resume_paths\":false"));
@@ -1541,6 +1545,93 @@ fn resume_benchmark_private_ocr_throughput_outputs_redacted_gateable_report() {
         "OCR throughput gate passed"
     );
     assert!(gate.stderr.is_empty());
+
+    remove_dir(&root);
+    remove_dir(renderer.parent().unwrap());
+    remove_dir(ocr.parent().unwrap());
+    remove_dir(&report_dir);
+}
+
+#[test]
+fn resume_benchmark_private_ocr_throughput_budget_exhaustion_is_redacted_and_not_gateable() {
+    let root = temp_dir("private-ocr-throughput-cli-budget-root");
+    fs::write(
+        root.join("private-cli-budget-sample.pdf"),
+        b"%PDF synthetic private cli budget sample",
+    )
+    .unwrap();
+    let renderer = pdf_render_fixture_script("private-ocr-throughput-cli-budget-renderer");
+    let ocr = slow_ocr_fixture_script("private-ocr-throughput-cli-budget-ocr");
+    let report_dir = temp_dir("private-ocr-throughput-cli-budget-report");
+    let report_path = report_dir.join("ocr-budget-report.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "private-ocr-throughput",
+            "--root",
+            path_str(&root),
+            "--renderer-command",
+            path_str(&renderer),
+            "--command",
+            path_str(&ocr),
+            "--max-documents",
+            "1",
+            "--max-pages",
+            "2",
+            "--pages-per-document",
+            "2",
+            "--max-run-ms",
+            "10",
+            "--page-timeout-ms",
+            "5000",
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--ocr-runtime-manifest-sha256",
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--renderer-manifest-sha256",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "--language-pack-manifest-sha256",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "--json",
+        ])
+        .output()
+        .expect("run private OCR throughput benchmark with run budget");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"page_count\":1"));
+    assert!(stdout.contains("\"run_budget_exhausted\":true"));
+    assert!(!stdout.contains(path_str(&root)));
+    assert!(!stdout.contains(path_str(&renderer)));
+    assert!(!stdout.contains(path_str(&ocr)));
+    assert!(!stdout.contains("private-cli-budget-sample.pdf"));
+    fs::write(&report_path, &output.stdout).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "ocr-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-real-corpus",
+            "--min-pages",
+            "1",
+            "--max-p95-ms",
+            "10000",
+            "--min-pages-per-second",
+            "0.001",
+        ])
+        .output()
+        .expect("run private OCR throughput gate");
+
+    assert!(!gate.status.success());
+    assert!(String::from_utf8_lossy(&gate.stderr)
+        .contains("private real-corpus OCR benchmark run budget exhausted"));
 
     remove_dir(&root);
     remove_dir(renderer.parent().unwrap());
@@ -1595,6 +1686,10 @@ fn resume_benchmark_ocr_gate_requires_private_real_corpus_report() {
             "\"page_count\":500,",
             "\"document_count\":200,",
             "\"scanned_document_count\":150,",
+            "\"failed_document_count\":50,",
+            "\"render_failure_count\":50,",
+            "\"ocr_failure_count\":0,",
+            "\"run_budget_exhausted\":false,",
             "\"engine_kind\":\"tesseract\",",
             "\"total_ms\":200000.0,",
             "\"page_latency_ms\":{\"samples\":500,\"p50\":250.0,\"p95\":450.0,\"p99\":800.0},",
@@ -1662,6 +1757,10 @@ fn resume_benchmark_ocr_gate_rejects_private_real_inconsistent_throughput() {
             "\"page_count\":500,",
             "\"document_count\":200,",
             "\"scanned_document_count\":150,",
+            "\"failed_document_count\":50,",
+            "\"render_failure_count\":50,",
+            "\"ocr_failure_count\":0,",
+            "\"run_budget_exhausted\":false,",
             "\"engine_kind\":\"tesseract\",",
             "\"total_ms\":200000.0,",
             "\"page_latency_ms\":{\"samples\":500,\"p50\":250.0,\"p95\":450.0,\"p99\":800.0},",
@@ -2140,6 +2239,19 @@ fn ocr_fixture_script(label: &str) -> PathBuf {
     path
 }
 
+fn slow_ocr_fixture_script(label: &str) -> PathBuf {
+    let path = temp_dir(label).join(ocr_fixture_file_name());
+    fs::write(&path, slow_ocr_fixture_script_body()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
 fn pdf_render_fixture_script(label: &str) -> PathBuf {
     let path = temp_dir(label).join(pdf_render_fixture_file_name());
     fs::write(&path, pdf_render_fixture_script_body()).unwrap();
@@ -2299,6 +2411,15 @@ fn ocr_fixture_script_body() -> &'static str {
 }
 
 #[cfg(unix)]
+fn slow_ocr_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "sleep 0.05\n",
+        "printf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s REDACTION_SENTINEL_OCR_TEXT\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n",
+    )
+}
+
+#[cfg(unix)]
 fn pdf_render_fixture_script_body() -> &'static str {
     "#!/bin/sh\nprintf 'REDACTION_SENTINEL_PAGE_IMAGE %s SYNTHETIC_PIXELS' \"$RESUME_IR_PDF_RENDER_PAGE_NO\"\n"
 }
@@ -2324,6 +2445,19 @@ fn ocr_fixture_script_body() -> &'static str {
         "echo text:\r\n",
         "echo Synthetic OCR Candidate page %RESUME_IR_OCR_PAGE_NO% REDACTION_SENTINEL_OCR_TEXT\r\n",
         "exit /b 0\r\n"
+    )
+}
+
+#[cfg(windows)]
+fn slow_ocr_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "ping -n 2 127.0.0.1 >nul\r\n",
+        "echo resume-ir-ocr-v1\r\n",
+        "echo confidence=0.97\r\n",
+        "echo text:\r\n",
+        "echo Synthetic OCR Candidate page %RESUME_IR_OCR_PAGE_NO% REDACTION_SENTINEL_OCR_TEXT\r\n",
+        "exit /b 0\r\n",
     )
 }
 

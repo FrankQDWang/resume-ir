@@ -227,6 +227,10 @@ fn run_private_ocr_throughput(args: PrivateOcrThroughputArgs) -> Result<(), CliE
         .and_then(|config| config.with_max_pages(args.max_pages))
         .and_then(|config| config.with_pages_per_document(args.pages_per_document))
         .and_then(|config| config.with_page_timeout_ms(args.page_timeout_ms))
+        .and_then(|config| match args.max_run_ms {
+            Some(max_run_ms) => config.with_max_run_ms(max_run_ms),
+            None => Ok(config),
+        })
         .and_then(|config| config.with_render_dpi(args.render_dpi))
         .and_then(|config| config.with_ocr_lang(args.ocr_lang))
         .and_then(|config| config.with_engine_profile(args.engine_profile))
@@ -837,6 +841,7 @@ fn parse_private_ocr_throughput_args(
     let mut max_pages = 500_usize;
     let mut pages_per_document = 1_usize;
     let mut page_timeout_ms = 30_000_u64;
+    let mut max_run_ms = None;
     let mut render_dpi = 150_u32;
     let mut ocr_lang = "eng".to_string();
     let mut engine_profile = "private-real-corpus".to_string();
@@ -911,6 +916,10 @@ fn parse_private_ocr_throughput_args(
                 page_timeout_ms = parse_positive_u64(args.get(index + 1))?;
                 index += 2;
             }
+            "--max-run-ms" => {
+                max_run_ms = Some(parse_positive_u64(args.get(index + 1))?);
+                index += 2;
+            }
             "--render-dpi" => {
                 render_dpi = parse_positive_u32(args.get(index + 1))?;
                 index += 2;
@@ -977,6 +986,7 @@ fn parse_private_ocr_throughput_args(
         max_pages,
         pages_per_document,
         page_timeout_ms,
+        max_run_ms,
         render_dpi,
         ocr_lang,
         engine_profile,
@@ -1247,7 +1257,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --command <path> --document-count <n> --dataset-manifest-sha256 <sha256> --query-set-sha256 <sha256> [--max-queries <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --command <path> --document-count <n> --dataset-manifest-sha256 <sha256> --query-set-sha256 <sha256> [--max-queries <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--max-run-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -1358,6 +1368,7 @@ struct PrivateOcrThroughputArgs {
     max_pages: usize,
     pages_per_document: usize,
     page_timeout_ms: u64,
+    max_run_ms: Option<u64>,
     render_dpi: u32,
     ocr_lang: String,
     engine_profile: String,

@@ -516,6 +516,7 @@ pub struct PrivateOcrThroughputConfig {
     max_pages: usize,
     pages_per_document: usize,
     page_timeout_ms: u64,
+    max_run_ms: Option<u64>,
     render_dpi: u32,
     ocr_lang: String,
     engine_profile: String,
@@ -541,6 +542,7 @@ impl PrivateOcrThroughputConfig {
             max_pages: DEFAULT_PRIVATE_OCR_MAX_PAGES,
             pages_per_document: DEFAULT_PRIVATE_OCR_PAGES_PER_DOCUMENT,
             page_timeout_ms: 30_000,
+            max_run_ms: None,
             render_dpi: DEFAULT_SYNTHETIC_OCR_RENDER_DPI,
             ocr_lang: DEFAULT_PRIVATE_OCR_LANG.to_string(),
             engine_profile: DEFAULT_PRIVATE_OCR_PROFILE.to_string(),
@@ -580,6 +582,14 @@ impl PrivateOcrThroughputConfig {
             ));
         }
         self.page_timeout_ms = page_timeout_ms;
+        Ok(self)
+    }
+
+    pub fn with_max_run_ms(mut self, max_run_ms: u64) -> Result<Self> {
+        if max_run_ms == 0 {
+            return Err(BenchmarkError::invalid_config("private_ocr_max_run_ms"));
+        }
+        self.max_run_ms = Some(max_run_ms);
         Ok(self)
     }
 
@@ -1089,6 +1099,10 @@ pub struct PrivateOcrThroughputReport {
     page_count: usize,
     document_count: usize,
     scanned_document_count: usize,
+    failed_document_count: usize,
+    render_failure_count: usize,
+    ocr_failure_count: usize,
+    run_budget_exhausted: bool,
     engine_kind: &'static str,
     total_ms: f64,
     latency: LatencySummary,
@@ -1106,6 +1120,22 @@ impl PrivateOcrThroughputReport {
 
     pub fn scanned_document_count(&self) -> usize {
         self.scanned_document_count
+    }
+
+    pub fn failed_document_count(&self) -> usize {
+        self.failed_document_count
+    }
+
+    pub fn render_failure_count(&self) -> usize {
+        self.render_failure_count
+    }
+
+    pub fn ocr_failure_count(&self) -> usize {
+        self.ocr_failure_count
+    }
+
+    pub fn run_budget_exhausted(&self) -> bool {
+        self.run_budget_exhausted
     }
 
     pub fn engine_kind(&self) -> &'static str {
@@ -1135,6 +1165,10 @@ impl PrivateOcrThroughputReport {
                 "\"page_count\":{},",
                 "\"document_count\":{},",
                 "\"scanned_document_count\":{},",
+                "\"failed_document_count\":{},",
+                "\"render_failure_count\":{},",
+                "\"ocr_failure_count\":{},",
+                "\"run_budget_exhausted\":{},",
                 "\"engine_kind\":\"{}\",",
                 "\"total_ms\":{},",
                 "\"page_latency_ms\":{{",
@@ -1165,6 +1199,10 @@ impl PrivateOcrThroughputReport {
             self.page_count,
             self.document_count,
             self.scanned_document_count,
+            self.failed_document_count,
+            self.render_failure_count,
+            self.ocr_failure_count,
+            self.run_budget_exhausted,
             self.engine_kind,
             format_consistency_number(self.total_ms),
             self.latency.samples,
@@ -1190,6 +1228,10 @@ impl fmt::Debug for PrivateOcrThroughputReport {
             .field("page_count", &self.page_count)
             .field("document_count", &self.document_count)
             .field("scanned_document_count", &self.scanned_document_count)
+            .field("failed_document_count", &self.failed_document_count)
+            .field("render_failure_count", &self.render_failure_count)
+            .field("ocr_failure_count", &self.ocr_failure_count)
+            .field("run_budget_exhausted", &self.run_budget_exhausted)
             .field("engine_kind", &self.engine_kind)
             .field("total_ms", &self.total_ms)
             .field("latency", &self.latency)
@@ -1603,14 +1645,19 @@ pub fn run_private_ocr_throughput_benchmark(
     let mut page_latencies = Vec::new();
     let mut document_count = 0_usize;
     let mut scanned_document_count = 0_usize;
+    let mut failed_document_count = 0_usize;
+    let mut render_failure_count = 0_usize;
+    let mut ocr_failure_count = 0_usize;
+    let mut run_budget_exhausted = false;
 
     for document_path in documents {
-        if page_latencies.len() >= config.max_pages {
+        if page_latencies.len() >= config.max_pages || run_budget_exhausted {
             break;
         }
         document_count += 1;
         let document_bytes = fs::read(&document_path).map_err(BenchmarkError::io)?;
         let mut document_pages = 0_usize;
+        let mut document_failed = false;
 
         for page_index in 0..config.pages_per_document {
             if page_latencies.len() >= config.max_pages {
@@ -1619,26 +1666,43 @@ pub fn run_private_ocr_throughput_benchmark(
             let page_no = u32::try_from(page_index + 1)
                 .map_err(|_| BenchmarkError::invalid_config("private_ocr_page_no"))?;
             let page_started = Instant::now();
-            let rendered_page = renderer
-                .render_page(
-                    &document_bytes,
-                    page_no,
-                    config.render_dpi,
-                    budget,
-                    &cancellation,
-                )
-                .map_err(BenchmarkError::ocr)?;
+            let rendered_page = match renderer.render_page(
+                &document_bytes,
+                page_no,
+                config.render_dpi,
+                budget,
+                &cancellation,
+            ) {
+                Ok(rendered_page) => rendered_page,
+                Err(_) => {
+                    render_failure_count += 1;
+                    document_failed = true;
+                    break;
+                }
+            };
             let request =
                 OcrPageRequest::new(rendered_page, options.clone()).map_err(BenchmarkError::ocr)?;
-            let _page = client
+            if client
                 .recognize_page(request, budget, &cancellation)
-                .map_err(BenchmarkError::ocr)?;
+                .is_err()
+            {
+                ocr_failure_count += 1;
+                document_failed = true;
+                break;
+            }
             page_latencies.push(elapsed_ms(page_started));
             document_pages += 1;
+            if private_ocr_run_budget_exhausted(run_started, config.max_run_ms) {
+                run_budget_exhausted = true;
+                break;
+            }
         }
 
         if document_pages > 0 {
             scanned_document_count += 1;
+        }
+        if document_failed {
+            failed_document_count += 1;
         }
     }
 
@@ -1652,6 +1716,10 @@ pub fn run_private_ocr_throughput_benchmark(
         page_count: page_latencies.len(),
         document_count,
         scanned_document_count,
+        failed_document_count,
+        render_failure_count,
+        ocr_failure_count,
+        run_budget_exhausted,
         engine_kind,
         total_ms: elapsed_ms(run_started),
         latency: LatencySummary::from_samples(page_latencies)?,
@@ -4296,6 +4364,10 @@ fn validate_private_real_ocr_throughput_boundary(
     let page_count = private_ocr_usize(report, "page_count")?;
     let document_count = private_ocr_usize(report, "document_count")?;
     let scanned_document_count = private_ocr_usize(report, "scanned_document_count")?;
+    let failed_document_count = private_ocr_usize(report, "failed_document_count")?;
+    let render_failure_count = private_ocr_usize(report, "render_failure_count")?;
+    let ocr_failure_count = private_ocr_usize(report, "ocr_failure_count")?;
+    let run_budget_exhausted = private_ocr_bool(report, "run_budget_exhausted")?;
     let total_ms = private_ocr_number(report, "total_ms")?;
     let pages_per_second = private_ocr_number(report, "pages_per_second")?;
     let latency = report
@@ -4306,11 +4378,18 @@ fn validate_private_real_ocr_throughput_boundary(
         || document_count == 0
         || scanned_document_count == 0
         || scanned_document_count > document_count
+        || failed_document_count > document_count
+        || render_failure_count + ocr_failure_count != failed_document_count
         || scanned_document_count > page_count
         || samples != page_count
         || total_ms <= 0.0
     {
         return Err(private_ocr_counts_error());
+    }
+    if run_budget_exhausted {
+        return Err(BenchmarkGateError::failed(
+            "private real-corpus OCR benchmark run budget exhausted",
+        ));
     }
     let expected_pages_per_second = page_count as f64 / (total_ms / 1000.0);
     if (pages_per_second - expected_pages_per_second).abs() > OCR_THROUGHPUT_SCORE_TOLERANCE {
@@ -4367,6 +4446,10 @@ fn validate_private_real_ocr_throughput_shape(
     private_ocr_usize(report, "page_count")?;
     private_ocr_usize(report, "document_count")?;
     private_ocr_usize(report, "scanned_document_count")?;
+    private_ocr_usize(report, "failed_document_count")?;
+    private_ocr_usize(report, "render_failure_count")?;
+    private_ocr_usize(report, "ocr_failure_count")?;
+    private_ocr_bool(report, "run_budget_exhausted")?;
     private_ocr_str(report, "engine_kind")?;
     private_ocr_number(report, "total_ms")?;
     let latency = report
@@ -4424,6 +4507,10 @@ fn is_allowed_private_real_ocr_key(key: &str) -> bool {
             | "page_count"
             | "document_count"
             | "scanned_document_count"
+            | "failed_document_count"
+            | "render_failure_count"
+            | "ocr_failure_count"
+            | "run_budget_exhausted"
             | "engine_kind"
             | "total_ms"
             | "page_latency_ms"
@@ -4837,6 +4924,10 @@ fn private_ocr_is_pdf_path(path: &Path) -> bool {
 
 fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
+}
+
+fn private_ocr_run_budget_exhausted(started: Instant, max_run_ms: Option<u64>) -> bool {
+    max_run_ms.is_some_and(|max_run_ms| elapsed_ms(started) >= max_run_ms as f64)
 }
 
 fn generate_run_id() -> String {

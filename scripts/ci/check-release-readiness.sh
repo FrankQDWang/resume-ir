@@ -162,5 +162,8 @@ require_text "$runbook" "actual ENOSPC"
 require_text "$runbook" "service-level daemon kill"
 require_text "$runbook" "vector-gate --report private-vector-quality.json"
 require_text "$runbook" "ocr-gate --report private-ocr-throughput.json"
+require_text "$runbook" "--max-run-ms <release-budget-ms>"
+require_text "$runbook" "failed_document_count"
+require_text "$runbook" "run_budget_exhausted"
 
 printf '%s\n' "release readiness check passed"
