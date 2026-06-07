@@ -231,13 +231,28 @@ reports. The report must use `dataset_kind: "private-business-labeled"`,
 "resume-ir.dedupe.v1"`, false raw-data/path/profile-value/sample-ID/document-ID
 booleans, and sha256 digests for both the dataset and annotation manifests. Do
 not upload reports if they contain names, schools, companies, skills, document
-IDs, sample IDs, filenames, local paths, raw resume text, or notes. The
-aggregate pair counts must be internally consistent:
+IDs, sample IDs, filenames, local paths, raw resume text, or notes. The labeled
+JSONL can contain raw profile values and identifiers only while it stays in a
+reviewed local private workspace; do not commit, upload, or archive that JSONL.
+The aggregate pair counts must be internally consistent:
 `pair_count == true_positive + false_positive + false_negative + true_negative`,
 `positive_pair_count == true_positive + false_negative`, and
 `predicted_duplicate_pairs == true_positive + false_positive`. The reported
 precision, recall, and F1 must match those aggregate counts within rounding
 tolerance.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  dedupe-quality --dataset private-dedupe-quality.jsonl \
+  --private-business-labeled \
+  --dataset-manifest-sha256 <sha256> \
+  --annotation-manifest-sha256 <sha256> \
+  --json > private-dedupe-quality.json
+```
+
+Review the generated report before any release evidence upload or public commit.
+It must be aggregate-only and must not contain sample IDs, document IDs, local
+paths, profile values, or raw resume text.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
@@ -247,10 +262,10 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   --min-precision 0.90 --min-recall 0.90 --min-f1 0.90
 ```
 
-This gate is a release evidence validator. It does not create, upload, label,
-or sanitize private dedupe-quality reports and cannot clear the dedupe quality
-blocker until representative local business labels and aggregate dedupe metrics
-exist.
+This workflow creates only a local redacted aggregate report and validates its
+release-evidence shape. It does not upload reports, create labels, review
+labeling quality, or clear the dedupe quality blocker until representative local
+business labels and aggregate dedupe metrics exist.
 
 Run private business vector-quality gates only against local redacted aggregate
 reports. The report must use `dataset_kind: "private-business-labeled"`,

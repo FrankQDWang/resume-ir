@@ -170,6 +170,32 @@ impl PrivateFieldQualityManifestDigests {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateDedupeQualityManifestDigests {
+    dataset_manifest_sha256: String,
+    annotation_manifest_sha256: String,
+}
+
+impl PrivateDedupeQualityManifestDigests {
+    pub fn new(
+        dataset_manifest_sha256: impl Into<String>,
+        annotation_manifest_sha256: impl Into<String>,
+    ) -> Result<Self> {
+        let digests = Self {
+            dataset_manifest_sha256: dataset_manifest_sha256.into(),
+            annotation_manifest_sha256: annotation_manifest_sha256.into(),
+        };
+        if !is_sha256_hex(&digests.dataset_manifest_sha256)
+            || !is_sha256_hex(&digests.annotation_manifest_sha256)
+        {
+            return Err(BenchmarkError::invalid_config(
+                "private_dedupe_quality_manifest_sha256",
+            ));
+        }
+        Ok(digests)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrivateQueryBenchmarkConfig {
     query_set: PathBuf,
     command: PrivateQueryBenchmarkCommand,
@@ -2237,6 +2263,7 @@ pub struct DedupeQualityReport {
     dataset_kind: &'static str,
     counts: DedupeQualityCounts,
     target_claim: &'static str,
+    private_boundary: Option<PrivateDedupeQualityBoundary>,
 }
 
 impl DedupeQualityReport {
@@ -2265,6 +2292,33 @@ impl DedupeQualityReport {
     }
 
     pub fn to_redacted_json(&self) -> String {
+        let private_boundary_json = self
+            .private_boundary
+            .as_ref()
+            .map(|boundary| {
+                format!(
+                    concat!(
+                        "\"corpus_origin\":\"private_local\",",
+                        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+                        "\"contains_raw_resume_text\":false,",
+                        "\"contains_resume_paths\":false,",
+                        "\"contains_profile_values\":false,",
+                        "\"contains_sample_ids\":false,",
+                        "\"contains_document_ids\":false,",
+                        "\"dataset_manifest_sha256\":\"{}\",",
+                        "\"annotation_manifest_sha256\":\"{}\",",
+                        "\"dedupe_taxonomy\":\"resume-ir.dedupe.v1\","
+                    ),
+                    boundary.manifests.dataset_manifest_sha256,
+                    boundary.manifests.annotation_manifest_sha256,
+                )
+            })
+            .unwrap_or_default();
+        let scope = if self.private_boundary.is_some() {
+            PRIVATE_BUSINESS_DEDUPE_QUALITY_SCOPE
+        } else {
+            "labeled dedupe quality; no names, schools, companies, skills, sample ids, document ids, paths, or raw resume text included"
+        };
         format!(
             concat!(
                 "{{",
@@ -2283,7 +2337,8 @@ impl DedupeQualityReport {
                 "\"recall\":{},",
                 "\"f1\":{},",
                 "\"target_claim\":\"{}\",",
-                "\"scope\":\"labeled dedupe quality; no names, schools, companies, skills, sample ids, document ids, paths, or raw resume text included\"",
+                "{}",
+                "\"scope\":\"{}\"",
                 "}}"
             ),
             self.run_id,
@@ -2300,8 +2355,15 @@ impl DedupeQualityReport {
             format_ms(self.counts.recall()),
             format_ms(self.counts.f1()),
             self.target_claim,
+            private_boundary_json,
+            scope,
         )
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PrivateDedupeQualityBoundary {
+    manifests: PrivateDedupeQualityManifestDigests,
 }
 
 pub fn run_field_quality_jsonl(dataset_jsonl: &str) -> Result<FieldQualityReport> {
@@ -2392,7 +2454,19 @@ pub fn run_dedupe_quality_jsonl(dataset_jsonl: &str) -> Result<DedupeQualityRepo
         dataset_kind: "labeled",
         counts,
         target_claim: "not_evaluated",
+        private_boundary: None,
     })
+}
+
+pub fn run_private_business_dedupe_quality_jsonl(
+    dataset_jsonl: &str,
+    manifests: PrivateDedupeQualityManifestDigests,
+) -> Result<DedupeQualityReport> {
+    let mut report = run_dedupe_quality_jsonl(dataset_jsonl)?;
+    report.dataset_kind = "private-business-labeled";
+    report.target_claim = PRIVATE_BUSINESS_DEDUPE_QUALITY_TARGET_CLAIM;
+    report.private_boundary = Some(PrivateDedupeQualityBoundary { manifests });
+    Ok(report)
 }
 
 const DEDUPE_QUALITY_DUPLICATE_CONFIDENCE_THRESHOLD: f32 = 0.70;

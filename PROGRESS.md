@@ -43,6 +43,10 @@ production-ready scope source.
   S267 used hosted CI failure logs and synthetic vector fixtures only; no real
   resume data, local paths, raw text, vectors from real resumes, or generated
   diagnostics were committed or uploaded.
+  S268 used synthetic/private-shaped dedupe-quality label fixtures only; no
+  real labeled dataset, real resume data, local paths, profile values, sample
+  IDs, document IDs, raw text, or generated quality report was committed or
+  uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -867,8 +871,75 @@ obsolete preliminary files and checklists are not product scope.
 | S265 | Product private real-corpus query report generator complete locally | Focused RED first failed because `benchmark-runner` had no private query benchmark API and `resume-benchmark private-query` was rejected as usage. After implementation, the benchmark runner can read a local private query-set JSONL, pass each raw query to a reviewed local query command through an owner-only temporary file instead of argv, parse strict `resume-ir-query-v1`/`hits=<n>` stdout, and emit a `benchmark.v1` private-real-corpus hot-index hybrid aggregate report accepted by `gate --require-private-real-corpus` without query text, sample IDs, query-set paths, command paths, resume text, or filenames. | This slice adds local private query benchmark report generation only. It does not run the actual 500-query private local benchmark, create or review a production private query set, prove `<200ms` P95, select/license/distribute the embedding model, clear private vector-quality blockers, validate platform installers/services, or make stable release ready. |
 | S266 | Product private business field-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private field-quality report API and `resume-benchmark field-quality` rejected `--private-business-labeled` plus manifest SHA flags. After implementation, `field-quality` can evaluate a local labeled JSONL, emit a strict `field-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation manifest digests, and pass `field-gate --require-private-business-labeled` without raw resume text, field values, sample IDs, local paths, or filenames. The same slice also fixed the quality-label parser so `location` is accepted as a production expected field type. | This slice adds local private field-quality report generation only. It does not create or review the actual private business labeled dataset, prove production field precision/recall/F1 on real labels, clear dedupe/vector quality blockers, validate platform installers/services, or make stable release ready. |
 | S267 | CI semantic closed-loop HNSW under-return fix complete locally | GitHub Actions PR #9 `rust workspace` failed after S266 because the Linux CLI closed-loop semantic search output was missing `results: 3`; local macOS full verification had passed. Root cause was the persistent HNSW backend trusting ANN output cardinality even though small or tied vector sets can under-return on hosted Linux. After implementation, `HnswShard::knn` backfills missing candidates from the same in-memory shard with exact cosine ordering, and a synthetic identical-vector regression proves model-scoped persistent KNN returns the requested `k`. | This slice fixes deterministic small/tied vector result coverage for local and hosted synthetic closed-loop checks only. It does not prove private semantic quality, release model selection/licensing/distribution, real 100k/1M ANN recall or latency, platform installer/service behavior, or stable release readiness. |
+| S268 | Product private business dedupe-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private dedupe-quality report API and `resume-benchmark dedupe-quality` rejected `--private-business-labeled` plus manifest SHA flags. After implementation, `dedupe-quality` can evaluate a local labeled pair JSONL, emit a strict `dedupe-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation manifest digests, and pass `dedupe-gate --require-private-business-labeled` without raw resume text, profile values, names, schools, companies, skills, sample IDs, document IDs, local paths, or filenames. The release blocker runbook now documents the local report generation command before the gate. | This slice adds local private dedupe-quality report generation only. It does not create or review the actual private business labeled dedupe dataset, prove production dedupe precision/recall/F1 on real labels, clear field/vector quality blockers, validate platform installers/services, or make stable release ready. |
 
 ## Command Log
+
+### S268
+
+Design target:
+
+- Add a local-only private business dedupe-quality report generator to complement
+  the existing `dedupe-gate --require-private-business-labeled` validator.
+- Keep raw labeled pair dataset contents out of output: no profile values,
+  names, schools, companies, skills, sample IDs, document IDs, local paths,
+  filenames, or raw resume text in emitted JSON.
+- Preserve existing `dedupe-quality --dataset` behavior for non-private labeled
+  fixture evaluation.
+
+TDD RED:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_business_dedupe_quality_report_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_business_dedupe_quality_outputs_redacted_gateable_report --locked -- --exact
+```
+
+Output summary:
+
+- The library test failed before implementation because
+  `run_private_business_dedupe_quality_jsonl` and
+  `PrivateDedupeQualityManifestDigests` did not exist.
+- The CLI test failed before implementation because `dedupe-quality` rejected
+  `--private-business-labeled`, `--dataset-manifest-sha256`, and
+  `--annotation-manifest-sha256` as usage errors.
+
+Implementation checks:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_business_dedupe_quality_report_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_business_dedupe_quality_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --locked
+cargo fmt --check
+cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+# changed-file added-line privacy marker scan; private-local patterns omitted from this public log
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The focused library test passed with a synthetic/private-shaped labeled pair
+  JSONL fixture, a redacted aggregate private dedupe report, and a passing
+  private business dedupe gate.
+- The focused CLI test passed with `resume-benchmark dedupe-quality
+  --private-business-labeled`, wrote a temporary redacted report, and passed
+  `dedupe-gate --require-private-business-labeled`.
+- `cargo test -p benchmark-runner --locked` passed: 32 CLI tests, 62 library
+  tests, and 0 doctests.
+- `cargo fmt --check`, focused benchmark-runner clippy, runbook guard, diff
+  check, public-repo guard, and full `verify-local.sh` passed.
+- The changed-file privacy grep found no local private corpus paths, real
+  resume markers, local runtime paths, credential markers, or generated report
+  payloads in added lines.
+
+Scope note:
+
+- S268 does not create or review the real private business dedupe labels and
+  does not clear the dedupe quality blocker. It supplies the local-only report
+  generator that can be used once a reviewed private labeled pair dataset and
+  manifests are available.
 
 ### S267
 

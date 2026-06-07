@@ -6,10 +6,11 @@ use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
     evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
-    run_private_business_field_quality_jsonl, run_private_ocr_throughput_benchmark,
-    run_private_query_benchmark, run_synthetic_ocr_throughput_benchmark,
-    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkGateConfig,
-    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    run_private_business_dedupe_quality_jsonl, run_private_business_field_quality_jsonl,
+    run_private_ocr_throughput_benchmark, run_private_query_benchmark,
+    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
+    run_vector_quality_jsonl, BenchmarkGateConfig, DedupeQualityGateConfig, FieldQualityGateConfig,
+    OcrThroughputGateConfig, PrivateDedupeQualityManifestDigests,
     PrivateFieldQualityManifestDigests, PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests,
     PrivateOcrThroughputConfig, PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand,
     PrivateQueryBenchmarkConfig, PrivateQueryManifestDigests, SyntheticBenchmarkConfig,
@@ -783,6 +784,65 @@ fn dedupe_quality_report_scores_labeled_pairs_without_profile_leakage() {
     assert!(!json.contains("Synthetic University"));
     assert!(!json.contains("Example Labs"));
     assert!(!json.contains("Payments"));
+}
+
+#[test]
+fn private_business_dedupe_quality_report_outputs_redacted_gateable_report() {
+    let manifests = PrivateDedupeQualityManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    )
+    .unwrap();
+
+    let report = run_private_business_dedupe_quality_jsonl(
+        &private_business_dedupe_quality_dataset(),
+        manifests,
+    )
+    .unwrap();
+
+    assert_eq!(report.dataset_kind(), "private-business-labeled");
+    assert_eq!(report.pair_count(), 2);
+    assert_eq!(report.positive_pair_count(), 1);
+    assert!(report.precision() >= 0.99);
+    assert!(report.recall() >= 0.99);
+    assert!(report.f1() >= 0.99);
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"schema_version\":\"dedupe-quality.v1\""));
+    assert!(json.contains("\"dataset_kind\":\"private-business-labeled\""));
+    assert!(json.contains("\"target_claim\":\"dedupe_quality_target_met\""));
+    assert!(json.contains("\"corpus_origin\":\"private_local\""));
+    assert!(json.contains("\"privacy_boundary\":\"redacted_local_aggregate\""));
+    assert!(json.contains("\"contains_raw_resume_text\":false"));
+    assert!(json.contains("\"contains_resume_paths\":false"));
+    assert!(json.contains("\"contains_profile_values\":false"));
+    assert!(json.contains("\"contains_sample_ids\":false"));
+    assert!(json.contains("\"contains_document_ids\":false"));
+    assert!(json.contains(
+        "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
+    ));
+    assert!(json.contains(
+        "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\""
+    ));
+    assert!(json.contains("\"dedupe_taxonomy\":\"resume-ir.dedupe.v1\""));
+    assert!(json.contains(
+        "\"scope\":\"private business dedupe-quality benchmark; aggregate redacted report only\""
+    ));
+    assert!(!json.contains("private-dedupe-sample-001"));
+    assert!(!json.contains("private-left-doc-001"));
+    assert!(!json.contains("REDACTION_SENTINEL_DEDUPE_VALUE"));
+    assert!(!json.contains("Synthetic Duplicate Candidate"));
+    assert!(!json.contains("Synthetic Commerce"));
+    assert!(!json.contains("Synthetic University"));
+    assert!(!json.contains("Payments"));
+
+    let gate = DedupeQualityGateConfig::new(0.90, 0.90, 0.90)
+        .with_min_pairs(2)
+        .with_min_positive_pairs(1)
+        .require_private_business_labeled();
+    let evaluation = evaluate_dedupe_quality_gate_json(&json, gate).unwrap();
+    assert_eq!(evaluation.dataset_kind(), "private-business-labeled");
+    assert_eq!(evaluation.pair_count(), 2);
+    assert!(evaluation.f1() >= 0.99);
 }
 
 #[test]
@@ -1722,6 +1782,20 @@ fn private_business_field_quality_dataset() -> String {
         "{\"type\":\"skill\",\"normalized\":\"Rust\"},",
         "{\"type\":\"skill\",\"normalized\":\"Java\"}",
         "]}\n"
+    )
+    .to_string()
+}
+
+fn private_business_dedupe_quality_dataset() -> String {
+    concat!(
+        "{\"sample_id\":\"private-dedupe-sample-001\",",
+        "\"left\":{\"id\":\"private-left-doc-001\",\"name\":\"Synthetic Duplicate Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\",\"Payments\",\"REDACTION_SENTINEL_DEDUPE_VALUE\"]},",
+        "\"right\":{\"id\":\"private-right-doc-001\",\"name\":\"synthetic duplicate candidate\",\"schools\":[\"synthetic university\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\",\"Search\"]},",
+        "\"duplicate\":true}\n",
+        "{\"sample_id\":\"private-dedupe-sample-002\",",
+        "\"left\":{\"id\":\"private-left-doc-002\",\"name\":\"Synthetic Duplicate Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\"]},",
+        "\"right\":{\"id\":\"private-right-doc-002\",\"name\":\"Different Synthetic Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\"]},",
+        "\"duplicate\":false}\n",
     )
     .to_string()
 }

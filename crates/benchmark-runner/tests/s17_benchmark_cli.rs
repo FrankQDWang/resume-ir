@@ -1160,6 +1160,93 @@ fn resume_benchmark_dedupe_quality_outputs_redacted_report_and_gate() {
 }
 
 #[test]
+fn resume_benchmark_private_business_dedupe_quality_outputs_redacted_gateable_report() {
+    let dataset_dir = temp_dir("private-business-dedupe-quality-dataset");
+    let dataset_path = dataset_dir.join("private-dedupe-quality.jsonl");
+    let report_path = dataset_dir.join("private-dedupe-report.json");
+    fs::write(&dataset_path, private_business_dedupe_quality_dataset()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "dedupe-quality",
+            "--dataset",
+            path_str(&dataset_path),
+            "--private-business-labeled",
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--annotation-manifest-sha256",
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--json",
+        ])
+        .output()
+        .expect("run private business dedupe-quality benchmark");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\":\"dedupe-quality.v1\""));
+    assert!(stdout.contains("\"dataset_kind\":\"private-business-labeled\""));
+    assert!(stdout.contains("\"pair_count\":2"));
+    assert!(stdout.contains("\"target_claim\":\"dedupe_quality_target_met\""));
+    assert!(stdout.contains("\"corpus_origin\":\"private_local\""));
+    assert!(stdout.contains("\"privacy_boundary\":\"redacted_local_aggregate\""));
+    assert!(stdout.contains("\"contains_raw_resume_text\":false"));
+    assert!(stdout.contains("\"contains_resume_paths\":false"));
+    assert!(stdout.contains("\"contains_profile_values\":false"));
+    assert!(stdout.contains("\"contains_sample_ids\":false"));
+    assert!(stdout.contains("\"contains_document_ids\":false"));
+    assert!(stdout.contains("\"dedupe_taxonomy\":\"resume-ir.dedupe.v1\""));
+    assert!(!stdout.contains(path_str(&dataset_path)));
+    assert!(!stdout.contains("private-dedupe-sample-001"));
+    assert!(!stdout.contains("private-left-doc-001"));
+    assert!(!stdout.contains("REDACTION_SENTINEL_DEDUPE_VALUE"));
+    assert!(!stdout.contains("Synthetic Duplicate Candidate"));
+    assert!(!stdout.contains("Synthetic Commerce"));
+    assert!(!stdout.contains("Synthetic University"));
+    assert!(!stdout.contains("Payments"));
+    fs::write(&report_path, &output.stdout).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "dedupe-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-business-labeled",
+            "--min-pairs",
+            "2",
+            "--min-positive-pairs",
+            "1",
+            "--min-precision",
+            "0.90",
+            "--min-recall",
+            "0.90",
+            "--min-f1",
+            "0.90",
+        ])
+        .output()
+        .expect("run private business dedupe quality gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "dedupe quality gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(&dataset_dir);
+}
+
+#[test]
 fn resume_benchmark_dedupe_gate_accepts_private_business_labeled_report() {
     let dataset_dir = temp_dir("dedupe-quality-private-business-accept");
     let report_path = dataset_dir.join("dedupe-report.json");
@@ -2039,6 +2126,20 @@ fn private_business_field_quality_dataset() -> String {
         "{\"type\":\"skill\",\"normalized\":\"Rust\"},",
         "{\"type\":\"skill\",\"normalized\":\"Java\"}",
         "]}\n"
+    )
+    .to_string()
+}
+
+fn private_business_dedupe_quality_dataset() -> String {
+    concat!(
+        "{\"sample_id\":\"private-dedupe-sample-001\",",
+        "\"left\":{\"id\":\"private-left-doc-001\",\"name\":\"Synthetic Duplicate Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\",\"Payments\",\"REDACTION_SENTINEL_DEDUPE_VALUE\"]},",
+        "\"right\":{\"id\":\"private-right-doc-001\",\"name\":\"synthetic duplicate candidate\",\"schools\":[\"synthetic university\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\",\"Search\"]},",
+        "\"duplicate\":true}\n",
+        "{\"sample_id\":\"private-dedupe-sample-002\",",
+        "\"left\":{\"id\":\"private-left-doc-002\",\"name\":\"Synthetic Duplicate Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\"]},",
+        "\"right\":{\"id\":\"private-right-doc-002\",\"name\":\"Different Synthetic Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\"]},",
+        "\"duplicate\":false}\n",
     )
     .to_string()
 }
