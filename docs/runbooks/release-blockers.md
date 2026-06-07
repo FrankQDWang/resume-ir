@@ -263,6 +263,32 @@ Private OCR throughput reports must also include `total_ms` so
 page_count`, `page_latency_ms.samples == page_count`, `total_ms > 0`, and
 `pages_per_second == page_count / (total_ms / 1000)` within rounding tolerance.
 
+Generate the private OCR throughput report locally. The command reads only local
+PDF files under the requested root, runs the configured renderer plus OCR engine,
+and prints only aggregate redacted JSON. Do not commit or upload the generated
+report unless it has been separately reviewed to contain no raw OCR text, page
+images, local paths, filenames, document IDs, page IDs, command paths, runtime
+paths, or notes.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  private-ocr-throughput \
+  --root <private-local-root> \
+  --pdftoppm-command <pdftoppm> \
+  --tesseract-command <tesseract> \
+  --max-documents 500 --max-pages 500 --pages-per-document 1 \
+  --page-timeout-ms 30000 --render-dpi 150 --ocr-lang eng+chi_sim \
+  --dataset-manifest-sha256 <sha256> \
+  --ocr-runtime-manifest-sha256 <sha256> \
+  --renderer-manifest-sha256 <sha256> \
+  --language-pack-manifest-sha256 <sha256> \
+  --json > private-ocr-throughput.json
+```
+
+Small private smoke reports can prove command wiring, but they do not clear the
+release blocker. Stable-release OCR throughput evidence needs the representative
+page count and reviewed manifests required by the gate below.
+
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   ocr-gate --report private-ocr-throughput.json \

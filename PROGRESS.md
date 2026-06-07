@@ -28,6 +28,11 @@ production-ready scope source.
   user-authorized local resume sample directory through temporary witness
   copies; no real resume data, filenames, paths, raw text, or diagnostics were
   committed or uploaded.
+  S264 also used a private local-only OCR throughput smoke against the
+  user-authorized local resume sample directory with temporary redacted
+  manifests and local Tesseract/Poppler commands; no real resume data,
+  filenames, paths, raw OCR text, page images, command paths, or generated
+  reports were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -834,8 +839,83 @@ obsolete preliminary files and checklists are not product scope.
 | S261 | Product private 10k-scale PDF/Word local witness complete | Authorized local-only PDF/Word witness over the private resume sample root selected 8720 supported PDF/DOCX/DOC files, skipped 49 unsupported entries, reported zero scan errors, completed import without scan-budget exhaustion, produced 146 directly searchable documents, queued 8554 OCR-required documents, reported 20 failed import documents, completed field and search probes, and removed private temporary data. A bounded OCR witness with local Tesseract plus Poppler processed 20 OCR-required documents, wrote 22 OCR cache entries, had zero OCR document failures, and left the remaining OCR queue explicitly budget-exhausted. | This slice proves a local redacted aggregate witness over the available private real corpus only. It does not prove full-corpus OCR completion, OCR quality, private labeled field/dedupe/vector quality, production embedding model licensing/distribution, installer signing/notarization, Windows service validation, or true external million-scale real-corpus latency. |
 | S262 | Product release-readiness local benchmark boundary aligned | Focused RED first failed because `resume-cli release-readiness` and its JSON blocker still labeled the performance blocker as `100k/1M real-corpus benchmarks` and required `--require-million-scale`/`percentile_confidence: release` as local release-readiness detail. After implementation, release-readiness reports `private real-corpus performance evidence`, requires local hot-index hybrid evidence over the available private corpus with at least 500 query samples, and keeps external 100k/1M scale validation as future scale evidence rather than a local prerequisite. The release-readiness CI guard and release blocker runbook now enforce the same boundary without local path leaks. | This slice aligns release-readiness reporting with the available local private corpus boundary only. It does not create the private benchmark report, prove `<200ms` P95, complete full-corpus OCR, select/license a production embedding model, validate cross-platform installers/services, or make stable release ready. |
 | S263 | Product witness import failure-kind aggregates complete | Focused RED first failed because a private witness over a corrupted DOCX only reported `failed documents: 1` and did not expose any redacted failure-kind counter. After implementation, import-pipeline carries an `ImportFailureKind` aggregate in `ImportSummary`, witness output prints fixed redacted `import failure <kind>: <count>` lines, and the focused CLI test proves a corrupted private DOCX reports `parser_corrupted: 1` without path, file-name, or payload leaks. The private 10k-scale witness was rerun locally and reported 20 total failures split into 16 `parser_corrupted` and 4 `parser_encrypted`, with private temporary data removed. | This slice improves private witness diagnostics only. It does not repair corrupted/encrypted documents, prove full-corpus OCR completion, run private performance benchmarks, create labeled quality evidence, clear model/OCR licensing blockers, validate release installers, or make stable release ready. |
+| S264 | Product private real-corpus OCR throughput report generator complete locally | Focused RED first failed because `benchmark-runner` had no private OCR throughput report API and `resume-benchmark private-ocr-throughput` was rejected as usage. After implementation, the benchmark runner can scan local PDF files, run a configured local PDF renderer plus OCR engine, and emit a strict `ocr-throughput.v1` private-real-corpus aggregate report accepted by `ocr-gate --require-private-real-corpus` without paths, filenames, OCR text, page images, document IDs, page IDs, or command paths. A private local smoke over the user-authorized sample directory processed 2 pages across 2 documents with local Tesseract/Poppler and passed a smoke OCR gate using redacted aggregate output only. | This slice adds local private OCR throughput report generation and a tiny real-corpus smoke only. It does not complete the release-grade 500-page OCR throughput run, review/distribute OCR runtime manifests, prove OCR quality, run full-corpus OCR, clear OCR licensing, validate platform installers/services, or make stable release ready. |
 
 ## Command Log
+
+### S264
+
+Design target:
+
+- Add a local-only private real-corpus OCR throughput report generator to
+  complement the existing `ocr-gate --require-private-real-corpus` validator.
+- Keep the report redacted aggregate only: no root paths, filenames, command
+  paths, raw OCR text, rendered page bytes, document IDs, page IDs, or notes.
+- Preserve the current local evidence boundary: the available local corpus is
+  approximately ten thousand real resumes, while release-grade OCR throughput
+  still requires a representative 500-page run and reviewed manifests.
+
+TDD RED:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_ocr_throughput_benchmark_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_ocr_throughput_outputs_redacted_gateable_report --locked -- --exact
+```
+
+Output summary:
+
+- The library test failed before implementation because
+  `run_private_ocr_throughput_benchmark`,
+  `PrivateOcrBenchmarkEngine`, `PrivatePdfRenderEngine`,
+  `PrivateOcrThroughputConfig`, and `PrivateOcrManifestDigests` did not exist.
+- The CLI test failed before implementation because `private-ocr-throughput`
+  was rejected by the usage parser.
+
+Implementation checks:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_ocr_throughput_benchmark_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_ocr_throughput_outputs_redacted_gateable_report --locked -- --exact
+cargo fmt --check
+cargo test -p benchmark-runner --locked
+cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+```
+
+Output summary:
+
+- Focused RED/GREEN tests passed for the library and CLI private OCR throughput
+  report generator.
+- `cargo fmt --check`: exit 0 after formatting.
+- `cargo test -p benchmark-runner --locked`: exit 0; 29 CLI tests, 59 library
+  tests, and doctests passed.
+- `cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings`:
+  exit 0.
+
+Private local smoke:
+
+```bash
+target/debug/resume-benchmark private-ocr-throughput --root <redacted-private-root> --pdftoppm-command <redacted> --tesseract-command <redacted> --max-documents 2 --max-pages 2 --pages-per-document 1 --page-timeout-ms 30000 --render-dpi 72 --ocr-lang eng+chi_sim --dataset-manifest-sha256 <redacted-sha256> --ocr-runtime-manifest-sha256 <redacted-sha256> --renderer-manifest-sha256 <redacted-sha256> --language-pack-manifest-sha256 <redacted-sha256> --json
+target/debug/resume-benchmark ocr-gate --report <redacted-temp-report> --require-private-real-corpus --min-pages 2 --max-p95-ms 30000 --min-pages-per-second 0.001
+```
+
+Output summary:
+
+- `OCR throughput gate passed`.
+- Redacted aggregate only: `dataset_kind: private-real-corpus`,
+  `page_count: 2`, `document_count: 2`, `scanned_document_count: 2`,
+  `engine_kind: tesseract`, `pages_per_second: 0.808`,
+  `target_claim: ocr_throughput_target_met`, `p95_ms: 1793.677`.
+- Temporary manifests and report were removed; no private paths, filenames,
+  raw OCR text, page images, command paths, or reports were committed or
+  uploaded.
+
+Scope note:
+
+- S264 proves generator wiring and a tiny private real-corpus OCR throughput
+  smoke only. It does not clear the release OCR throughput blocker because the
+  required representative 500-page run and reviewed runtime/renderer/language
+  manifests are still missing.
+- Full product is still not complete.
 
 ### S263
 

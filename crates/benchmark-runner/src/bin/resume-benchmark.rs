@@ -5,11 +5,12 @@ use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
     evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
-    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
-    run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig, BenchmarkGateError,
-    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
-    SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine,
-    VectorQualityConfig, VectorQualityGateConfig,
+    run_private_ocr_throughput_benchmark, run_synthetic_ocr_throughput_benchmark,
+    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig,
+    BenchmarkGateError, DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests, PrivateOcrThroughputConfig,
+    PrivatePdfRenderEngine, SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig,
+    SyntheticOcrBenchmarkEngine, VectorQualityConfig, VectorQualityGateConfig,
 };
 
 fn main() {
@@ -28,6 +29,7 @@ fn run() -> Result<(), CliError> {
         CliCommand::DedupeQuality(args) => run_dedupe_quality(args),
         CliCommand::DedupeGate(args) => run_dedupe_gate(args),
         CliCommand::OcrThroughput(args) => run_ocr_throughput(args),
+        CliCommand::PrivateOcrThroughput(args) => run_private_ocr_throughput(args),
         CliCommand::OcrGate(args) => run_ocr_gate(args),
         CliCommand::VectorQuality(args) => run_vector_quality(args),
         CliCommand::VectorGate(args) => run_vector_gate(args),
@@ -142,6 +144,46 @@ fn run_ocr_throughput(args: OcrThroughputArgs) -> Result<(), CliError> {
     Ok(())
 }
 
+fn run_private_ocr_throughput(args: PrivateOcrThroughputArgs) -> Result<(), CliError> {
+    let ocr_engine = match (args.command, args.tesseract_command) {
+        (Some(command), None) => {
+            PrivateOcrBenchmarkEngine::local_command(command).map_err(CliError::benchmark)?
+        }
+        (None, Some(command)) => {
+            PrivateOcrBenchmarkEngine::tesseract(command).map_err(CliError::benchmark)?
+        }
+        _ => return Err(CliError::usage()),
+    };
+    let renderer = match (args.renderer_command, args.pdftoppm_command) {
+        (Some(command), None) => {
+            PrivatePdfRenderEngine::local_command(command).map_err(CliError::benchmark)?
+        }
+        (None, Some(command)) => {
+            PrivatePdfRenderEngine::pdftoppm(command).map_err(CliError::benchmark)?
+        }
+        _ => return Err(CliError::usage()),
+    };
+    let manifests = PrivateOcrManifestDigests::new(
+        args.dataset_manifest_sha256,
+        args.ocr_runtime_manifest_sha256,
+        args.renderer_manifest_sha256,
+        args.language_pack_manifest_sha256,
+    )
+    .map_err(CliError::benchmark)?;
+    let config = PrivateOcrThroughputConfig::new(args.root, ocr_engine, renderer, manifests)
+        .and_then(|config| config.with_max_documents(args.max_documents))
+        .and_then(|config| config.with_max_pages(args.max_pages))
+        .and_then(|config| config.with_pages_per_document(args.pages_per_document))
+        .and_then(|config| config.with_page_timeout_ms(args.page_timeout_ms))
+        .and_then(|config| config.with_render_dpi(args.render_dpi))
+        .and_then(|config| config.with_ocr_lang(args.ocr_lang))
+        .and_then(|config| config.with_engine_profile(args.engine_profile))
+        .map_err(CliError::benchmark)?;
+    let report = run_private_ocr_throughput_benchmark(config).map_err(CliError::benchmark)?;
+    println!("{}", report.to_redacted_json());
+    Ok(())
+}
+
 fn run_ocr_gate(args: OcrGateArgs) -> Result<(), CliError> {
     let report_json = fs::read_to_string(&args.report)
         .map_err(|_| CliError::user("unable to read OCR throughput report"))?;
@@ -205,6 +247,9 @@ where
         Some("dedupe-gate") => parse_dedupe_gate_args(&args[1..]).map(CliCommand::DedupeGate),
         Some("ocr-throughput") => {
             parse_ocr_throughput_args(&args[1..]).map(CliCommand::OcrThroughput)
+        }
+        Some("private-ocr-throughput") => {
+            parse_private_ocr_throughput_args(&args[1..]).map(CliCommand::PrivateOcrThroughput)
         }
         Some("ocr-gate") => parse_ocr_gate_args(&args[1..]).map(CliCommand::OcrGate),
         Some("vector-quality") => {
@@ -576,6 +621,168 @@ fn parse_ocr_throughput_args(args: &[String]) -> Result<OcrThroughputArgs, CliEr
     })
 }
 
+fn parse_private_ocr_throughput_args(
+    args: &[String],
+) -> Result<PrivateOcrThroughputArgs, CliError> {
+    let mut root = None;
+    let mut command = None;
+    let mut tesseract_command = None;
+    let mut renderer_command = None;
+    let mut pdftoppm_command = None;
+    let mut max_documents = 100_usize;
+    let mut max_pages = 500_usize;
+    let mut pages_per_document = 1_usize;
+    let mut page_timeout_ms = 30_000_u64;
+    let mut render_dpi = 150_u32;
+    let mut ocr_lang = "eng".to_string();
+    let mut engine_profile = "private-real-corpus".to_string();
+    let mut dataset_manifest_sha256 = None;
+    let mut ocr_runtime_manifest_sha256 = None;
+    let mut renderer_manifest_sha256 = None;
+    let mut language_pack_manifest_sha256 = None;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--root" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                root = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                if command.is_some() {
+                    return Err(CliError::usage());
+                }
+                command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--tesseract-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                if tesseract_command.is_some() {
+                    return Err(CliError::usage());
+                }
+                tesseract_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--renderer-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                if renderer_command.is_some() {
+                    return Err(CliError::usage());
+                }
+                renderer_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--pdftoppm-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                if pdftoppm_command.is_some() {
+                    return Err(CliError::usage());
+                }
+                pdftoppm_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--max-documents" => {
+                max_documents = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--max-pages" => {
+                max_pages = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--pages-per-document" => {
+                pages_per_document = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--page-timeout-ms" => {
+                page_timeout_ms = parse_positive_u64(args.get(index + 1))?;
+                index += 2;
+            }
+            "--render-dpi" => {
+                render_dpi = parse_positive_u32(args.get(index + 1))?;
+                index += 2;
+            }
+            "--ocr-lang" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                ocr_lang = value.to_string();
+                index += 2;
+            }
+            "--engine-profile" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                engine_profile = value.to_string();
+                index += 2;
+            }
+            "--dataset-manifest-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                dataset_manifest_sha256 = Some(value.to_string());
+                index += 2;
+            }
+            "--ocr-runtime-manifest-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                ocr_runtime_manifest_sha256 = Some(value.to_string());
+                index += 2;
+            }
+            "--renderer-manifest-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                renderer_manifest_sha256 = Some(value.to_string());
+                index += 2;
+            }
+            "--language-pack-manifest-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                language_pack_manifest_sha256 = Some(value.to_string());
+                index += 2;
+            }
+            "--json" => {
+                index += 1;
+            }
+            "--help" | "-h" => {
+                return Err(CliError::user(usage()));
+            }
+            _ => return Err(CliError::usage()),
+        }
+    }
+
+    Ok(PrivateOcrThroughputArgs {
+        root: root.ok_or_else(CliError::usage)?,
+        command,
+        tesseract_command,
+        renderer_command,
+        pdftoppm_command,
+        max_documents,
+        max_pages,
+        pages_per_document,
+        page_timeout_ms,
+        render_dpi,
+        ocr_lang,
+        engine_profile,
+        dataset_manifest_sha256: dataset_manifest_sha256.ok_or_else(CliError::usage)?,
+        ocr_runtime_manifest_sha256: ocr_runtime_manifest_sha256.ok_or_else(CliError::usage)?,
+        renderer_manifest_sha256: renderer_manifest_sha256.ok_or_else(CliError::usage)?,
+        language_pack_manifest_sha256: language_pack_manifest_sha256.ok_or_else(CliError::usage)?,
+    })
+}
+
 fn parse_ocr_gate_args(args: &[String]) -> Result<OcrGateArgs, CliError> {
     let mut report = None;
     let mut allow_synthetic = false;
@@ -797,7 +1004,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -809,6 +1016,7 @@ enum CliCommand {
     DedupeQuality(DedupeQualityArgs),
     DedupeGate(DedupeGateArgs),
     OcrThroughput(OcrThroughputArgs),
+    PrivateOcrThroughput(PrivateOcrThroughputArgs),
     OcrGate(OcrGateArgs),
     VectorQuality(VectorQualityArgs),
     VectorGate(VectorGateArgs),
@@ -874,6 +1082,26 @@ struct OcrThroughputArgs {
     pages: usize,
     page_timeout_ms: u64,
     render_dpi: u32,
+}
+
+#[derive(Clone, Debug)]
+struct PrivateOcrThroughputArgs {
+    root: PathBuf,
+    command: Option<PathBuf>,
+    tesseract_command: Option<PathBuf>,
+    renderer_command: Option<PathBuf>,
+    pdftoppm_command: Option<PathBuf>,
+    max_documents: usize,
+    max_pages: usize,
+    pages_per_document: usize,
+    page_timeout_ms: u64,
+    render_dpi: u32,
+    ocr_lang: String,
+    engine_profile: String,
+    dataset_manifest_sha256: String,
+    ocr_runtime_manifest_sha256: String,
+    renderer_manifest_sha256: String,
+    language_pack_manifest_sha256: String,
 }
 
 #[derive(Clone, Debug)]

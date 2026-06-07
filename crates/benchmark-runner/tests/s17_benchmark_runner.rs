@@ -6,9 +6,11 @@ use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
     evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
-    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
-    run_vector_quality_jsonl, BenchmarkGateConfig, DedupeQualityGateConfig, FieldQualityGateConfig,
-    OcrThroughputGateConfig, SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig,
+    run_private_ocr_throughput_benchmark, run_synthetic_ocr_throughput_benchmark,
+    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkGateConfig,
+    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests, PrivateOcrThroughputConfig,
+    PrivatePdfRenderEngine, SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig,
     SyntheticOcrBenchmarkEngine, VectorQualityConfig, VectorQualityGateConfig,
 };
 
@@ -812,7 +814,7 @@ fn synthetic_ocr_throughput_reports_page_latency_without_payload_or_path_leakage
     assert!(json.contains("\"target_claim\":\"not_evaluated\""));
     assert!(!json.contains(path_str(&command)));
     assert!(!json.contains("Synthetic OCR Candidate"));
-    assert!(!json.contains("PRIVATE OCR PAYLOAD"));
+    assert!(!json.contains("REDACTION_SENTINEL_OCR_TEXT"));
 
     let _ = fs::remove_file(&command);
 }
@@ -917,6 +919,80 @@ fn ocr_throughput_gate_rejects_private_real_report_with_inconsistent_throughput(
     assert!(error
         .to_string()
         .contains("private real-corpus OCR throughput metric counts do not match scores"));
+}
+
+#[test]
+fn private_ocr_throughput_benchmark_outputs_redacted_gateable_report() {
+    let root = temp_dir("private-ocr-throughput-root");
+    fs::write(
+        root.join("private-sample.pdf"),
+        b"%PDF synthetic private sample",
+    )
+    .unwrap();
+    fs::write(
+        root.join("ignored-private-sample.docx"),
+        b"ignored synthetic docx",
+    )
+    .unwrap();
+    let renderer = pdf_render_fixture_script("private-ocr-throughput-renderer");
+    let ocr = ocr_fixture_script("private-ocr-throughput-ocr");
+    let manifests = PrivateOcrManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+    )
+    .unwrap();
+    let config = PrivateOcrThroughputConfig::new(
+        &root,
+        PrivateOcrBenchmarkEngine::local_command(&ocr).unwrap(),
+        PrivatePdfRenderEngine::local_command(&renderer).unwrap(),
+        manifests,
+    )
+    .unwrap()
+    .with_max_documents(1)
+    .unwrap()
+    .with_max_pages(2)
+    .unwrap()
+    .with_pages_per_document(2)
+    .unwrap()
+    .with_page_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_ocr_throughput_benchmark(config).unwrap();
+
+    assert_eq!(report.page_count(), 2);
+    assert_eq!(report.document_count(), 1);
+    assert_eq!(report.scanned_document_count(), 1);
+    assert_eq!(report.engine_kind(), "local-command");
+    assert_eq!(report.latency().samples(), 2);
+    assert!(report.pages_per_second() > 0.0);
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"schema_version\":\"ocr-throughput.v1\""));
+    assert!(json.contains("\"dataset_kind\":\"private-real-corpus\""));
+    assert!(json.contains("\"document_count\":1"));
+    assert!(json.contains("\"scanned_document_count\":1"));
+    assert!(json.contains("\"page_count\":2"));
+    assert!(json.contains("\"target_claim\":\"ocr_throughput_target_met\""));
+    assert!(json.contains("\"contains_raw_ocr_text\":false"));
+    assert!(json.contains("\"contains_resume_paths\":false"));
+    assert!(json.contains("\"contains_command_paths\":false"));
+    assert!(json.contains("\"scope\":\"private real-corpus OCR throughput benchmark; aggregate redacted report only\""));
+    assert!(!json.contains(path_str(&root)));
+    assert!(!json.contains(path_str(&renderer)));
+    assert!(!json.contains(path_str(&ocr)));
+    assert!(!json.contains("private-sample.pdf"));
+    assert!(!json.contains("REDACTION_SENTINEL_OCR_TEXT"));
+    assert!(!json.contains("REDACTION_SENTINEL_PAGE_IMAGE"));
+
+    let gate = OcrThroughputGateConfig::new(2, 10_000.0, 0.001).require_private_real_corpus();
+    let evaluation = evaluate_ocr_throughput_gate_json(&json, gate).unwrap();
+    assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
+    assert_eq!(evaluation.page_count(), 2);
+
+    remove_dir(&root);
+    remove_dir(renderer.parent().unwrap());
+    remove_dir(ocr.parent().unwrap());
 }
 
 #[test]
@@ -1428,6 +1504,19 @@ fn ocr_fixture_script(label: &str) -> PathBuf {
     path
 }
 
+fn pdf_render_fixture_script(label: &str) -> PathBuf {
+    let path = temp_dir(label).join(pdf_render_fixture_file_name());
+    fs::write(&path, pdf_render_fixture_script_body()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
 fn embedding_fixture_script(label: &str) -> PathBuf {
     let path = temp_dir(label).join(embedding_fixture_file_name());
     fs::write(&path, embedding_fixture_script_body()).unwrap();
@@ -1446,14 +1535,29 @@ fn ocr_fixture_file_name() -> &'static str {
     "ocr-fixture.sh"
 }
 
+#[cfg(unix)]
+fn pdf_render_fixture_file_name() -> &'static str {
+    "pdf-render-fixture.sh"
+}
+
 #[cfg(windows)]
 fn ocr_fixture_file_name() -> &'static str {
     "ocr-fixture.cmd"
 }
 
+#[cfg(windows)]
+fn pdf_render_fixture_file_name() -> &'static str {
+    "pdf-render-fixture.cmd"
+}
+
 #[cfg(unix)]
 fn ocr_fixture_script_body() -> &'static str {
-    "#!/bin/sh\nprintf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s PRIVATE OCR PAYLOAD\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n"
+    "#!/bin/sh\nprintf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s REDACTION_SENTINEL_OCR_TEXT\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n"
+}
+
+#[cfg(unix)]
+fn pdf_render_fixture_script_body() -> &'static str {
+    "#!/bin/sh\nprintf 'REDACTION_SENTINEL_PAGE_IMAGE %s SYNTHETIC_PIXELS' \"$RESUME_IR_PDF_RENDER_PAGE_NO\"\n"
 }
 
 #[cfg(windows)]
@@ -1463,7 +1567,16 @@ fn ocr_fixture_script_body() -> &'static str {
         "echo resume-ir-ocr-v1\r\n",
         "echo confidence=0.97\r\n",
         "echo text:\r\n",
-        "echo Synthetic OCR Candidate page %RESUME_IR_OCR_PAGE_NO% PRIVATE OCR PAYLOAD\r\n",
+        "echo Synthetic OCR Candidate page %RESUME_IR_OCR_PAGE_NO% REDACTION_SENTINEL_OCR_TEXT\r\n",
+        "exit /b 0\r\n"
+    )
+}
+
+#[cfg(windows)]
+fn pdf_render_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "echo REDACTION_SENTINEL_PAGE_IMAGE %RESUME_IR_PDF_RENDER_PAGE_NO% SYNTHETIC_PIXELS\r\n",
         "exit /b 0\r\n"
     )
 }

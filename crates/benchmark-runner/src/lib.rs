@@ -11,8 +11,9 @@ use embedder::{
 use extractor_rules::{extract_strong_fields, FieldType};
 use index_fulltext::{FullTextIndex, IndexDocument, IndexSection, SearchQuery};
 use ocr_client::{
-    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
-    OcrPageRequest, OcrWorkerBudget, RenderedPage, TesseractOcrClient, TesseractOcrSpec,
+    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
+    LocalPdfRenderCommandSpec, OcrClient, OcrOptions, OcrPageRequest, OcrWorkerBudget,
+    PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage, TesseractOcrClient, TesseractOcrSpec,
 };
 use rank_fusion::{soft_dedupe_score, DedupeProfile};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
@@ -24,6 +25,11 @@ pub fn crate_name() -> &'static str {
 const DEFAULT_TOP_K: usize = 10;
 const MAX_TOP_K: usize = 100;
 const DEFAULT_SYNTHETIC_OCR_RENDER_DPI: u32 = 150;
+const DEFAULT_PRIVATE_OCR_MAX_DOCUMENTS: usize = 100;
+const DEFAULT_PRIVATE_OCR_MAX_PAGES: usize = 500;
+const DEFAULT_PRIVATE_OCR_PAGES_PER_DOCUMENT: usize = 1;
+const DEFAULT_PRIVATE_OCR_LANG: &str = "eng";
+const DEFAULT_PRIVATE_OCR_PROFILE: &str = "private-real-corpus";
 const DEFAULT_VECTOR_QUALITY_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_VECTOR_QUALITY_TEXT_BYTES: usize = 128 * 1024;
 const PRIVATE_REAL_RELEASE_QUERY_SAMPLE_MIN: usize = 500;
@@ -175,6 +181,223 @@ impl fmt::Debug for SyntheticOcrBenchmarkEngine {
             .field("engine_kind", &self.engine_kind())
             .field("command", &"<redacted>")
             .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum PrivateOcrBenchmarkEngine {
+    LocalCommand { command: PathBuf },
+    Tesseract { command: PathBuf },
+}
+
+impl PrivateOcrBenchmarkEngine {
+    pub fn local_command(command: impl AsRef<Path>) -> Result<Self> {
+        let command = command.as_ref().to_path_buf();
+        if command.as_os_str().is_empty() {
+            return Err(BenchmarkError::invalid_config("private_ocr_command"));
+        }
+        Ok(Self::LocalCommand { command })
+    }
+
+    pub fn tesseract(command: impl AsRef<Path>) -> Result<Self> {
+        let command = command.as_ref().to_path_buf();
+        if command.as_os_str().is_empty() {
+            return Err(BenchmarkError::invalid_config(
+                "private_ocr_tesseract_command",
+            ));
+        }
+        Ok(Self::Tesseract { command })
+    }
+
+    fn engine_kind(&self) -> &'static str {
+        match self {
+            Self::LocalCommand { .. } => "local-command",
+            Self::Tesseract { .. } => "tesseract",
+        }
+    }
+}
+
+impl fmt::Debug for PrivateOcrBenchmarkEngine {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateOcrBenchmarkEngine")
+            .field("engine_kind", &self.engine_kind())
+            .field("command", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum PrivatePdfRenderEngine {
+    LocalCommand { command: PathBuf },
+    Pdftoppm { command: PathBuf },
+}
+
+impl PrivatePdfRenderEngine {
+    pub fn local_command(command: impl AsRef<Path>) -> Result<Self> {
+        let command = command.as_ref().to_path_buf();
+        if command.as_os_str().is_empty() {
+            return Err(BenchmarkError::invalid_config(
+                "private_ocr_renderer_command",
+            ));
+        }
+        Ok(Self::LocalCommand { command })
+    }
+
+    pub fn pdftoppm(command: impl AsRef<Path>) -> Result<Self> {
+        let command = command.as_ref().to_path_buf();
+        if command.as_os_str().is_empty() {
+            return Err(BenchmarkError::invalid_config(
+                "private_ocr_pdftoppm_command",
+            ));
+        }
+        Ok(Self::Pdftoppm { command })
+    }
+}
+
+impl fmt::Debug for PrivatePdfRenderEngine {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivatePdfRenderEngine")
+            .field("renderer_kind", &private_pdf_renderer_kind(self))
+            .field("command", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateOcrManifestDigests {
+    dataset_manifest_sha256: String,
+    ocr_runtime_manifest_sha256: String,
+    renderer_manifest_sha256: String,
+    language_pack_manifest_sha256: String,
+}
+
+impl PrivateOcrManifestDigests {
+    pub fn new(
+        dataset_manifest_sha256: impl Into<String>,
+        ocr_runtime_manifest_sha256: impl Into<String>,
+        renderer_manifest_sha256: impl Into<String>,
+        language_pack_manifest_sha256: impl Into<String>,
+    ) -> Result<Self> {
+        let digests = Self {
+            dataset_manifest_sha256: dataset_manifest_sha256.into(),
+            ocr_runtime_manifest_sha256: ocr_runtime_manifest_sha256.into(),
+            renderer_manifest_sha256: renderer_manifest_sha256.into(),
+            language_pack_manifest_sha256: language_pack_manifest_sha256.into(),
+        };
+        if !is_sha256_hex(&digests.dataset_manifest_sha256)
+            || !is_sha256_hex(&digests.ocr_runtime_manifest_sha256)
+            || !is_sha256_hex(&digests.renderer_manifest_sha256)
+            || !is_sha256_hex(&digests.language_pack_manifest_sha256)
+        {
+            return Err(BenchmarkError::invalid_config(
+                "private_ocr_manifest_sha256",
+            ));
+        }
+        Ok(digests)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateOcrThroughputConfig {
+    root: PathBuf,
+    ocr_engine: PrivateOcrBenchmarkEngine,
+    renderer: PrivatePdfRenderEngine,
+    manifests: PrivateOcrManifestDigests,
+    max_documents: usize,
+    max_pages: usize,
+    pages_per_document: usize,
+    page_timeout_ms: u64,
+    render_dpi: u32,
+    ocr_lang: String,
+    engine_profile: String,
+}
+
+impl PrivateOcrThroughputConfig {
+    pub fn new(
+        root: impl AsRef<Path>,
+        ocr_engine: PrivateOcrBenchmarkEngine,
+        renderer: PrivatePdfRenderEngine,
+        manifests: PrivateOcrManifestDigests,
+    ) -> Result<Self> {
+        let root = root.as_ref().to_path_buf();
+        if root.as_os_str().is_empty() {
+            return Err(BenchmarkError::invalid_config("private_ocr_root"));
+        }
+        Ok(Self {
+            root,
+            ocr_engine,
+            renderer,
+            manifests,
+            max_documents: DEFAULT_PRIVATE_OCR_MAX_DOCUMENTS,
+            max_pages: DEFAULT_PRIVATE_OCR_MAX_PAGES,
+            pages_per_document: DEFAULT_PRIVATE_OCR_PAGES_PER_DOCUMENT,
+            page_timeout_ms: 30_000,
+            render_dpi: DEFAULT_SYNTHETIC_OCR_RENDER_DPI,
+            ocr_lang: DEFAULT_PRIVATE_OCR_LANG.to_string(),
+            engine_profile: DEFAULT_PRIVATE_OCR_PROFILE.to_string(),
+        })
+    }
+
+    pub fn with_max_documents(mut self, max_documents: usize) -> Result<Self> {
+        if max_documents == 0 {
+            return Err(BenchmarkError::invalid_config("private_ocr_max_documents"));
+        }
+        self.max_documents = max_documents;
+        Ok(self)
+    }
+
+    pub fn with_max_pages(mut self, max_pages: usize) -> Result<Self> {
+        if max_pages == 0 {
+            return Err(BenchmarkError::invalid_config("private_ocr_max_pages"));
+        }
+        self.max_pages = max_pages;
+        Ok(self)
+    }
+
+    pub fn with_pages_per_document(mut self, pages_per_document: usize) -> Result<Self> {
+        if pages_per_document == 0 {
+            return Err(BenchmarkError::invalid_config(
+                "private_ocr_pages_per_document",
+            ));
+        }
+        self.pages_per_document = pages_per_document;
+        Ok(self)
+    }
+
+    pub fn with_page_timeout_ms(mut self, page_timeout_ms: u64) -> Result<Self> {
+        if page_timeout_ms == 0 {
+            return Err(BenchmarkError::invalid_config(
+                "private_ocr_page_timeout_ms",
+            ));
+        }
+        self.page_timeout_ms = page_timeout_ms;
+        Ok(self)
+    }
+
+    pub fn with_render_dpi(mut self, render_dpi: u32) -> Result<Self> {
+        if render_dpi == 0 {
+            return Err(BenchmarkError::invalid_config("private_ocr_render_dpi"));
+        }
+        self.render_dpi = render_dpi;
+        Ok(self)
+    }
+
+    pub fn with_ocr_lang(mut self, ocr_lang: impl Into<String>) -> Result<Self> {
+        let ocr_lang = ocr_lang.into();
+        OcrOptions::new(ocr_lang.as_str(), self.engine_profile.as_str())
+            .map_err(BenchmarkError::ocr)?;
+        self.ocr_lang = ocr_lang;
+        Ok(self)
+    }
+
+    pub fn with_engine_profile(mut self, engine_profile: impl Into<String>) -> Result<Self> {
+        let engine_profile = engine_profile.into();
+        OcrOptions::new(self.ocr_lang.as_str(), engine_profile.as_str())
+            .map_err(BenchmarkError::ocr)?;
+        self.engine_profile = engine_profile;
+        Ok(self)
     }
 }
 
@@ -479,8 +702,8 @@ impl OcrThroughputReport {
             self.dataset_kind,
             self.engine_kind,
             self.page_count,
-            format_ms(self.total_ms),
-            format_ms(self.pages_per_second()),
+            format_consistency_number(self.total_ms),
+            format_consistency_number(self.pages_per_second()),
             self.total_page_bytes,
             self.total_text_bytes,
             format_ms(self.mean_confidence as f64),
@@ -511,6 +734,121 @@ impl fmt::Debug for OcrThroughputReport {
             .field("mean_confidence", &self.mean_confidence)
             .field("latency", &self.latency)
             .field("target_claim", &self.target_claim)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct PrivateOcrThroughputReport {
+    run_id: String,
+    platform: String,
+    page_count: usize,
+    document_count: usize,
+    scanned_document_count: usize,
+    engine_kind: &'static str,
+    total_ms: f64,
+    latency: LatencySummary,
+    manifests: PrivateOcrManifestDigests,
+}
+
+impl PrivateOcrThroughputReport {
+    pub fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    pub fn document_count(&self) -> usize {
+        self.document_count
+    }
+
+    pub fn scanned_document_count(&self) -> usize {
+        self.scanned_document_count
+    }
+
+    pub fn engine_kind(&self) -> &'static str {
+        self.engine_kind
+    }
+
+    pub fn latency(&self) -> &LatencySummary {
+        &self.latency
+    }
+
+    pub fn pages_per_second(&self) -> f64 {
+        if self.total_ms <= 0.0 {
+            return 0.0;
+        }
+
+        self.page_count as f64 / (self.total_ms / 1000.0)
+    }
+
+    pub fn to_redacted_json(&self) -> String {
+        format!(
+            concat!(
+                "{{",
+                "\"schema_version\":\"ocr-throughput.v1\",",
+                "\"run_id\":\"{}\",",
+                "\"platform\":\"{}\",",
+                "\"dataset_kind\":\"private-real-corpus\",",
+                "\"page_count\":{},",
+                "\"document_count\":{},",
+                "\"scanned_document_count\":{},",
+                "\"engine_kind\":\"{}\",",
+                "\"total_ms\":{},",
+                "\"page_latency_ms\":{{",
+                "\"samples\":{},",
+                "\"p50\":{},",
+                "\"p95\":{},",
+                "\"p99\":{}",
+                "}},",
+                "\"pages_per_second\":{},",
+                "\"target_claim\":\"ocr_throughput_target_met\",",
+                "\"corpus_origin\":\"private_local\",",
+                "\"privacy_boundary\":\"redacted_local_aggregate\",",
+                "\"contains_raw_ocr_text\":false,",
+                "\"contains_page_images\":false,",
+                "\"contains_resume_paths\":false,",
+                "\"contains_document_ids\":false,",
+                "\"contains_page_ids\":false,",
+                "\"contains_command_paths\":false,",
+                "\"dataset_manifest_sha256\":\"{}\",",
+                "\"ocr_runtime_manifest_sha256\":\"{}\",",
+                "\"renderer_manifest_sha256\":\"{}\",",
+                "\"language_pack_manifest_sha256\":\"{}\",",
+                "\"scope\":\"private real-corpus OCR throughput benchmark; aggregate redacted report only\"",
+                "}}"
+            ),
+            self.run_id,
+            self.platform,
+            self.page_count,
+            self.document_count,
+            self.scanned_document_count,
+            self.engine_kind,
+            format_consistency_number(self.total_ms),
+            self.latency.samples,
+            format_ms(self.latency.p50_ms),
+            format_ms(self.latency.p95_ms),
+            format_ms(self.latency.p99_ms),
+            format_consistency_number(self.pages_per_second()),
+            self.manifests.dataset_manifest_sha256,
+            self.manifests.ocr_runtime_manifest_sha256,
+            self.manifests.renderer_manifest_sha256,
+            self.manifests.language_pack_manifest_sha256,
+        )
+    }
+}
+
+impl fmt::Debug for PrivateOcrThroughputReport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateOcrThroughputReport")
+            .field("run_id", &self.run_id)
+            .field("platform", &self.platform)
+            .field("dataset_kind", &"private-real-corpus")
+            .field("page_count", &self.page_count)
+            .field("document_count", &self.document_count)
+            .field("scanned_document_count", &self.scanned_document_count)
+            .field("engine_kind", &self.engine_kind)
+            .field("total_ms", &self.total_ms)
+            .field("latency", &self.latency)
             .finish()
     }
 }
@@ -775,6 +1113,93 @@ pub fn run_synthetic_ocr_throughput_benchmark(
         mean_confidence: confidence_sum / config.page_count as f32,
         latency: LatencySummary::from_samples(latencies)?,
         target_claim: "not_evaluated",
+    })
+}
+
+pub fn run_private_ocr_throughput_benchmark(
+    config: PrivateOcrThroughputConfig,
+) -> Result<PrivateOcrThroughputReport> {
+    let engine_kind = config.ocr_engine.engine_kind();
+    let client: Box<dyn OcrClient> = match &config.ocr_engine {
+        PrivateOcrBenchmarkEngine::LocalCommand { command } => {
+            let spec =
+                LocalOcrCommandSpec::new(command, Vec::<String>::new(), &config.engine_profile)
+                    .map_err(BenchmarkError::ocr)?;
+            Box::new(LocalOcrCommandClient::new(spec))
+        }
+        PrivateOcrBenchmarkEngine::Tesseract { command } => {
+            let spec = TesseractOcrSpec::new(command, &config.engine_profile)
+                .map_err(BenchmarkError::ocr)?;
+            Box::new(TesseractOcrClient::new(spec))
+        }
+    };
+    let renderer = PrivatePdfRendererClient::new(&config.renderer)?;
+    let budget = OcrWorkerBudget::new(config.page_timeout_ms).map_err(BenchmarkError::ocr)?;
+    let options =
+        OcrOptions::new(&config.ocr_lang, &config.engine_profile).map_err(BenchmarkError::ocr)?;
+    let cancellation = CancellationToken::new();
+    let documents = collect_private_pdf_documents(&config.root, config.max_documents)?;
+    if documents.is_empty() {
+        return Err(BenchmarkError::invalid_config("private_ocr_pdf_documents"));
+    }
+
+    let run_started = Instant::now();
+    let mut page_latencies = Vec::new();
+    let mut document_count = 0_usize;
+    let mut scanned_document_count = 0_usize;
+
+    for document_path in documents {
+        if page_latencies.len() >= config.max_pages {
+            break;
+        }
+        document_count += 1;
+        let document_bytes = fs::read(&document_path).map_err(BenchmarkError::io)?;
+        let mut document_pages = 0_usize;
+
+        for page_index in 0..config.pages_per_document {
+            if page_latencies.len() >= config.max_pages {
+                break;
+            }
+            let page_no = u32::try_from(page_index + 1)
+                .map_err(|_| BenchmarkError::invalid_config("private_ocr_page_no"))?;
+            let page_started = Instant::now();
+            let rendered_page = renderer
+                .render_page(
+                    &document_bytes,
+                    page_no,
+                    config.render_dpi,
+                    budget,
+                    &cancellation,
+                )
+                .map_err(BenchmarkError::ocr)?;
+            let request =
+                OcrPageRequest::new(rendered_page, options.clone()).map_err(BenchmarkError::ocr)?;
+            let _page = client
+                .recognize_page(request, budget, &cancellation)
+                .map_err(BenchmarkError::ocr)?;
+            page_latencies.push(elapsed_ms(page_started));
+            document_pages += 1;
+        }
+
+        if document_pages > 0 {
+            scanned_document_count += 1;
+        }
+    }
+
+    if page_latencies.is_empty() || document_count == 0 || scanned_document_count == 0 {
+        return Err(BenchmarkError::invalid_config("private_ocr_page_count"));
+    }
+
+    Ok(PrivateOcrThroughputReport {
+        run_id: generate_run_id(),
+        platform: platform_label(),
+        page_count: page_latencies.len(),
+        document_count,
+        scanned_document_count,
+        engine_kind,
+        total_ms: elapsed_ms(run_started),
+        latency: LatencySummary::from_samples(page_latencies)?,
+        manifests: config.manifests,
     })
 }
 
@@ -3752,6 +4177,99 @@ fn synthetic_ocr_page_bytes(index: usize) -> Vec<u8> {
     bytes
 }
 
+enum PrivatePdfRendererClient {
+    LocalCommand(LocalPdfRenderCommandClient),
+    Pdftoppm(PdftoppmPdfRenderer),
+}
+
+impl PrivatePdfRendererClient {
+    fn new(engine: &PrivatePdfRenderEngine) -> Result<Self> {
+        match engine {
+            PrivatePdfRenderEngine::LocalCommand { command } => {
+                let spec = LocalPdfRenderCommandSpec::new(command, Vec::<String>::new())
+                    .map_err(BenchmarkError::ocr)?;
+                Ok(Self::LocalCommand(LocalPdfRenderCommandClient::new(spec)))
+            }
+            PrivatePdfRenderEngine::Pdftoppm { command } => {
+                let spec = PdftoppmRenderSpec::new(command).map_err(BenchmarkError::ocr)?;
+                Ok(Self::Pdftoppm(PdftoppmPdfRenderer::new(spec)))
+            }
+        }
+    }
+
+    fn render_page(
+        &self,
+        document_bytes: &[u8],
+        page_no: u32,
+        render_dpi: u32,
+        budget: OcrWorkerBudget,
+        cancellation: &CancellationToken,
+    ) -> std::result::Result<RenderedPage, ocr_client::OcrError> {
+        match self {
+            Self::LocalCommand(renderer) => {
+                renderer.render_page(document_bytes, page_no, render_dpi, budget, cancellation)
+            }
+            Self::Pdftoppm(renderer) => {
+                renderer.render_page(document_bytes, page_no, render_dpi, budget, cancellation)
+            }
+        }
+    }
+}
+
+fn private_pdf_renderer_kind(engine: &PrivatePdfRenderEngine) -> &'static str {
+    match engine {
+        PrivatePdfRenderEngine::LocalCommand { .. } => "local-command",
+        PrivatePdfRenderEngine::Pdftoppm { .. } => "pdftoppm",
+    }
+}
+
+fn collect_private_pdf_documents(root: &Path, max_documents: usize) -> Result<Vec<PathBuf>> {
+    if max_documents == 0 {
+        return Err(BenchmarkError::invalid_config("private_ocr_max_documents"));
+    }
+    let metadata = fs::symlink_metadata(root).map_err(BenchmarkError::io)?;
+    if !metadata.is_dir() {
+        return Err(BenchmarkError::invalid_config("private_ocr_root"));
+    }
+
+    let mut selected = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let mut entries = fs::read_dir(&directory)
+            .map_err(BenchmarkError::io)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(BenchmarkError::io)?;
+        entries.sort_by_key(|entry| entry.path());
+
+        for entry in entries {
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path).map_err(BenchmarkError::io)?;
+            let file_type = metadata.file_type();
+            if file_type.is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if private_ocr_is_pdf_path(&path) {
+                selected.push(path);
+                if selected.len() >= max_documents {
+                    return Ok(selected);
+                }
+            }
+        }
+    }
+
+    Ok(selected)
+}
+
+fn private_ocr_is_pdf_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+}
+
 fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
 }
@@ -3798,6 +4316,10 @@ fn directory_size_bytes(path: &Path) -> Result<u64> {
 
 fn format_ms(value: f64) -> String {
     format!("{value:.3}")
+}
+
+fn format_consistency_number(value: f64) -> String {
+    format!("{value:.6}")
 }
 
 fn escape_json_string(value: &str) -> String {
