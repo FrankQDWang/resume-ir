@@ -316,6 +316,9 @@ printf 'metadata=synthetic-fixture\n'
 #[test]
 fn semantic_and_hybrid_search_use_persistent_vector_snapshot_with_local_query_embedding() {
     let data_dir = temp_dir("semantic-search-data");
+    let query_dir = temp_dir("semantic-search-query-file-private-input");
+    let query_file = query_dir.join("query.txt");
+    fs::write(&query_file, "SemanticOnlyToken\n").unwrap();
     let fixture_root = fixture_root();
     let command = write_fixture_executable(
         "fixture-semantic-search-embedding",
@@ -360,7 +363,8 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
                 "--data-dir",
                 path_str(&data_dir),
                 "search",
-                "SemanticOnlyToken",
+                "--query-file",
+                path_str(&query_file),
                 "--mode",
                 mode,
                 "--embedding-command",
@@ -387,10 +391,13 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
         assert!(stdout.contains("synthetic-java-platform.pdf"));
         assert!(stdout.contains("synthetic-java-engineer.docx"));
         assert!(!stdout.contains("SemanticOnlyToken"));
+        assert!(!stdout.contains(path_str(&query_file)));
+        assert!(!stdout.contains(path_str(&query_dir)));
         assert!(!stdout.contains(path_str(&data_dir)));
         assert!(!stdout.contains(path_str(&fixture_root)));
     }
 
+    remove_dir(&query_dir);
     remove_dir(&data_dir);
 }
 

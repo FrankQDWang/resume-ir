@@ -65,6 +65,9 @@ production-ready scope source.
   directory; no real resume data, filenames, paths, raw OCR text, page images,
   command paths, generated reports, diagnostics, or model caches were committed
   or uploaded.
+  S273 used synthetic search and embedding fixtures only; no real query set,
+  real resume data, local paths, raw query text, command paths, generated
+  benchmark reports, diagnostics, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -569,7 +572,11 @@ obsolete preliminary files and checklists are not product scope.
   query benchmark reports from a local query-set JSONL plus reviewed local query
   command, passing raw queries through owner-only temporary files and emitting
   only redacted aggregate `benchmark.v1` fields accepted by the existing private
-  real-corpus gate. Missing production evidence still includes the actual
+  real-corpus gate. The CLI search surface now also accepts `--query-file` for
+  full-text, semantic, and hybrid searches, so reviewed local private benchmark
+  wrappers can pass the benchmark-provided owner-only query file into
+  `resume-cli search` without putting raw query text in argv or output. Missing
+  production evidence still includes the actual
   500-query private local benchmark run, production embedding model/license
   approval, and external 100k/1M real-corpus scale validation.
   Hosted Windows daemon scheduler tests now avoid rerunning metadata migrations
@@ -905,8 +912,82 @@ obsolete preliminary files and checklists are not product scope.
 | S270 | CI Windows detail IPC endpoint wait hardening complete locally | GitHub Actions PR #9 `windows-latest` failed after S269 in `resume-daemon --test s49_detail_ipc` because `daemon_detail_ipc_rejects_unauthorized_invalid_and_missing_docs_without_secret_leaks` did not see the daemon IPC endpoint within the test's five-second startup budget. The same test passed locally on macOS, and the same Windows job had already passed earlier daemon IPC tests, so the root cause is the detail IPC test's too-small hosted Windows endpoint wait, not the S269 benchmark-runner product change. After implementation, the s49 detail IPC helper uses a 30-second endpoint startup budget and kills/waits the child on timeout to avoid orphan daemon processes. | This slice hardens one hosted Windows test helper only. It does not change product daemon behavior, prove installed Windows service lifecycle, validate production installer behavior, clear platform blockers, or make stable release ready. |
 | S271 | Product release-readiness local evidence intake complete locally | Focused RED first failed because `resume-cli release-readiness --json` rejected local evidence report flags and therefore could not mark already validated redacted aggregate reports as provided release evidence. After implementation, release-readiness accepts benchmark, field-quality, dedupe-quality, vector-quality, and OCR-throughput report paths, validates each report with the same benchmark-runner release gates, emits `provided_evidence` entries with `privacy_boundary: "redacted_local_aggregate"`, suppresses only the corresponding local evidence blockers, and still exits nonzero while signing, notarization, installer lifecycle, licensing, cross-platform validation, and hardware fault-drill blockers remain unresolved. The runbook and release-readiness CI guard now document and enforce the new evidence-input surface without local path leaks. | This slice connects existing local redacted aggregate evidence reports to the release-readiness report only. It does not generate or review the actual private reports, run the 500-query/500-page local evidence runs, create private labels, approve OCR/model licenses, validate installers/services, clear external blockers, or make stable release ready. |
 | S272 | Product private OCR throughput runner hardening complete locally | Focused RED first failed because private OCR throughput reports had no redacted per-document failure aggregate surface and the runner failed a whole run on a single render/OCR failure; a second RED failed because the runner had no total-run budget or `run_budget_exhausted` report field. After implementation, `private-ocr-throughput` skips per-document render/OCR failures into aggregate counts, emits the new strict private report fields, supports `--max-run-ms`, and `ocr-gate --require-private-real-corpus` rejects budget-exhausted evidence. A budgeted private local witness over the user-authorized sample corpus processed 25 pages across 25 documents, reported zero failures, exhausted the 60s budget, and was rejected by OCR gate and release-readiness as diagnostic evidence only. | This slice hardens report generation and proves the current serial local OCR path is not release-ready for the 500-page representative gate. It does not clear the OCR throughput blocker, finish a 500-page representative run, approve OCR distribution, validate platforms, or make stable release ready. |
+| S273 | Product private benchmark query-file search input complete locally | Focused RED first failed because `resume-cli search --query-file <path>` was rejected as usage, forcing any private benchmark wrapper based on the product CLI to put raw query text back into argv. After implementation, CLI search accepts exactly one query source from either positional `<query>` or `--query-file <path>`, rejects duplicate or unavailable query-file inputs without printing the file path, and the existing semantic/hybrid search regression now runs through `--query-file` while keeping query text and paths out of output. The release blocker runbook and readiness guard document that private benchmark wrappers should pass `RESUME_IR_QUERY_INPUT_PATH` through `resume-cli search --query-file`. | This slice hardens the local private-query benchmark command path only. It does not generate a private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, or make stable release ready. |
 
 ## Command Log
+
+### S273
+
+Design target:
+
+- Let reviewed local private benchmark wrappers call the product CLI without
+  putting raw benchmark queries in argv.
+- Keep CLI search output and error surfaces free of query-file paths while
+  preserving the existing full-text, semantic, and hybrid search behavior.
+- Document the `RESUME_IR_QUERY_INPUT_PATH` to `resume-cli search --query-file`
+  wrapper pattern for future private 500-query benchmark runs.
+
+TDD RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s10_search_filters search_accepts_query_file_without_query_file_path_leak --locked -- --exact
+```
+
+Output summary:
+
+- The new test failed before implementation because `resume-cli search
+  --query-file <path>` was rejected as usage, so the CLI still required the raw
+  query as a positional argument.
+
+Implementation and focused checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s10_search_filters search_accepts_query_file_without_query_file_path_leak --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s39_embedding_worker semantic_and_hybrid_search_use_persistent_vector_snapshot_with_local_query_embedding --locked -- --exact
+```
+
+Output summary:
+
+- The full-text/filter focused regression passed after search accepted
+  `--query-file`, rejected duplicate query sources, rejected unavailable query
+  files with a fixed redacted error, and kept query-file paths out of stdout and
+  stderr.
+- The semantic/hybrid regression passed after it was switched to read the query
+  from a query file, proving the new query source works with local embedding and
+  hybrid search paths.
+
+Final checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s10_search_filters --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s39_embedding_worker --locked
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+./scripts/ci/check-release-readiness.sh
+git diff --check
+# changed-line privacy marker scan; private evidence patterns omitted from this public log
+./scripts/ci/guard-public-repo.sh
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The full `s10_search_filters` test file passed 13/13 and the full
+  `s39_embedding_worker` test file passed 9/9.
+- `cargo fmt --check`, focused `resume-cli` clippy, release-readiness runbook
+  guard, diff check, changed-line privacy marker scan, public-repo guard, and
+  full `verify-local.sh` passed locally. The full verifier covered workspace
+  clippy/tests, closed-loop CLI/daemon checks, benchmark/OCR/vector gates,
+  license/runbook/workflow guards, release-readiness guard, release artifact
+  and SBOM checks, macOS package and installer evidence, Windows evidence
+  scripts, and the final public repository guard.
+
+Scope note:
+
+- S273 prepares a safer local private benchmark query command path. The actual
+  500-query private benchmark, reviewed query workload, production model/license
+  approval, OCR throughput, platform release validation, and stable-release
+  readiness remain not complete.
 
 ### S272
 

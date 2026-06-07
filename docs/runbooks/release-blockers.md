@@ -166,6 +166,10 @@ owner-only temporary file path in `RESUME_IR_QUERY_INPUT_PATH` plus
 `resume-ir-query-v1` plus `hits=<n>` on stdout. Do not upload the query-set, the
 report, or command wrappers unless they have been separately reviewed to contain
 no raw queries, filenames, local paths, tokens, or resume data.
+Wrappers that delegate to `resume-cli search` must pass the query file through
+`resume-cli search --query-file "$RESUME_IR_QUERY_INPUT_PATH" --mode hybrid`
+instead of putting the raw query in argv; wrapper stdout must still be reduced
+to the benchmark protocol only.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \

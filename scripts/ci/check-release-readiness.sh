@@ -152,6 +152,7 @@ require_text "$workflow_guard" "check-release-readiness.sh"
 require_text "$release_workflow" "./scripts/ci/check-release-readiness.sh"
 require_text "$runbook" "resume-cli --data-dir <local-data-dir> release-readiness --json"
 require_text "$runbook" "--benchmark-report private-benchmark-local.json"
+require_text "$runbook" 'resume-cli search --query-file "$RESUME_IR_QUERY_INPUT_PATH" --mode hybrid'
 require_text "$runbook" "--field-quality-report private-field-quality.json"
 require_text "$runbook" "--dedupe-quality-report private-dedupe-quality.json"
 require_text "$runbook" "--vector-quality-report private-vector-quality.json"

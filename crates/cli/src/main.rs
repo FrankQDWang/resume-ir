@@ -8698,10 +8698,11 @@ fn format_json_optional_u64(value: Option<u64>) -> String {
 }
 
 fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
-    let Some(query) = args.first() else {
+    if args.is_empty() {
         return Err(CliError::usage(search_usage()));
     };
 
+    let mut query = None;
     let mut top_k = 10_usize;
     let mut filters = SearchFilters::default();
     let mut mode = SearchMode::FullText;
@@ -8715,10 +8716,20 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
     let mut ipc_token_file = None;
     let mut contact_hashes_any = Vec::new();
     let mut contact_hasher = None;
-    let mut index = 1_usize;
+    let mut index = 0_usize;
 
     while index < args.len() {
         match args[index].as_str() {
+            "--query-file" => {
+                if query.is_some() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                query = Some(read_search_query_file(Path::new(value))?);
+                index += 2;
+            }
             "--ipc" => {
                 if ipc_auto || ipc_endpoint.is_some() {
                     return Err(CliError::usage(search_usage()));
@@ -9026,6 +9037,14 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
                     .ok_or_else(|| CliError::user("search top-k is invalid"))?;
                 index += 2;
             }
+            value if !value.starts_with("--") && query.is_none() => {
+                let value = value.trim();
+                if value.is_empty() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                query = Some(value.to_string());
+                index += 1;
+            }
             _ => return Err(CliError::usage(search_usage())),
         }
     }
@@ -9038,9 +9057,10 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
     if !contact_hashes_any.is_empty() {
         filters = filters.with_contact_hashes_any(contact_hashes_any);
     }
+    let query = query.ok_or_else(|| CliError::usage(search_usage()))?;
 
     Ok(SearchArgs {
-        query: query.clone(),
+        query,
         top_k,
         filters,
         mode,
@@ -9056,7 +9076,17 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--name <name[,name...]>] [--names-any <name[,name...]>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--major <major[,major...]>] [--majors-any <major[,major...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--location <location[,location...]>] [--locations-any <location[,location...]>] [--skills-any <skill[,skill...]>] [--email <email[,email...]>] [--phone <phone[,phone...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search (<query>|--query-file <path>) [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--name <name[,name...]>] [--names-any <name[,name...]>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--major <major[,major...]>] [--majors-any <major[,major...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--location <location[,location...]>] [--locations-any <location[,location...]>] [--skills-any <skill[,skill...]>] [--email <email[,email...]>] [--phone <phone[,phone...]>] [--years-experience-min <years>] [--top-k <n>]"
+}
+
+fn read_search_query_file(path: &Path) -> Result<String> {
+    let query =
+        fs::read_to_string(path).map_err(|_| CliError::user("search query file is unavailable"))?;
+    let query = query.trim();
+    if query.is_empty() {
+        return Err(CliError::user("search query file is empty"));
+    }
+    Ok(query.to_string())
 }
 
 fn comma_values(value: &str) -> Vec<&str> {

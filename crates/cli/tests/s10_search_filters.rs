@@ -124,6 +124,87 @@ fn search_supports_degree_filter_and_top_k_without_query_echo() {
 }
 
 #[test]
+fn search_accepts_query_file_without_query_file_path_leak() {
+    let data_dir = temp_dir("search-query-file-data");
+    let query_dir = temp_dir("search-query-file-private-input");
+    let query_file = query_dir.join("private-query-file.txt");
+    fs::write(&query_file, "Java\n").unwrap();
+    import_fixtures(&data_dir);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "--query-file",
+            path_str(&query_file),
+            "--degree",
+            "bachelor",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run search from query file");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 2"));
+    assert!(stdout.contains("synthetic-java-engineer.docx"));
+    assert!(stdout.contains("synthetic-java-platform.pdf"));
+    assert!(!stdout.contains(path_str(&query_file)));
+    assert!(!stdout.contains(path_str(&query_dir)));
+    assert!(!stdout.contains("query:"));
+
+    let duplicate = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "Java",
+            "--query-file",
+            path_str(&query_file),
+        ])
+        .output()
+        .expect("reject duplicate query inputs");
+    assert!(!duplicate.status.success());
+    let duplicate_stdout = String::from_utf8_lossy(&duplicate.stdout);
+    let duplicate_stderr = String::from_utf8_lossy(&duplicate.stderr);
+    assert!(!duplicate_stdout.contains(path_str(&query_file)));
+    assert!(!duplicate_stderr.contains(path_str(&query_file)));
+    assert!(!duplicate_stdout.contains(path_str(&query_dir)));
+    assert!(!duplicate_stderr.contains(path_str(&query_dir)));
+
+    let missing_query_file = query_dir.join("missing-private-query.txt");
+    let missing = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "--query-file",
+            path_str(&missing_query_file),
+        ])
+        .output()
+        .expect("reject missing query file without path leak");
+    assert!(!missing.status.success());
+    let missing_stdout = String::from_utf8_lossy(&missing.stdout);
+    let missing_stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(missing_stderr.contains("search query file is unavailable"));
+    assert!(!missing_stdout.contains(path_str(&missing_query_file)));
+    assert!(!missing_stderr.contains(path_str(&missing_query_file)));
+    assert!(!missing_stdout.contains(path_str(&query_dir)));
+    assert!(!missing_stderr.contains(path_str(&query_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&query_dir);
+}
+
+#[test]
 fn filtered_search_prefilters_fields_before_fulltext_top_k_cutoff() {
     let data_dir = temp_dir("search-filter-prefilter-data");
     let resume_root = temp_dir("search-filter-prefilter-resumes");
