@@ -20,6 +20,17 @@ production-ready scope source.
   user-authorized local resume sample directory through temporary witness
   copies; no real resume data, filenames, paths, counts, raw text, or
   diagnostics were committed or uploaded.
+  S261 also used a private local-only PDF/Word witness against the
+  user-authorized local resume sample directory through temporary witness
+  copies; no real resume data, filenames, paths, raw text, or diagnostics were
+  committed or uploaded.
+- Current local real-corpus boundary: the user clarified that the available
+  local private validation corpus is approximately ten thousand real resumes on
+  this machine. This corpus may be used only for local redacted aggregate
+  witness and benchmark evidence. The original million-resume target should
+  still shape architecture and synthetic scale tooling, but true million-scale
+  real-corpus validation is not available on this machine and must be treated as
+  external-environment evidence rather than a local prerequisite.
 - Remote side effects: the public GitHub repository `FrankQDWang/resume-ir` was created during S67 after public-repo guard passed, and local `main` was pushed at `cc009da12c7c5753bbf3e66642fccee7db2ebeae`, then updated to `135f927` after S67 and `d0798fa` after S68. Main branch protection has been configured, draft PR #8 exists for the branch-protection progress record, and draft PR #9 exists for the current feature branch. No release, upload of runtime data, signing, or notarization has been performed.
 - Slice rule: acceptance command passes before a slice is marked complete.
 
@@ -77,11 +88,15 @@ obsolete preliminary files and checklists are not product scope.
   redacted output, can run a redacted internal full-text search probe without
   printing the private query or matched files, can run a redacted field-extraction
   aggregate probe without printing field values, filenames, or paths, and
-  removes private witness data. S127, S136, and S171 reran the explicit-root private
+  removes private witness data. S127, S136, S171, and S261 reran the explicit-root private
   PDF/Word witness against the user-authorized local sample directory for import/
   search/field probes plus bounded OCR witnesses using local `tesseract` and
   `pdftoppm`; these runs removed private temporary data and no private evidence
-  was committed or uploaded. Import scan errors are persisted and now surfaced
+  was committed or uploaded. The S261 private witness selected 8720 supported
+  PDF/DOCX/DOC inputs, skipped 49 unsupported entries, reported zero scan
+  errors and no scan-budget exhaustion, completed import, found 146 directly
+  searchable documents, queued 8554 OCR-required documents, and reported 20
+  failed import documents. Import scan errors are persisted and now surfaced
   as redacted kind/operation aggregate breakdowns through local status, doctor,
   and redacted diagnostics without path or path-digest disclosure. Missing production work includes
   production-grade PDF coverage, full
@@ -390,6 +405,11 @@ obsolete preliminary files and checklists are not product scope.
   renderer/language-pack artifact checksums and reviewed license metadata
   without printing local paths, runtime bytes, language-pack bytes, or complete
   digests. This is governance evidence only and does not approve distribution.
+  The S261 private local witness executed a bounded real OCR worker run against
+  20 queued OCR-required documents using local Tesseract plus Poppler, produced
+  22 OCR cache writes, had zero OCR document failures, and left the remaining
+  OCR queue explicitly budget-exhausted instead of claiming full-corpus OCR
+  completion.
   Deleted-document purge now removes
   current OCR jobs and current OCR page-cache entries that are no longer shared
   by visible documents. Missing or BLOCKED work includes final OCR/renderer
@@ -802,8 +822,63 @@ obsolete preliminary files and checklists are not product scope.
 | S258 | Product Chinese degree filter alias coverage complete locally | Focused RED first failed because `DegreeLevel::parse("本科")` returned `None`, and direct CLI search with `--degree 本科` rejected the filter even though import persisted a Chinese `学历：本科` mention as canonical `bachelor`. After implementation, degree filter parsing accepts Chinese high-school, associate, bachelor, master, and doctor aliases and maps them to the existing canonical degree levels; the CLI integration test imports synthetic Chinese degree resumes, filters with `--degree 本科`, returns only the canonical bachelor target, and keeps paths/emails/decoy degree text out of output. | This slice proves synthetic/local Chinese degree filter alias coverage only. It does not prove complete field dictionaries, real labeled field-quality metrics, long-tail education phrasing, private corpus recall, or stable release readiness. |
 | S259 | Product Chinese present date-range filter alias coverage complete locally | Focused RED first failed because `SearchFilters::with_date_range_overlaps("2024-01/至今")` produced no parsed range, and direct CLI search with `--date-range-overlaps 2024-01/至今` rejected the filter even though import persists Chinese `2020年1月 - 至今` ranges as canonical `YYYY-MM/PRESENT`. After implementation, date range filter parsing accepts Chinese open-ended aliases `至今`, `现在`, `当前`, `目前`, and `进行中` as canonical `PRESENT`; the CLI integration test imports synthetic Chinese present-date resumes, filters with `--date-range-overlaps 2024-01/至今`, returns only the active target, and keeps query echo, local paths, emails, and decoy files out of output. | This slice proves synthetic/local Chinese present date-range filter alias coverage only. It does not prove complete date parsing dictionaries, real labeled field-quality metrics, long-tail work-history phrasing, private corpus recall, or stable release readiness. |
 | S260 | Product Chinese year-month date-range filter alias coverage complete locally | Focused RED first failed because `SearchFilters::with_date_range_overlaps("2020年1月/2024年3月")` produced no parsed range, and direct CLI search with `--date-range-overlaps 2020年1月/2024年3月` rejected the filter even though import persists Chinese `2020年1月 - 2024年3月` ranges as canonical `YYYY-MM/YYYY-MM`. After implementation, date range filter parsing accepts Chinese year/month values as canonical `YYYY-MM`; the CLI integration test imports synthetic Chinese year/month date resumes, filters with `--date-range-overlaps 2020年1月/2024年3月`, returns only the overlapping target, and keeps query echo, local paths, emails, and decoy files out of output. | This slice proves synthetic/local Chinese year/month date-range filter input coverage only. It does not prove complete date parsing dictionaries, real labeled field-quality metrics, long-tail work-history phrasing, private corpus recall, or stable release readiness. |
+| S261 | Product private 10k-scale PDF/Word local witness complete | Authorized local-only PDF/Word witness over the private resume sample root selected 8720 supported PDF/DOCX/DOC files, skipped 49 unsupported entries, reported zero scan errors, completed import without scan-budget exhaustion, produced 146 directly searchable documents, queued 8554 OCR-required documents, reported 20 failed import documents, completed field and search probes, and removed private temporary data. A bounded OCR witness with local Tesseract plus Poppler processed 20 OCR-required documents, wrote 22 OCR cache entries, had zero OCR document failures, and left the remaining OCR queue explicitly budget-exhausted. | This slice proves a local redacted aggregate witness over the available private real corpus only. It does not prove full-corpus OCR completion, OCR quality, private labeled field/dedupe/vector quality, production embedding model licensing/distribution, installer signing/notarization, Windows service validation, or true external million-scale real-corpus latency. |
 
 ## Command Log
+
+### S261
+
+User-updated local evidence boundary:
+
+- The available local private validation corpus is approximately ten thousand
+  real resumes on this machine. The user authorized local-only scans and
+  dependency use, with no upload or network transfer of local resume data.
+- True million-resume real-corpus validation is not available locally. The
+  product must still keep architecture and synthetic scale tooling compatible
+  with that target, but local acceptance evidence can only be gathered from the
+  available private corpus and must remain redacted aggregate evidence.
+
+Private local witness command:
+
+```bash
+target/debug/resume-cli witness --root <redacted-private-root> --max-files 10000 --probe-search --probe-fields --run-ocr --ocr-max-documents 20 --ocr-tesseract-command <local-tesseract> --ocr-pdftoppm-command <local-pdftoppm> --ocr-lang eng+chi_sim --ocr-engine-profile local-tesseract
+```
+
+Output summary:
+
+- `files selected: 8720`
+- `unsupported entries skipped: 49`
+- `filesystem scan errors: 0`
+- `scan budget exhausted: no`
+- `witness import status: completed`
+- `searchable documents: 146`
+- `ocr required documents: 8554`
+- `ocr jobs queued: 8554`
+- `failed documents: 20`
+- `witness ocr status: completed`
+- `ocr documents processed: 20`
+- `ocr documents failed: 0`
+- `ocr cache writes: 22`
+- `ocr document budget exhausted: yes`
+- `witness field status: completed`
+- `field probe documents: 153`
+- `field probe mentions: 2276`
+- `witness search status: completed`
+- `search probe hits: 4`
+- `private witness data: removed`
+
+Scope note:
+
+- S261 proves local redacted aggregate import/search/field witness behavior over
+  the currently available private PDF/Word corpus and a bounded real OCR worker
+  run. It does not prove full-corpus OCR completion, private labeled quality,
+  production model readiness, release readiness, or external million-scale
+  latency.
+- The high `ocr required documents` count is a real product signal: full value
+  on this corpus depends on running and measuring a much larger OCR workload,
+  preferably through daemon worker scheduling and redacted aggregate throughput
+  evidence rather than a single foreground witness run.
+- Full product is still not complete.
 
 ### S260
 
