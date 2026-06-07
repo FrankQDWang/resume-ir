@@ -580,6 +580,32 @@ impl HnswShard {
                 )
             })
             .collect::<Vec<_>>();
+        if hits.len() < candidate_count {
+            let mut seen_vector_ids = hits
+                .iter()
+                .map(|hit| hit.vector_id().to_string())
+                .collect::<BTreeSet<_>>();
+            let mut backfill_hits = self
+                .documents
+                .iter()
+                .filter(|vector| seen_vector_ids.insert(vector.vector_id().to_string()))
+                .map(|vector| {
+                    VectorHit::new(
+                        vector.vector_id().to_string(),
+                        vector.doc_id().to_string(),
+                        cosine_similarity(query, vector.values()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            backfill_hits.sort_by(|left, right| {
+                right
+                    .score()
+                    .partial_cmp(&left.score())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.doc_id().cmp(right.doc_id()))
+            });
+            hits.extend(backfill_hits.into_iter().take(candidate_count - hits.len()));
+        }
         hits.sort_by(|left, right| {
             right
                 .score()

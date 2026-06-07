@@ -258,6 +258,58 @@ fn persistent_vector_index_uses_hnsw_ann_backend_after_reopen_and_keeps_model_sc
 }
 
 #[test]
+fn persistent_vector_index_returns_requested_k_for_identical_hnsw_vectors() {
+    let private_dir = temp_dir("private-identical-hnsw-vector-index");
+
+    {
+        let index = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+        index
+            .upsert(vec![
+                VectorDocument::new_for_model(
+                    "model-identical",
+                    "model-identical:vec_alpha",
+                    "doc_alpha",
+                    vec![1.0, 0.0, 0.0, 0.0],
+                )
+                .unwrap(),
+                VectorDocument::new_for_model(
+                    "model-identical",
+                    "model-identical:vec_bravo",
+                    "doc_bravo",
+                    vec![1.0, 0.0, 0.0, 0.0],
+                )
+                .unwrap(),
+                VectorDocument::new_for_model(
+                    "model-identical",
+                    "model-identical:vec_charlie",
+                    "doc_charlie",
+                    vec![1.0, 0.0, 0.0, 0.0],
+                )
+                .unwrap(),
+            ])
+            .unwrap();
+    }
+
+    {
+        let reopened = PersistentVectorIndex::open(&private_dir, 4).unwrap();
+        let hits = reopened
+            .knn_for_model(
+                QueryVector::new(vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
+                3,
+                "model-identical",
+            )
+            .unwrap();
+        let doc_ids = hits
+            .iter()
+            .map(|hit| hit.doc_id().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(doc_ids, ["doc_alpha", "doc_bravo", "doc_charlie"]);
+    }
+
+    remove_dir(&private_dir);
+}
+
+#[test]
 fn persistent_vector_index_rebuilds_hnsw_after_upsert_and_tombstone() {
     let private_dir = temp_dir("private-hnsw-stale-node-vector-index");
     let index = PersistentVectorIndex::open(&private_dir, 4).unwrap();

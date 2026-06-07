@@ -40,6 +40,9 @@ production-ready scope source.
   S266 used synthetic/private-shaped field-quality label fixtures only; no real
   labeled dataset, real resume data, local paths, field values, sample IDs, raw
   text, or generated quality report was committed or uploaded.
+  S267 used hosted CI failure logs and synthetic vector fixtures only; no real
+  resume data, local paths, raw text, vectors from real resumes, or generated
+  diagnostics were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -348,7 +351,10 @@ obsolete preliminary files and checklists are not product scope.
   search now rebuilds a process-local HNSW ANN graph from the durable vector
   snapshot, preserves model-scoped graph isolation, and reports the ANN backend
   through redacted CLI status, doctor, and diagnostics output without emitting
-  vectors or local paths. Persistent vector mutations now use a stable
+  vectors or local paths. HNSW query results now backfill from the same in-memory
+  shard when the ANN backend under-returns candidates, keeping small or tied
+  vector sets deterministic for CLI and daemon semantic closed-loop checks.
+  Persistent vector mutations now use a stable
   sidecar file lock, reload the latest snapshot while holding that lock, merge
   the current mutation, and refresh local HNSW state before returning, preventing
   stale CLI/daemon writers from overwriting each other's vector updates or
@@ -860,8 +866,65 @@ obsolete preliminary files and checklists are not product scope.
 | S264 | Product private real-corpus OCR throughput report generator complete locally | Focused RED first failed because `benchmark-runner` had no private OCR throughput report API and `resume-benchmark private-ocr-throughput` was rejected as usage. After implementation, the benchmark runner can scan local PDF files, run a configured local PDF renderer plus OCR engine, and emit a strict `ocr-throughput.v1` private-real-corpus aggregate report accepted by `ocr-gate --require-private-real-corpus` without paths, filenames, OCR text, page images, document IDs, page IDs, or command paths. A private local smoke over the user-authorized sample directory processed 2 pages across 2 documents with local Tesseract/Poppler and passed a smoke OCR gate using redacted aggregate output only. | This slice adds local private OCR throughput report generation and a tiny real-corpus smoke only. It does not complete the release-grade 500-page OCR throughput run, review/distribute OCR runtime manifests, prove OCR quality, run full-corpus OCR, clear OCR licensing, validate platform installers/services, or make stable release ready. |
 | S265 | Product private real-corpus query report generator complete locally | Focused RED first failed because `benchmark-runner` had no private query benchmark API and `resume-benchmark private-query` was rejected as usage. After implementation, the benchmark runner can read a local private query-set JSONL, pass each raw query to a reviewed local query command through an owner-only temporary file instead of argv, parse strict `resume-ir-query-v1`/`hits=<n>` stdout, and emit a `benchmark.v1` private-real-corpus hot-index hybrid aggregate report accepted by `gate --require-private-real-corpus` without query text, sample IDs, query-set paths, command paths, resume text, or filenames. | This slice adds local private query benchmark report generation only. It does not run the actual 500-query private local benchmark, create or review a production private query set, prove `<200ms` P95, select/license/distribute the embedding model, clear private vector-quality blockers, validate platform installers/services, or make stable release ready. |
 | S266 | Product private business field-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private field-quality report API and `resume-benchmark field-quality` rejected `--private-business-labeled` plus manifest SHA flags. After implementation, `field-quality` can evaluate a local labeled JSONL, emit a strict `field-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation manifest digests, and pass `field-gate --require-private-business-labeled` without raw resume text, field values, sample IDs, local paths, or filenames. The same slice also fixed the quality-label parser so `location` is accepted as a production expected field type. | This slice adds local private field-quality report generation only. It does not create or review the actual private business labeled dataset, prove production field precision/recall/F1 on real labels, clear dedupe/vector quality blockers, validate platform installers/services, or make stable release ready. |
+| S267 | CI semantic closed-loop HNSW under-return fix complete locally | GitHub Actions PR #9 `rust workspace` failed after S266 because the Linux CLI closed-loop semantic search output was missing `results: 3`; local macOS full verification had passed. Root cause was the persistent HNSW backend trusting ANN output cardinality even though small or tied vector sets can under-return on hosted Linux. After implementation, `HnswShard::knn` backfills missing candidates from the same in-memory shard with exact cosine ordering, and a synthetic identical-vector regression proves model-scoped persistent KNN returns the requested `k`. | This slice fixes deterministic small/tied vector result coverage for local and hosted synthetic closed-loop checks only. It does not prove private semantic quality, release model selection/licensing/distribution, real 100k/1M ANN recall or latency, platform installer/service behavior, or stable release readiness. |
 
 ## Command Log
+
+### S267
+
+Debug target:
+
+- Investigate the GitHub Actions PR #9 `rust workspace` failure after S266.
+- Keep the fix at the root cause of semantic closed-loop result under-return,
+  not in a looser CI assertion.
+
+TDD/RED evidence:
+
+```bash
+gh run view 27083713757 --job 79934065364 --log
+```
+
+Output summary:
+
+- Hosted Linux `rust workspace` failed in `./scripts/ci/check-cli-closed-loop.sh`
+  with `cli closed-loop output is missing required evidence: results: 3`.
+- The failure occurred after workspace tests and doc-tests passed, at the local
+  CLI semantic/hybrid closed-loop evidence stage.
+- Root cause: persistent vector KNN trusted HNSW ANN output cardinality. For
+  small or tied vector sets, the hosted Linux ANN backend can under-return even
+  when the shard has enough active model-scoped vectors.
+
+Implementation checks:
+
+```bash
+cargo test -p index-vector --test s11_vector_index persistent_vector_index_returns_requested_k_for_identical_hnsw_vectors --locked -- --exact
+./scripts/ci/check-cli-closed-loop.sh
+cargo test -p index-vector --locked
+cargo fmt --check
+cargo clippy -p index-vector --all-targets --locked -- -D warnings
+./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+# changed-file added-line privacy marker scan; private-local patterns omitted from this public log
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The identical-vector persistent HNSW regression passed, proving
+  model-scoped KNN returns the requested `k` for tied vectors.
+- The local CLI closed-loop script passed with semantic and hybrid evidence.
+- Full `index-vector` tests passed: 13 integration tests and 0 doctests.
+- `cargo fmt --check`, focused `index-vector` clippy, runbook guard, diff
+  check, public-repo guard, and full `verify-local.sh` passed.
+- The changed-file privacy scan found no private local path markers in added
+  lines.
+
+Scope note:
+
+- S267 fixes hosted/local synthetic semantic closed-loop determinism only. It
+  does not prove production semantic quality, real private vector-quality
+  labels, model distribution, or large-corpus ANN latency/recall.
 
 ### S266
 
