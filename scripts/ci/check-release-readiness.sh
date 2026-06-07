@@ -65,6 +65,7 @@ fi
 require_text "$stdout_file" '"schema_version": "release-readiness.v1"'
 require_text "$stdout_file" '"stable_release": "blocked"'
 require_text "$stdout_file" '"local_dry_run_artifacts": "evidence_only"'
+require_text "$stdout_file" '"provided_evidence": []'
 require_text "$stdout_file" '"blockers": ['
 require_text "$stdout_file" '"label": "signing certificates"'
 require_text "$stdout_file" "production signing certificates"
@@ -150,6 +151,12 @@ require_text "$verify_script" "./scripts/ci/check-release-readiness.sh"
 require_text "$workflow_guard" "check-release-readiness.sh"
 require_text "$release_workflow" "./scripts/ci/check-release-readiness.sh"
 require_text "$runbook" "resume-cli --data-dir <local-data-dir> release-readiness --json"
+require_text "$runbook" "--benchmark-report private-benchmark-local.json"
+require_text "$runbook" "--field-quality-report private-field-quality.json"
+require_text "$runbook" "--dedupe-quality-report private-dedupe-quality.json"
+require_text "$runbook" "--vector-quality-report private-vector-quality.json"
+require_text "$runbook" "--ocr-throughput-report private-ocr-throughput.json"
+require_text "$runbook" "provided_evidence"
 require_text "$runbook" "hardware fault drills"
 require_text "$runbook" "actual ENOSPC"
 require_text "$runbook" "service-level daemon kill"

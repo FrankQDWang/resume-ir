@@ -10,6 +10,7 @@ name = "resume-cli"
 path = "src/main.rs"
 
 [dependencies]
+benchmark-runner = { path = "../benchmark-runner" }
 embedder = { path = "../embedder" }
 fs-crawler = { path = "../fs-crawler" }
 fs4 = "0.13.1"

@@ -8,6 +8,12 @@ use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use benchmark_runner::{
+    evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
+    evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
+    evaluate_vector_quality_gate_json, BenchmarkGateConfig, DedupeQualityGateConfig,
+    FieldQualityGateConfig, OcrThroughputGateConfig, VectorQualityGateConfig,
+};
 use embedder::{
     Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
     LocalEmbeddingCommandSpec,
@@ -121,6 +127,11 @@ const WITNESS_IMPORT_FAILURE_KINDS: &[ImportFailureKind] = &[
     ImportFailureKind::EmptyText,
 ];
 const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
+const RELEASE_READINESS_PERFORMANCE_LABEL: &str = "private real-corpus performance evidence";
+const RELEASE_READINESS_FIELD_QUALITY_LABEL: &str = "field extraction quality";
+const RELEASE_READINESS_DEDUPE_QUALITY_LABEL: &str = "dedupe quality";
+const RELEASE_READINESS_VECTOR_QUALITY_LABEL: &str = "vector quality";
+const RELEASE_READINESS_OCR_THROUGHPUT_LABEL: &str = "OCR throughput";
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     (
         "signing certificates",
@@ -143,23 +154,23 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
         "signed pkg/dmg install/upgrade/uninstall/rollback and Gatekeeper validation are not proven on fresh macOS release artifacts",
     ),
     (
-        "private real-corpus performance evidence",
+        RELEASE_READINESS_PERFORMANCE_LABEL,
         "representative local private real-corpus hot-index hybrid performance evidence is not available; release evidence must cover the available private corpus with at least 500 query samples, and external 100k/1M scale validation remains future scale evidence rather than a local prerequisite",
     ),
     (
-        "field extraction quality",
+        RELEASE_READINESS_FIELD_QUALITY_LABEL,
         "private business labeled field-quality evidence is not available; release evidence requires min-samples 1000 and precision/recall/F1 >= 0.93 across required production fields",
     ),
     (
-        "dedupe quality",
+        RELEASE_READINESS_DEDUPE_QUALITY_LABEL,
         "private business labeled dedupe-quality evidence is not available; release evidence requires min-pairs 1000, min-positive-pairs 100, and precision/recall/F1 >= 0.90",
     ),
     (
-        "vector quality",
+        RELEASE_READINESS_VECTOR_QUALITY_LABEL,
         "private business labeled vector-quality evidence is not available; release evidence requires min-samples 1000, recall@k >= 0.90, MRR >= 0.85, NDCG@k >= 0.90, and zero-recall queries blocked",
     ),
     (
-        "OCR throughput",
+        RELEASE_READINESS_OCR_THROUGHPUT_LABEL,
         "private real-corpus OCR throughput evidence is not available; release evidence requires min-pages 500, OCR p95 <= 1000ms, pages_per_second >= 1, and reviewed OCR runtime/renderer/language-pack manifests",
     ),
     (
@@ -227,17 +238,17 @@ fn run() -> Result<()> {
 }
 
 fn release_readiness_command(args: &[String]) -> Result<()> {
-    let json = match args {
-        [] => false,
-        [arg] if arg == "--json" => true,
-        _ => {
-            return Err(CliError::usage(release_readiness_usage()));
-        }
-    };
+    let args = parse_release_readiness_args(args)?;
+    let provided_evidence = validate_release_readiness_evidence(&args.evidence)?;
 
-    if json {
+    if args.json {
+        let provided_labels = provided_evidence
+            .iter()
+            .map(|evidence| evidence.label)
+            .collect::<BTreeSet<_>>();
         let blockers = RELEASE_READINESS_BLOCKERS
             .iter()
+            .filter(|(label, _)| !provided_labels.contains(label))
             .map(|(label, detail)| {
                 serde_json::json!({
                     "label": label,
@@ -246,10 +257,22 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
                 })
             })
             .collect::<Vec<_>>();
+        let provided_evidence = provided_evidence
+            .iter()
+            .map(|evidence| {
+                serde_json::json!({
+                    "label": evidence.label,
+                    "status": "provided",
+                    "privacy_boundary": "redacted_local_aggregate",
+                    "detail": evidence.detail,
+                })
+            })
+            .collect::<Vec<_>>();
         let report = serde_json::json!({
             "schema_version": "release-readiness.v1",
             "stable_release": "blocked",
             "local_dry_run_artifacts": "evidence_only",
+            "provided_evidence": provided_evidence,
             "blockers": blockers,
             "next_gate": "keep release blocked until every item has current local evidence",
         });
@@ -264,8 +287,21 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
     println!("resume-ir release readiness");
     println!("stable release: blocked");
     println!("local dry-run artifacts: evidence only");
+    if !provided_evidence.is_empty() {
+        println!("provided local evidence:");
+        for evidence in &provided_evidence {
+            println!("- {}: provided ({})", evidence.label, evidence.detail);
+        }
+    }
     println!("blocked evidence:");
+    let provided_labels = provided_evidence
+        .iter()
+        .map(|evidence| evidence.label)
+        .collect::<BTreeSet<_>>();
     for (label, detail) in RELEASE_READINESS_BLOCKERS {
+        if provided_labels.contains(label) {
+            continue;
+        }
         println!("- {label}: blocked ({detail})");
     }
     println!("next gate: keep release blocked until every item has current local evidence");
@@ -276,7 +312,157 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>]"
+}
+
+#[derive(Default)]
+struct ReleaseReadinessEvidenceArgs {
+    benchmark_report: Option<PathBuf>,
+    field_quality_report: Option<PathBuf>,
+    dedupe_quality_report: Option<PathBuf>,
+    vector_quality_report: Option<PathBuf>,
+    ocr_throughput_report: Option<PathBuf>,
+}
+
+struct ReleaseReadinessArgs {
+    json: bool,
+    evidence: ReleaseReadinessEvidenceArgs,
+}
+
+struct ReleaseReadinessProvidedEvidence {
+    label: &'static str,
+    detail: &'static str,
+}
+
+fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs> {
+    let mut parsed = ReleaseReadinessArgs {
+        json: false,
+        evidence: ReleaseReadinessEvidenceArgs::default(),
+    };
+    let mut index = 0_usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--json" => {
+                parsed.json = true;
+                index += 1;
+            }
+            "--benchmark-report" => {
+                parsed.evidence.benchmark_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--field-quality-report" => {
+                parsed.evidence.field_quality_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--dedupe-quality-report" => {
+                parsed.evidence.dedupe_quality_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--vector-quality-report" => {
+                parsed.evidence.vector_quality_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--ocr-throughput-report" => {
+                parsed.evidence.ocr_throughput_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            _ => return Err(CliError::usage(release_readiness_usage())),
+        }
+    }
+    Ok(parsed)
+}
+
+fn take_release_readiness_path(args: &[String], index: &mut usize) -> Result<PathBuf> {
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(release_readiness_usage()));
+    };
+    *index += 2;
+    Ok(PathBuf::from(value))
+}
+
+fn validate_release_readiness_evidence(
+    args: &ReleaseReadinessEvidenceArgs,
+) -> Result<Vec<ReleaseReadinessProvidedEvidence>> {
+    let mut provided = Vec::new();
+    if let Some(path) = &args.benchmark_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        let config = BenchmarkGateConfig::new(1, 500, 200.0)
+            .with_max_zero_result_queries(0)
+            .require_private_real_corpus();
+        evaluate_benchmark_gate_json(&report, config).map_err(|error| {
+            release_readiness_evidence_error(RELEASE_READINESS_PERFORMANCE_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_PERFORMANCE_LABEL,
+            detail: "private real-corpus hot-index hybrid benchmark report passed the local release gate",
+        });
+    }
+    if let Some(path) = &args.field_quality_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        let config = FieldQualityGateConfig::new(0.93, 0.93, 0.93)
+            .with_min_samples(1000)
+            .require_private_business_labeled();
+        evaluate_field_quality_gate_json(&report, config).map_err(|error| {
+            release_readiness_evidence_error(RELEASE_READINESS_FIELD_QUALITY_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_FIELD_QUALITY_LABEL,
+            detail: "private business field-quality report passed the local release gate",
+        });
+    }
+    if let Some(path) = &args.dedupe_quality_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        let config = DedupeQualityGateConfig::new(0.90, 0.90, 0.90)
+            .with_min_pairs(1000)
+            .with_min_positive_pairs(100)
+            .require_private_business_labeled();
+        evaluate_dedupe_quality_gate_json(&report, config).map_err(|error| {
+            release_readiness_evidence_error(RELEASE_READINESS_DEDUPE_QUALITY_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_DEDUPE_QUALITY_LABEL,
+            detail: "private business dedupe-quality report passed the local release gate",
+        });
+    }
+    if let Some(path) = &args.vector_quality_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        let config = VectorQualityGateConfig::new(1000, 0.90, 0.85, 0.90)
+            .with_max_zero_recall_queries(0)
+            .require_private_business_labeled();
+        evaluate_vector_quality_gate_json(&report, config).map_err(|error| {
+            release_readiness_evidence_error(RELEASE_READINESS_VECTOR_QUALITY_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_VECTOR_QUALITY_LABEL,
+            detail: "private business vector-quality report passed the local release gate",
+        });
+    }
+    if let Some(path) = &args.ocr_throughput_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        let config = OcrThroughputGateConfig::new(500, 1000.0, 1.0).require_private_real_corpus();
+        evaluate_ocr_throughput_gate_json(&report, config).map_err(|error| {
+            release_readiness_evidence_error(RELEASE_READINESS_OCR_THROUGHPUT_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_OCR_THROUGHPUT_LABEL,
+            detail: "private real-corpus OCR throughput report passed the local release gate",
+        });
+    }
+    Ok(provided)
+}
+
+fn read_release_readiness_evidence_report(path: &Path) -> Result<String> {
+    fs::read_to_string(path)
+        .map_err(|_| CliError::user("unable to read release readiness evidence report"))
+}
+
+fn release_readiness_evidence_error(
+    label: &'static str,
+    error: benchmark_runner::BenchmarkGateError,
+) -> CliError {
+    CliError::user(format!(
+        "release readiness evidence failed validation: {label}: {error}"
+    ))
 }
 
 fn candidate_review_command(data_dir: &Path, args: &[String]) -> Result<()> {

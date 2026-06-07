@@ -52,6 +52,14 @@ production-ready scope source.
   local paths, raw queries, candidate text, sample IDs, candidate IDs, vectors,
   command paths, model paths, or generated quality report was committed or
   uploaded.
+  S270 used hosted CI failure logs and synthetic/local daemon IPC fixtures only;
+  no real resume data, local paths, raw text, diagnostics, or generated runtime
+  data was committed or uploaded.
+  S271 used synthetic/private-shaped redacted aggregate report fixtures only;
+  no real benchmark, field-quality, dedupe-quality, vector-quality, OCR
+  throughput, resume data, local paths, raw queries, labels, sample IDs,
+  document IDs, vectors, page images, secrets, diagnostics, or generated private
+  report was committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -879,8 +887,77 @@ obsolete preliminary files and checklists are not product scope.
 | S268 | Product private business dedupe-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private dedupe-quality report API and `resume-benchmark dedupe-quality` rejected `--private-business-labeled` plus manifest SHA flags. After implementation, `dedupe-quality` can evaluate a local labeled pair JSONL, emit a strict `dedupe-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation manifest digests, and pass `dedupe-gate --require-private-business-labeled` without raw resume text, profile values, names, schools, companies, skills, sample IDs, document IDs, local paths, or filenames. The release blocker runbook now documents the local report generation command before the gate. | This slice adds local private dedupe-quality report generation only. It does not create or review the actual private business labeled dedupe dataset, prove production dedupe precision/recall/F1 on real labels, clear field/vector quality blockers, validate platform installers/services, or make stable release ready. |
 | S269 | Product private business vector-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private vector-quality report API and `resume-benchmark vector-quality` rejected `--private-business-labeled` plus dataset, annotation, and model manifest SHA flags. After implementation, `vector-quality` can evaluate a local labeled query/candidate JSONL through a reviewed local embedding command, emit a strict `vector-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation/model manifest digests, and pass `vector-gate --require-private-business-labeled` without raw queries, candidate text, sample IDs, candidate IDs, vectors, command paths, model paths, local paths, or raw resume text. The private report omits `model_id`, `dimension`, and other non-allowed release-evidence fields; the runbook now documents local report generation before the gate. | This slice adds local private vector-quality report generation only. It does not create or review the actual private business labeled vector dataset, approve or distribute a production embedding model, prove production semantic recall/MRR/NDCG on real labels, clear field/dedupe/vector quality blockers, validate platform installers/services, or make stable release ready. |
 | S270 | CI Windows detail IPC endpoint wait hardening complete locally | GitHub Actions PR #9 `windows-latest` failed after S269 in `resume-daemon --test s49_detail_ipc` because `daemon_detail_ipc_rejects_unauthorized_invalid_and_missing_docs_without_secret_leaks` did not see the daemon IPC endpoint within the test's five-second startup budget. The same test passed locally on macOS, and the same Windows job had already passed earlier daemon IPC tests, so the root cause is the detail IPC test's too-small hosted Windows endpoint wait, not the S269 benchmark-runner product change. After implementation, the s49 detail IPC helper uses a 30-second endpoint startup budget and kills/waits the child on timeout to avoid orphan daemon processes. | This slice hardens one hosted Windows test helper only. It does not change product daemon behavior, prove installed Windows service lifecycle, validate production installer behavior, clear platform blockers, or make stable release ready. |
+| S271 | Product release-readiness local evidence intake complete locally | Focused RED first failed because `resume-cli release-readiness --json` rejected local evidence report flags and therefore could not mark already validated redacted aggregate reports as provided release evidence. After implementation, release-readiness accepts benchmark, field-quality, dedupe-quality, vector-quality, and OCR-throughput report paths, validates each report with the same benchmark-runner release gates, emits `provided_evidence` entries with `privacy_boundary: "redacted_local_aggregate"`, suppresses only the corresponding local evidence blockers, and still exits nonzero while signing, notarization, installer lifecycle, licensing, cross-platform validation, and hardware fault-drill blockers remain unresolved. The runbook and release-readiness CI guard now document and enforce the new evidence-input surface without local path leaks. | This slice connects existing local redacted aggregate evidence reports to the release-readiness report only. It does not generate or review the actual private reports, run the 500-query/500-page local evidence runs, create private labels, approve OCR/model licenses, validate installers/services, clear external blockers, or make stable release ready. |
 
 ## Command Log
+
+### S271
+
+Design target:
+
+- Let `resume-cli release-readiness` consume local redacted aggregate report
+  files produced by the benchmark/quality/OCR evidence workflows.
+- Reuse the existing strict benchmark-runner release gates, so release-readiness
+  cannot clear a local evidence item with a weaker or divergent validation path.
+- Keep report paths and private contents out of stdout/stderr. Even with all
+  local evidence reports present, keep stable release blocked until external
+  release blockers are resolved.
+
+TDD RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers --locked -- --exact
+```
+
+Output summary:
+
+- The new test failed before implementation because the CLI did not accept
+  `--benchmark-report`, `--field-quality-report`, `--dedupe-quality-report`,
+  `--vector-quality-report`, or `--ocr-throughput-report`, so stdout was not a
+  release-readiness JSON evidence report.
+
+Implementation and focused checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers --offline -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo clippy -p resume-cli --test s161_release_readiness --locked -- -D warnings
+./scripts/ci/check-release-readiness.sh
+```
+
+Output summary:
+
+- The focused evidence-intake regression passed after release-readiness parsed
+  local evidence flags, validated synthetic redacted aggregate reports through
+  benchmark-runner gates, emitted `provided_evidence`, removed only those local
+  evidence blockers, and kept external blockers plus nonzero exit status.
+- The full release-readiness CLI test file, fmt check, focused CLI clippy, and
+  release-readiness CI guard passed locally.
+
+Final checks:
+
+```bash
+git diff --check
+# changed-file added-line privacy marker scan; private evidence patterns omitted from this public log
+./scripts/ci/guard-public-repo.sh
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Diff check, changed-line privacy scan, public-repo guard, and full
+  `verify-local.sh` passed locally. The full verifier covered workspace clippy
+  and tests, closed-loop CLI/daemon checks, benchmark/OCR/vector gates,
+  license/runbook/workflow guards, release-readiness guard, release artifact
+  and SBOM evidence, macOS package/installer evidence, Windows evidence scripts,
+  and the final public repository guard.
+
+Scope note:
+
+- S271 does not commit or upload private reports. It records only the local
+  command surface needed to consume reviewed redacted aggregate evidence and
+  keeps release-readiness fail-closed while external blockers remain.
 
 ### S270
 

@@ -46,6 +46,26 @@ release criterion has current local evidence:
 resume-cli --data-dir <local-data-dir> release-readiness --json
 ```
 
+After local redacted aggregate reports have been generated and reviewed, feed
+them into the readiness gate as evidence inputs:
+
+```bash
+resume-cli --data-dir <local-data-dir> release-readiness --json \
+  --benchmark-report private-benchmark-local.json \
+  --field-quality-report private-field-quality.json \
+  --dedupe-quality-report private-dedupe-quality.json \
+  --vector-quality-report private-vector-quality.json \
+  --ocr-throughput-report private-ocr-throughput.json
+```
+
+Passing these local evidence inputs marks only the corresponding local evidence
+items as `provided_evidence`. The command must still fail closed while signing,
+notarization, installer lifecycle, model/OCR licensing, cross-platform release
+validation, or hardware fault-drill blockers remain unresolved. Do not upload or
+commit generated reports unless they have been separately reviewed to contain no
+raw resume text, filenames, local paths, queries, labels, sample IDs, document
+IDs, vectors, page images, secrets, diagnostics, indexes, or model caches.
+
 Release dry-runs must also produce a blocked signing evidence manifest, not a
 fake signature result. The manifest schema is `release.signing_evidence.v1` and
 must contain only artifact names, byte counts, hashes, and blocked signing
