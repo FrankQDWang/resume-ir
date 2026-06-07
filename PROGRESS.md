@@ -68,6 +68,10 @@ production-ready scope source.
   S273 used synthetic search and embedding fixtures only; no real query set,
   real resume data, local paths, raw query text, command paths, generated
   benchmark reports, diagnostics, or model caches were committed or uploaded.
+  S274 used synthetic/private-shaped redacted aggregate benchmark report
+  fixtures only; no real benchmark query set, real resume data, local paths,
+  raw queries, generated private reports, diagnostics, or model caches were
+  committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -578,7 +582,11 @@ obsolete preliminary files and checklists are not product scope.
   `resume-cli search` without putting raw query text in argv or output. Missing
   production evidence still includes the actual
   500-query private local benchmark run, production embedding model/license
-  approval, and external 100k/1M real-corpus scale validation.
+  approval, and external 100k/1M real-corpus scale validation. Release-
+  readiness benchmark evidence intake now enforces the same 8000-document,
+  500-query, p95 <= 200ms, zero-result-query gate documented for the local
+  private benchmark run, so undersized private reports cannot clear the local
+  performance evidence blocker.
   Hosted Windows daemon scheduler tests now avoid rerunning metadata migrations
   from the test process after foreground daemon readiness has already proved the
   store is migrated, reducing live worker-loop SQLCipher/SQLite DDL contention
@@ -913,8 +921,77 @@ obsolete preliminary files and checklists are not product scope.
 | S271 | Product release-readiness local evidence intake complete locally | Focused RED first failed because `resume-cli release-readiness --json` rejected local evidence report flags and therefore could not mark already validated redacted aggregate reports as provided release evidence. After implementation, release-readiness accepts benchmark, field-quality, dedupe-quality, vector-quality, and OCR-throughput report paths, validates each report with the same benchmark-runner release gates, emits `provided_evidence` entries with `privacy_boundary: "redacted_local_aggregate"`, suppresses only the corresponding local evidence blockers, and still exits nonzero while signing, notarization, installer lifecycle, licensing, cross-platform validation, and hardware fault-drill blockers remain unresolved. The runbook and release-readiness CI guard now document and enforce the new evidence-input surface without local path leaks. | This slice connects existing local redacted aggregate evidence reports to the release-readiness report only. It does not generate or review the actual private reports, run the 500-query/500-page local evidence runs, create private labels, approve OCR/model licenses, validate installers/services, clear external blockers, or make stable release ready. |
 | S272 | Product private OCR throughput runner hardening complete locally | Focused RED first failed because private OCR throughput reports had no redacted per-document failure aggregate surface and the runner failed a whole run on a single render/OCR failure; a second RED failed because the runner had no total-run budget or `run_budget_exhausted` report field. After implementation, `private-ocr-throughput` skips per-document render/OCR failures into aggregate counts, emits the new strict private report fields, supports `--max-run-ms`, and `ocr-gate --require-private-real-corpus` rejects budget-exhausted evidence. A budgeted private local witness over the user-authorized sample corpus processed 25 pages across 25 documents, reported zero failures, exhausted the 60s budget, and was rejected by OCR gate and release-readiness as diagnostic evidence only. | This slice hardens report generation and proves the current serial local OCR path is not release-ready for the 500-page representative gate. It does not clear the OCR throughput blocker, finish a 500-page representative run, approve OCR distribution, validate platforms, or make stable release ready. |
 | S273 | Product private benchmark query-file search input complete locally | Focused RED first failed because `resume-cli search --query-file <path>` was rejected as usage, forcing any private benchmark wrapper based on the product CLI to put raw query text back into argv. After implementation, CLI search accepts exactly one query source from either positional `<query>` or `--query-file <path>`, rejects duplicate or unavailable query-file inputs without printing the file path, and the existing semantic/hybrid search regression now runs through `--query-file` while keeping query text and paths out of output. The release blocker runbook and readiness guard document that private benchmark wrappers should pass `RESUME_IR_QUERY_INPUT_PATH` through `resume-cli search --query-file`. | This slice hardens the local private-query benchmark command path only. It does not generate a private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, or make stable release ready. |
+| S274 | Product release-readiness benchmark document floor aligned locally | Focused RED first failed because `resume-cli release-readiness --json --benchmark-report <report>` accepted a private real-corpus benchmark report with `document_count: 7999`, emitted release-readiness JSON, and treated the local performance evidence as provided even though the runbook gate requires at least 8000 local documents. After implementation, release-readiness validates benchmark evidence with an 8000-document floor, keeps the 500-query, p95 <= 200ms, and zero-result-query requirements, rejects undersized private reports with a redacted validation error, and the runbook/CI guard now lock the same threshold text. | This slice fixes release-readiness evidence intake consistency only. It does not generate or review the actual private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 
 ## Command Log
+
+### S274
+
+Design target:
+
+- Align `resume-cli release-readiness --benchmark-report` with the local private
+  benchmark runbook gate.
+- Reject redacted benchmark reports below 8000 local documents even when their
+  query count, latency, zero-result count, and private-boundary fields pass.
+- Keep evidence-validation failures free of local report and data paths.
+
+TDD RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_benchmark_evidence_below_local_document_floor_without_path_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The new test failed before implementation because the 7999-document private
+  benchmark report was accepted and release-readiness JSON was printed instead
+  of a redacted validation error.
+
+Implementation and focused checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_benchmark_evidence_below_local_document_floor_without_path_leaks --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+./scripts/ci/check-release-readiness.sh
+```
+
+Output summary:
+
+- The focused 7999-document rejection regression passed after release-readiness
+  used an 8000-document benchmark evidence floor and kept local paths out of
+  stderr.
+- The full `s161_release_readiness` test file passed 4/4, including the
+  existing 8720-document positive evidence path.
+- The release-readiness guard passed with the updated `min-documents 8000`
+  blocker/runbook requirements.
+
+Final checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+git diff --check
+# changed-line privacy marker scan; private evidence patterns omitted from this public log
+./scripts/ci/guard-public-repo.sh
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --check`, focused `resume-cli` clippy, diff check, changed-line
+  privacy marker scan, public-repo guard, and full `verify-local.sh` passed
+  locally. The full verifier covered workspace clippy/tests, closed-loop
+  CLI/daemon checks, benchmark/OCR/vector gates, license/runbook/workflow
+  guards, release-readiness guard, release artifact and SBOM checks, macOS
+  package and installer evidence, Windows evidence scripts, and the final
+  public repository guard.
+
+Scope note:
+
+- S274 closes a release-readiness gate mismatch only. It does not create the
+  private query workload, run the private 500-query benchmark, approve model
+  distribution, finish OCR throughput evidence, validate installers/services,
+  or make stable release ready.
 
 ### S273
 

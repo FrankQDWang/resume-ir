@@ -43,6 +43,7 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("private real-corpus performance evidence: blocked"));
     assert!(stdout.contains("hot-index hybrid"));
     assert!(stdout.contains("available private corpus"));
+    assert!(stdout.contains("min-documents 8000"));
     assert!(stdout.contains("500 query samples"));
     assert!(stdout.contains("external 100k/1M scale validation"));
     assert!(!stdout.contains("100k/1M real-corpus benchmarks: blocked"));
@@ -153,6 +154,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     let benchmark_detail = benchmark_blocker["detail"].as_str().unwrap();
     assert!(benchmark_detail.contains("hot-index hybrid"));
     assert!(benchmark_detail.contains("available private corpus"));
+    assert!(benchmark_detail.contains("min-documents 8000"));
     assert!(benchmark_detail.contains("500 query samples"));
     assert!(benchmark_detail.contains("external 100k/1M scale validation"));
     assert!(!benchmark_detail.contains("--require-million-scale"));
@@ -357,6 +359,49 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
     assert!(!stdout.contains(path_str(&evidence_dir)));
     assert!(!stderr.contains(path_str(&evidence_dir)));
     assert!(!stdout.contains("PRIVATE"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_benchmark_evidence_below_local_document_floor_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-benchmark-floor-private-data");
+    let evidence_dir = temp_path("release-readiness-benchmark-floor-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let benchmark_report = evidence_dir.join("private-benchmark-below-floor.json");
+    fs::write(
+        &benchmark_report,
+        private_real_benchmark_report()
+            .replace("\"document_count\":8720,", "\"document_count\":7999,"),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--benchmark-report",
+            path_str(&benchmark_report),
+        ])
+        .output()
+        .expect("reject benchmark evidence below local document floor");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("private real-corpus performance evidence"));
+    assert!(stderr.contains("document count below gate minimum"));
+    assert!(!stderr.contains(path_str(&benchmark_report)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&benchmark_report)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&data_dir)));
 
     let _ = fs::remove_dir_all(&data_dir);
     let _ = fs::remove_dir_all(&evidence_dir);

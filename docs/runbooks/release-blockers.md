@@ -151,10 +151,10 @@ local paths, queries, sample IDs, or filenames.
 
 The current local private corpus is approximately ten thousand resumes, not a
 100k or 1M corpus. Local release-readiness therefore requires redacted
-hot-index hybrid evidence over the available private corpus with at least 500
-query latency samples. External 100k/1M scale validation remains future scale
-evidence for representative user environments, not a local prerequisite for
-this machine.
+hot-index hybrid evidence over the available private corpus with at least 8000
+local documents and 500 query latency samples. External 100k/1M scale
+validation remains future scale evidence for representative user environments,
+not a local prerequisite for this machine.
 
 Generate the private query benchmark report locally only after the target
 private corpus has been imported, indexed, and warmed, and after the local query
