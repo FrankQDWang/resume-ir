@@ -7,13 +7,14 @@ use benchmark_runner::{
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
     evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
     run_private_business_dedupe_quality_jsonl, run_private_business_field_quality_jsonl,
-    run_private_ocr_throughput_benchmark, run_private_query_benchmark,
-    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
-    run_vector_quality_jsonl, BenchmarkGateConfig, DedupeQualityGateConfig, FieldQualityGateConfig,
-    OcrThroughputGateConfig, PrivateDedupeQualityManifestDigests,
-    PrivateFieldQualityManifestDigests, PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests,
-    PrivateOcrThroughputConfig, PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand,
-    PrivateQueryBenchmarkConfig, PrivateQueryManifestDigests, SyntheticBenchmarkConfig,
+    run_private_business_vector_quality_jsonl, run_private_ocr_throughput_benchmark,
+    run_private_query_benchmark, run_synthetic_ocr_throughput_benchmark,
+    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkGateConfig,
+    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    PrivateDedupeQualityManifestDigests, PrivateFieldQualityManifestDigests,
+    PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests, PrivateOcrThroughputConfig,
+    PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand, PrivateQueryBenchmarkConfig,
+    PrivateQueryManifestDigests, PrivateVectorQualityManifestDigests, SyntheticBenchmarkConfig,
     SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine, VectorQualityConfig,
     VectorQualityGateConfig,
 };
@@ -1232,6 +1233,79 @@ fn vector_quality_report_scores_labeled_samples_without_text_id_path_or_vector_l
 }
 
 #[test]
+fn private_business_vector_quality_report_outputs_redacted_gateable_report() {
+    let command = embedding_fixture_script("private-business-vector-quality-command");
+    let manifests = PrivateVectorQualityManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = VectorQualityConfig::new(&command, "fixture-local-model", 3)
+        .unwrap()
+        .with_top_k(1);
+
+    let report = run_private_business_vector_quality_jsonl(
+        &private_business_vector_quality_dataset(),
+        config,
+        manifests,
+    )
+    .unwrap();
+
+    assert_eq!(report.dataset_kind(), "private-business-labeled");
+    assert_eq!(report.sample_count(), 2);
+    assert_eq!(report.candidate_count(), 4);
+    assert_eq!(report.top_k(), 1);
+    assert!(report.recall_at_k() >= 0.99);
+    assert!(report.mrr() >= 0.99);
+    assert!(report.ndcg_at_k() >= 0.99);
+    assert_eq!(report.zero_recall_queries(), 0);
+    let json = report.to_redacted_json();
+    assert!(json.contains("\"schema_version\":\"vector-quality.v1\""));
+    assert!(json.contains("\"dataset_kind\":\"private-business-labeled\""));
+    assert!(json.contains("\"target_claim\":\"vector_quality_target_met\""));
+    assert!(json.contains("\"corpus_origin\":\"private_local\""));
+    assert!(json.contains("\"privacy_boundary\":\"redacted_local_aggregate\""));
+    assert!(json.contains("\"contains_raw_queries\":false"));
+    assert!(json.contains("\"contains_candidate_text\":false"));
+    assert!(json.contains("\"contains_resume_paths\":false"));
+    assert!(json.contains("\"contains_sample_ids\":false"));
+    assert!(json.contains("\"contains_candidate_ids\":false"));
+    assert!(json.contains("\"contains_vectors\":false"));
+    assert!(json.contains(
+        "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
+    ));
+    assert!(json.contains(
+        "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\""
+    ));
+    assert!(json.contains(
+        "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
+    ));
+    assert!(json.contains("\"vector_taxonomy\":\"resume-ir.vector-quality.v1\""));
+    assert!(json.contains(
+        "\"scope\":\"private business vector-quality benchmark; aggregate redacted report only\""
+    ));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("fixture-local-model"));
+    assert!(!json.contains("\"dimension\""));
+    assert!(!json.contains("private-vector-sample-001"));
+    assert!(!json.contains("private-vector-candidate-001"));
+    assert!(!json.contains("REDACTION_SENTINEL_VECTOR_QUERY"));
+    assert!(!json.contains("REDACTION_SENTINEL_VECTOR_CANDIDATE"));
+    assert!(!json.contains("1.0,0.0,0.0"));
+
+    let gate = VectorQualityGateConfig::new(2, 0.90, 0.90, 0.90)
+        .with_max_zero_recall_queries(0)
+        .require_private_business_labeled();
+    let evaluation = evaluate_vector_quality_gate_json(&json, gate).unwrap();
+    assert_eq!(evaluation.dataset_kind(), "private-business-labeled");
+    assert_eq!(evaluation.sample_count(), 2);
+    assert!(evaluation.recall_at_k() >= 0.99);
+
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
 fn vector_quality_gate_rejects_low_recall_reports() {
     let report = concat!(
         "{\"schema_version\":\"vector-quality.v1\",",
@@ -1796,6 +1870,22 @@ fn private_business_dedupe_quality_dataset() -> String {
         "\"left\":{\"id\":\"private-left-doc-002\",\"name\":\"Synthetic Duplicate Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\"]},",
         "\"right\":{\"id\":\"private-right-doc-002\",\"name\":\"Different Synthetic Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\"]},",
         "\"duplicate\":false}\n",
+    )
+    .to_string()
+}
+
+fn private_business_vector_quality_dataset() -> String {
+    concat!(
+        "{\"sample_id\":\"private-vector-sample-001\",\"query\":\"REDACTION_SENTINEL_VECTOR_QUERY backend java payment\",",
+        "\"candidates\":[",
+        "{\"id\":\"private-vector-candidate-001\",\"text\":\"REDACTION_SENTINEL_VECTOR_CANDIDATE Java payment backend search engineer\",\"relevant\":true},",
+        "{\"id\":\"private-vector-candidate-002\",\"text\":\"Synthetic sales operations\",\"relevant\":false}",
+        "]}\n",
+        "{\"sample_id\":\"private-vector-sample-002\",\"query\":\"REDACTION_SENTINEL_VECTOR_QUERY rust indexing\",",
+        "\"candidates\":[",
+        "{\"id\":\"private-vector-candidate-003\",\"text\":\"REDACTION_SENTINEL_VECTOR_CANDIDATE Rust indexing platform engineer\",\"relevant\":true},",
+        "{\"id\":\"private-vector-candidate-004\",\"text\":\"Synthetic HR partner\",\"relevant\":false}",
+        "]}\n",
     )
     .to_string()
 }

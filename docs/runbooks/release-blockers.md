@@ -277,13 +277,34 @@ and model manifests (`dataset_manifest_sha256`,
 `annotation_manifest_sha256`, and `model_manifest_sha256`). Do not upload
 reports if they contain raw queries,
 candidate text, resume text, candidate IDs, sample IDs, filenames, local paths,
-vectors, command paths, model paths, or notes.
+vectors, command paths, model paths, or notes. The labeled JSONL can contain raw
+queries, candidate text, sample IDs, and candidate IDs only while it stays in a
+reviewed local private workspace; do not commit, upload, or archive that JSONL.
 Private vector-quality release reports must also have feasible aggregate
 retrieval counts: `sample_count > 0`, `candidate_count > 0`, `top_k > 0`,
 `candidate_count >= sample_count`, `top_k <= candidate_count`,
 `zero_recall_queries <= sample_count`, and `recall_at_k` must not exceed the
 maximum possible recall implied by `zero_recall_queries` within rounding
 tolerance.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  vector-quality --dataset private-vector-quality.jsonl \
+  --command <reviewed-local-embedding-command> \
+  --model-id <reviewed-local-model-id> \
+  --dimension <n> \
+  --private-business-labeled \
+  --dataset-manifest-sha256 <sha256> \
+  --annotation-manifest-sha256 <sha256> \
+  --model-manifest-sha256 <sha256> \
+  --top-k 10 \
+  --json > private-vector-quality.json
+```
+
+Review the generated report before any release evidence upload or public commit.
+It must be aggregate-only and must not contain raw queries, candidate text,
+sample IDs, candidate IDs, vectors, local paths, command paths, model paths, or
+raw resume text.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
@@ -294,10 +315,11 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   --max-zero-recall-queries 0
 ```
 
-This gate is a release evidence validator. It does not create, upload, label,
-embed, or sanitize private vector-quality reports and cannot clear the vector
-quality blocker until representative local business labels, a reviewed model
-manifest, and aggregate semantic retrieval metrics exist.
+This workflow creates only a local redacted aggregate report and validates its
+release-evidence shape. It does not upload reports, create labels, review
+labeling quality, approve model licensing, or clear the vector quality blocker
+until representative local business labels, a reviewed model manifest, and
+aggregate semantic retrieval metrics exist.
 
 Run private real-corpus OCR throughput gates only against local redacted
 aggregate reports. The report must use `dataset_kind: "private-real-corpus"`,

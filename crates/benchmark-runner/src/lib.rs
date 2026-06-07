@@ -196,6 +196,36 @@ impl PrivateDedupeQualityManifestDigests {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateVectorQualityManifestDigests {
+    dataset_manifest_sha256: String,
+    annotation_manifest_sha256: String,
+    model_manifest_sha256: String,
+}
+
+impl PrivateVectorQualityManifestDigests {
+    pub fn new(
+        dataset_manifest_sha256: impl Into<String>,
+        annotation_manifest_sha256: impl Into<String>,
+        model_manifest_sha256: impl Into<String>,
+    ) -> Result<Self> {
+        let digests = Self {
+            dataset_manifest_sha256: dataset_manifest_sha256.into(),
+            annotation_manifest_sha256: annotation_manifest_sha256.into(),
+            model_manifest_sha256: model_manifest_sha256.into(),
+        };
+        if !is_sha256_hex(&digests.dataset_manifest_sha256)
+            || !is_sha256_hex(&digests.annotation_manifest_sha256)
+            || !is_sha256_hex(&digests.model_manifest_sha256)
+        {
+            return Err(BenchmarkError::invalid_config(
+                "private_vector_quality_manifest_sha256",
+            ));
+        }
+        Ok(digests)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrivateQueryBenchmarkConfig {
     query_set: PathBuf,
     command: PrivateQueryBenchmarkCommand,
@@ -1183,6 +1213,7 @@ pub struct VectorQualityReport {
     model_id: String,
     dimension: usize,
     target_claim: &'static str,
+    private_boundary: Option<PrivateVectorQualityBoundary>,
 }
 
 impl VectorQualityReport {
@@ -1219,6 +1250,54 @@ impl VectorQualityReport {
     }
 
     pub fn to_redacted_json(&self) -> String {
+        if let Some(boundary) = &self.private_boundary {
+            return format!(
+                concat!(
+                    "{{",
+                    "\"schema_version\":\"vector-quality.v1\",",
+                    "\"run_id\":\"{}\",",
+                    "\"platform\":\"{}\",",
+                    "\"dataset_kind\":\"{}\",",
+                    "\"sample_count\":{},",
+                    "\"candidate_count\":{},",
+                    "\"top_k\":{},",
+                    "\"recall_at_k\":{},",
+                    "\"mrr\":{},",
+                    "\"ndcg_at_k\":{},",
+                    "\"zero_recall_queries\":{},",
+                    "\"target_claim\":\"{}\",",
+                    "\"corpus_origin\":\"private_local\",",
+                    "\"privacy_boundary\":\"redacted_local_aggregate\",",
+                    "\"contains_raw_queries\":false,",
+                    "\"contains_candidate_text\":false,",
+                    "\"contains_resume_paths\":false,",
+                    "\"contains_sample_ids\":false,",
+                    "\"contains_candidate_ids\":false,",
+                    "\"contains_vectors\":false,",
+                    "\"dataset_manifest_sha256\":\"{}\",",
+                    "\"annotation_manifest_sha256\":\"{}\",",
+                    "\"model_manifest_sha256\":\"{}\",",
+                    "\"vector_taxonomy\":\"resume-ir.vector-quality.v1\",",
+                    "\"scope\":\"{}\"",
+                    "}}"
+                ),
+                self.run_id,
+                self.platform,
+                self.dataset_kind,
+                self.sample_count,
+                self.candidate_count,
+                self.top_k,
+                format_ms(self.recall_at_k),
+                format_ms(self.mrr),
+                format_ms(self.ndcg_at_k),
+                self.zero_recall_queries,
+                self.target_claim,
+                boundary.manifests.dataset_manifest_sha256,
+                boundary.manifests.annotation_manifest_sha256,
+                boundary.manifests.model_manifest_sha256,
+                PRIVATE_BUSINESS_VECTOR_QUALITY_SCOPE,
+            );
+        }
         format!(
             concat!(
                 "{{",
@@ -1258,6 +1337,11 @@ impl VectorQualityReport {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PrivateVectorQualityBoundary {
+    manifests: PrivateVectorQualityManifestDigests,
+}
+
 impl fmt::Debug for VectorQualityReport {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -1276,6 +1360,7 @@ impl fmt::Debug for VectorQualityReport {
             .field("model_id", &self.model_id)
             .field("dimension", &self.dimension)
             .field("target_claim", &self.target_claim)
+            .field("private_boundary", &self.private_boundary.is_some())
             .finish()
     }
 }
@@ -1700,7 +1785,20 @@ pub fn run_vector_quality_jsonl(
         model_id: config.model_id,
         dimension: config.dimension,
         target_claim: "not_evaluated",
+        private_boundary: None,
     })
+}
+
+pub fn run_private_business_vector_quality_jsonl(
+    dataset_jsonl: &str,
+    config: VectorQualityConfig,
+    manifests: PrivateVectorQualityManifestDigests,
+) -> Result<VectorQualityReport> {
+    let mut report = run_vector_quality_jsonl(dataset_jsonl, config)?;
+    report.dataset_kind = "private-business-labeled";
+    report.target_claim = PRIVATE_BUSINESS_VECTOR_QUALITY_TARGET_CLAIM;
+    report.private_boundary = Some(PrivateVectorQualityBoundary { manifests });
+    Ok(report)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

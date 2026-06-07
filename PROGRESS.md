@@ -47,6 +47,11 @@ production-ready scope source.
   real labeled dataset, real resume data, local paths, profile values, sample
   IDs, document IDs, raw text, or generated quality report was committed or
   uploaded.
+  S269 used synthetic/private-shaped vector-quality label fixtures and local
+  embedding-command fixtures only; no real labeled dataset, real resume data,
+  local paths, raw queries, candidate text, sample IDs, candidate IDs, vectors,
+  command paths, model paths, or generated quality report was committed or
+  uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -872,8 +877,77 @@ obsolete preliminary files and checklists are not product scope.
 | S266 | Product private business field-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private field-quality report API and `resume-benchmark field-quality` rejected `--private-business-labeled` plus manifest SHA flags. After implementation, `field-quality` can evaluate a local labeled JSONL, emit a strict `field-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation manifest digests, and pass `field-gate --require-private-business-labeled` without raw resume text, field values, sample IDs, local paths, or filenames. The same slice also fixed the quality-label parser so `location` is accepted as a production expected field type. | This slice adds local private field-quality report generation only. It does not create or review the actual private business labeled dataset, prove production field precision/recall/F1 on real labels, clear dedupe/vector quality blockers, validate platform installers/services, or make stable release ready. |
 | S267 | CI semantic closed-loop HNSW under-return fix complete locally | GitHub Actions PR #9 `rust workspace` failed after S266 because the Linux CLI closed-loop semantic search output was missing `results: 3`; local macOS full verification had passed. Root cause was the persistent HNSW backend trusting ANN output cardinality even though small or tied vector sets can under-return on hosted Linux. After implementation, `HnswShard::knn` backfills missing candidates from the same in-memory shard with exact cosine ordering, and a synthetic identical-vector regression proves model-scoped persistent KNN returns the requested `k`. | This slice fixes deterministic small/tied vector result coverage for local and hosted synthetic closed-loop checks only. It does not prove private semantic quality, release model selection/licensing/distribution, real 100k/1M ANN recall or latency, platform installer/service behavior, or stable release readiness. |
 | S268 | Product private business dedupe-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private dedupe-quality report API and `resume-benchmark dedupe-quality` rejected `--private-business-labeled` plus manifest SHA flags. After implementation, `dedupe-quality` can evaluate a local labeled pair JSONL, emit a strict `dedupe-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation manifest digests, and pass `dedupe-gate --require-private-business-labeled` without raw resume text, profile values, names, schools, companies, skills, sample IDs, document IDs, local paths, or filenames. The release blocker runbook now documents the local report generation command before the gate. | This slice adds local private dedupe-quality report generation only. It does not create or review the actual private business labeled dedupe dataset, prove production dedupe precision/recall/F1 on real labels, clear field/vector quality blockers, validate platform installers/services, or make stable release ready. |
+| S269 | Product private business vector-quality report generator complete locally | Focused RED first failed because `benchmark-runner` had no private vector-quality report API and `resume-benchmark vector-quality` rejected `--private-business-labeled` plus dataset, annotation, and model manifest SHA flags. After implementation, `vector-quality` can evaluate a local labeled query/candidate JSONL through a reviewed local embedding command, emit a strict `vector-quality.v1` private-business-labeled aggregate report with redacted local boundary fields and dataset/annotation/model manifest digests, and pass `vector-gate --require-private-business-labeled` without raw queries, candidate text, sample IDs, candidate IDs, vectors, command paths, model paths, local paths, or raw resume text. The private report omits `model_id`, `dimension`, and other non-allowed release-evidence fields; the runbook now documents local report generation before the gate. | This slice adds local private vector-quality report generation only. It does not create or review the actual private business labeled vector dataset, approve or distribute a production embedding model, prove production semantic recall/MRR/NDCG on real labels, clear field/dedupe/vector quality blockers, validate platform installers/services, or make stable release ready. |
 
 ## Command Log
+
+### S269
+
+Design target:
+
+- Add a local-only private business vector-quality report generator to complement
+  the existing `vector-gate --require-private-business-labeled` validator.
+- Keep raw labeled query/candidate dataset contents out of output: no raw
+  queries, candidate text, sample IDs, candidate IDs, vectors, command paths,
+  model paths, local paths, or raw resume text in emitted JSON.
+- Preserve existing `vector-quality --dataset` behavior for non-private labeled
+  fixture evaluation.
+
+TDD RED:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_business_vector_quality_report_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_business_vector_quality_outputs_redacted_gateable_report --locked -- --exact
+```
+
+Output summary:
+
+- The library test failed before implementation because
+  `run_private_business_vector_quality_jsonl` and
+  `PrivateVectorQualityManifestDigests` did not exist.
+- The CLI test failed before implementation because `vector-quality` rejected
+  `--private-business-labeled`, `--dataset-manifest-sha256`,
+  `--annotation-manifest-sha256`, and `--model-manifest-sha256` as usage
+  errors.
+
+Implementation checks:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_business_vector_quality_report_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_business_vector_quality_outputs_redacted_gateable_report --locked -- --exact
+cargo test -p benchmark-runner --locked
+cargo fmt --check
+cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+# changed-file added-line privacy marker scan; private evidence patterns omitted from this public log
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The focused library test passed with a synthetic/private-shaped labeled
+  query/candidate JSONL fixture, a local embedding-command fixture, a redacted
+  aggregate private vector report, and a passing private business vector gate.
+- The focused CLI test passed with `resume-benchmark vector-quality
+  --private-business-labeled`, wrote a temporary redacted report, and passed
+  `vector-gate --require-private-business-labeled`.
+- `cargo test -p benchmark-runner --locked` passed: 33 CLI tests, 63 library
+  tests, and 0 doctests.
+- `cargo fmt --check`, focused benchmark-runner clippy, runbook guard, diff
+  check, public-repo guard, and full `verify-local.sh` passed.
+- The changed-file privacy grep found no local private corpus paths, real
+  resume markers, local runtime paths, credential markers, or generated report
+  payloads in added lines.
+
+Scope note:
+
+- S269 does not create or review the real private business vector labels,
+  approve a production embedding model, or clear the vector quality blocker. It
+  supplies the local-only report generator that can be used once a reviewed
+  private labeled query/candidate dataset, model manifest, and embedding command
+  are available.
 
 ### S268
 

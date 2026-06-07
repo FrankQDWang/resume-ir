@@ -1807,6 +1807,109 @@ fn resume_benchmark_vector_quality_outputs_redacted_report_and_gate() {
 }
 
 #[test]
+fn resume_benchmark_private_business_vector_quality_outputs_redacted_gateable_report() {
+    let command = embedding_fixture_script("private-business-vector-quality-cli-command");
+    let dataset_dir = temp_dir("private-business-vector-quality-dataset");
+    let dataset_path = dataset_dir.join("private-vector-quality.jsonl");
+    let report_path = dataset_dir.join("private-vector-report.json");
+    fs::write(&dataset_path, private_business_vector_quality_dataset()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "vector-quality",
+            "--dataset",
+            path_str(&dataset_path),
+            "--command",
+            path_str(&command),
+            "--model-id",
+            "fixture-local-model",
+            "--dimension",
+            "3",
+            "--top-k",
+            "1",
+            "--private-business-labeled",
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--annotation-manifest-sha256",
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--model-manifest-sha256",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "--json",
+        ])
+        .output()
+        .expect("run private business vector-quality benchmark");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\":\"vector-quality.v1\""));
+    assert!(stdout.contains("\"dataset_kind\":\"private-business-labeled\""));
+    assert!(stdout.contains("\"sample_count\":2"));
+    assert!(stdout.contains("\"candidate_count\":4"));
+    assert!(stdout.contains("\"top_k\":1"));
+    assert!(stdout.contains("\"target_claim\":\"vector_quality_target_met\""));
+    assert!(stdout.contains("\"corpus_origin\":\"private_local\""));
+    assert!(stdout.contains("\"privacy_boundary\":\"redacted_local_aggregate\""));
+    assert!(stdout.contains("\"contains_raw_queries\":false"));
+    assert!(stdout.contains("\"contains_candidate_text\":false"));
+    assert!(stdout.contains("\"contains_resume_paths\":false"));
+    assert!(stdout.contains("\"contains_sample_ids\":false"));
+    assert!(stdout.contains("\"contains_candidate_ids\":false"));
+    assert!(stdout.contains("\"contains_vectors\":false"));
+    assert!(stdout.contains("\"vector_taxonomy\":\"resume-ir.vector-quality.v1\""));
+    assert!(!stdout.contains(path_str(&dataset_path)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains("fixture-local-model"));
+    assert!(!stdout.contains("\"dimension\""));
+    assert!(!stdout.contains("private-vector-sample-001"));
+    assert!(!stdout.contains("private-vector-candidate-001"));
+    assert!(!stdout.contains("REDACTION_SENTINEL_VECTOR_QUERY"));
+    assert!(!stdout.contains("REDACTION_SENTINEL_VECTOR_CANDIDATE"));
+    assert!(!stdout.contains("1.0,0.0,0.0"));
+    fs::write(&report_path, &output.stdout).unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "vector-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-business-labeled",
+            "--min-samples",
+            "2",
+            "--min-recall-at-k",
+            "0.90",
+            "--min-mrr",
+            "0.90",
+            "--min-ndcg-at-k",
+            "0.90",
+            "--max-zero-recall-queries",
+            "0",
+        ])
+        .output()
+        .expect("run private business vector quality gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "vector quality gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(command.parent().unwrap());
+    remove_dir(&dataset_dir);
+}
+
+#[test]
 fn resume_benchmark_vector_gate_rejects_unproven_target_claim() {
     let report_dir = temp_dir("vector-quality-cli-gate-reject");
     let report_path = report_dir.join("vector-report.json");
@@ -2140,6 +2243,22 @@ fn private_business_dedupe_quality_dataset() -> String {
         "\"left\":{\"id\":\"private-left-doc-002\",\"name\":\"Synthetic Duplicate Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\"]},",
         "\"right\":{\"id\":\"private-right-doc-002\",\"name\":\"Different Synthetic Candidate\",\"schools\":[\"Synthetic University\"],\"companies\":[\"Synthetic Commerce\"],\"skills\":[\"Rust\"]},",
         "\"duplicate\":false}\n",
+    )
+    .to_string()
+}
+
+fn private_business_vector_quality_dataset() -> String {
+    concat!(
+        "{\"sample_id\":\"private-vector-sample-001\",\"query\":\"REDACTION_SENTINEL_VECTOR_QUERY backend java payment\",",
+        "\"candidates\":[",
+        "{\"id\":\"private-vector-candidate-001\",\"text\":\"REDACTION_SENTINEL_VECTOR_CANDIDATE Java payment backend search engineer\",\"relevant\":true},",
+        "{\"id\":\"private-vector-candidate-002\",\"text\":\"Synthetic sales operations\",\"relevant\":false}",
+        "]}\n",
+        "{\"sample_id\":\"private-vector-sample-002\",\"query\":\"REDACTION_SENTINEL_VECTOR_QUERY rust indexing\",",
+        "\"candidates\":[",
+        "{\"id\":\"private-vector-candidate-003\",\"text\":\"REDACTION_SENTINEL_VECTOR_CANDIDATE Rust indexing platform engineer\",\"relevant\":true},",
+        "{\"id\":\"private-vector-candidate-004\",\"text\":\"Synthetic HR partner\",\"relevant\":false}",
+        "]}\n",
     )
     .to_string()
 }

@@ -6,15 +6,16 @@ use benchmark_runner::{
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
     evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
     run_private_business_dedupe_quality_jsonl, run_private_business_field_quality_jsonl,
-    run_private_ocr_throughput_benchmark, run_private_query_benchmark,
-    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
-    run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig, BenchmarkGateError,
-    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    run_private_business_vector_quality_jsonl, run_private_ocr_throughput_benchmark,
+    run_private_query_benchmark, run_synthetic_ocr_throughput_benchmark,
+    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig,
+    BenchmarkGateError, DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
     PrivateDedupeQualityManifestDigests, PrivateFieldQualityManifestDigests,
     PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests, PrivateOcrThroughputConfig,
     PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand, PrivateQueryBenchmarkConfig,
-    PrivateQueryManifestDigests, SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig,
-    SyntheticOcrBenchmarkEngine, VectorQualityConfig, VectorQualityGateConfig,
+    PrivateQueryManifestDigests, PrivateVectorQualityManifestDigests, SyntheticBenchmarkConfig,
+    SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine, VectorQualityConfig,
+    VectorQualityGateConfig,
 };
 
 fn main() {
@@ -261,7 +262,25 @@ fn run_vector_quality(args: VectorQualityArgs) -> Result<(), CliError> {
         .map_err(CliError::benchmark)?
         .with_max_text_bytes(args.max_text_bytes)
         .map_err(CliError::benchmark)?;
-    let report = run_vector_quality_jsonl(&dataset_jsonl, config).map_err(CliError::benchmark)?;
+    let report = if args.private_business_labeled {
+        let manifests = PrivateVectorQualityManifestDigests::new(
+            args.dataset_manifest_sha256.ok_or_else(CliError::usage)?,
+            args.annotation_manifest_sha256
+                .ok_or_else(CliError::usage)?,
+            args.model_manifest_sha256.ok_or_else(CliError::usage)?,
+        )
+        .map_err(CliError::benchmark)?;
+        run_private_business_vector_quality_jsonl(&dataset_jsonl, config, manifests)
+            .map_err(CliError::benchmark)?
+    } else {
+        if args.dataset_manifest_sha256.is_some()
+            || args.annotation_manifest_sha256.is_some()
+            || args.model_manifest_sha256.is_some()
+        {
+            return Err(CliError::usage());
+        }
+        run_vector_quality_jsonl(&dataset_jsonl, config).map_err(CliError::benchmark)?
+    };
     println!("{}", report.to_redacted_json());
     Ok(())
 }
@@ -1028,6 +1047,10 @@ fn parse_vector_quality_args(args: &[String]) -> Result<VectorQualityArgs, CliEr
     let mut command = None;
     let mut model_id = None;
     let mut dimension = None;
+    let mut private_business_labeled = false;
+    let mut dataset_manifest_sha256 = None;
+    let mut annotation_manifest_sha256 = None;
+    let mut model_manifest_sha256 = None;
     let mut top_k = 10_usize;
     let mut timeout_ms = 30_000_u64;
     let mut max_text_bytes = 128 * 1024_usize;
@@ -1060,6 +1083,31 @@ fn parse_vector_quality_args(args: &[String]) -> Result<VectorQualityArgs, CliEr
                 dimension = Some(parse_positive_usize(args.get(index + 1))?);
                 index += 2;
             }
+            "--private-business-labeled" => {
+                private_business_labeled = true;
+                index += 1;
+            }
+            "--dataset-manifest-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                dataset_manifest_sha256 = Some(value.clone());
+                index += 2;
+            }
+            "--annotation-manifest-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                annotation_manifest_sha256 = Some(value.clone());
+                index += 2;
+            }
+            "--model-manifest-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage());
+                };
+                model_manifest_sha256 = Some(value.clone());
+                index += 2;
+            }
             "--top-k" => {
                 top_k = parse_positive_usize(args.get(index + 1))?;
                 index += 2;
@@ -1087,6 +1135,10 @@ fn parse_vector_quality_args(args: &[String]) -> Result<VectorQualityArgs, CliEr
         command: command.ok_or_else(CliError::usage)?,
         model_id: model_id.ok_or_else(CliError::usage)?,
         dimension: dimension.ok_or_else(CliError::usage)?,
+        private_business_labeled,
+        dataset_manifest_sha256,
+        annotation_manifest_sha256,
+        model_manifest_sha256,
         top_k,
         timeout_ms,
         max_text_bytes,
@@ -1195,7 +1247,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --command <path> --document-count <n> --dataset-manifest-sha256 <sha256> --query-set-sha256 <sha256> [--max-queries <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --command <path> --document-count <n> --dataset-manifest-sha256 <sha256> --query-set-sha256 <sha256> [--max-queries <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -1331,6 +1383,10 @@ struct VectorQualityArgs {
     command: PathBuf,
     model_id: String,
     dimension: usize,
+    private_business_labeled: bool,
+    dataset_manifest_sha256: Option<String>,
+    annotation_manifest_sha256: Option<String>,
+    model_manifest_sha256: Option<String>,
     top_k: usize,
     timeout_ms: u64,
     max_text_bytes: usize,
