@@ -680,6 +680,50 @@ fn witness_run_ocr_without_command_reports_blocked_without_persisting_private_da
 }
 
 #[test]
+fn witness_reports_import_failure_kinds_without_path_or_payload_leak() {
+    serialize_windows_s9_import_test!();
+    let data_dir = temp_dir("witness-failure-kind-unused-data-dir");
+    let private_root = temp_dir("witness-failure-kind-private-root");
+    fs::write(
+        private_root.join("synthetic-corrupted.docx"),
+        b"SYNTHETIC corrupted docx payload",
+    )
+    .unwrap();
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+
+    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "witness",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run resume-cli local witness with import failure kind");
+
+    assert!(
+        witness.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&witness.stdout),
+        String::from_utf8_lossy(&witness.stderr)
+    );
+    assert!(witness.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&witness.stdout);
+    assert!(stdout.contains("failed documents: 1"));
+    assert!(stdout.contains("import failure parser_corrupted: 1"));
+    assert!(!stdout.contains("SYNTHETIC"));
+    assert!(!stdout.contains("synthetic-corrupted"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&canonical_private_root)));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
 fn import_txt_resume_builds_searchable_index_without_path_leakage() {
     serialize_windows_s9_import_test!();
     let data_dir = temp_dir("txt-import-data");

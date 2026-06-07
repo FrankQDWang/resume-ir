@@ -16,7 +16,7 @@ use fs4::fs_std::FileExt;
 use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions};
 use import_pipeline::{
     detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
-    remove_documents_from_full_text_index, ImportOptions,
+    remove_documents_from_full_text_index, ImportFailureKind, ImportOptions,
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{
@@ -105,6 +105,20 @@ const WITNESS_FIELD_LABELS: &[&str] = &[
     "date_range",
     "years_experience",
     "location",
+];
+const WITNESS_IMPORT_FAILURE_KINDS: &[ImportFailureKind] = &[
+    ImportFailureKind::TextTooLarge,
+    ImportFailureKind::ReadError,
+    ImportFailureKind::UnsupportedExtension,
+    ImportFailureKind::ParserUnsupported,
+    ImportFailureKind::ParserCorrupted,
+    ImportFailureKind::ParserEncrypted,
+    ImportFailureKind::ParserTimeout,
+    ImportFailureKind::ParserResourceExhausted,
+    ImportFailureKind::ParserIo,
+    ImportFailureKind::ParserCancelled,
+    ImportFailureKind::ParserInternal,
+    ImportFailureKind::EmptyText,
 ];
 const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
@@ -4119,6 +4133,7 @@ fn witness_command(args: &[String]) -> Result<()> {
     println!("ocr required documents: {}", summary.ocr_required_documents);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
     println!("failed documents: {}", summary.failed_documents);
+    print_import_failure_counts(&summary);
     print_witness_ocr_status(&witness_ocr);
     print_witness_field_status(&witness_fields);
     print_witness_search_status(&witness_search);
@@ -4138,6 +4153,16 @@ fn witness_command(args: &[String]) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_import_failure_counts(summary: &ImportSummary) {
+    for kind in WITNESS_IMPORT_FAILURE_KINDS {
+        println!(
+            "import failure {}: {}",
+            kind.label(),
+            summary.failure_counts.get(*kind)
+        );
+    }
 }
 
 fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
@@ -5159,6 +5184,9 @@ fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
     total.ocr_required_documents += next.ocr_required_documents;
     total.ocr_jobs_queued += next.ocr_jobs_queued;
     total.failed_documents += next.failed_documents;
+    for (kind, count) in next.failure_counts.entries() {
+        total.failure_counts.add(kind, count);
+    }
     total.deleted_documents += next.deleted_documents;
     if next.scan_budget.is_some()
         && (total.scan_budget.is_none() || next.scan_budget.is_some_and(|budget| budget.exhausted))

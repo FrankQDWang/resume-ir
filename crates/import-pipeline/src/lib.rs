@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -127,6 +127,7 @@ fn run_import(
         ocr_required_documents: 0,
         ocr_jobs_queued: 0,
         failed_documents: 0,
+        failure_counts: ImportFailureCounts::default(),
         deleted_documents: 0,
         scan_budget,
     };
@@ -167,8 +168,9 @@ fn run_import(
                     summary.ocr_jobs_queued += 1;
                 }
             }
-            ProcessedFile::Failed => {
+            ProcessedFile::Failed { kind } => {
                 summary.failed_documents += 1;
+                summary.failure_counts.increment(kind);
             }
         }
         if should_publish_import_progress(index, total_files) {
@@ -755,7 +757,9 @@ fn process_file(
         store
             .upsert_document(&document)
             .map_err(ImportPipelineError::store)?;
-        return Ok(ProcessedFile::Failed);
+        return Ok(ProcessedFile::Failed {
+            kind: ImportFailureKind::TextTooLarge,
+        });
     }
 
     let path = PathBuf::from(file.normalized_path.as_str());
@@ -767,7 +771,9 @@ fn process_file(
             store
                 .upsert_document(&document)
                 .map_err(ImportPipelineError::store)?;
-            return Ok(ProcessedFile::Failed);
+            return Ok(ProcessedFile::Failed {
+                kind: ImportFailureKind::ReadError,
+            });
         }
     };
     ensure_not_cancelled()?;
@@ -804,7 +810,9 @@ fn process_file(
             store
                 .upsert_document(&document)
                 .map_err(ImportPipelineError::store)?;
-            return Ok(ProcessedFile::Failed);
+            return Ok(ProcessedFile::Failed {
+                kind: ImportFailureKind::UnsupportedExtension,
+            });
         }
     };
     ensure_not_cancelled()?;
@@ -827,7 +835,9 @@ fn process_file(
                 store
                     .upsert_document(&document)
                     .map_err(ImportPipelineError::store)?;
-                ProcessedFile::Failed
+                ProcessedFile::Failed {
+                    kind: ImportFailureKind::from_parser_error(error.kind()),
+                }
             });
         }
     };
@@ -850,7 +860,9 @@ fn process_file(
             store
                 .upsert_document(&document)
                 .map_err(ImportPipelineError::store)?;
-            return Ok(ProcessedFile::Failed);
+            return Ok(ProcessedFile::Failed {
+                kind: ImportFailureKind::EmptyText,
+            });
         }
 
         ensure_not_cancelled()?;
@@ -1121,10 +1133,12 @@ enum ProcessedFile {
     OcrRequired {
         ocr_job_queued: bool,
     },
-    Failed,
+    Failed {
+        kind: ImportFailureKind,
+    },
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportSummary {
     pub files_discovered: usize,
     pub scan_errors: usize,
@@ -1133,8 +1147,80 @@ pub struct ImportSummary {
     pub ocr_required_documents: usize,
     pub ocr_jobs_queued: usize,
     pub failed_documents: usize,
+    pub failure_counts: ImportFailureCounts,
     pub deleted_documents: usize,
     pub scan_budget: Option<ImportScanBudget>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImportFailureCounts {
+    counts: BTreeMap<ImportFailureKind, usize>,
+}
+
+impl ImportFailureCounts {
+    fn increment(&mut self, kind: ImportFailureKind) {
+        *self.counts.entry(kind).or_default() += 1;
+    }
+
+    pub fn add(&mut self, kind: ImportFailureKind, count: usize) {
+        *self.counts.entry(kind).or_default() += count;
+    }
+
+    pub fn get(&self, kind: ImportFailureKind) -> usize {
+        self.counts.get(&kind).copied().unwrap_or(0)
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = (ImportFailureKind, usize)> + '_ {
+        self.counts.iter().map(|(kind, count)| (*kind, *count))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ImportFailureKind {
+    TextTooLarge,
+    ReadError,
+    UnsupportedExtension,
+    ParserUnsupported,
+    ParserCorrupted,
+    ParserEncrypted,
+    ParserTimeout,
+    ParserResourceExhausted,
+    ParserIo,
+    ParserCancelled,
+    ParserInternal,
+    EmptyText,
+}
+
+impl ImportFailureKind {
+    fn from_parser_error(kind: ParserErrorKind) -> Self {
+        match kind {
+            ParserErrorKind::Unsupported => Self::ParserUnsupported,
+            ParserErrorKind::Corrupted => Self::ParserCorrupted,
+            ParserErrorKind::Encrypted => Self::ParserEncrypted,
+            ParserErrorKind::Timeout => Self::ParserTimeout,
+            ParserErrorKind::ResourceExhausted => Self::ParserResourceExhausted,
+            ParserErrorKind::Io => Self::ParserIo,
+            ParserErrorKind::Cancelled => Self::ParserCancelled,
+            ParserErrorKind::OcrRequired | ParserErrorKind::Internal => Self::ParserInternal,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TextTooLarge => "text_too_large",
+            Self::ReadError => "read_error",
+            Self::UnsupportedExtension => "unsupported_extension",
+            Self::ParserUnsupported => "parser_unsupported",
+            Self::ParserCorrupted => "parser_corrupted",
+            Self::ParserEncrypted => "parser_encrypted",
+            Self::ParserTimeout => "parser_timeout",
+            Self::ParserResourceExhausted => "parser_resource_exhausted",
+            Self::ParserIo => "parser_io",
+            Self::ParserCancelled => "parser_cancelled",
+            Self::ParserInternal => "parser_internal",
+            Self::EmptyText => "empty_text",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

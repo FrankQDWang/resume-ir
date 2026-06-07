@@ -24,6 +24,10 @@ production-ready scope source.
   user-authorized local resume sample directory through temporary witness
   copies; no real resume data, filenames, paths, raw text, or diagnostics were
   committed or uploaded.
+  S263 also used a private local-only PDF/Word witness against the
+  user-authorized local resume sample directory through temporary witness
+  copies; no real resume data, filenames, paths, raw text, or diagnostics were
+  committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -96,7 +100,10 @@ obsolete preliminary files and checklists are not product scope.
   PDF/DOCX/DOC inputs, skipped 49 unsupported entries, reported zero scan
   errors and no scan-budget exhaustion, completed import, found 146 directly
   searchable documents, queued 8554 OCR-required documents, and reported 20
-  failed import documents. Import scan errors are persisted and now surfaced
+  failed import documents. S263 added redacted import-failure kind aggregates
+  to witness output and reran the private witness: the same 20 failures broke
+  down into 16 `parser_corrupted` and 4 `parser_encrypted` documents, with all
+  other failure kinds at zero. Import scan errors are persisted and now surfaced
   as redacted kind/operation aggregate breakdowns through local status, doctor,
   and redacted diagnostics without path or path-digest disclosure. Missing production work includes
   production-grade PDF coverage, full
@@ -826,8 +833,82 @@ obsolete preliminary files and checklists are not product scope.
 | S260 | Product Chinese year-month date-range filter alias coverage complete locally | Focused RED first failed because `SearchFilters::with_date_range_overlaps("2020年1月/2024年3月")` produced no parsed range, and direct CLI search with `--date-range-overlaps 2020年1月/2024年3月` rejected the filter even though import persists Chinese `2020年1月 - 2024年3月` ranges as canonical `YYYY-MM/YYYY-MM`. After implementation, date range filter parsing accepts Chinese year/month values as canonical `YYYY-MM`; the CLI integration test imports synthetic Chinese year/month date resumes, filters with `--date-range-overlaps 2020年1月/2024年3月`, returns only the overlapping target, and keeps query echo, local paths, emails, and decoy files out of output. | This slice proves synthetic/local Chinese year/month date-range filter input coverage only. It does not prove complete date parsing dictionaries, real labeled field-quality metrics, long-tail work-history phrasing, private corpus recall, or stable release readiness. |
 | S261 | Product private 10k-scale PDF/Word local witness complete | Authorized local-only PDF/Word witness over the private resume sample root selected 8720 supported PDF/DOCX/DOC files, skipped 49 unsupported entries, reported zero scan errors, completed import without scan-budget exhaustion, produced 146 directly searchable documents, queued 8554 OCR-required documents, reported 20 failed import documents, completed field and search probes, and removed private temporary data. A bounded OCR witness with local Tesseract plus Poppler processed 20 OCR-required documents, wrote 22 OCR cache entries, had zero OCR document failures, and left the remaining OCR queue explicitly budget-exhausted. | This slice proves a local redacted aggregate witness over the available private real corpus only. It does not prove full-corpus OCR completion, OCR quality, private labeled field/dedupe/vector quality, production embedding model licensing/distribution, installer signing/notarization, Windows service validation, or true external million-scale real-corpus latency. |
 | S262 | Product release-readiness local benchmark boundary aligned | Focused RED first failed because `resume-cli release-readiness` and its JSON blocker still labeled the performance blocker as `100k/1M real-corpus benchmarks` and required `--require-million-scale`/`percentile_confidence: release` as local release-readiness detail. After implementation, release-readiness reports `private real-corpus performance evidence`, requires local hot-index hybrid evidence over the available private corpus with at least 500 query samples, and keeps external 100k/1M scale validation as future scale evidence rather than a local prerequisite. The release-readiness CI guard and release blocker runbook now enforce the same boundary without local path leaks. | This slice aligns release-readiness reporting with the available local private corpus boundary only. It does not create the private benchmark report, prove `<200ms` P95, complete full-corpus OCR, select/license a production embedding model, validate cross-platform installers/services, or make stable release ready. |
+| S263 | Product witness import failure-kind aggregates complete | Focused RED first failed because a private witness over a corrupted DOCX only reported `failed documents: 1` and did not expose any redacted failure-kind counter. After implementation, import-pipeline carries an `ImportFailureKind` aggregate in `ImportSummary`, witness output prints fixed redacted `import failure <kind>: <count>` lines, and the focused CLI test proves a corrupted private DOCX reports `parser_corrupted: 1` without path, file-name, or payload leaks. The private 10k-scale witness was rerun locally and reported 20 total failures split into 16 `parser_corrupted` and 4 `parser_encrypted`, with private temporary data removed. | This slice improves private witness diagnostics only. It does not repair corrupted/encrypted documents, prove full-corpus OCR completion, run private performance benchmarks, create labeled quality evidence, clear model/OCR licensing blockers, validate release installers, or make stable release ready. |
 
 ## Command Log
+
+### S263
+
+Design target:
+
+- Turn `failed documents: <n>` in the local witness into actionable redacted
+  aggregate evidence by adding fixed import failure-kind counters.
+- Preserve the witness privacy boundary: no path, filename, raw payload,
+  parser diagnostic, or document text in output.
+
+TDD RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_reports_import_failure_kinds_without_path_or_payload_leak --locked -- --exact
+```
+
+Output summary:
+
+- The focused test failed because witness output did not contain
+  `import failure parser_corrupted: 1` for a synthetic private corrupted DOCX.
+
+Implementation checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search witness_reports_import_failure_kinds_without_path_or_payload_leak --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s9_import_search --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p import-pipeline --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings
+```
+
+Output summary:
+
+- Focused GREEN passed for redacted import failure-kind witness output.
+- Full `s9_import_search` passed with 27 tests.
+- Full `import-pipeline` tests and doctests passed.
+- `cargo fmt --check` passed after formatting the touched enum.
+- Focused clippy passed with `-D warnings`.
+
+Private local witness:
+
+```bash
+target/debug/resume-cli witness --root <redacted-private-root> --max-files 10000 --probe-search --probe-fields
+```
+
+Output summary:
+
+- `files selected: 8720`
+- `unsupported entries skipped: 49`
+- `filesystem scan errors: 0`
+- `scan budget exhausted: no`
+- `witness import status: completed`
+- `searchable documents: 146`
+- `ocr required documents: 8554`
+- `ocr jobs queued: 8554`
+- `failed documents: 20`
+- `import failure parser_corrupted: 16`
+- `import failure parser_encrypted: 4`
+- all other import failure counters were `0`
+- `witness field status: completed`
+- `field probe documents: 133`
+- `field probe mentions: 2193`
+- `witness search status: completed`
+- `search probe hits: 1`
+- `private witness data: removed`
+
+Scope note:
+
+- S263 proves redacted import failure-kind aggregation for witness output and
+  identifies the current private-corpus failed-import split. It does not fix
+  encrypted/corrupted documents or clear OCR, benchmark, model, platform, or
+  release blockers.
+- Full product is still not complete.
 
 ### S262
 

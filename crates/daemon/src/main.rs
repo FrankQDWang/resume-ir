@@ -854,7 +854,7 @@ fn run_import_worker_once_with_retry_due(
         };
 
         let finished_at = current_timestamp()?;
-        upsert_scope_summary(store, scope, import_summary, finished_at)?;
+        upsert_scope_summary(store, scope, &import_summary, finished_at)?;
         worker_summary.processed += 1;
         worker_summary.searchable_documents += import_summary.searchable_documents;
         worker_summary.ocr_jobs_queued += import_summary.ocr_jobs_queued;
@@ -1874,7 +1874,7 @@ fn import_options_from_scope(scope: &ImportScanScope) -> Result<ImportOptions> {
 fn upsert_scope_summary(
     store: &MetaStore,
     mut scope: ImportScanScope,
-    summary: ImportSummary,
+    summary: &ImportSummary,
     now: UnixTimestamp,
 ) -> Result<()> {
     scope.files_discovered = usize_to_u64(summary.files_discovered)?;
