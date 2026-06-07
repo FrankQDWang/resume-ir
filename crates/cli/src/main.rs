@@ -126,7 +126,7 @@ const WITNESS_IMPORT_FAILURE_KINDS: &[ImportFailureKind] = &[
     ImportFailureKind::ParserInternal,
     ImportFailureKind::EmptyText,
 ];
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, benchmark-query-protocol, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
 const RELEASE_READINESS_PERFORMANCE_LABEL: &str = "private real-corpus performance evidence";
 const RELEASE_READINESS_FIELD_QUALITY_LABEL: &str = "field extraction quality";
 const RELEASE_READINESS_DEDUPE_QUALITY_LABEL: &str = "dedupe quality";
@@ -216,6 +216,7 @@ fn run() -> Result<()> {
         "status" => status_command(&data_dir, &args[1..]),
         "import" => import_command(&data_dir, &args[1..]),
         "search" => search_command(&data_dir, &args[1..]),
+        "benchmark-query-protocol" => benchmark_query_protocol_command(&data_dir, &args[1..]),
         "detail" => detail_command(&data_dir, &args[1..]),
         "delete" => delete_command(&data_dir, &args[1..]),
         "purge" => purge_command(&data_dir, &args[1..]),
@@ -5837,46 +5838,13 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return search_ipc_command(endpoint, &search_args);
     }
 
-    let candidate_limit = search_args
-        .top_k
-        .saturating_mul(5)
-        .clamp(search_args.top_k, 100);
-
     let query_started = Instant::now();
-    let hits = match search_args.mode {
-        SearchMode::FullText => {
-            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
-                .map_err(CliError::fulltext)?
-            else {
-                println!("search index not available yet");
-                println!("results: 0");
-                return Ok(());
-            };
-            let store = open_store(data_dir)?;
-            let fulltext_hits = run_fulltext_search(&index, &store, &search_args, candidate_limit)?;
-            attach_soft_dedupe_hints(
-                &store,
-                fulltext_hits.into_iter().take(search_args.top_k).collect(),
-            )?
-        }
-        SearchMode::Semantic => {
-            let store = open_store(data_dir)?;
-            let hits = run_semantic_search(data_dir, &store, &search_args, candidate_limit)?;
-            attach_soft_dedupe_hints(&store, hits)?
-        }
-        SearchMode::Hybrid => {
-            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
-                .map_err(CliError::fulltext)?
-            else {
-                return Err(CliError::user(
-                    "hybrid search unavailable: full-text index is not ready",
-                ));
-            };
-            let store = open_store(data_dir)?;
-            let fulltext_hits = run_fulltext_search(&index, &store, &search_args, candidate_limit)?;
-            let vector_hits = run_semantic_search(data_dir, &store, &search_args, candidate_limit)?;
-            let hits = fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k);
-            attach_soft_dedupe_hints(&store, hits)?
+    let hits = match run_local_search(data_dir, &search_args)? {
+        LocalSearchOutcome::Hits(hits) => hits,
+        LocalSearchOutcome::FullTextIndexUnavailable => {
+            println!("search index not available yet");
+            println!("results: 0");
+            return Ok(());
         }
     };
 
@@ -5889,6 +5857,119 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
     print_search_hits(hits);
 
     Ok(())
+}
+
+fn benchmark_query_protocol_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    validate_benchmark_query_protocol_args(args)?;
+    let query_input_path = benchmark_query_env("RESUME_IR_QUERY_INPUT_PATH")?;
+    let top_k = benchmark_query_top_k()?;
+    let mode = benchmark_query_mode()?;
+    let mut search_args = vec![
+        "--query-file".to_string(),
+        query_input_path,
+        "--mode".to_string(),
+        mode.label().to_string(),
+        "--top-k".to_string(),
+        top_k.to_string(),
+    ];
+    search_args.extend(args.iter().cloned());
+
+    let search_args = parse_search_args(data_dir, &search_args)?;
+    let query_started = Instant::now();
+    let hits = match run_local_search(data_dir, &search_args)? {
+        LocalSearchOutcome::Hits(hits) => hits,
+        LocalSearchOutcome::FullTextIndexUnavailable => Vec::new(),
+    };
+    record_search_query_observation(
+        data_dir,
+        search_args.mode,
+        query_started.elapsed(),
+        hits.len(),
+    );
+    println!("resume-ir-query-v1");
+    println!("hits={}", hits.len());
+    Ok(())
+}
+
+fn validate_benchmark_query_protocol_args(args: &[String]) -> Result<()> {
+    for arg in args {
+        match arg.as_str() {
+            "--query-file" | "--mode" | "--top-k" | "--ipc" | "--ipc-token-file" => {
+                return Err(CliError::usage(benchmark_query_protocol_usage()));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn benchmark_query_env(name: &str) -> Result<String> {
+    std::env::var(name).map_err(|_| CliError::user("benchmark query input is unavailable"))
+}
+
+fn benchmark_query_top_k() -> Result<usize> {
+    let value = std::env::var("RESUME_IR_QUERY_TOP_K")
+        .map_err(|_| CliError::user("benchmark query top-k is invalid"))?;
+    parse_positive_usize(&value).map_err(|_| CliError::user("benchmark query top-k is invalid"))
+}
+
+fn benchmark_query_mode() -> Result<SearchMode> {
+    let value = std::env::var("RESUME_IR_QUERY_MODE")
+        .map_err(|_| CliError::user("benchmark query mode is invalid"))?;
+    SearchMode::parse(&value).ok_or_else(|| CliError::user("benchmark query mode is invalid"))
+}
+
+fn benchmark_query_protocol_usage() -> &'static str {
+    "usage: resume-cli benchmark-query-protocol [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>]"
+}
+
+enum LocalSearchOutcome {
+    Hits(Vec<SearchOutputHit>),
+    FullTextIndexUnavailable,
+}
+
+fn run_local_search(data_dir: &Path, search_args: &SearchArgs) -> Result<LocalSearchOutcome> {
+    let candidate_limit = search_args
+        .top_k
+        .saturating_mul(5)
+        .clamp(search_args.top_k, 100);
+
+    let hits = match search_args.mode {
+        SearchMode::FullText => {
+            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+                .map_err(CliError::fulltext)?
+            else {
+                return Ok(LocalSearchOutcome::FullTextIndexUnavailable);
+            };
+            let store = open_store(data_dir)?;
+            let fulltext_hits = run_fulltext_search(&index, &store, search_args, candidate_limit)?;
+            attach_soft_dedupe_hints(
+                &store,
+                fulltext_hits.into_iter().take(search_args.top_k).collect(),
+            )?
+        }
+        SearchMode::Semantic => {
+            let store = open_store(data_dir)?;
+            let hits = run_semantic_search(data_dir, &store, search_args, candidate_limit)?;
+            attach_soft_dedupe_hints(&store, hits)?
+        }
+        SearchMode::Hybrid => {
+            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+                .map_err(CliError::fulltext)?
+            else {
+                return Err(CliError::user(
+                    "hybrid search unavailable: full-text index is not ready",
+                ));
+            };
+            let store = open_store(data_dir)?;
+            let fulltext_hits = run_fulltext_search(&index, &store, search_args, candidate_limit)?;
+            let vector_hits = run_semantic_search(data_dir, &store, search_args, candidate_limit)?;
+            let hits = fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k);
+            attach_soft_dedupe_hints(&store, hits)?
+        }
+    };
+
+    Ok(LocalSearchOutcome::Hits(hits))
 }
 
 fn record_search_query_observation(

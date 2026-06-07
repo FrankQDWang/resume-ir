@@ -96,15 +96,33 @@ impl fmt::Debug for SyntheticBenchmarkConfig {
 #[derive(Clone, PartialEq, Eq)]
 pub struct PrivateQueryBenchmarkCommand {
     command: PathBuf,
+    args: Vec<String>,
 }
 
 impl PrivateQueryBenchmarkCommand {
     pub fn local_command(command: impl AsRef<Path>) -> Result<Self> {
+        Self::local_command_with_args(command, Vec::<String>::new())
+    }
+
+    pub fn local_command_with_args(
+        command: impl AsRef<Path>,
+        args: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<Self> {
         let command = command.as_ref().to_path_buf();
         if command.as_os_str().is_empty() {
             return Err(BenchmarkError::invalid_config("private_query_command"));
         }
-        Ok(Self { command })
+        let args = args
+            .into_iter()
+            .map(Into::into)
+            .map(|arg| {
+                if arg.is_empty() {
+                    return Err(BenchmarkError::invalid_config("private_query_command_arg"));
+                }
+                Ok(arg)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self { command, args })
     }
 }
 
@@ -5051,6 +5069,7 @@ fn run_private_query_command(
 ) -> Result<usize> {
     let started = Instant::now();
     let mut child = Command::new(&command.command)
+        .args(&command.args)
         .env("RESUME_IR_QUERY_INPUT_PATH", query_file)
         .env("RESUME_IR_QUERY_TOP_K", top_k.to_string())
         .env("RESUME_IR_QUERY_MODE", "hybrid")

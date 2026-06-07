@@ -246,6 +246,60 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
 }
 
 #[test]
+fn resume_benchmark_private_query_passes_command_args_without_leaking_them() {
+    let query_set = private_query_set_file("private-query-cli-command-args-set", 3);
+    let command = query_fixture_script_requiring_args("private-query-cli-command-args-command");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "private-query",
+            "--query-set",
+            path_str(&query_set),
+            "--command",
+            path_str(&command),
+            "--command-arg",
+            "resume-cli",
+            "--command-arg",
+            "benchmark-query-protocol",
+            "--document-count",
+            "8720",
+            "--max-queries",
+            "3",
+            "--top-k",
+            "10",
+            "--timeout-ms",
+            "5000",
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--query-set-sha256",
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--json",
+        ])
+        .output()
+        .expect("run resume-benchmark private-query with command args");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\":\"benchmark.v1\""));
+    assert!(stdout.contains("\"query_count\":3"));
+    assert!(stdout.contains("\"query_mode\":\"hybrid\""));
+    assert!(!stdout.contains(path_str(&query_set)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains("resume-cli"));
+    assert!(!stdout.contains("benchmark-query-protocol"));
+    assert!(!stdout.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
 fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
     let report_dir = temp_dir("private-real-benchmark-cli-gate");
     let report_path = report_dir.join("benchmark-report.json");
@@ -2266,8 +2320,16 @@ fn pdf_render_fixture_script(label: &str) -> PathBuf {
 }
 
 fn query_fixture_script(label: &str) -> PathBuf {
+    query_fixture_script_with_body(label, query_fixture_script_body())
+}
+
+fn query_fixture_script_requiring_args(label: &str) -> PathBuf {
+    query_fixture_script_with_body(label, query_fixture_script_requiring_args_body())
+}
+
+fn query_fixture_script_with_body(label: &str, body: &str) -> PathBuf {
     let path = temp_dir(label).join(query_fixture_file_name());
-    fs::write(&path, query_fixture_script_body()).unwrap();
+    fs::write(&path, body).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -2428,6 +2490,21 @@ fn pdf_render_fixture_script_body() -> &'static str {
 fn query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
+        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
+        "  printf 'resume-ir-query-v1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "else\n",
+        "  printf 'resume-ir-query-v1\\nhits=0\\n'\n",
+        "fi\n",
+    )
+}
+
+#[cfg(unix)]
+fn query_fixture_script_requiring_args_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "if [ \"$1\" != \"resume-cli\" ] || [ \"$2\" != \"benchmark-query-protocol\" ]; then\n",
+        "  exit 7\n",
+        "fi\n",
         "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
         "  printf 'resume-ir-query-v1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
         "else\n",
@@ -2633,6 +2710,24 @@ fn minimal_private_business_dedupe_quality_json() -> String {
         "}"
     )
     .to_string()
+}
+
+#[cfg(windows)]
+fn query_fixture_script_requiring_args_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "if not \"%1\"==\"resume-cli\" exit /b 7\r\n",
+        "if not \"%2\"==\"benchmark-query-protocol\" exit /b 7\r\n",
+        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
+        "if %ERRORLEVEL%==0 (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
+        ") else (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo hits=0\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
 }
 
 fn remove_dir(path: &Path) {

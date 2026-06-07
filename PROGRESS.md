@@ -72,6 +72,10 @@ production-ready scope source.
   fixtures only; no real benchmark query set, real resume data, local paths,
   raw queries, generated private reports, diagnostics, or model caches were
   committed or uploaded.
+  S275 used synthetic fixtures and private-shaped benchmark query fixtures only;
+  no real benchmark query set, real resume data, local paths, raw queries,
+  generated private reports, diagnostics, or model caches were committed or
+  uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -586,7 +590,12 @@ obsolete preliminary files and checklists are not product scope.
   readiness benchmark evidence intake now enforces the same 8000-document,
   500-query, p95 <= 200ms, zero-result-query gate documented for the local
   private benchmark run, so undersized private reports cannot clear the local
-  performance evidence blocker.
+  performance evidence blocker. The CLI now also has a product-owned
+  `benchmark-query-protocol` command and the benchmark runner accepts
+  `--command-arg`, so local private query benchmark runs can invoke
+  `resume-cli --data-dir <local-data-dir> benchmark-query-protocol ...`
+  directly instead of relying on an ad hoc wrapper that might leak raw queries
+  or result details.
   Hosted Windows daemon scheduler tests now avoid rerunning metadata migrations
   from the test process after foreground daemon readiness has already proved the
   store is migrated, reducing live worker-loop SQLCipher/SQLite DDL contention
@@ -922,8 +931,88 @@ obsolete preliminary files and checklists are not product scope.
 | S272 | Product private OCR throughput runner hardening complete locally | Focused RED first failed because private OCR throughput reports had no redacted per-document failure aggregate surface and the runner failed a whole run on a single render/OCR failure; a second RED failed because the runner had no total-run budget or `run_budget_exhausted` report field. After implementation, `private-ocr-throughput` skips per-document render/OCR failures into aggregate counts, emits the new strict private report fields, supports `--max-run-ms`, and `ocr-gate --require-private-real-corpus` rejects budget-exhausted evidence. A budgeted private local witness over the user-authorized sample corpus processed 25 pages across 25 documents, reported zero failures, exhausted the 60s budget, and was rejected by OCR gate and release-readiness as diagnostic evidence only. | This slice hardens report generation and proves the current serial local OCR path is not release-ready for the 500-page representative gate. It does not clear the OCR throughput blocker, finish a 500-page representative run, approve OCR distribution, validate platforms, or make stable release ready. |
 | S273 | Product private benchmark query-file search input complete locally | Focused RED first failed because `resume-cli search --query-file <path>` was rejected as usage, forcing any private benchmark wrapper based on the product CLI to put raw query text back into argv. After implementation, CLI search accepts exactly one query source from either positional `<query>` or `--query-file <path>`, rejects duplicate or unavailable query-file inputs without printing the file path, and the existing semantic/hybrid search regression now runs through `--query-file` while keeping query text and paths out of output. The release blocker runbook and readiness guard document that private benchmark wrappers should pass `RESUME_IR_QUERY_INPUT_PATH` through `resume-cli search --query-file`. | This slice hardens the local private-query benchmark command path only. It does not generate a private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, or make stable release ready. |
 | S274 | Product release-readiness benchmark document floor aligned locally | Focused RED first failed because `resume-cli release-readiness --json --benchmark-report <report>` accepted a private real-corpus benchmark report with `document_count: 7999`, emitted release-readiness JSON, and treated the local performance evidence as provided even though the runbook gate requires at least 8000 local documents. After implementation, release-readiness validates benchmark evidence with an 8000-document floor, keeps the 500-query, p95 <= 200ms, and zero-result-query requirements, rejects undersized private reports with a redacted validation error, and the runbook/CI guard now lock the same threshold text. | This slice fixes release-readiness evidence intake consistency only. It does not generate or review the actual private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
+| S275 | Product private benchmark query protocol runner complete locally | Focused RED first failed because `resume-cli benchmark-query-protocol` was not a command, so benchmark-runner could only use external wrapper scripts; a second RED failed because `resume-benchmark private-query` rejected `--command-arg`, so it could not invoke `resume-cli --data-dir <local-data-dir> benchmark-query-protocol ...` directly. After implementation, the CLI protocol runner reads `RESUME_IR_QUERY_INPUT_PATH`, `RESUME_IR_QUERY_TOP_K`, and `RESUME_IR_QUERY_MODE`, runs the normal local search path, records redacted query telemetry, and emits only `resume-ir-query-v1` plus `hits=<n>`. The benchmark runner now passes redacted command args to the local query command without including them in benchmark reports, and the runbook/guard document the product-owned benchmark command path. | This slice removes a wrapper-script gap in private benchmark execution only. It does not create or review the actual private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 
 ## Command Log
+
+### S275
+
+Design target:
+
+- Give private query benchmark runs a product-owned command that converts
+  benchmark-runner query-file env vars into normal local hybrid search without
+  printing search results.
+- Let `resume-benchmark private-query` pass fixed command arguments so it can
+  invoke `resume-cli --data-dir <local-data-dir> benchmark-query-protocol ...`
+  directly instead of requiring ad hoc wrapper scripts.
+- Keep protocol stdout reduced to `resume-ir-query-v1` plus `hits=<n>` and keep
+  query text, result details, local paths, and command args out of reports.
+
+TDD RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s39_embedding_worker benchmark_query_protocol_runs_hybrid_search_without_result_or_query_leaks --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_passes_command_args_without_leaking_them --locked -- --exact
+```
+
+Output summary:
+
+- The CLI protocol regression failed before implementation because
+  `benchmark-query-protocol` was rejected as an unknown `resume-cli` command.
+- The benchmark-runner regression failed before implementation because
+  `private-query` rejected `--command-arg` as usage.
+
+Implementation and focused checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s39_embedding_worker benchmark_query_protocol_runs_hybrid_search_without_result_or_query_leaks --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_passes_command_args_without_leaking_them --locked -- --exact
+```
+
+Output summary:
+
+- The CLI protocol regression passed after the new command ran local hybrid
+  search through the persisted vector snapshot and emitted exactly
+  `resume-ir-query-v1` plus `hits=2`, without query text, fixture result names,
+  local paths, or fixture roots.
+- The benchmark-runner regression passed after `--command-arg` reached the
+  child query command while the redacted aggregate benchmark report omitted the
+  query set path, command path, command args, sample IDs, and raw query marker.
+
+Final checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s39_embedding_worker --locked
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli --locked
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo clippy -p resume-cli -p benchmark-runner --tests --locked -- -D warnings
+./scripts/ci/check-release-readiness.sh
+git diff --check
+# changed-line privacy marker scan; private evidence patterns omitted from this public log
+./scripts/ci/guard-public-repo.sh
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The full `s39_embedding_worker` file passed 10/10 and the full
+  `s17_benchmark_cli` file passed 35/35 after the focused RED/GREEN
+  regressions.
+- `cargo fmt --check`, focused `resume-cli`/`benchmark-runner` clippy,
+  release-readiness guard, diff check, changed-line privacy marker scan, and
+  public-repo guard passed before the full verifier.
+- Full `verify-local.sh` passed locally. The verifier covered workspace
+  clippy/tests, closed-loop CLI/daemon checks, benchmark/OCR/vector gates,
+  benchmark smoke, license/runbook/workflow/release-readiness guards, release
+  artifact and SBOM checks, macOS package and installer evidence, Windows
+  evidence scripts, and the final public-repo guard.
+
+Scope note:
+
+- S275 makes the private benchmark command path safer and product-owned. It
+  does not create the private query workload, run the private 500-query
+  benchmark, approve model distribution, finish OCR throughput evidence,
+  validate installers/services, or make stable release ready.
 
 ### S274
 

@@ -403,6 +403,90 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
 
 #[cfg(unix)]
 #[test]
+fn benchmark_query_protocol_runs_hybrid_search_without_result_or_query_leaks() {
+    let data_dir = temp_dir("benchmark-query-protocol-data");
+    let query_dir = temp_dir("benchmark-query-protocol-private-input");
+    let query_file = query_dir.join("query.txt");
+    fs::write(&query_file, "SemanticOnlyToken\n").unwrap();
+    let fixture_root = fixture_root();
+    let command = write_fixture_executable(
+        "fixture-benchmark-query-protocol-embedding",
+        r#"#!/bin/sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0,0\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+    import_fixtures(&data_dir, &fixture_root);
+
+    let embed = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "embed-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+            "--model-id",
+            "fixture-local-model",
+            "--dimension",
+            "4",
+            "--max-docs",
+            "8",
+            "--max-text-bytes",
+            "100000",
+        ])
+        .output()
+        .expect("run embed worker before benchmark query protocol");
+    assert!(
+        embed.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&embed.stdout),
+        String::from_utf8_lossy(&embed.stderr)
+    );
+
+    let protocol = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "benchmark-query-protocol",
+            "--embedding-command",
+            path_str(&command),
+            "--model-id",
+            "fixture-local-model",
+            "--dimension",
+            "4",
+        ])
+        .env("RESUME_IR_QUERY_INPUT_PATH", path_str(&query_file))
+        .env("RESUME_IR_QUERY_TOP_K", "20")
+        .env("RESUME_IR_QUERY_MODE", "hybrid")
+        .output()
+        .expect("run benchmark query protocol");
+
+    assert!(
+        protocol.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&protocol.stdout),
+        String::from_utf8_lossy(&protocol.stderr)
+    );
+    assert!(protocol.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&protocol.stdout);
+    assert_eq!(stdout, "resume-ir-query-v1\nhits=2\n");
+    assert!(!stdout.contains("SemanticOnlyToken"));
+    assert!(!stdout.contains("synthetic-java-platform.pdf"));
+    assert!(!stdout.contains("synthetic-java-engineer.docx"));
+    assert!(!stdout.contains(path_str(&query_file)));
+    assert!(!stdout.contains(path_str(&query_dir)));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+
+    remove_dir(&query_dir);
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn semantic_search_reports_missing_vector_snapshot_even_when_dimension_is_supplied() {
     let data_dir = temp_dir("semantic-missing-vector-snapshot-data");
     let command = write_fixture_executable(

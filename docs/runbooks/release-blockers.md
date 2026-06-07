@@ -159,14 +159,18 @@ not a local prerequisite for this machine.
 Generate the private query benchmark report locally only after the target
 private corpus has been imported, indexed, and warmed, and after the local query
 command has been reviewed to run hot hybrid search without OCR, parsing, or
-heavy model inference on the query path. The query-set JSONL stays local and may
-contain raw private queries; the command receives each query through an
-owner-only temporary file path in `RESUME_IR_QUERY_INPUT_PATH` plus
+heavy model inference on the query path. Prefer the product-owned
+`resume-cli benchmark-query-protocol` command over private wrapper scripts; it
+returns only the benchmark protocol and runs the query through the normal
+product hybrid search path. The query-set JSONL stays local and may contain raw
+private queries; the benchmark runner passes each query through an owner-only
+temporary file path in `RESUME_IR_QUERY_INPUT_PATH` plus
 `RESUME_IR_QUERY_TOP_K` and `RESUME_IR_QUERY_MODE=hybrid`, and must return only
 `resume-ir-query-v1` plus `hits=<n>` on stdout. Do not upload the query-set, the
 report, or command wrappers unless they have been separately reviewed to contain
 no raw queries, filenames, local paths, tokens, or resume data.
-Wrappers that delegate to `resume-cli search` must pass the query file through
+If a wrapper is still needed, it must delegate through
+`resume-cli benchmark-query-protocol` or pass the query file through
 `resume-cli search --query-file "$RESUME_IR_QUERY_INPUT_PATH" --mode hybrid`
 instead of putting the raw query in argv; wrapper stdout must still be reduced
 to the benchmark protocol only.
@@ -175,7 +179,12 @@ to the benchmark protocol only.
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   private-query \
   --query-set private-query-set.jsonl \
-  --command private-query-wrapper \
+  --command resume-cli \
+  --command-arg --data-dir --command-arg <local-data-dir> \
+  --command-arg benchmark-query-protocol \
+  --command-arg --embedding-command --command-arg <embedding-command> \
+  --command-arg --model-id --command-arg <model-id> \
+  --command-arg --dimension --command-arg <dim> \
   --document-count 8720 \
   --max-queries 500 --top-k 10 \
   --dataset-manifest-sha256 <sha256> \
