@@ -71,6 +71,7 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
     let manifests = PrivateQueryManifestDigests::new(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "1111111111111111111111111111111111111111111111111111111111111111",
     )
     .unwrap();
     let config = PrivateQueryBenchmarkConfig::new(
@@ -106,6 +107,9 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
     assert!(json.contains("\"vector_indexed_document_count\":8720"));
     assert!(json.contains("\"corpus_summary_sha256\":\""));
     assert!(json.contains("\"query_count\":500"));
+    assert!(json.contains(
+        "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
+    ));
     assert!(json.contains("\"target_claim\":\"query_latency_target_met\""));
     assert!(json.contains("\"query_mode\":\"hybrid\""));
     assert!(json.contains("\"retrieval_layers\":\"fulltext+field+vector+rrf\""));
@@ -144,6 +148,21 @@ fn private_query_corpus_summary_rejects_partial_hot_index_coverage() {
     assert!(error
         .to_string()
         .contains("private_query_corpus_summary_hot_index"));
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_corpus_without_model_manifest_digest() {
+    let report = minimal_private_real_benchmark_json(8_720, 500, 25.0, false).replace(
+        ",\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
+        "",
+    );
+    let config = BenchmarkGateConfig::new(8_000, 500, 50.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires model manifest digest"));
 }
 
 #[test]
@@ -289,6 +308,7 @@ fn benchmark_gate_rejects_private_real_report_without_hot_hybrid_evidence() {
         ",\"contains_queries\":false",
         ",\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
         ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\"",
+        ",\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
         ",\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
     ));
     report.push('}');
@@ -1731,6 +1751,7 @@ fn minimal_private_real_benchmark_json_without_hot_coverage(
         ",\"contains_queries\":false",
         ",\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
         ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\"",
+        ",\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
         ",\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
     ));
     report.push('}');

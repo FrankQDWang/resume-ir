@@ -184,6 +184,8 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "--query-set-sha256",
             "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--model-manifest-sha256",
+            "1111111111111111111111111111111111111111111111111111111111111111",
             "--json",
         ])
         .output()
@@ -204,6 +206,9 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
     assert!(stdout.contains("\"vector_indexed_document_count\":8720"));
     assert!(stdout.contains("\"corpus_summary_sha256\":\""));
     assert!(stdout.contains("\"query_count\":500"));
+    assert!(stdout.contains(
+        "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
+    ));
     assert!(stdout.contains("\"target_claim\":\"query_latency_target_met\""));
     assert!(stdout.contains("\"query_mode\":\"hybrid\""));
     assert!(stdout.contains("\"retrieval_layers\":\"fulltext+field+vector+rrf\""));
@@ -271,6 +276,8 @@ fn resume_benchmark_private_query_rejects_partial_corpus_summary_without_path_le
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "--query-set-sha256",
             "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--model-manifest-sha256",
+            "1111111111111111111111111111111111111111111111111111111111111111",
             "--json",
         ])
         .output()
@@ -314,6 +321,8 @@ fn resume_benchmark_private_query_passes_command_args_without_leaking_them() {
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "--query-set-sha256",
             "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--model-manifest-sha256",
+            "1111111111111111111111111111111111111111111111111111111111111111",
             "--json",
         ])
         .output()
@@ -336,6 +345,43 @@ fn resume_benchmark_private_query_passes_command_args_without_leaking_them() {
     assert!(!stdout.contains("resume-cli"));
     assert!(!stdout.contains("benchmark-query-protocol"));
     assert!(!stdout.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+    remove_dir(corpus_summary.parent().unwrap());
+}
+
+#[test]
+fn resume_benchmark_private_query_requires_model_manifest_digest() {
+    let query_set = private_query_set_file("private-query-cli-missing-model-set", 1);
+    let command = query_fixture_script("private-query-cli-missing-model-command");
+    let corpus_summary =
+        private_query_corpus_summary_file("private-query-cli-missing-model-summary", 8_720, true);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "private-query",
+            "--query-set",
+            path_str(&query_set),
+            "--command",
+            path_str(&command),
+            "--corpus-summary",
+            path_str(&corpus_summary),
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--query-set-sha256",
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        ])
+        .output()
+        .expect("run resume-benchmark private-query without model manifest digest");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("usage: resume-benchmark"));
+    assert!(!stderr.contains(path_str(&query_set)));
+    assert!(!stderr.contains(path_str(&command)));
+    assert!(!stderr.contains(path_str(&corpus_summary)));
 
     remove_dir(query_set.parent().unwrap());
     remove_dir(command.parent().unwrap());
@@ -389,6 +435,7 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
             "\"contains_queries\":false,",
             "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
             "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
@@ -475,6 +522,7 @@ fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
             "\"contains_queries\":false,",
             "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
             "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
@@ -553,6 +601,7 @@ fn resume_benchmark_gate_rejects_million_release_sampled_confidence() {
             "\"contains_queries\":false,",
             "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
             "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
@@ -631,6 +680,7 @@ fn resume_benchmark_gate_rejects_private_real_too_few_query_samples() {
             "\"contains_queries\":false,",
             "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
             "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"

@@ -510,6 +510,7 @@ fn private_real_benchmark_report() -> String {
         "\"contains_queries\":false,",
         "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
         "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
         "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
         "}"
     )

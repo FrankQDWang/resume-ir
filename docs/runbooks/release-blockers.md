@@ -143,9 +143,9 @@ reports. The report must use `dataset_kind: "private-real-corpus"`,
 `searchable_document_count` and `vector_indexed_document_count` hot-index
 coverage fields, false hot-path OCR/parsing/heavy-model-inference booleans,
 false raw-data/path/query booleans, and sha256 digests for the local dataset
-manifest, query set, and redacted `benchmark-corpus-summary` preflight. It must
-also have internally consistent aggregate metrics: hot-index coverage counts
-are non-zero and no larger than
+manifest, query set, reviewed embedding model manifest, and redacted
+`benchmark-corpus-summary` preflight. It must also have internally consistent
+aggregate metrics: hot-index coverage counts are non-zero and no larger than
 `document_count`, latency samples equal query count, zero-result queries do not
 exceed query count, total hits do not exceed `query_count * top_k`, latency
 percentiles are ordered, `query_total_ms` is positive, and reported QPS matches
@@ -208,6 +208,7 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   --max-queries 500 --top-k 10 \
   --dataset-manifest-sha256 <sha256> \
   --query-set-sha256 <sha256> \
+  --model-manifest-sha256 <sha256> \
   --json > private-benchmark-local.json
 ```
 

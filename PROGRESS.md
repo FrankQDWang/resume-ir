@@ -100,6 +100,10 @@ production-ready scope source.
   probe fixtures only; no real resume data, filenames, paths, raw text,
   vectors, command paths, generated private reports, diagnostics, or model
   caches were committed or uploaded.
+  S282 used synthetic/private-shaped benchmark, query-set, model-manifest, and
+  release-readiness fixtures only; no real benchmark query set, real resume
+  data, local paths, raw queries, model files, generated private reports,
+  diagnostics, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -983,8 +987,93 @@ obsolete preliminary files and checklists are not product scope.
 | S279 | CI Windows daemon import IPC wait hardening complete locally | GitHub Actions PR #9 `windows-latest` failed after S278 in `resume-daemon --test s20_ipc` because `daemon_import_command_ipc_feeds_running_import_worker_loop` did not see the daemon status reach two searchable documents within the old 120-request, 25ms polling window. The same test passed locally on macOS, and all other hosted checks passed, so the root cause was a too-small Windows hosted wait budget for the combined IPC/import-worker test. After implementation, the s20 IPC helper uses explicit endpoint/import-worker timeouts, a larger but bounded status request budget, 50ms polling, and redacted store-state/last-response diagnostics on timeout; both s20 combined import-worker tests share the hardened helper. | This slice hardens hosted Windows daemon IPC test reliability only. It does not change product daemon behavior, prove installed Windows service lifecycle, validate production installer behavior, clear platform blockers, or make stable release ready. |
 | S280 | Product private benchmark corpus-summary binding complete locally | Focused RED first failed because `benchmark-runner` had no `PrivateQueryCorpusSummary` and `PrivateQueryBenchmarkConfig::new` still accepted manually supplied hot-index counts. After implementation, `resume-benchmark private-query` requires `--corpus-summary <json>` from `resume-cli benchmark-corpus-summary --json`, validates the summary schema/privacy boundary, rejects partial hot-index coverage, derives document/searchable/vector counts from the summary instead of hand-copied flags, emits only `corpus_summary_sha256` in the redacted benchmark report, and the private real-corpus gate requires that digest. The runbook now instructs operators to save the local summary file and pass it directly to the benchmark runner. | This slice binds private benchmark reports to a local redacted corpus preflight only. It does not create or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 | S281 | Product witness embedding and corpus preflight complete locally | Focused RED first failed because `resume-cli witness` rejected `--run-embedding` and `--probe-benchmark-corpus` as unknown witness flags. After implementation, witness can run a configured local embedding command inside its temporary private data directory, persist a temporary vector snapshot, emit redacted aggregate embedding counts and vector-indexed document coverage, run the shared benchmark corpus summary helper against the same temporary corpus, and still remove private witness data. A blocked-command regression proves `--run-embedding` without a command reports `local embedding command not configured`, keeps vector coverage at zero, runs the corpus probe, and does not persist metadata in the user-supplied data dir. | This slice adds a local redacted witness preflight for embedding/corpus coverage only. It does not run the actual private 500-query benchmark, OCR the scanned local corpus, approve or distribute a production embedding model, prove 100k/1M scale, validate platforms, or make stable release ready. |
+| S282 | Product private benchmark model-manifest binding complete locally | Focused RED first failed because `resume-benchmark gate --require-private-real-corpus` accepted a private benchmark report without any `model_manifest_sha256`, and `resume-benchmark private-query` could generate one without `--model-manifest-sha256`. After implementation, private-query requires the model-manifest digest, validates it as SHA-256, emits it in the redacted aggregate benchmark report, and the private real-corpus gate rejects reports missing the reviewed model binding. Release-readiness fixtures and the release blocker runbook now require the same digest. | This slice binds private latency evidence to a reviewed embedding model manifest only. It does not create or review the actual private query set, run the 500-query private benchmark, approve/distribute a production embedding model, prove vector quality, OCR the scanned corpus, validate 100k/1M scale, validate platforms, or make stable release ready. |
 
 ## Command Log
+
+### S282
+
+Design target:
+
+- Bind private real-corpus query benchmark evidence to the reviewed embedding
+  model manifest, not just the dataset/query/corpus-summary digests.
+- Keep all evidence local and aggregate-only: no raw queries, local paths,
+  command paths, resume text, filenames, model files, diagnostics, or generated
+  private reports in committed files.
+- Treat this as a release-evidence schema hardening slice; actual production
+  model approval and the 500-query private benchmark remain separate blockers.
+
+TDD RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_corpus_without_model_manifest_digest --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_requires_model_manifest_digest --locked -- --exact
+```
+
+Output summary:
+
+- The gate RED failed before implementation because the missing-model report was
+  accepted as valid private real-corpus benchmark evidence.
+- The CLI RED failed before implementation because `private-query` succeeded
+  without `--model-manifest-sha256`.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_corpus_without_model_manifest_digest --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_requires_model_manifest_digest --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p benchmark-runner -p resume-cli --tests --locked -- -D warnings
+```
+
+Output summary:
+
+- The two exact RED tests passed after implementation.
+- `cargo fmt --check`: exit 0.
+- `cargo test -p benchmark-runner --test s17_benchmark_runner --locked`: exit
+  0; 68 tests passed.
+- `cargo test -p benchmark-runner --test s17_benchmark_cli --locked`: exit 0;
+  37 tests passed.
+- `cargo test -p benchmark-runner --locked`: exit 0; package tests and
+  doc-tests passed.
+- `cargo test -p resume-cli --test s161_release_readiness --locked`: exit 0; 5
+  tests passed.
+- Focused clippy exited 0.
+
+Acceptance checks:
+
+```bash
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-readiness.sh
+git diff --check
+git diff -U0 | rg -n "<local-corpus-path>|<copied-device-code>|<token-or-private-key-marker>"
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Runbook and release-readiness guards exited 0.
+- `git diff --check`: exit 0.
+- The narrow changed-line privacy scan exited 1 with no matches for the real
+  local corpus path, copied GitHub device code, token prefixes, or private-key
+  markers.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace tests and doc-tests,
+  CLI/daemon closed loops, benchmark/OCR/vector gates, runbook/license/
+  workflow/release-readiness checks, artifact/signing/notarization/SBOM checks,
+  macOS package checks, Windows evidence checks, and public repo guard passed.
+
+Scope note:
+
+- S282 is release-evidence binding only. It does not clear the private
+  performance, vector quality, OCR throughput, model licensing/distribution,
+  installer/signing/notarization, cross-platform validation, hardware fault
+  drill, or stable release blockers.
 
 ### S281
 

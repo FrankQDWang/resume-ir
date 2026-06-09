@@ -140,19 +140,23 @@ impl fmt::Debug for PrivateQueryBenchmarkCommand {
 pub struct PrivateQueryManifestDigests {
     dataset_manifest_sha256: String,
     query_set_sha256: String,
+    model_manifest_sha256: String,
 }
 
 impl PrivateQueryManifestDigests {
     pub fn new(
         dataset_manifest_sha256: impl Into<String>,
         query_set_sha256: impl Into<String>,
+        model_manifest_sha256: impl Into<String>,
     ) -> Result<Self> {
         let digests = Self {
             dataset_manifest_sha256: dataset_manifest_sha256.into(),
             query_set_sha256: query_set_sha256.into(),
+            model_manifest_sha256: model_manifest_sha256.into(),
         };
         if !is_sha256_hex(&digests.dataset_manifest_sha256)
             || !is_sha256_hex(&digests.query_set_sha256)
+            || !is_sha256_hex(&digests.model_manifest_sha256)
         {
             return Err(BenchmarkError::invalid_config(
                 "private_query_manifest_sha256",
@@ -1029,6 +1033,7 @@ impl PrivateQueryBenchmarkReport {
                 "\"contains_queries\":false,",
                 "\"dataset_manifest_sha256\":\"{}\",",
                 "\"query_set_sha256\":\"{}\",",
+                "\"model_manifest_sha256\":\"{}\",",
                 "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
                 "}}"
             ),
@@ -1056,6 +1061,7 @@ impl PrivateQueryBenchmarkReport {
             self.percentile_confidence,
             self.manifests.dataset_manifest_sha256,
             self.manifests.query_set_sha256,
+            self.manifests.model_manifest_sha256,
         )
     }
 }
@@ -4106,6 +4112,7 @@ fn validate_private_real_benchmark_boundary(
         || private_real_bool(report, "contains_queries")?
         || !is_sha256_hex(private_real_str(report, "dataset_manifest_sha256")?)
         || !is_sha256_hex(private_real_str(report, "query_set_sha256")?)
+        || !is_sha256_hex(private_real_str(report, "model_manifest_sha256")?)
         || !is_sha256_hex(private_real_str(report, "corpus_summary_sha256")?)
         || private_real_str(report, "scope")?
             != "private local real-corpus query benchmark; aggregate redacted report only"
@@ -4224,6 +4231,9 @@ fn validate_private_real_report_shape(
     private_real_bool(report, "contains_queries")?;
     private_real_str(report, "dataset_manifest_sha256")?;
     private_real_str(report, "query_set_sha256")?;
+    private_real_str(report, "model_manifest_sha256").map_err(|_| {
+        BenchmarkGateError::failed("private real-corpus benchmark requires model manifest digest")
+    })?;
     private_real_str(report, "corpus_summary_sha256")?;
     private_real_str(report, "scope")?;
     validate_private_real_hot_hybrid_evidence(report)?;
@@ -5002,6 +5012,7 @@ fn is_allowed_private_real_report_key(key: &str) -> bool {
             | "contains_queries"
             | "dataset_manifest_sha256"
             | "query_set_sha256"
+            | "model_manifest_sha256"
             | "corpus_summary_sha256"
             | "scope"
     )
