@@ -96,6 +96,10 @@ production-ready scope source.
   release-readiness fixtures only; no real benchmark query set, real resume
   data, local paths, raw queries, generated private reports, diagnostics, or
   model caches were committed or uploaded.
+  S281 used synthetic/private-shaped witness embedding and benchmark corpus
+  probe fixtures only; no real resume data, filenames, paths, raw text,
+  vectors, command paths, generated private reports, diagnostics, or model
+  caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -159,7 +163,10 @@ obsolete preliminary files and checklists are not product scope.
   budgeted witness on the first per-document OCR failure, prints only aggregate
   redacted output, can run a redacted internal full-text search probe without
   printing the private query or matched files, can run a redacted field-extraction
-  aggregate probe without printing field values, filenames, or paths, and
+  aggregate probe without printing field values, filenames, or paths, can run a
+  local embedding command against the temporary imported witness corpus and
+  report only redacted aggregate vector coverage, can run a redacted benchmark
+  corpus coverage probe from the same temporary data directory, and
   removes private witness data. S127, S136, S171, and S261 reran the explicit-root private
   PDF/Word witness against the user-authorized local sample directory for import/
   search/field probes plus bounded OCR witnesses using local `tesseract` and
@@ -975,8 +982,86 @@ obsolete preliminary files and checklists are not product scope.
 | S278 | Product benchmark corpus summary preflight complete locally | Focused RED first failed because vector snapshots had no unique active document count and `resume-cli benchmark-corpus-summary` was rejected as an unknown command. After implementation, `VectorSnapshot::document_count()` counts unique non-deleted vector document IDs, metadata exposes count/ID-only local coverage queries, and `resume-cli benchmark-corpus-summary --json` emits redacted aggregate `document_count`, `searchable_document_count`, `vector_indexed_document_count`, active vector document/vector/tombstone counts, vector index state/backend, and explicit false raw-data/path/query/sample-ID booleans. The CLI regression proves section vectors do not inflate coverage, deleted vectors are ignored, orphan vectors are not counted as benchmark-indexed searchable documents, and stdout omits synthetic private text, filenames, document IDs, and data-dir paths. | This slice adds a local preflight for private benchmark coverage counts only. It does not create or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 | S279 | CI Windows daemon import IPC wait hardening complete locally | GitHub Actions PR #9 `windows-latest` failed after S278 in `resume-daemon --test s20_ipc` because `daemon_import_command_ipc_feeds_running_import_worker_loop` did not see the daemon status reach two searchable documents within the old 120-request, 25ms polling window. The same test passed locally on macOS, and all other hosted checks passed, so the root cause was a too-small Windows hosted wait budget for the combined IPC/import-worker test. After implementation, the s20 IPC helper uses explicit endpoint/import-worker timeouts, a larger but bounded status request budget, 50ms polling, and redacted store-state/last-response diagnostics on timeout; both s20 combined import-worker tests share the hardened helper. | This slice hardens hosted Windows daemon IPC test reliability only. It does not change product daemon behavior, prove installed Windows service lifecycle, validate production installer behavior, clear platform blockers, or make stable release ready. |
 | S280 | Product private benchmark corpus-summary binding complete locally | Focused RED first failed because `benchmark-runner` had no `PrivateQueryCorpusSummary` and `PrivateQueryBenchmarkConfig::new` still accepted manually supplied hot-index counts. After implementation, `resume-benchmark private-query` requires `--corpus-summary <json>` from `resume-cli benchmark-corpus-summary --json`, validates the summary schema/privacy boundary, rejects partial hot-index coverage, derives document/searchable/vector counts from the summary instead of hand-copied flags, emits only `corpus_summary_sha256` in the redacted benchmark report, and the private real-corpus gate requires that digest. The runbook now instructs operators to save the local summary file and pass it directly to the benchmark runner. | This slice binds private benchmark reports to a local redacted corpus preflight only. It does not create or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
+| S281 | Product witness embedding and corpus preflight complete locally | Focused RED first failed because `resume-cli witness` rejected `--run-embedding` and `--probe-benchmark-corpus` as unknown witness flags. After implementation, witness can run a configured local embedding command inside its temporary private data directory, persist a temporary vector snapshot, emit redacted aggregate embedding counts and vector-indexed document coverage, run the shared benchmark corpus summary helper against the same temporary corpus, and still remove private witness data. A blocked-command regression proves `--run-embedding` without a command reports `local embedding command not configured`, keeps vector coverage at zero, runs the corpus probe, and does not persist metadata in the user-supplied data dir. | This slice adds a local redacted witness preflight for embedding/corpus coverage only. It does not run the actual private 500-query benchmark, OCR the scanned local corpus, approve or distribute a production embedding model, prove 100k/1M scale, validate platforms, or make stable release ready. |
 
 ## Command Log
+
+### S281
+
+Design target:
+
+- Extend the private local witness so an operator can validate import ->
+  embedding -> vector coverage -> benchmark corpus summary in one temporary,
+  redacted local run.
+- Keep the witness privacy boundary strict: no source paths, command paths,
+  filenames, raw resume text, vectors, document IDs, sample IDs, generated
+  private reports, diagnostics, or model caches in output or committed files.
+- Treat local million-resume validation as external-environment evidence; this
+  machine's available real corpus is about 10k resumes and remains local-only.
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s9_import_search witness_run_embedding_and_benchmark_probe_reports_hot_index_without_leaks --locked -- --exact
+```
+
+Output summary:
+
+- Failed before implementation because `resume-cli witness` rejected
+  `--run-embedding`, `--embedding-command`, and `--probe-benchmark-corpus`
+  with the old witness usage text.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s9_import_search witness_run_embedding_and_benchmark_probe_reports_hot_index_without_leaks --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s9_import_search witness_run_embedding_without_command_reports_blocked_without_persisting_private_data --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s9_import_search --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s39_embedding_worker --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+```
+
+Output summary:
+
+- The successful witness embedding/corpus probe exact test passed after
+  implementation.
+- The blocked embedding witness exact test passed and proved no command path,
+  private root path, filename, or user-specified data-dir persistence leak.
+- `cargo fmt --check`: exit 0.
+- `cargo test -p resume-cli --test s9_import_search --locked`: exit 0; 29
+  tests passed.
+- `cargo test -p resume-cli --test s39_embedding_worker --locked`: exit 0; 11
+  tests passed.
+- `cargo clippy -p resume-cli --tests --locked -- -D warnings`: exit 0.
+
+Acceptance checks:
+
+```bash
+git diff --check
+git diff -U0 | rg -n "<local-corpus-path>|<copied-device-code>|<token-or-private-key-marker>"
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `git diff --check`: exit 0.
+- The narrow changed-line privacy scan exited 1 with no matches for the real
+  local corpus path, copied GitHub device code, token prefixes, or private-key
+  markers.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace tests and doc-tests,
+  CLI/daemon closed loops, benchmark/OCR/vector gates, runbook/license/
+  workflow/release-readiness checks, artifact/signing/notarization/SBOM checks,
+  macOS package checks, Windows evidence checks, and public repo guard passed.
+
+Scope note:
+
+- S281 is local witness and corpus-preflight closure only. It does not run the
+  release private benchmark, finish OCR for the scanned local corpus, select or
+  approve a production embedding model, validate 100k/1M real-corpus scale, or
+  clear release blockers.
 
 ### S280
 

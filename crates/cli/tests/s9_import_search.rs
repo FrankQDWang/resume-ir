@@ -361,6 +361,155 @@ fn witness_probe_fields_reports_aggregate_counts_without_values_or_paths() {
     remove_dir(&private_root);
 }
 
+#[cfg(unix)]
+#[test]
+fn witness_run_embedding_and_benchmark_probe_reports_hot_index_without_leaks() {
+    serialize_windows_s9_import_test!();
+    let data_dir = temp_dir("witness-embedding-unused-data-dir");
+    let private_root = temp_dir("witness-embedding-private-root");
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        private_root.join("real-person-platform.pdf"),
+    )
+    .unwrap();
+    fs::copy(
+        fixture_root().join("synthetic-java-engineer.docx"),
+        private_root.join("real-person-engineer.docx"),
+    )
+    .unwrap();
+    let command = write_fixture_executable(
+        "fixture-witness-embedding",
+        r#"#!/bin/sh
+if [ ! -s "$RESUME_IR_EMBEDDING_INPUT_PATH" ]; then
+  exit 7
+fi
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-witness-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.25,0.25,0.25,0.25\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+
+    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "witness",
+            "--root",
+            path_str(&private_root),
+            "--run-embedding",
+            "--embedding-command",
+            path_str(&command),
+            "--embedding-model-id",
+            "fixture-witness-model",
+            "--embedding-dimension",
+            "4",
+            "--embedding-max-docs",
+            "8",
+            "--embedding-max-text-bytes",
+            "100000",
+            "--probe-benchmark-corpus",
+        ])
+        .output()
+        .expect("run resume-cli local witness with embedding and corpus probe");
+
+    assert!(
+        witness.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&witness.stdout),
+        String::from_utf8_lossy(&witness.stderr)
+    );
+    assert!(witness.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&witness.stdout);
+    assert!(stdout.contains("witness embedding status: completed"));
+    assert!(stdout.contains("embedding documents considered: 2"));
+    assert!(stdout.contains("embedding documents embedded: 2"));
+    assert!(stdout.contains("embedding vector indexed documents: 2"));
+    let vector_inputs = stdout_value(&stdout, "embedding vector inputs: ")
+        .parse::<usize>()
+        .expect("numeric embedding vector input count");
+    assert!(vector_inputs >= 2, "stdout:\n{stdout}");
+    assert!(stdout.contains("witness benchmark corpus status: completed"));
+    assert!(stdout.contains("benchmark corpus documents: 2"));
+    assert!(stdout.contains("benchmark corpus searchable documents: 2"));
+    assert!(stdout.contains("benchmark corpus vector indexed documents: 2"));
+    assert!(stdout.contains("benchmark corpus hot index fully covered: yes"));
+    assert!(stdout.contains("private witness data: removed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&canonical_private_root)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains("real-person"));
+    assert!(!stdout.contains("synthetic-java-platform.pdf"));
+    assert!(!stdout.contains("synthetic-java-engineer.docx"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn witness_run_embedding_without_command_reports_blocked_without_persisting_private_data() {
+    serialize_windows_s9_import_test!();
+    let data_dir = temp_dir("witness-embedding-blocked-unused-data-dir");
+    let private_root = temp_dir("witness-embedding-blocked-private-root");
+    fs::copy(
+        fixture_root().join("synthetic-java-platform.pdf"),
+        private_root.join("real-person-platform.pdf"),
+    )
+    .unwrap();
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+
+    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "witness",
+            "--root",
+            path_str(&private_root),
+            "--run-embedding",
+            "--embedding-model-id",
+            "fixture-witness-model",
+            "--embedding-dimension",
+            "4",
+            "--probe-benchmark-corpus",
+        ])
+        .output()
+        .expect("run resume-cli local witness with blocked embedding");
+
+    assert!(
+        witness.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&witness.stdout),
+        String::from_utf8_lossy(&witness.stderr)
+    );
+    assert!(witness.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&witness.stdout);
+    assert!(stdout.contains("witness embedding status: blocked"));
+    assert!(stdout.contains("embedding block reason: local embedding command not configured"));
+    assert!(stdout.contains("embedding documents considered: 0"));
+    assert!(stdout.contains("embedding documents embedded: 0"));
+    assert!(stdout.contains("embedding vector inputs: 0"));
+    assert!(stdout.contains("embedding vector indexed documents: 0"));
+    assert!(stdout.contains("witness benchmark corpus status: completed"));
+    assert!(stdout.contains("benchmark corpus documents: 1"));
+    assert!(stdout.contains("benchmark corpus searchable documents: 1"));
+    assert!(stdout.contains("benchmark corpus vector indexed documents: 0"));
+    assert!(stdout.contains("benchmark corpus hot index fully covered: no"));
+    assert!(stdout.contains("private witness data: removed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&canonical_private_root)));
+    assert!(!stdout.contains("real-person"));
+    assert!(!stdout.contains("synthetic-java-platform.pdf"));
+    assert!(!data_dir.join("metadata.sqlite3").exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
 #[test]
 fn witness_local_discovery_preset_uses_discovery_profile_without_path_leak() {
     serialize_windows_s9_import_test!();

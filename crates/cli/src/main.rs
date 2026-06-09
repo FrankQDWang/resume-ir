@@ -4287,6 +4287,22 @@ fn witness_command(args: &[String]) -> Result<()> {
     } else {
         WitnessOcrStatus::NotRequested
     };
+    let witness_embedding = if witness_args.run_embedding {
+        run_witness_embedding_jobs(
+            &temp_dirs.data_dir,
+            &store,
+            &witness_args.embedding_worker_args,
+        )?
+    } else {
+        WitnessEmbeddingStatus::NotRequested
+    };
+    let witness_benchmark_corpus = if witness_args.probe_benchmark_corpus {
+        WitnessBenchmarkCorpusStatus::Completed {
+            summary: benchmark_corpus_summary(&temp_dirs.data_dir, &store)?,
+        }
+    } else {
+        WitnessBenchmarkCorpusStatus::NotRequested
+    };
     let witness_fields = if witness_args.probe_fields {
         run_witness_field_probe(&store)?
     } else {
@@ -4325,6 +4341,8 @@ fn witness_command(args: &[String]) -> Result<()> {
     println!("failed documents: {}", summary.failed_documents);
     print_import_failure_counts(&summary);
     print_witness_ocr_status(&witness_ocr);
+    print_witness_embedding_status(&witness_embedding);
+    print_witness_benchmark_corpus_status(&witness_benchmark_corpus);
     print_witness_field_status(&witness_fields);
     print_witness_search_status(&witness_search);
     println!(
@@ -4360,10 +4378,14 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
     let mut root_preset = None;
     let mut max_files = WITNESS_DEFAULT_MAX_FILES;
     let mut run_ocr = false;
+    let mut run_embedding = false;
     let mut probe_search = false;
     let mut probe_fields = false;
+    let mut probe_benchmark_corpus = false;
     let mut seen_ocr_option = false;
+    let mut seen_embedding_option = false;
     let mut ocr_worker_args = default_ocr_worker_args();
+    let mut embedding_worker_args = default_embed_worker_args();
     let mut ocr_max_documents = None;
     let mut index = 0_usize;
 
@@ -4407,12 +4429,20 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
                 run_ocr = true;
                 index += 1;
             }
+            "--run-embedding" => {
+                run_embedding = true;
+                index += 1;
+            }
             "--probe-search" => {
                 probe_search = true;
                 index += 1;
             }
             "--probe-fields" => {
                 probe_fields = true;
+                index += 1;
+            }
+            "--probe-benchmark-corpus" => {
+                probe_benchmark_corpus = true;
                 index += 1;
             }
             "--ocr-command" => {
@@ -4545,11 +4575,89 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
                 );
                 index += 2;
             }
+            "--embedding-command" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if embedding_worker_args.command.is_some() {
+                    return Err(witness_usage());
+                }
+                embedding_worker_args.command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--embedding-model-id" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if embedding_worker_args.model_id.is_some() || !valid_cli_identifier(value) {
+                    return Err(witness_usage());
+                }
+                embedding_worker_args.model_id = Some(value.clone());
+                index += 2;
+            }
+            "--embedding-dimension" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if embedding_worker_args.dimension.is_some() {
+                    return Err(witness_usage());
+                }
+                embedding_worker_args.dimension = Some(
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .ok_or_else(witness_usage)?,
+                );
+                index += 2;
+            }
+            "--embedding-max-docs" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                embedding_worker_args.max_docs = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            "--embedding-max-text-bytes" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                embedding_worker_args.max_text_bytes = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            "--embedding-timeout-ms" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                embedding_worker_args.timeout_ms = value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
             _ => return Err(witness_usage()),
         }
     }
 
     if seen_ocr_option && !run_ocr {
+        return Err(witness_usage());
+    }
+    if seen_embedding_option && !run_embedding {
         return Err(witness_usage());
     }
     if ocr_worker_args.command.is_some() && ocr_worker_args.tesseract_command.is_some() {
@@ -4571,16 +4679,19 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
         root_selection,
         max_files,
         run_ocr,
+        run_embedding,
         probe_search,
         probe_fields,
+        probe_benchmark_corpus,
         ocr_max_documents,
         ocr_worker_args,
+        embedding_worker_args,
     })
 }
 
 fn witness_usage() -> CliError {
     CliError::usage(
-        "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--probe-search] [--probe-fields] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]",
+        "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--probe-search] [--probe-fields] [--probe-benchmark-corpus] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]] [--run-embedding [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>]]",
     )
 }
 
@@ -4596,6 +4707,17 @@ fn default_ocr_worker_args() -> OcrWorkerArgs {
         render_dpi: 300,
         page_timeout_ms: 30_000,
         max_pages_per_document: DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT,
+    }
+}
+
+fn default_embed_worker_args() -> EmbedWorkerArgs {
+    EmbedWorkerArgs {
+        command: None,
+        model_id: None,
+        dimension: None,
+        max_docs: 64,
+        max_text_bytes: 1_000_000,
+        timeout_ms: 30_000,
     }
 }
 
@@ -4722,6 +4844,158 @@ fn print_witness_ocr_status(status: &WitnessOcrStatus) {
             println!(
                 "ocr document budget exhausted: {}",
                 yes_no(*budget_exhausted)
+            );
+        }
+    }
+}
+
+fn run_witness_embedding_jobs(
+    data_dir: &Path,
+    store: &MetaStore,
+    worker_args: &EmbedWorkerArgs,
+) -> Result<WitnessEmbeddingStatus> {
+    let Some(command) = worker_args.command.clone() else {
+        return Ok(WitnessEmbeddingStatus::Blocked {
+            reason: "local embedding command not configured",
+            documents_considered: 0,
+            documents_embedded: 0,
+            vector_inputs: 0,
+            vector_indexed_documents: 0,
+        });
+    };
+    let Some(model_id) = worker_args.model_id.as_deref() else {
+        return Ok(WitnessEmbeddingStatus::Blocked {
+            reason: "local embedding model not configured",
+            documents_considered: 0,
+            documents_embedded: 0,
+            vector_inputs: 0,
+            vector_indexed_documents: 0,
+        });
+    };
+    let Some(dimension) = worker_args.dimension else {
+        return Ok(WitnessEmbeddingStatus::Blocked {
+            reason: "local embedding dimension not configured",
+            documents_considered: 0,
+            documents_embedded: 0,
+            vector_inputs: 0,
+            vector_indexed_documents: 0,
+        });
+    };
+
+    let candidates = embedding_candidates(store, worker_args.max_docs)?;
+    let documents_considered = candidates.len();
+    match run_local_embedding_jobs(
+        data_dir,
+        &candidates,
+        command,
+        model_id,
+        dimension,
+        worker_args.max_text_bytes,
+        worker_args.timeout_ms,
+    ) {
+        Ok(summary) => {
+            let corpus_summary = benchmark_corpus_summary(data_dir, store)?;
+            Ok(WitnessEmbeddingStatus::Completed {
+                documents_considered: summary.documents_considered,
+                documents_embedded: summary.documents_embedded,
+                vector_inputs: summary.vector_inputs,
+                vector_indexed_documents: corpus_summary.vector_indexed_document_count,
+            })
+        }
+        Err(_) => Ok(WitnessEmbeddingStatus::Blocked {
+            reason: "local embedding command failed or unavailable",
+            documents_considered,
+            documents_embedded: 0,
+            vector_inputs: 0,
+            vector_indexed_documents: benchmark_corpus_summary(data_dir, store)?
+                .vector_indexed_document_count,
+        }),
+    }
+}
+
+fn print_witness_embedding_status(status: &WitnessEmbeddingStatus) {
+    match status {
+        WitnessEmbeddingStatus::NotRequested => {
+            println!("witness embedding status: not_requested");
+            println!("embedding documents considered: 0");
+            println!("embedding documents embedded: 0");
+            println!("embedding vector inputs: 0");
+            println!("embedding vector indexed documents: 0");
+        }
+        WitnessEmbeddingStatus::Completed {
+            documents_considered,
+            documents_embedded,
+            vector_inputs,
+            vector_indexed_documents,
+        } => {
+            println!("witness embedding status: completed");
+            println!("embedding documents considered: {documents_considered}");
+            println!("embedding documents embedded: {documents_embedded}");
+            println!("embedding vector inputs: {vector_inputs}");
+            println!("embedding vector indexed documents: {vector_indexed_documents}");
+        }
+        WitnessEmbeddingStatus::Blocked {
+            reason,
+            documents_considered,
+            documents_embedded,
+            vector_inputs,
+            vector_indexed_documents,
+        } => {
+            println!("witness embedding status: blocked");
+            println!("embedding block reason: {reason}");
+            println!("embedding documents considered: {documents_considered}");
+            println!("embedding documents embedded: {documents_embedded}");
+            println!("embedding vector inputs: {vector_inputs}");
+            println!("embedding vector indexed documents: {vector_indexed_documents}");
+        }
+    }
+}
+
+fn print_witness_benchmark_corpus_status(status: &WitnessBenchmarkCorpusStatus) {
+    match status {
+        WitnessBenchmarkCorpusStatus::NotRequested => {
+            println!("witness benchmark corpus status: not_requested");
+            println!("benchmark corpus documents: 0");
+            println!("benchmark corpus searchable documents: 0");
+            println!("benchmark corpus vector indexed documents: 0");
+            println!("benchmark corpus active vector documents: 0");
+            println!("benchmark corpus vector count: 0");
+            println!("benchmark corpus vector tombstones: 0");
+            println!("benchmark corpus vector index: unavailable");
+            println!("benchmark corpus vector backend: none");
+            println!("benchmark corpus hot index fully covered: no");
+        }
+        WitnessBenchmarkCorpusStatus::Completed { summary } => {
+            println!("witness benchmark corpus status: completed");
+            println!("benchmark corpus documents: {}", summary.document_count);
+            println!(
+                "benchmark corpus searchable documents: {}",
+                summary.searchable_document_count
+            );
+            println!(
+                "benchmark corpus vector indexed documents: {}",
+                summary.vector_indexed_document_count
+            );
+            println!(
+                "benchmark corpus active vector documents: {}",
+                summary.active_vector_document_count
+            );
+            println!("benchmark corpus vector count: {}", summary.vector_count);
+            println!(
+                "benchmark corpus vector tombstones: {}",
+                summary.vector_deleted_count
+            );
+            println!(
+                "benchmark corpus vector index: {}",
+                summary.vector_index_state
+            );
+            println!(
+                "benchmark corpus vector backend: {}",
+                summary.vector_search_backend
+            );
+            println!(
+                "benchmark corpus hot index fully covered: {}",
+                yes_no(summary.hot_index_fully_covered)
             );
         }
     }
@@ -5053,10 +5327,13 @@ struct WitnessArgs {
     root_selection: WitnessRootSelection,
     max_files: usize,
     run_ocr: bool,
+    run_embedding: bool,
     probe_search: bool,
     probe_fields: bool,
+    probe_benchmark_corpus: bool,
     ocr_max_documents: Option<usize>,
     ocr_worker_args: OcrWorkerArgs,
+    embedding_worker_args: EmbedWorkerArgs,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -5099,6 +5376,28 @@ enum WitnessOcrStatus {
         cache_hits: usize,
         budget_exhausted: bool,
     },
+}
+
+enum WitnessEmbeddingStatus {
+    NotRequested,
+    Completed {
+        documents_considered: usize,
+        documents_embedded: usize,
+        vector_inputs: usize,
+        vector_indexed_documents: u64,
+    },
+    Blocked {
+        reason: &'static str,
+        documents_considered: usize,
+        documents_embedded: usize,
+        vector_inputs: usize,
+        vector_indexed_documents: u64,
+    },
+}
+
+enum WitnessBenchmarkCorpusStatus {
+    NotRequested,
+    Completed { summary: BenchmarkCorpusSummary },
 }
 
 enum WitnessSearchStatus {
@@ -5907,6 +6206,76 @@ fn validate_benchmark_query_protocol_args(args: &[String]) -> Result<()> {
 fn benchmark_corpus_summary_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let args = parse_benchmark_corpus_summary_args(args)?;
     let store = open_store(data_dir)?;
+    let summary = benchmark_corpus_summary(data_dir, &store)?;
+
+    if args.json {
+        let report = serde_json::json!({
+            "schema_version": "benchmark-corpus-summary.v1",
+            "privacy_boundary": "redacted_local_aggregate",
+            "document_count": summary.document_count,
+            "searchable_document_count": summary.searchable_document_count,
+            "vector_indexed_document_count": summary.vector_indexed_document_count,
+            "active_vector_document_count": summary.active_vector_document_count,
+            "vector_count": summary.vector_count,
+            "vector_deleted_count": summary.vector_deleted_count,
+            "vector_index_state": summary.vector_index_state,
+            "vector_search_backend": summary.vector_search_backend,
+            "hot_index_fully_covered": summary.hot_index_fully_covered,
+            "contains_raw_resume_text": false,
+            "contains_resume_paths": false,
+            "contains_queries": false,
+            "contains_sample_ids": false,
+        });
+        let report = serde_json::to_string_pretty(&report)
+            .map_err(|_| CliError::user("benchmark corpus summary unavailable"))?;
+        println!("{report}");
+        return Ok(());
+    }
+
+    println!("resume-ir benchmark corpus summary");
+    println!("privacy boundary: redacted local aggregate");
+    println!("documents: {}", summary.document_count);
+    println!(
+        "searchable documents: {}",
+        summary.searchable_document_count
+    );
+    println!(
+        "vector indexed documents: {}",
+        summary.vector_indexed_document_count
+    );
+    println!(
+        "active vector documents: {}",
+        summary.active_vector_document_count
+    );
+    println!("vector count: {}", summary.vector_count);
+    println!("vector tombstones: {}", summary.vector_deleted_count);
+    println!("vector index: {}", summary.vector_index_state);
+    println!("vector backend: {}", summary.vector_search_backend);
+    println!(
+        "hot index fully covered: {}",
+        summary.hot_index_fully_covered
+    );
+    println!("raw resume text: <redacted>");
+    println!("resume paths: <redacted>");
+    println!("queries: <redacted>");
+    println!("sample ids: <redacted>");
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BenchmarkCorpusSummary {
+    document_count: u64,
+    searchable_document_count: u64,
+    vector_indexed_document_count: u64,
+    active_vector_document_count: u64,
+    vector_count: u64,
+    vector_deleted_count: u64,
+    vector_index_state: &'static str,
+    vector_search_backend: &'static str,
+    hot_index_fully_covered: bool,
+}
+
+fn benchmark_corpus_summary(data_dir: &Path, store: &MetaStore) -> Result<BenchmarkCorpusSummary> {
     let document_count = store.visible_document_count().map_err(CliError::store)?;
     let summary = store.status_summary().map_err(CliError::store)?;
     let searchable_document_ids = store
@@ -5932,46 +6301,17 @@ fn benchmark_corpus_summary_command(data_dir: &Path, args: &[String]) -> Result<
         && summary.searchable_documents >= document_count
         && vector_indexed_document_count >= document_count;
 
-    if args.json {
-        let report = serde_json::json!({
-            "schema_version": "benchmark-corpus-summary.v1",
-            "privacy_boundary": "redacted_local_aggregate",
-            "document_count": document_count,
-            "searchable_document_count": summary.searchable_documents,
-            "vector_indexed_document_count": vector_indexed_document_count,
-            "active_vector_document_count": active_vector_document_count,
-            "vector_count": vector_count,
-            "vector_deleted_count": vector_deleted_count,
-            "vector_index_state": vector_diagnostic.state_label(),
-            "vector_search_backend": vector_diagnostic.backend_json_label(),
-            "hot_index_fully_covered": hot_index_fully_covered,
-            "contains_raw_resume_text": false,
-            "contains_resume_paths": false,
-            "contains_queries": false,
-            "contains_sample_ids": false,
-        });
-        let report = serde_json::to_string_pretty(&report)
-            .map_err(|_| CliError::user("benchmark corpus summary unavailable"))?;
-        println!("{report}");
-        return Ok(());
-    }
-
-    println!("resume-ir benchmark corpus summary");
-    println!("privacy boundary: redacted local aggregate");
-    println!("documents: {document_count}");
-    println!("searchable documents: {}", summary.searchable_documents);
-    println!("vector indexed documents: {vector_indexed_document_count}");
-    println!("active vector documents: {active_vector_document_count}");
-    println!("vector count: {vector_count}");
-    println!("vector tombstones: {vector_deleted_count}");
-    println!("vector index: {}", vector_diagnostic.state_label());
-    println!("vector backend: {}", vector_diagnostic.backend_json_label());
-    println!("hot index fully covered: {hot_index_fully_covered}");
-    println!("raw resume text: <redacted>");
-    println!("resume paths: <redacted>");
-    println!("queries: <redacted>");
-    println!("sample ids: <redacted>");
-    Ok(())
+    Ok(BenchmarkCorpusSummary {
+        document_count,
+        searchable_document_count: summary.searchable_documents,
+        vector_indexed_document_count,
+        active_vector_document_count,
+        vector_count,
+        vector_deleted_count,
+        vector_index_state: vector_diagnostic.state_label(),
+        vector_search_backend: vector_diagnostic.backend_json_label(),
+        hot_index_fully_covered,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7925,9 +8265,17 @@ fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let dimension = worker_args.dimension.ok_or_else(embed_worker_usage)?;
     let store = open_store(data_dir)?;
     let candidates = embedding_candidates(&store, worker_args.max_docs)?;
-    let documents_considered = candidates.len();
+    let embedding_summary = run_local_embedding_jobs(
+        data_dir,
+        &candidates,
+        command,
+        model_id,
+        dimension,
+        worker_args.max_text_bytes,
+        worker_args.timeout_ms,
+    )?;
 
-    if candidates.is_empty() {
+    if embedding_summary.documents_considered == 0 {
         let vector_diagnostic = inspect_vector_index(data_dir);
         println!("embedding worker: completed");
         println!("model id: {model_id}");
@@ -7938,22 +8286,62 @@ fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Ok(());
     }
 
+    let vector_diagnostic = inspect_vector_index(data_dir);
+    println!("embedding worker: completed");
+    println!("model id: {model_id}");
+    println!("dimension: {dimension}");
+    println!(
+        "documents considered: {}",
+        embedding_summary.documents_considered
+    );
+    println!(
+        "documents embedded: {}",
+        embedding_summary.documents_embedded
+    );
+    println!("vector inputs: {}", embedding_summary.vector_inputs);
+    println!("vector index: {}", vector_diagnostic.index_label());
+
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LocalEmbeddingRunSummary {
+    documents_considered: usize,
+    documents_embedded: usize,
+    vector_inputs: usize,
+}
+
+fn run_local_embedding_jobs(
+    data_dir: &Path,
+    candidates: &[EmbedWorkerCandidate],
+    command: PathBuf,
+    model_id: &str,
+    dimension: usize,
+    max_text_bytes: usize,
+    timeout_ms: u64,
+) -> Result<LocalEmbeddingRunSummary> {
+    let documents_considered = candidates.len();
+    if candidates.is_empty() {
+        return Ok(LocalEmbeddingRunSummary {
+            documents_considered,
+            documents_embedded: 0,
+            vector_inputs: 0,
+        });
+    }
+
     let embedder = LocalEmbeddingCommandEmbedder::new(
         LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
             .map_err(CliError::embedding)?
-            .with_timeout_ms(worker_args.timeout_ms)
+            .with_timeout_ms(timeout_ms)
             .map_err(CliError::embedding)?,
     );
-    let vector_inputs = embedding_inputs_for_candidates(&candidates);
+    let vector_inputs = embedding_inputs_for_candidates(candidates);
     let inputs = vector_inputs
         .iter()
         .map(|input| EmbeddingInput::new(input.input_id.as_str(), input.text.as_str()))
         .collect::<Vec<_>>();
     let vectors = embedder
-        .embed_batch(
-            &inputs,
-            EmbeddingBudget::new(inputs.len(), worker_args.max_text_bytes),
-        )
+        .embed_batch(&inputs, EmbeddingBudget::new(inputs.len(), max_text_bytes))
         .map_err(CliError::embedding)?;
     let vector_documents = vectors
         .into_iter()
@@ -7972,16 +8360,11 @@ fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .map_err(CliError::vector)?;
     index.upsert(vector_documents).map_err(CliError::vector)?;
 
-    let vector_diagnostic = inspect_vector_index(data_dir);
-    println!("embedding worker: completed");
-    println!("model id: {model_id}");
-    println!("dimension: {dimension}");
-    println!("documents considered: {documents_considered}");
-    println!("documents embedded: {}", candidates.len());
-    println!("vector inputs: {}", inputs.len());
-    println!("vector index: {}", vector_diagnostic.index_label());
-
-    Ok(())
+    Ok(LocalEmbeddingRunSummary {
+        documents_considered,
+        documents_embedded: candidates.len(),
+        vector_inputs: inputs.len(),
+    })
 }
 
 #[derive(Clone, PartialEq, Eq)]
