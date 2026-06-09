@@ -89,6 +89,9 @@ production-ready scope source.
   only; no real benchmark query set, real resume data, local paths, raw queries,
   generated private reports, diagnostics, or model caches were committed or
   uploaded.
+  S279 used hosted Windows CI failure logs and synthetic daemon IPC/import
+  fixtures only; no real resume data, local paths, raw text, diagnostics, or
+  generated runtime data was committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -966,8 +969,48 @@ obsolete preliminary files and checklists are not product scope.
 | S276 | Product OCR throughput target-claim correction complete locally | A full private local witness selected 8720 PDF/Word samples and proved the available local corpus is dominated by scanned/OCR-required documents: 146 searchable text-layer documents, 8554 OCR-required documents, and 20 parser failures, all reported only as aggregates. A 500-page private OCR throughput diagnostic using local Tesseract plus Poppler completed without run-budget exhaustion but failed the release OCR gate with p95 4214.12ms and 0.397338 pages/sec. Focused RED tests then failed because generated private OCR throughput reports still wrote `target_claim: "ocr_throughput_target_met"` even for budget-exhausted or P95-failing diagnostics. After implementation, generated private OCR throughput reports emit `not_evaluated` unless the built-in release page-count, P95, throughput, and run-budget thresholds are met; the gate still requires `ocr_throughput_target_met` after metric checks for release evidence. | This slice fixes misleading OCR report semantics and records representative local OCR throughput failure evidence. It does not clear OCR throughput, approve OCR distribution, run full-library OCR, produce reviewed manifests, validate Windows/macOS, or make stable release ready. |
 | S277 | Product private benchmark hot-index coverage gate complete locally | Focused RED first failed because a `private-real-corpus` benchmark report with valid total `document_count` but no hot-index coverage counts was accepted. After implementation, private query benchmark reports include aggregate `searchable_document_count` and `vector_indexed_document_count`; the runner requires them, the benchmark gate requires them to be non-zero and no larger than `document_count`, release-readiness requires both to meet the local 8000-document floor, and the runbook documents the new report fields and CLI flags. | This slice prevents local performance evidence from being cleared by a corpus that imported enough documents but did not make enough documents hot-searchable and vector-indexed. It does not generate or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 | S278 | Product benchmark corpus summary preflight complete locally | Focused RED first failed because vector snapshots had no unique active document count and `resume-cli benchmark-corpus-summary` was rejected as an unknown command. After implementation, `VectorSnapshot::document_count()` counts unique non-deleted vector document IDs, metadata exposes count/ID-only local coverage queries, and `resume-cli benchmark-corpus-summary --json` emits redacted aggregate `document_count`, `searchable_document_count`, `vector_indexed_document_count`, active vector document/vector/tombstone counts, vector index state/backend, and explicit false raw-data/path/query/sample-ID booleans. The CLI regression proves section vectors do not inflate coverage, deleted vectors are ignored, orphan vectors are not counted as benchmark-indexed searchable documents, and stdout omits synthetic private text, filenames, document IDs, and data-dir paths. | This slice adds a local preflight for private benchmark coverage counts only. It does not create or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
+| S279 | CI Windows daemon import IPC wait hardening complete locally | GitHub Actions PR #9 `windows-latest` failed after S278 in `resume-daemon --test s20_ipc` because `daemon_import_command_ipc_feeds_running_import_worker_loop` did not see the daemon status reach two searchable documents within the old 120-request, 25ms polling window. The same test passed locally on macOS, and all other hosted checks passed, so the root cause was a too-small Windows hosted wait budget for the combined IPC/import-worker test. After implementation, the s20 IPC helper uses explicit endpoint/import-worker timeouts, a larger but bounded status request budget, 50ms polling, and redacted store-state/last-response diagnostics on timeout; both s20 combined import-worker tests share the hardened helper. | This slice hardens hosted Windows daemon IPC test reliability only. It does not change product daemon behavior, prove installed Windows service lifecycle, validate production installer behavior, clear platform blockers, or make stable release ready. |
 
 ## Command Log
+
+### S279
+
+Failure signal:
+
+- GitHub Actions PR #9 `windows-latest` failed on the S278 commit in
+  `resume-daemon --test s20_ipc` at
+  `daemon_import_command_ipc_feeds_running_import_worker_loop`.
+- The hosted failure message was `daemon status did not report searchable
+  document count 2`; the test had only 120 status polls with a 25ms sleep while
+  the import worker and status IPC were sharing the same daemon process.
+
+Implementation and focused checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo fmt
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s20_ipc daemon_import_command_ipc_feeds_running_import_worker_loop --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-daemon --test s20_ipc --locked
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo clippy -p resume-daemon --tests --locked -- -D warnings
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The focused s20 IPC regression passed locally after the wait budget was
+  hardened.
+- Full `resume-daemon --test s20_ipc` passed all 18 tests.
+- Focused daemon clippy passed.
+- Full `verify-local.sh` passed locally, including workspace clippy/tests, CLI
+  and daemon closed-loop checks, benchmark/OCR/vector gates, benchmark smoke,
+  license/runbook/workflow/release-readiness guards, release artifact and SBOM
+  checks, macOS package and installer evidence, Windows evidence scripts, and
+  the final public-repo guard.
+
+Scope note:
+
+- S279 is a hosted Windows reliability fix for a synthetic daemon IPC test. It
+  does not change product behavior or close any release-readiness blocker.
 
 ### S278
 

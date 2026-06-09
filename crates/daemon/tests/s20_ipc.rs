@@ -13,6 +13,12 @@ use meta_store::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(5);
+const IMPORT_WORKER_STATUS_REQUEST_LIMIT: usize = 320;
+const IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS: usize = 260;
+const IMPORT_WORKER_SEARCHABLE_TIMEOUT: Duration = Duration::from_secs(20);
+const IMPORT_WORKER_STATUS_POLL_DELAY: Duration = Duration::from_millis(50);
+
 #[test]
 fn daemon_serves_redacted_status_over_loopback_ipc() {
     let data_dir = temp_dir("ipc-status-data");
@@ -704,7 +710,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     let data_dir = temp_dir("ipc-import-command-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let request_limit = 160_usize;
+    let request_limit = IMPORT_WORKER_STATUS_REQUEST_LIMIT;
     let request_limit_arg = request_limit.to_string();
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
@@ -732,8 +738,13 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, None);
     assert!(response.contains("HTTP/1.1 202 Accepted"));
 
-    let (worker_requests, completed_response) =
-        wait_for_searchable_documents(&mut child, &data_dir, &endpoint, 2, 120);
+    let (worker_requests, completed_response) = wait_for_searchable_documents(
+        &mut child,
+        &data_dir,
+        &endpoint,
+        2,
+        IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS,
+    );
     let used_requests = 1 + worker_requests;
     drain_status_requests(&endpoint, request_limit - used_requests);
 
@@ -807,7 +818,7 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
     let data_dir = temp_dir("ipc-import-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let request_limit = 160_usize;
+    let request_limit = IMPORT_WORKER_STATUS_REQUEST_LIMIT;
     let request_limit_arg = request_limit.to_string();
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
@@ -841,8 +852,13 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    let (worker_requests, completed_response) =
-        wait_for_searchable_documents(&mut child, &data_dir, &endpoint, 2, 120);
+    let (worker_requests, completed_response) = wait_for_searchable_documents(
+        &mut child,
+        &data_dir,
+        &endpoint,
+        2,
+        IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS,
+    );
     let used_requests = 1 + worker_requests;
     drain_status_requests(&endpoint, request_limit - used_requests);
 
@@ -932,7 +948,7 @@ fn daemon_rejects_worker_tick_limit_in_combined_ipc_worker_mode() {
 }
 
 fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + IPC_ENDPOINT_TIMEOUT;
     let mut line = String::new();
 
     while Instant::now() < deadline {
@@ -958,6 +974,8 @@ fn wait_for_searchable_documents(
     expected: usize,
     max_requests: usize,
 ) -> (usize, String) {
+    let deadline = Instant::now() + IMPORT_WORKER_SEARCHABLE_TIMEOUT;
+    let mut last_response = String::new();
     for request_count in 1..=max_requests {
         if let Some(status) = child.try_wait().expect("poll daemon child") {
             let stderr = read_child_stderr(child);
@@ -968,15 +986,18 @@ fn wait_for_searchable_documents(
         }
         let response = match try_http_get(endpoint) {
             Ok(response) if response.is_empty() => {
-                std::thread::sleep(Duration::from_millis(25));
+                last_response = "<empty status response>".to_string();
+                std::thread::sleep(IMPORT_WORKER_STATUS_POLL_DELAY);
                 continue;
             }
             Ok(response) => response,
             Err(_) => {
-                std::thread::sleep(Duration::from_millis(25));
+                last_response = "<status request unavailable>".to_string();
+                std::thread::sleep(IMPORT_WORKER_STATUS_POLL_DELAY);
                 continue;
             }
         };
+        last_response = response.clone();
         if !response.contains("HTTP/1.1 200 OK") {
             let _ = child.kill();
             let _ = child.wait();
@@ -988,10 +1009,20 @@ fn wait_for_searchable_documents(
             assert!(!response.contains("raw_resume_text"));
             return (request_count, response);
         }
-        std::thread::sleep(Duration::from_millis(25));
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(IMPORT_WORKER_STATUS_POLL_DELAY);
     }
 
-    panic!("daemon status did not report searchable document count {expected}");
+    let _ = child.kill();
+    let _ = child.wait();
+    let stderr = read_child_stderr(child);
+    let store_state = describe_store_state(data_dir);
+    panic!(
+        "daemon status did not report searchable document count {expected} within {max_requests} requests or {:?}\nlast response:\n{last_response}\nstderr:\n{stderr}\n{store_state}",
+        IMPORT_WORKER_SEARCHABLE_TIMEOUT
+    );
 }
 
 fn describe_store_state(data_dir: &Path) -> String {
