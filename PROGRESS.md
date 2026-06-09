@@ -76,6 +76,11 @@ production-ready scope source.
   no real benchmark query set, real resume data, local paths, raw queries,
   generated private reports, diagnostics, or model caches were committed or
   uploaded.
+  S276 used private local-only redacted aggregate witness and OCR throughput
+  diagnostics against the user-authorized local resume sample directory; no
+  real resume data, filenames, paths, raw OCR text, page images, command paths,
+  generated private reports, diagnostics, or model caches were committed or
+  uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -480,6 +485,14 @@ obsolete preliminary files and checklists are not product scope.
   22 OCR cache writes, had zero OCR document failures, and left the remaining
   OCR queue explicitly budget-exhausted instead of claiming full-corpus OCR
   completion.
+  S276 reran a full local PDF/Word witness over the available user-authorized
+  private corpus and selected 8720 samples: 146 were searchable text-layer
+  documents, 8554 required OCR, and 20 failed parsing with redacted failure
+  aggregates. S276 also ran a 500-page private OCR throughput diagnostic with
+  local Tesseract plus Poppler: 500 pages across 501 documents, 1 render
+  failure, no OCR failures, no run-budget exhaustion, p95 4214.12ms, and
+  0.397338 pages/sec. The OCR gate rejected this report because p95 exceeded
+  the 1000ms threshold, so OCR throughput remains not release-ready.
   Deleted-document purge now removes
   current OCR jobs and current OCR page-cache entries that are no longer shared
   by visible documents. Missing or BLOCKED work includes final OCR/renderer
@@ -638,7 +651,10 @@ obsolete preliminary files and checklists are not product scope.
   `failed_document_count`, `render_failure_count`, and `ocr_failure_count`
   aggregates, `run_budget_exhausted: false`, and explicit proof that raw OCR
   text, page images, resume paths, document identifiers, page identifiers, and
-  command paths are not included. The release-readiness gate
+  command paths are not included. S276 also corrected private OCR throughput
+  report `target_claim` generation so under-threshold diagnostics use
+  `not_evaluated` instead of self-claiming `ocr_throughput_target_met`; the
+  gate remains the release target arbiter. The release-readiness gate
   and release blockers runbook now include vector quality and OCR throughput as
   separate blocked release criteria instead of relying only on the model and OCR
   license/distribution blockers.
@@ -932,8 +948,109 @@ obsolete preliminary files and checklists are not product scope.
 | S273 | Product private benchmark query-file search input complete locally | Focused RED first failed because `resume-cli search --query-file <path>` was rejected as usage, forcing any private benchmark wrapper based on the product CLI to put raw query text back into argv. After implementation, CLI search accepts exactly one query source from either positional `<query>` or `--query-file <path>`, rejects duplicate or unavailable query-file inputs without printing the file path, and the existing semantic/hybrid search regression now runs through `--query-file` while keeping query text and paths out of output. The release blocker runbook and readiness guard document that private benchmark wrappers should pass `RESUME_IR_QUERY_INPUT_PATH` through `resume-cli search --query-file`. | This slice hardens the local private-query benchmark command path only. It does not generate a private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, or make stable release ready. |
 | S274 | Product release-readiness benchmark document floor aligned locally | Focused RED first failed because `resume-cli release-readiness --json --benchmark-report <report>` accepted a private real-corpus benchmark report with `document_count: 7999`, emitted release-readiness JSON, and treated the local performance evidence as provided even though the runbook gate requires at least 8000 local documents. After implementation, release-readiness validates benchmark evidence with an 8000-document floor, keeps the 500-query, p95 <= 200ms, and zero-result-query requirements, rejects undersized private reports with a redacted validation error, and the runbook/CI guard now lock the same threshold text. | This slice fixes release-readiness evidence intake consistency only. It does not generate or review the actual private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 | S275 | Product private benchmark query protocol runner complete locally | Focused RED first failed because `resume-cli benchmark-query-protocol` was not a command, so benchmark-runner could only use external wrapper scripts; a second RED failed because `resume-benchmark private-query` rejected `--command-arg`, so it could not invoke `resume-cli --data-dir <local-data-dir> benchmark-query-protocol ...` directly. After implementation, the CLI protocol runner reads `RESUME_IR_QUERY_INPUT_PATH`, `RESUME_IR_QUERY_TOP_K`, and `RESUME_IR_QUERY_MODE`, runs the normal local search path, records redacted query telemetry, and emits only `resume-ir-query-v1` plus `hits=<n>`. The benchmark runner now passes redacted command args to the local query command without including them in benchmark reports, and the runbook/guard document the product-owned benchmark command path. | This slice removes a wrapper-script gap in private benchmark execution only. It does not create or review the actual private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
+| S276 | Product OCR throughput target-claim correction complete locally | A full private local witness selected 8720 PDF/Word samples and proved the available local corpus is dominated by scanned/OCR-required documents: 146 searchable text-layer documents, 8554 OCR-required documents, and 20 parser failures, all reported only as aggregates. A 500-page private OCR throughput diagnostic using local Tesseract plus Poppler completed without run-budget exhaustion but failed the release OCR gate with p95 4214.12ms and 0.397338 pages/sec. Focused RED tests then failed because generated private OCR throughput reports still wrote `target_claim: "ocr_throughput_target_met"` even for budget-exhausted or P95-failing diagnostics. After implementation, generated private OCR throughput reports emit `not_evaluated` unless the built-in release page-count, P95, throughput, and run-budget thresholds are met; the gate still requires `ocr_throughput_target_met` after metric checks for release evidence. | This slice fixes misleading OCR report semantics and records representative local OCR throughput failure evidence. It does not clear OCR throughput, approve OCR distribution, run full-library OCR, produce reviewed manifests, validate Windows/macOS, or make stable release ready. |
 
 ## Command Log
+
+### S276
+
+Design target:
+
+- Use the user-authorized local private corpus only for redacted aggregate
+  evidence, not committed reports or raw data.
+- Prevent private OCR throughput diagnostics from self-claiming release target
+  success when page-count, p95, throughput, or run-budget criteria are not met.
+- Keep release gate semantics strict: release-clearing private OCR evidence must
+  still carry `ocr_throughput_target_met` after metrics pass.
+
+Private local evidence:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo run -p resume-cli --locked -- witness --root <private-local-root> --max-files 8721 --probe-search --probe-fields
+./target/debug/resume-benchmark private-ocr-throughput --root <private-local-root> --pdftoppm-command <pdftoppm> --tesseract-command <tesseract> --max-documents 900 --max-pages 500 --pages-per-document 1 --page-timeout-ms 30000 --max-run-ms 1800000 --render-dpi 150 --ocr-lang eng+chi_sim --json > <temporary-private-report>
+./target/debug/resume-benchmark ocr-gate --report <temporary-private-report> --require-private-real-corpus --min-pages 500 --max-p95-ms 1000 --min-pages-per-second 1
+```
+
+Output summary:
+
+- The full private local witness selected 8720 PDF/Word samples, skipped 49
+  unsupported entries, reported zero filesystem scan errors, completed import,
+  and removed temporary private witness data.
+- The witness reported 146 searchable documents, 8554 OCR-required documents,
+  8554 queued OCR jobs, and 20 failed documents. Redacted failure aggregates
+  were 16 parser-corrupted and 4 parser-encrypted.
+- Field probe completed over 133 documents with 2193 aggregate field mentions,
+  and search probe completed with 5 hits. No paths, filenames, raw text, raw
+  OCR output, page images, command paths, reports, or diagnostics were committed
+  or uploaded.
+- The 500-page OCR diagnostic reported 500 pages across 501 documents, 1 render
+  failure, 0 OCR failures, `run_budget_exhausted: false`, p50 2409.907ms, p95
+  4214.12ms, p99 5109.623ms, and 0.397338 pages/sec.
+- The OCR gate rejected the temporary private report with `OCR page p95 exceeded
+  threshold`; the generated report and gate temp files were deleted.
+
+TDD RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner tests::private_ocr_report_does_not_claim_target_when_release_latency_is_missed --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner private_ocr_throughput_benchmark_reports_run_budget_exhaustion_without_gate_clearance --locked -- --exact
+```
+
+Output summary:
+
+- The library regression failed before implementation because a constructed
+  private OCR report with 500 samples and p95 4214.12ms still emitted
+  `ocr_throughput_target_met`.
+- The runner regression failed before implementation because a budget-exhausted
+  private OCR diagnostic still emitted `ocr_throughput_target_met`.
+
+Implementation and focused checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner tests::private_ocr_report_does_not_claim_target_when_release_latency_is_missed --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner private_ocr_throughput_benchmark_reports_run_budget_exhaustion_without_gate_clearance --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --locked
+```
+
+Output summary:
+
+- The focused regressions passed after private OCR report `target_claim`
+  generation was tied to built-in release page-count, p95, throughput, and
+  run-budget thresholds.
+- Full `benchmark-runner` tests passed: 2 library unit tests, 35 CLI tests, 65
+  runner integration tests, and doc-tests.
+
+Final checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo clippy -p benchmark-runner --tests --locked -- -D warnings
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-readiness.sh
+git diff --check
+# changed-line privacy marker scan; private evidence patterns omitted from this public log
+./scripts/ci/guard-public-repo.sh
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --check`, focused `benchmark-runner` clippy, runbook guard,
+  release-readiness guard, diff check, changed-line privacy marker scan, and
+  public-repo guard passed after the documentation update.
+- Full `verify-local.sh` passed locally. The verifier covered workspace
+  clippy/tests, closed-loop CLI/daemon checks, benchmark/OCR/vector gates,
+  benchmark smoke, license/runbook/workflow/release-readiness guards, release
+  artifact and SBOM checks, macOS package and installer evidence, Windows
+  evidence scripts, and the final public-repo guard.
+
+Scope note:
+
+- S276 proves the current local OCR throughput blocker with representative
+  500-page evidence and fixes a misleading report field. It does not clear OCR
+  throughput, reviewed OCR runtime/renderer/language-pack manifests, OCR
+  distribution approval, full-corpus OCR completion, or cross-platform release
+  validation.
 
 ### S275
 

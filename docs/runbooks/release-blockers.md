@@ -364,6 +364,10 @@ digests for the dataset, OCR runtime, renderer, and language-pack manifests
 `renderer_manifest_sha256`, and `language_pack_manifest_sha256`). Do not upload
 reports if they contain raw OCR text, page images, resume text, filenames,
 local paths, document IDs, page IDs, command paths, runtime paths, or notes.
+Small or under-threshold diagnostic reports should use
+`target_claim: "not_evaluated"`; the private OCR throughput command emits
+`ocr_throughput_target_met` only when the built-in release OCR page, P95,
+throughput, and run-budget thresholds are met.
 Private OCR throughput reports must also include `total_ms` so
 `pages_per_second` can be recomputed, per-document failure aggregates
 (`failed_document_count`, `render_failure_count`, and `ocr_failure_count`), and

@@ -1494,7 +1494,7 @@ fn resume_benchmark_ocr_gate_rejects_synthetic_without_explicit_allowance() {
 }
 
 #[test]
-fn resume_benchmark_private_ocr_throughput_outputs_redacted_gateable_report() {
+fn resume_benchmark_private_ocr_throughput_outputs_redacted_diagnostic_report() {
     let root = temp_dir("private-ocr-throughput-cli-root");
     fs::write(
         root.join("private-cli-sample.pdf"),
@@ -1559,7 +1559,8 @@ fn resume_benchmark_private_ocr_throughput_outputs_redacted_gateable_report() {
     assert!(stdout.contains("\"render_failure_count\":0"));
     assert!(stdout.contains("\"ocr_failure_count\":0"));
     assert!(stdout.contains("\"run_budget_exhausted\":false"));
-    assert!(stdout.contains("\"target_claim\":\"ocr_throughput_target_met\""));
+    assert!(stdout.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!stdout.contains("\"target_claim\":\"ocr_throughput_target_met\""));
     assert!(stdout.contains("\"contains_raw_ocr_text\":false"));
     assert!(stdout.contains("\"contains_resume_paths\":false"));
     assert!(stdout.contains("\"contains_command_paths\":false"));
@@ -1588,17 +1589,9 @@ fn resume_benchmark_private_ocr_throughput_outputs_redacted_gateable_report() {
         .output()
         .expect("run private OCR throughput gate");
 
-    assert!(
-        gate.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&gate.stdout),
-        String::from_utf8_lossy(&gate.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&gate.stdout).trim(),
-        "OCR throughput gate passed"
-    );
-    assert!(gate.stderr.is_empty());
+    assert!(!gate.status.success());
+    assert!(String::from_utf8_lossy(&gate.stderr)
+        .contains("private real-corpus OCR benchmark requires throughput target claim"));
 
     remove_dir(&root);
     remove_dir(renderer.parent().unwrap());

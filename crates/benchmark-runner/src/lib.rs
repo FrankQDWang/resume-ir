@@ -1172,6 +1172,18 @@ impl PrivateOcrThroughputReport {
         self.page_count as f64 / (self.total_ms / 1000.0)
     }
 
+    fn target_claim(&self) -> &'static str {
+        if self.page_count >= PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MIN_PAGES
+            && !self.run_budget_exhausted
+            && self.latency.p95_ms <= PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MAX_P95_MS
+            && self.pages_per_second() >= PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MIN_PAGES_PER_SECOND
+        {
+            PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM
+        } else {
+            "not_evaluated"
+        }
+    }
+
     pub fn to_redacted_json(&self) -> String {
         format!(
             concat!(
@@ -1196,7 +1208,7 @@ impl PrivateOcrThroughputReport {
                 "\"p99\":{}",
                 "}},",
                 "\"pages_per_second\":{},",
-                "\"target_claim\":\"ocr_throughput_target_met\",",
+                "\"target_claim\":\"{}\",",
                 "\"corpus_origin\":\"private_local\",",
                 "\"privacy_boundary\":\"redacted_local_aggregate\",",
                 "\"contains_raw_ocr_text\":false,",
@@ -1228,6 +1240,7 @@ impl PrivateOcrThroughputReport {
             format_ms(self.latency.p95_ms),
             format_ms(self.latency.p99_ms),
             format_consistency_number(self.pages_per_second()),
+            self.target_claim(),
             self.manifests.dataset_manifest_sha256,
             self.manifests.ocr_runtime_manifest_sha256,
             self.manifests.renderer_manifest_sha256,
@@ -4338,7 +4351,7 @@ pub fn evaluate_ocr_throughput_gate_json(
         ));
     }
     if dataset_kind == "private-real-corpus" {
-        validate_private_real_ocr_throughput_boundary(&report, target_claim)?;
+        validate_private_real_ocr_throughput_boundary(&report)?;
     }
     if page_count < config.min_pages || samples < config.min_pages {
         return Err(BenchmarkGateError::failed(
@@ -4353,6 +4366,13 @@ pub fn evaluate_ocr_throughput_gate_json(
     if pages_per_second < config.min_pages_per_second {
         return Err(BenchmarkGateError::failed(
             "OCR pages-per-second below threshold",
+        ));
+    }
+    if dataset_kind == "private-real-corpus"
+        && target_claim != PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM
+    {
+        return Err(BenchmarkGateError::failed(
+            "private real-corpus OCR benchmark requires throughput target claim",
         ));
     }
     if dataset_kind == "synthetic" && target_claim != "not_evaluated" {
@@ -4372,11 +4392,13 @@ pub fn evaluate_ocr_throughput_gate_json(
 const PRIVATE_REAL_OCR_THROUGHPUT_SCOPE: &str =
     "private real-corpus OCR throughput benchmark; aggregate redacted report only";
 const PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM: &str = "ocr_throughput_target_met";
+const PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MIN_PAGES: usize = 500;
+const PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MAX_P95_MS: f64 = 1_000.0;
+const PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MIN_PAGES_PER_SECOND: f64 = 1.0;
 const OCR_THROUGHPUT_SCORE_TOLERANCE: f64 = 0.000_5;
 
 fn validate_private_real_ocr_throughput_boundary(
     report: &serde_json::Value,
-    target_claim: &str,
 ) -> std::result::Result<(), BenchmarkGateError> {
     validate_private_real_ocr_throughput_shape(report)?;
     let page_count = private_ocr_usize(report, "page_count")?;
@@ -4428,11 +4450,6 @@ fn validate_private_real_ocr_throughput_boundary(
         || private_ocr_str(report, "scope")? != PRIVATE_REAL_OCR_THROUGHPUT_SCOPE
     {
         return Err(private_ocr_boundary_error());
-    }
-    if target_claim != PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM {
-        return Err(BenchmarkGateError::failed(
-            "private real-corpus OCR benchmark requires throughput target claim",
-        ));
     }
     if !is_safe_benchmark_token(private_ocr_str(report, "run_id")?)
         || !is_safe_platform_label(private_ocr_str(report, "platform")?)
@@ -5303,3 +5320,83 @@ impl fmt::Display for BenchmarkGateError {
 }
 
 impl std::error::Error for BenchmarkGateError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn private_ocr_report_does_not_claim_target_when_release_latency_is_missed() {
+        let report = PrivateOcrThroughputReport {
+            run_id: "ocr_release_latency_probe".to_string(),
+            platform: "macos/aarch64".to_string(),
+            page_count: 500,
+            document_count: 500,
+            scanned_document_count: 500,
+            failed_document_count: 0,
+            render_failure_count: 0,
+            ocr_failure_count: 0,
+            run_budget_exhausted: false,
+            engine_kind: "tesseract",
+            total_ms: 1_258_375.597_167,
+            latency: LatencySummary {
+                samples: 500,
+                min_ms: 1_200.0,
+                mean_ms: 2_516.0,
+                p50_ms: 2_409.907,
+                p95_ms: 4_214.12,
+                p99_ms: 5_109.623,
+                max_ms: 5_500.0,
+            },
+            manifests: PrivateOcrManifestDigests::new(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                "2222222222222222222222222222222222222222222222222222222222222222",
+            )
+            .unwrap(),
+        };
+
+        let json = report.to_redacted_json();
+
+        assert!(json.contains("\"target_claim\":\"not_evaluated\""));
+        assert!(!json.contains("\"target_claim\":\"ocr_throughput_target_met\""));
+    }
+
+    #[test]
+    fn private_ocr_report_claims_target_only_when_release_thresholds_are_met() {
+        let report = PrivateOcrThroughputReport {
+            run_id: "ocr_release_passing_probe".to_string(),
+            platform: "macos/aarch64".to_string(),
+            page_count: 500,
+            document_count: 500,
+            scanned_document_count: 500,
+            failed_document_count: 0,
+            render_failure_count: 0,
+            ocr_failure_count: 0,
+            run_budget_exhausted: false,
+            engine_kind: "tesseract",
+            total_ms: 200_000.0,
+            latency: LatencySummary {
+                samples: 500,
+                min_ms: 120.0,
+                mean_ms: 400.0,
+                p50_ms: 250.0,
+                p95_ms: 450.0,
+                p99_ms: 800.0,
+                max_ms: 900.0,
+            },
+            manifests: PrivateOcrManifestDigests::new(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                "2222222222222222222222222222222222222222222222222222222222222222",
+            )
+            .unwrap(),
+        };
+
+        let json = report.to_redacted_json();
+
+        assert!(json.contains("\"target_claim\":\"ocr_throughput_target_met\""));
+    }
+}

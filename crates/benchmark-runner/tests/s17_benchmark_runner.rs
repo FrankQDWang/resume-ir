@@ -1116,7 +1116,7 @@ fn ocr_throughput_gate_rejects_private_real_report_with_inconsistent_throughput(
 }
 
 #[test]
-fn private_ocr_throughput_benchmark_outputs_redacted_gateable_report() {
+fn private_ocr_throughput_benchmark_outputs_redacted_diagnostic_report() {
     let root = temp_dir("private-ocr-throughput-root");
     fs::write(
         root.join("private-sample.pdf"),
@@ -1174,7 +1174,8 @@ fn private_ocr_throughput_benchmark_outputs_redacted_gateable_report() {
     assert!(json.contains("\"ocr_failure_count\":0"));
     assert!(json.contains("\"run_budget_exhausted\":false"));
     assert!(json.contains("\"page_count\":2"));
-    assert!(json.contains("\"target_claim\":\"ocr_throughput_target_met\""));
+    assert!(json.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!json.contains("\"target_claim\":\"ocr_throughput_target_met\""));
     assert!(json.contains("\"contains_raw_ocr_text\":false"));
     assert!(json.contains("\"contains_resume_paths\":false"));
     assert!(json.contains("\"contains_command_paths\":false"));
@@ -1187,9 +1188,10 @@ fn private_ocr_throughput_benchmark_outputs_redacted_gateable_report() {
     assert!(!json.contains("REDACTION_SENTINEL_PAGE_IMAGE"));
 
     let gate = OcrThroughputGateConfig::new(2, 10_000.0, 0.001).require_private_real_corpus();
-    let evaluation = evaluate_ocr_throughput_gate_json(&json, gate).unwrap();
-    assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
-    assert_eq!(evaluation.page_count(), 2);
+    let error = evaluate_ocr_throughput_gate_json(&json, gate).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("private real-corpus OCR benchmark requires throughput target claim"));
 
     remove_dir(&root);
     remove_dir(renderer.parent().unwrap());
@@ -1246,9 +1248,10 @@ fn private_ocr_throughput_benchmark_skips_failed_documents_with_redacted_aggrega
     assert!(!json.contains("FAIL_RENDER"));
 
     let gate = OcrThroughputGateConfig::new(1, 10_000.0, 0.001).require_private_real_corpus();
-    let evaluation = evaluate_ocr_throughput_gate_json(&json, gate).unwrap();
-    assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
-    assert_eq!(evaluation.page_count(), 1);
+    let error = evaluate_ocr_throughput_gate_json(&json, gate).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("private real-corpus OCR benchmark requires throughput target claim"));
 
     remove_dir(&root);
     remove_dir(renderer.parent().unwrap());
@@ -1296,6 +1299,8 @@ fn private_ocr_throughput_benchmark_reports_run_budget_exhaustion_without_gate_c
     assert!(report.run_budget_exhausted());
     let json = report.to_redacted_json();
     assert!(json.contains("\"run_budget_exhausted\":true"));
+    assert!(json.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(!json.contains("\"target_claim\":\"ocr_throughput_target_met\""));
     assert!(!json.contains(path_str(&root)));
     assert!(!json.contains(path_str(&ocr)));
 
