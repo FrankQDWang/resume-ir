@@ -179,6 +179,18 @@ If a wrapper is still needed, it must delegate through
 instead of putting the raw query in argv; wrapper stdout must still be reduced
 to the benchmark protocol only.
 
+Before generating the benchmark report, capture local hot-index corpus coverage
+as a redacted aggregate summary:
+
+```bash
+resume-cli --data-dir <local-data-dir> benchmark-corpus-summary --json
+```
+
+Use the summary's `document_count`, `searchable_document_count`, and
+`vector_indexed_document_count` fields as the matching `private-query` flags.
+The summary is local evidence only and must not contain raw resume text, local
+paths, queries, filenames, sample IDs, or document IDs.
+
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   private-query \
@@ -189,7 +201,7 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   --command-arg --embedding-command --command-arg <embedding-command> \
   --command-arg --model-id --command-arg <model-id> \
   --command-arg --dimension --command-arg <dim> \
-  --document-count 8720 \
+  --document-count <document-count> \
   --searchable-document-count <hot-searchable-documents> \
   --vector-indexed-document-count <hot-vector-documents> \
   --max-queries 500 --top-k 10 \

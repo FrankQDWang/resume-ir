@@ -283,6 +283,46 @@ pub fn inspect_persistent_vector_snapshot(
     }
 }
 
+pub fn inspect_persistent_vector_document_coverage(
+    root: impl AsRef<Path>,
+    document_ids: &BTreeSet<String>,
+) -> PersistentVectorDocumentCoverageInspection {
+    let root = root.as_ref();
+    let snapshot_path = root.join(SNAPSHOT_FILE);
+    let last_good_path = root.join(SNAPSHOT_LAST_GOOD_FILE);
+    let key_path = root.join(SNAPSHOT_KEY_FILE);
+    if !snapshot_path.exists() {
+        if last_good_path.exists() {
+            return inspect_recovered_vector_document_coverage(
+                &last_good_path,
+                &key_path,
+                document_ids,
+            );
+        }
+        return PersistentVectorDocumentCoverageInspection {
+            state: PersistentVectorSnapshotState::Missing,
+            active_document_count: 0,
+            covered_document_count: 0,
+        };
+    }
+
+    match read_snapshot_unchecked_dimension(&snapshot_path, &key_path) {
+        Ok((_, state)) => vector_document_coverage_from_state(
+            PersistentVectorSnapshotState::Ready,
+            &state,
+            document_ids,
+        ),
+        Err(VectorIndexError::Storage) => PersistentVectorDocumentCoverageInspection {
+            state: PersistentVectorSnapshotState::Unreadable,
+            active_document_count: 0,
+            covered_document_count: 0,
+        },
+        Err(_) => {
+            inspect_recovered_vector_document_coverage(&last_good_path, &key_path, document_ids)
+        }
+    }
+}
+
 pub fn reset_persistent_vector_snapshots_for_rebuild(
     root: impl AsRef<Path>,
 ) -> Result<(), VectorIndexError> {
@@ -300,6 +340,38 @@ pub fn reset_persistent_vector_snapshots_for_rebuild(
         remove_snapshot_file_if_exists(&path)?;
     }
     Ok(())
+}
+
+fn inspect_recovered_vector_document_coverage(
+    last_good_path: &Path,
+    key_path: &Path,
+    document_ids: &BTreeSet<String>,
+) -> PersistentVectorDocumentCoverageInspection {
+    if !last_good_path.exists() {
+        return PersistentVectorDocumentCoverageInspection {
+            state: PersistentVectorSnapshotState::Corrupt,
+            active_document_count: 0,
+            covered_document_count: 0,
+        };
+    }
+
+    match read_snapshot_unchecked_dimension(last_good_path, key_path) {
+        Ok((_, state)) => vector_document_coverage_from_state(
+            PersistentVectorSnapshotState::Recovered,
+            &state,
+            document_ids,
+        ),
+        Err(VectorIndexError::Storage) => PersistentVectorDocumentCoverageInspection {
+            state: PersistentVectorSnapshotState::Unreadable,
+            active_document_count: 0,
+            covered_document_count: 0,
+        },
+        Err(_) => PersistentVectorDocumentCoverageInspection {
+            state: PersistentVectorSnapshotState::Corrupt,
+            active_document_count: 0,
+            covered_document_count: 0,
+        },
+    }
 }
 
 fn inspect_recovered_vector_snapshot(
@@ -330,6 +402,27 @@ fn inspect_recovered_vector_snapshot(
             state: PersistentVectorSnapshotState::Corrupt,
             snapshot: None,
         },
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PersistentVectorDocumentCoverageInspection {
+    state: PersistentVectorSnapshotState,
+    active_document_count: usize,
+    covered_document_count: usize,
+}
+
+impl PersistentVectorDocumentCoverageInspection {
+    pub fn state(self) -> PersistentVectorSnapshotState {
+        self.state
+    }
+
+    pub fn active_document_count(self) -> usize {
+        self.active_document_count
+    }
+
+    pub fn covered_document_count(self) -> usize {
+        self.covered_document_count
     }
 }
 
@@ -764,6 +857,7 @@ impl fmt::Debug for VectorHit {
 pub struct VectorSnapshot {
     vector_count: usize,
     deleted_count: usize,
+    document_count: usize,
     dimension: usize,
     search_backend: VectorSearchBackend,
 }
@@ -775,6 +869,10 @@ impl VectorSnapshot {
 
     pub fn deleted_count(self) -> usize {
         self.deleted_count
+    }
+
+    pub fn document_count(self) -> usize {
+        self.document_count
     }
 
     pub fn dimension(self) -> usize {
@@ -900,9 +998,37 @@ fn snapshot_from_state(
     VectorSnapshot {
         vector_count: state.vectors.len(),
         deleted_count: state.deleted.len(),
+        document_count: active_vector_document_ids(state).len(),
         dimension,
         search_backend,
     }
+}
+
+fn vector_document_coverage_from_state(
+    state_label: PersistentVectorSnapshotState,
+    state: &IndexState,
+    document_ids: &BTreeSet<String>,
+) -> PersistentVectorDocumentCoverageInspection {
+    let active_document_ids = active_vector_document_ids(state);
+    let covered_document_count = active_document_ids
+        .iter()
+        .filter(|document_id| document_ids.contains::<str>(*document_id))
+        .count();
+
+    PersistentVectorDocumentCoverageInspection {
+        state: state_label,
+        active_document_count: active_document_ids.len(),
+        covered_document_count,
+    }
+}
+
+fn active_vector_document_ids(state: &IndexState) -> BTreeSet<&str> {
+    state
+        .vectors
+        .values()
+        .filter(|vector| !state.deleted.contains(vector.vector_id()))
+        .map(VectorDocument::doc_id)
+        .collect()
 }
 
 fn read_snapshot(

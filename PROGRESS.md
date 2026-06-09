@@ -85,6 +85,10 @@ production-ready scope source.
   only; no real benchmark query set, real resume data, local paths, raw queries,
   generated private reports, diagnostics, or model caches were committed or
   uploaded.
+  S278 used synthetic/private-shaped corpus summary and vector-index fixtures
+  only; no real benchmark query set, real resume data, local paths, raw queries,
+  generated private reports, diagnostics, or model caches were committed or
+  uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -961,8 +965,91 @@ obsolete preliminary files and checklists are not product scope.
 | S275 | Product private benchmark query protocol runner complete locally | Focused RED first failed because `resume-cli benchmark-query-protocol` was not a command, so benchmark-runner could only use external wrapper scripts; a second RED failed because `resume-benchmark private-query` rejected `--command-arg`, so it could not invoke `resume-cli --data-dir <local-data-dir> benchmark-query-protocol ...` directly. After implementation, the CLI protocol runner reads `RESUME_IR_QUERY_INPUT_PATH`, `RESUME_IR_QUERY_TOP_K`, and `RESUME_IR_QUERY_MODE`, runs the normal local search path, records redacted query telemetry, and emits only `resume-ir-query-v1` plus `hits=<n>`. The benchmark runner now passes redacted command args to the local query command without including them in benchmark reports, and the runbook/guard document the product-owned benchmark command path. | This slice removes a wrapper-script gap in private benchmark execution only. It does not create or review the actual private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 | S276 | Product OCR throughput target-claim correction complete locally | A full private local witness selected 8720 PDF/Word samples and proved the available local corpus is dominated by scanned/OCR-required documents: 146 searchable text-layer documents, 8554 OCR-required documents, and 20 parser failures, all reported only as aggregates. A 500-page private OCR throughput diagnostic using local Tesseract plus Poppler completed without run-budget exhaustion but failed the release OCR gate with p95 4214.12ms and 0.397338 pages/sec. Focused RED tests then failed because generated private OCR throughput reports still wrote `target_claim: "ocr_throughput_target_met"` even for budget-exhausted or P95-failing diagnostics. After implementation, generated private OCR throughput reports emit `not_evaluated` unless the built-in release page-count, P95, throughput, and run-budget thresholds are met; the gate still requires `ocr_throughput_target_met` after metric checks for release evidence. | This slice fixes misleading OCR report semantics and records representative local OCR throughput failure evidence. It does not clear OCR throughput, approve OCR distribution, run full-library OCR, produce reviewed manifests, validate Windows/macOS, or make stable release ready. |
 | S277 | Product private benchmark hot-index coverage gate complete locally | Focused RED first failed because a `private-real-corpus` benchmark report with valid total `document_count` but no hot-index coverage counts was accepted. After implementation, private query benchmark reports include aggregate `searchable_document_count` and `vector_indexed_document_count`; the runner requires them, the benchmark gate requires them to be non-zero and no larger than `document_count`, release-readiness requires both to meet the local 8000-document floor, and the runbook documents the new report fields and CLI flags. | This slice prevents local performance evidence from being cleared by a corpus that imported enough documents but did not make enough documents hot-searchable and vector-indexed. It does not generate or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
+| S278 | Product benchmark corpus summary preflight complete locally | Focused RED first failed because vector snapshots had no unique active document count and `resume-cli benchmark-corpus-summary` was rejected as an unknown command. After implementation, `VectorSnapshot::document_count()` counts unique non-deleted vector document IDs, metadata exposes count/ID-only local coverage queries, and `resume-cli benchmark-corpus-summary --json` emits redacted aggregate `document_count`, `searchable_document_count`, `vector_indexed_document_count`, active vector document/vector/tombstone counts, vector index state/backend, and explicit false raw-data/path/query/sample-ID booleans. The CLI regression proves section vectors do not inflate coverage, deleted vectors are ignored, orphan vectors are not counted as benchmark-indexed searchable documents, and stdout omits synthetic private text, filenames, document IDs, and data-dir paths. | This slice adds a local preflight for private benchmark coverage counts only. It does not create or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 
 ## Command Log
+
+### S278
+
+Design target:
+
+- Provide a product-owned local preflight command for private benchmark corpus
+  counts so operators do not manually invent or mistype `document_count`,
+  `searchable_document_count`, or `vector_indexed_document_count`.
+- Keep the output redacted aggregate only: no raw resume text, local paths,
+  filenames, query text, sample IDs, document IDs, vectors, command paths, or
+  generated private reports.
+- Count vector coverage by unique active documents and intersect it with the
+  current searchable metadata set so section vectors and orphan vectors cannot
+  inflate hot-index benchmark coverage.
+
+TDD RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p index-vector --test s11_vector_index vector_snapshot_counts_unique_active_documents_not_section_vectors --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s39_embedding_worker benchmark_corpus_summary_json_reports_redacted_hot_index_coverage_without_private_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The vector focused regression failed before implementation because
+  `VectorSnapshot::document_count()` did not exist.
+- The CLI focused regression failed before implementation because
+  `benchmark-corpus-summary` was rejected by the top-level command parser.
+
+Implementation and focused checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p index-vector --test s11_vector_index vector_snapshot_counts_unique_active_documents_not_section_vectors --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s39_embedding_worker benchmark_corpus_summary_json_reports_redacted_hot_index_coverage_without_private_leaks --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p index-vector --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s39_embedding_worker --locked
+PATH=<cargo-bin>:$PATH cargo test -p meta-store --locked
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --locked
+PATH=<cargo-bin>:$PATH cargo clippy -p index-vector -p meta-store -p resume-cli --tests --locked -- -D warnings
+```
+
+Output summary:
+
+- The focused vector and CLI regressions passed after the new snapshot coverage
+  and `benchmark-corpus-summary` command were implemented.
+- Full `index-vector` tests passed: 14 integration tests plus doc-tests.
+- `resume-cli --test s39_embedding_worker` passed all 11 embedding/model/
+  semantic/benchmark protocol tests.
+- Full `meta-store` tests passed: 56 SQLite integration tests plus doc-tests.
+- Full `resume-cli` tests passed: 25 test targets covering 191 tests.
+- Focused clippy for `index-vector`, `meta-store`, and `resume-cli` test
+  targets passed.
+
+Final checks:
+
+```bash
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-readiness.sh
+git diff --check
+# changed-line privacy marker scan; private evidence patterns omitted from this public log
+./scripts/ci/guard-public-repo.sh
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Runbook guard, release-readiness guard, diff check, changed-line privacy
+  marker scan, and public-repo guard passed.
+- Full `verify-local.sh` passed locally. The verifier covered workspace
+  clippy/tests, CLI and daemon closed-loop checks, benchmark/OCR/vector gates,
+  benchmark smoke, license/runbook/workflow/release-readiness guards, release
+  artifact and SBOM checks, macOS package and installer evidence, Windows
+  evidence scripts, and the final public-repo guard.
+
+Scope note:
+
+- S278 creates the redacted aggregate preflight needed before private query
+  benchmark generation. It does not run the real private 500-query benchmark,
+  finish full-corpus OCR, select a production embedding model, produce private
+  vector/field/dedupe labels, clear release-readiness blockers, or prove
+  external million-scale evidence.
 
 ### S277
 

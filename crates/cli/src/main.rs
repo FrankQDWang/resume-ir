@@ -31,9 +31,9 @@ use index_fulltext::{
     SnapshotRootState,
 };
 use index_vector::{
-    inspect_persistent_vector_snapshot, PersistentVectorIndex, PersistentVectorSnapshotInspection,
-    PersistentVectorSnapshotState, QueryVector, VectorDocument, VectorHit, VectorIndex,
-    VectorSearchBackend,
+    inspect_persistent_vector_document_coverage, inspect_persistent_vector_snapshot,
+    PersistentVectorIndex, PersistentVectorSnapshotInspection, PersistentVectorSnapshotState,
+    QueryVector, VectorDocument, VectorHit, VectorIndex, VectorSearchBackend,
 };
 use meta_store::{
     backup_metadata_encryption_key, restore_metadata_encryption_key,
@@ -126,7 +126,7 @@ const WITNESS_IMPORT_FAILURE_KINDS: &[ImportFailureKind] = &[
     ImportFailureKind::ParserInternal,
     ImportFailureKind::EmptyText,
 ];
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, benchmark-query-protocol, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, benchmark-query-protocol, benchmark-corpus-summary, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
 const RELEASE_READINESS_PERFORMANCE_LABEL: &str = "private real-corpus performance evidence";
 const RELEASE_READINESS_FIELD_QUALITY_LABEL: &str = "field extraction quality";
 const RELEASE_READINESS_DEDUPE_QUALITY_LABEL: &str = "dedupe quality";
@@ -217,6 +217,7 @@ fn run() -> Result<()> {
         "import" => import_command(&data_dir, &args[1..]),
         "search" => search_command(&data_dir, &args[1..]),
         "benchmark-query-protocol" => benchmark_query_protocol_command(&data_dir, &args[1..]),
+        "benchmark-corpus-summary" => benchmark_corpus_summary_command(&data_dir, &args[1..]),
         "detail" => detail_command(&data_dir, &args[1..]),
         "delete" => delete_command(&data_dir, &args[1..]),
         "purge" => purge_command(&data_dir, &args[1..]),
@@ -5901,6 +5902,96 @@ fn validate_benchmark_query_protocol_args(args: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn benchmark_corpus_summary_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let args = parse_benchmark_corpus_summary_args(args)?;
+    let store = open_store(data_dir)?;
+    let document_count = store.visible_document_count().map_err(CliError::store)?;
+    let summary = store.status_summary().map_err(CliError::store)?;
+    let searchable_document_ids = store
+        .searchable_document_ids()
+        .map_err(CliError::store)?
+        .into_iter()
+        .map(|document_id| document_id.to_string())
+        .collect::<BTreeSet<_>>();
+    let vector_diagnostic = inspect_vector_index(data_dir);
+    let vector_coverage = inspect_persistent_vector_document_coverage(
+        data_dir.join("vector-index"),
+        &searchable_document_ids,
+    );
+    let vector_indexed_document_count = u64::try_from(vector_coverage.covered_document_count())
+        .map_err(|_| CliError::user("benchmark corpus vector coverage count is too large"))?;
+    let active_vector_document_count = u64::try_from(vector_coverage.active_document_count())
+        .map_err(|_| CliError::user("benchmark corpus vector document count is too large"))?;
+    let vector_count = u64::try_from(vector_diagnostic.vector_count())
+        .map_err(|_| CliError::user("benchmark corpus vector count is too large"))?;
+    let vector_deleted_count = u64::try_from(vector_diagnostic.deleted_count())
+        .map_err(|_| CliError::user("benchmark corpus vector tombstone count is too large"))?;
+    let hot_index_fully_covered = document_count > 0
+        && summary.searchable_documents >= document_count
+        && vector_indexed_document_count >= document_count;
+
+    if args.json {
+        let report = serde_json::json!({
+            "schema_version": "benchmark-corpus-summary.v1",
+            "privacy_boundary": "redacted_local_aggregate",
+            "document_count": document_count,
+            "searchable_document_count": summary.searchable_documents,
+            "vector_indexed_document_count": vector_indexed_document_count,
+            "active_vector_document_count": active_vector_document_count,
+            "vector_count": vector_count,
+            "vector_deleted_count": vector_deleted_count,
+            "vector_index_state": vector_diagnostic.state_label(),
+            "vector_search_backend": vector_diagnostic.backend_json_label(),
+            "hot_index_fully_covered": hot_index_fully_covered,
+            "contains_raw_resume_text": false,
+            "contains_resume_paths": false,
+            "contains_queries": false,
+            "contains_sample_ids": false,
+        });
+        let report = serde_json::to_string_pretty(&report)
+            .map_err(|_| CliError::user("benchmark corpus summary unavailable"))?;
+        println!("{report}");
+        return Ok(());
+    }
+
+    println!("resume-ir benchmark corpus summary");
+    println!("privacy boundary: redacted local aggregate");
+    println!("documents: {document_count}");
+    println!("searchable documents: {}", summary.searchable_documents);
+    println!("vector indexed documents: {vector_indexed_document_count}");
+    println!("active vector documents: {active_vector_document_count}");
+    println!("vector count: {vector_count}");
+    println!("vector tombstones: {vector_deleted_count}");
+    println!("vector index: {}", vector_diagnostic.state_label());
+    println!("vector backend: {}", vector_diagnostic.backend_json_label());
+    println!("hot index fully covered: {hot_index_fully_covered}");
+    println!("raw resume text: <redacted>");
+    println!("resume paths: <redacted>");
+    println!("queries: <redacted>");
+    println!("sample ids: <redacted>");
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BenchmarkCorpusSummaryArgs {
+    json: bool,
+}
+
+fn parse_benchmark_corpus_summary_args(args: &[String]) -> Result<BenchmarkCorpusSummaryArgs> {
+    let mut json = false;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => json = true,
+            _ => return Err(CliError::usage(benchmark_corpus_summary_usage())),
+        }
+    }
+    Ok(BenchmarkCorpusSummaryArgs { json })
+}
+
+fn benchmark_corpus_summary_usage() -> &'static str {
+    "usage: resume-cli benchmark-corpus-summary [--json]"
 }
 
 fn benchmark_query_env(name: &str) -> Result<String> {

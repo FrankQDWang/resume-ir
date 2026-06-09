@@ -939,6 +939,37 @@ impl MetaStore {
         Ok(documents)
     }
 
+    pub fn visible_document_count(&self) -> Result<u64> {
+        let connection = self.connection.borrow();
+        let count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM document WHERE is_deleted = 0 AND status <> ?1",
+                params![document_status_to_storage(DocumentStatus::Deleted)],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?;
+        i64_to_u64(count, "document.visible_document_count")
+    }
+
+    pub fn searchable_document_ids(&self) -> Result<Vec<DocumentId>> {
+        let connection = self.connection.borrow();
+        let mut statement = connection
+            .prepare("SELECT id FROM document WHERE is_deleted = 0 AND status = ?1 ORDER BY id")
+            .map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![document_status_to_storage(
+                DocumentStatus::Searchable
+            )])
+            .map_err(MetaStoreError::storage)?;
+        let mut document_ids = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            document_ids.push(read_id::<DocumentId>(row, 0, "document.id")?);
+        }
+
+        Ok(document_ids)
+    }
+
     pub fn mark_document_deleted(
         &self,
         id: &DocumentId,

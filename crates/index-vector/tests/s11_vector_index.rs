@@ -57,7 +57,30 @@ fn in_memory_vector_index_searches_marks_deleted_and_snapshots_without_vector_le
     let snapshot = index.snapshot().unwrap();
     assert_eq!(snapshot.vector_count(), 2);
     assert_eq!(snapshot.deleted_count(), 1);
+    assert_eq!(snapshot.document_count(), 1);
     assert_eq!(snapshot.dimension(), 16);
+}
+
+#[test]
+fn vector_snapshot_counts_unique_active_documents_not_section_vectors() {
+    let index = InMemoryVectorIndex::new(4);
+
+    index
+        .upsert(vec![
+            VectorDocument::new("doc_a:main", "doc_a", vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
+            VectorDocument::new("doc_a:section:0", "doc_a", vec![0.9, 0.1, 0.0, 0.0]).unwrap(),
+            VectorDocument::new("doc_b:main", "doc_b", vec![0.0, 1.0, 0.0, 0.0]).unwrap(),
+            VectorDocument::new("doc_deleted:main", "doc_deleted", vec![0.0, 0.0, 1.0, 0.0])
+                .unwrap(),
+        ])
+        .unwrap();
+    index.mark_deleted(&["doc_deleted:main"]).unwrap();
+
+    let snapshot = index.snapshot().unwrap();
+
+    assert_eq!(snapshot.vector_count(), 4);
+    assert_eq!(snapshot.deleted_count(), 1);
+    assert_eq!(snapshot.document_count(), 2);
 }
 
 #[test]

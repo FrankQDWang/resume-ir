@@ -485,6 +485,131 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
     remove_dir(&data_dir);
 }
 
+#[test]
+fn benchmark_corpus_summary_json_reports_redacted_hot_index_coverage_without_private_leaks() {
+    let data_dir = temp_dir("benchmark-corpus-summary-private-data");
+    let document_a_id = DocumentId::from_non_secret_parts(&["s278", "summary-doc-a"]);
+    let document_a_version_id =
+        ResumeVersionId::from_non_secret_parts(&["s278", "summary-version-a"]);
+    let document_b_id = DocumentId::from_non_secret_parts(&["s278", "summary-doc-b"]);
+    let document_b_version_id =
+        ResumeVersionId::from_non_secret_parts(&["s278", "summary-version-b"]);
+    let ocr_document_id = DocumentId::from_non_secret_parts(&["s278", "summary-ocr-doc"]);
+    let private_text = "SyntheticBenchmarkSecretToken local resume text";
+
+    seed_searchable_metadata(
+        &data_dir,
+        &document_a_id,
+        &document_a_version_id,
+        "synthetic-summary-a.pdf",
+        private_text,
+    );
+    seed_searchable_metadata(
+        &data_dir,
+        &document_b_id,
+        &document_b_version_id,
+        "synthetic-summary-b.docx",
+        "Synthetic benchmark corpus second resume",
+    );
+    seed_document_metadata(
+        &data_dir,
+        &ocr_document_id,
+        "synthetic-summary-needs-ocr.pdf",
+        DocumentStatus::OcrRequired,
+    );
+
+    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
+    vector_index
+        .upsert(vec![
+            VectorDocument::new_for_model(
+                "fixture-summary-model",
+                format!("fixture-summary-model:{document_a_version_id}"),
+                document_a_id.to_string(),
+                vec![1.0, 0.0, 0.0, 0.0],
+            )
+            .unwrap(),
+            VectorDocument::new_for_model(
+                "fixture-summary-model",
+                format!("fixture-summary-model:{document_a_version_id}:section:0"),
+                document_a_id.to_string(),
+                vec![0.9, 0.1, 0.0, 0.0],
+            )
+            .unwrap(),
+            VectorDocument::new_for_model(
+                "fixture-summary-model",
+                format!("fixture-summary-model:{document_b_version_id}"),
+                document_b_id.to_string(),
+                vec![0.0, 1.0, 0.0, 0.0],
+            )
+            .unwrap(),
+            VectorDocument::new_for_model(
+                "fixture-summary-model",
+                "fixture-summary-model:orphan-vector",
+                "orphan-private-doc",
+                vec![0.0, 0.0, 1.0, 0.0],
+            )
+            .unwrap(),
+            VectorDocument::new_for_model(
+                "fixture-summary-model",
+                "fixture-summary-model:deleted-vector",
+                "deleted-private-doc",
+                vec![0.0, 0.0, 0.0, 1.0],
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+    vector_index
+        .mark_deleted(&["fixture-summary-model:deleted-vector"])
+        .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "benchmark-corpus-summary",
+            "--json",
+        ])
+        .output()
+        .expect("run benchmark corpus summary");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("benchmark corpus summary json");
+
+    assert_eq!(report["schema_version"], "benchmark-corpus-summary.v1");
+    assert_eq!(report["privacy_boundary"], "redacted_local_aggregate");
+    assert_eq!(report["document_count"], 3);
+    assert_eq!(report["searchable_document_count"], 2);
+    assert_eq!(report["vector_indexed_document_count"], 2);
+    assert_eq!(report["active_vector_document_count"], 3);
+    assert_eq!(report["vector_count"], 5);
+    assert_eq!(report["vector_deleted_count"], 1);
+    assert_eq!(report["vector_index_state"], "available");
+    assert_eq!(report["vector_search_backend"], "hnsw_ann");
+    assert_eq!(report["hot_index_fully_covered"], false);
+    assert_eq!(report["contains_raw_resume_text"], false);
+    assert_eq!(report["contains_resume_paths"], false);
+    assert_eq!(report["contains_queries"], false);
+    assert_eq!(report["contains_sample_ids"], false);
+    assert!(!stdout.contains(private_text));
+    assert!(!stdout.contains("synthetic-summary-a.pdf"));
+    assert!(!stdout.contains("synthetic-summary-b.docx"));
+    assert!(!stdout.contains("synthetic-summary-needs-ocr.pdf"));
+    assert!(!stdout.contains("orphan-private-doc"));
+    assert!(!stdout.contains("deleted-private-doc"));
+    assert!(!stdout.contains("summary-doc-a"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    remove_dir(&data_dir);
+}
+
 #[cfg(unix)]
 #[test]
 fn semantic_search_reports_missing_vector_snapshot_even_when_dimension_is_supplied() {
@@ -877,6 +1002,34 @@ fn seed_searchable_metadata(
             clean_text: Some(text.to_string()),
             quality_score: Some(0.9),
             visibility: ResumeVisibility::Searchable,
+        })
+        .unwrap();
+}
+
+fn seed_document_metadata(
+    data_dir: &Path,
+    document_id: &DocumentId,
+    file_name: &str,
+    status: DocumentStatus,
+) {
+    let now = UnixTimestamp::from_unix_seconds(1_800_054_000);
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .upsert_document(&Document {
+            id: document_id.clone(),
+            source_uri: format!("synthetic://{file_name}"),
+            normalized_path: format!("synthetic/{file_name}"),
+            file_name: file_name.to_string(),
+            extension: FileExtension::Pdf,
+            byte_size: 256,
+            mtime: now,
+            content_hash: Some(format!("{file_name}-hash")),
+            text_hash: None,
+            is_deleted: false,
+            created_at: now,
+            updated_at: now,
+            status,
         })
         .unwrap();
 }
