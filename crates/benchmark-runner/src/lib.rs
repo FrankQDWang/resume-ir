@@ -20,6 +20,7 @@ use ocr_client::{
 };
 use rank_fusion::{soft_dedupe_score, DedupeProfile};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use sha2::{Digest, Sha256};
 
 pub fn crate_name() -> &'static str {
     "benchmark-runner"
@@ -244,12 +245,85 @@ impl PrivateVectorQualityManifestDigests {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrivateQueryBenchmarkConfig {
-    query_set: PathBuf,
-    command: PrivateQueryBenchmarkCommand,
+pub struct PrivateQueryCorpusSummary {
     document_count: usize,
     searchable_document_count: usize,
     vector_indexed_document_count: usize,
+    sha256: String,
+}
+
+impl PrivateQueryCorpusSummary {
+    pub fn from_redacted_json_file(path: impl AsRef<Path>) -> Result<Self> {
+        let bytes = fs::read(path).map_err(BenchmarkError::io)?;
+        Self::from_redacted_json_bytes(bytes)
+    }
+
+    pub fn from_redacted_json_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let report = serde_json::from_slice::<serde_json::Value>(bytes)
+            .map_err(|_| BenchmarkError::invalid_config("private_query_corpus_summary_json"))?;
+        validate_private_query_corpus_summary_shape(&report)?;
+        if private_query_corpus_summary_str(&report, "schema_version")?
+            != "benchmark-corpus-summary.v1"
+            || private_query_corpus_summary_str(&report, "privacy_boundary")?
+                != "redacted_local_aggregate"
+            || private_query_corpus_summary_bool(&report, "contains_raw_resume_text")?
+            || private_query_corpus_summary_bool(&report, "contains_resume_paths")?
+            || private_query_corpus_summary_bool(&report, "contains_queries")?
+            || private_query_corpus_summary_bool(&report, "contains_sample_ids")?
+        {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_corpus_summary_boundary",
+            ));
+        }
+
+        let document_count = private_query_corpus_summary_usize(&report, "document_count")?;
+        let searchable_document_count =
+            private_query_corpus_summary_usize(&report, "searchable_document_count")?;
+        let vector_indexed_document_count =
+            private_query_corpus_summary_usize(&report, "vector_indexed_document_count")?;
+        let hot_index_fully_covered =
+            private_query_corpus_summary_bool(&report, "hot_index_fully_covered")?;
+        if document_count == 0
+            || !hot_index_fully_covered
+            || searchable_document_count != document_count
+            || vector_indexed_document_count != document_count
+        {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_corpus_summary_hot_index",
+            ));
+        }
+
+        Ok(Self {
+            document_count,
+            searchable_document_count,
+            vector_indexed_document_count,
+            sha256: sha256_hex(bytes),
+        })
+    }
+
+    pub fn document_count(&self) -> usize {
+        self.document_count
+    }
+
+    pub fn searchable_document_count(&self) -> usize {
+        self.searchable_document_count
+    }
+
+    pub fn vector_indexed_document_count(&self) -> usize {
+        self.vector_indexed_document_count
+    }
+
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateQueryBenchmarkConfig {
+    query_set: PathBuf,
+    command: PrivateQueryBenchmarkCommand,
+    corpus_summary: PrivateQueryCorpusSummary,
     max_queries: usize,
     top_k: usize,
     timeout_ms: u64,
@@ -261,36 +335,17 @@ impl PrivateQueryBenchmarkConfig {
     pub fn new(
         query_set: impl AsRef<Path>,
         command: PrivateQueryBenchmarkCommand,
-        document_count: usize,
-        searchable_document_count: usize,
-        vector_indexed_document_count: usize,
+        corpus_summary: PrivateQueryCorpusSummary,
         manifests: PrivateQueryManifestDigests,
     ) -> Result<Self> {
         let query_set = query_set.as_ref().to_path_buf();
         if query_set.as_os_str().is_empty() {
             return Err(BenchmarkError::invalid_config("private_query_set"));
         }
-        if document_count == 0 {
-            return Err(BenchmarkError::invalid_config(
-                "private_query_document_count",
-            ));
-        }
-        if searchable_document_count == 0 || searchable_document_count > document_count {
-            return Err(BenchmarkError::invalid_config(
-                "private_query_searchable_document_count",
-            ));
-        }
-        if vector_indexed_document_count == 0 || vector_indexed_document_count > document_count {
-            return Err(BenchmarkError::invalid_config(
-                "private_query_vector_indexed_document_count",
-            ));
-        }
         Ok(Self {
             query_set,
             command,
-            document_count,
-            searchable_document_count,
-            vector_indexed_document_count,
+            corpus_summary,
             max_queries: DEFAULT_PRIVATE_QUERY_MAX_QUERIES,
             top_k: DEFAULT_TOP_K,
             timeout_ms: DEFAULT_PRIVATE_QUERY_TIMEOUT_MS,
@@ -879,6 +934,7 @@ pub struct PrivateQueryBenchmarkReport {
     document_count: usize,
     searchable_document_count: usize,
     vector_indexed_document_count: usize,
+    corpus_summary_sha256: String,
     query_count: usize,
     top_k: usize,
     query_total_ms: f64,
@@ -939,6 +995,7 @@ impl PrivateQueryBenchmarkReport {
                 "\"document_count\":{},",
                 "\"searchable_document_count\":{},",
                 "\"vector_indexed_document_count\":{},",
+                "\"corpus_summary_sha256\":\"{}\",",
                 "\"query_count\":{},",
                 "\"top_k\":{},",
                 "\"build_ms\":0.000,",
@@ -980,6 +1037,7 @@ impl PrivateQueryBenchmarkReport {
             self.document_count,
             self.searchable_document_count,
             self.vector_indexed_document_count,
+            self.corpus_summary_sha256,
             self.query_count,
             self.top_k,
             format_consistency_number(self.query_total_ms),
@@ -1015,6 +1073,7 @@ impl fmt::Debug for PrivateQueryBenchmarkReport {
                 "vector_indexed_document_count",
                 &self.vector_indexed_document_count,
             )
+            .field("corpus_summary_sha256", &self.corpus_summary_sha256)
             .field("query_count", &self.query_count)
             .field("top_k", &self.top_k)
             .field("query_total_ms", &self.query_total_ms)
@@ -1594,9 +1653,10 @@ pub fn run_private_query_benchmark(
     Ok(PrivateQueryBenchmarkReport {
         run_id: generate_run_id(),
         platform: platform_label(),
-        document_count: config.document_count,
-        searchable_document_count: config.searchable_document_count,
-        vector_indexed_document_count: config.vector_indexed_document_count,
+        document_count: config.corpus_summary.document_count(),
+        searchable_document_count: config.corpus_summary.searchable_document_count(),
+        vector_indexed_document_count: config.corpus_summary.vector_indexed_document_count(),
+        corpus_summary_sha256: config.corpus_summary.sha256().to_string(),
         query_count: queries.len(),
         top_k: config.top_k,
         query_total_ms,
@@ -1604,9 +1664,9 @@ pub fn run_private_query_benchmark(
         zero_result_queries,
         total_hits,
         latency: LatencySummary::from_samples(latencies)?,
-        million_scale_verified: config.document_count >= 1_000_000,
+        million_scale_verified: config.corpus_summary.document_count() >= 1_000_000,
         percentile_confidence: private_query_percentile_confidence(
-            config.document_count,
+            config.corpus_summary.document_count(),
             queries.len(),
         ),
         manifests: config.manifests,
@@ -4046,6 +4106,7 @@ fn validate_private_real_benchmark_boundary(
         || private_real_bool(report, "contains_queries")?
         || !is_sha256_hex(private_real_str(report, "dataset_manifest_sha256")?)
         || !is_sha256_hex(private_real_str(report, "query_set_sha256")?)
+        || !is_sha256_hex(private_real_str(report, "corpus_summary_sha256")?)
         || private_real_str(report, "scope")?
             != "private local real-corpus query benchmark; aggregate redacted report only"
     {
@@ -4163,6 +4224,7 @@ fn validate_private_real_report_shape(
     private_real_bool(report, "contains_queries")?;
     private_real_str(report, "dataset_manifest_sha256")?;
     private_real_str(report, "query_set_sha256")?;
+    private_real_str(report, "corpus_summary_sha256")?;
     private_real_str(report, "scope")?;
     validate_private_real_hot_hybrid_evidence(report)?;
     Ok(())
@@ -4810,8 +4872,99 @@ fn private_real_hot_index_document_coverage_error() -> BenchmarkGateError {
     )
 }
 
+fn validate_private_query_corpus_summary_shape(report: &serde_json::Value) -> Result<()> {
+    let Some(object) = report.as_object() else {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_corpus_summary_boundary",
+        ));
+    };
+    for key in object.keys() {
+        if !is_allowed_private_query_corpus_summary_key(key) {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_corpus_summary_boundary",
+            ));
+        }
+    }
+
+    private_query_corpus_summary_str(report, "schema_version")?;
+    private_query_corpus_summary_str(report, "privacy_boundary")?;
+    private_query_corpus_summary_usize(report, "document_count")?;
+    private_query_corpus_summary_usize(report, "searchable_document_count")?;
+    private_query_corpus_summary_usize(report, "vector_indexed_document_count")?;
+    private_query_corpus_summary_usize(report, "active_vector_document_count")?;
+    private_query_corpus_summary_usize(report, "vector_count")?;
+    private_query_corpus_summary_usize(report, "vector_deleted_count")?;
+    private_query_corpus_summary_str(report, "vector_index_state")?;
+    private_query_corpus_summary_str(report, "vector_search_backend")?;
+    private_query_corpus_summary_bool(report, "hot_index_fully_covered")?;
+    private_query_corpus_summary_bool(report, "contains_raw_resume_text")?;
+    private_query_corpus_summary_bool(report, "contains_resume_paths")?;
+    private_query_corpus_summary_bool(report, "contains_queries")?;
+    private_query_corpus_summary_bool(report, "contains_sample_ids")?;
+    Ok(())
+}
+
+fn private_query_corpus_summary_str<'a>(
+    report: &'a serde_json::Value,
+    key: &'static str,
+) -> Result<&'a str> {
+    report
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_corpus_summary_boundary"))
+}
+
+fn private_query_corpus_summary_bool(
+    report: &serde_json::Value,
+    key: &'static str,
+) -> Result<bool> {
+    report
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_corpus_summary_boundary"))
+}
+
+fn private_query_corpus_summary_usize(
+    report: &serde_json::Value,
+    key: &'static str,
+) -> Result<usize> {
+    report
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_corpus_summary_boundary"))
+}
+
 fn is_sha256_hex(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn is_allowed_private_query_corpus_summary_key(key: &str) -> bool {
+    matches!(
+        key,
+        "schema_version"
+            | "privacy_boundary"
+            | "document_count"
+            | "searchable_document_count"
+            | "vector_indexed_document_count"
+            | "active_vector_document_count"
+            | "vector_count"
+            | "vector_deleted_count"
+            | "vector_index_state"
+            | "vector_search_backend"
+            | "hot_index_fully_covered"
+            | "contains_raw_resume_text"
+            | "contains_resume_paths"
+            | "contains_queries"
+            | "contains_sample_ids"
+    )
 }
 
 fn is_allowed_private_real_report_key(key: &str) -> bool {
@@ -4849,6 +5002,7 @@ fn is_allowed_private_real_report_key(key: &str) -> bool {
             | "contains_queries"
             | "dataset_manifest_sha256"
             | "query_set_sha256"
+            | "corpus_summary_sha256"
             | "scope"
     )
 }

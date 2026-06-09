@@ -92,6 +92,10 @@ production-ready scope source.
   S279 used hosted Windows CI failure logs and synthetic daemon IPC/import
   fixtures only; no real resume data, local paths, raw text, diagnostics, or
   generated runtime data was committed or uploaded.
+  S280 used synthetic/private-shaped benchmark corpus summary, query-set, and
+  release-readiness fixtures only; no real benchmark query set, real resume
+  data, local paths, raw queries, generated private reports, diagnostics, or
+  model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -970,8 +974,93 @@ obsolete preliminary files and checklists are not product scope.
 | S277 | Product private benchmark hot-index coverage gate complete locally | Focused RED first failed because a `private-real-corpus` benchmark report with valid total `document_count` but no hot-index coverage counts was accepted. After implementation, private query benchmark reports include aggregate `searchable_document_count` and `vector_indexed_document_count`; the runner requires them, the benchmark gate requires them to be non-zero and no larger than `document_count`, release-readiness requires both to meet the local 8000-document floor, and the runbook documents the new report fields and CLI flags. | This slice prevents local performance evidence from being cleared by a corpus that imported enough documents but did not make enough documents hot-searchable and vector-indexed. It does not generate or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 | S278 | Product benchmark corpus summary preflight complete locally | Focused RED first failed because vector snapshots had no unique active document count and `resume-cli benchmark-corpus-summary` was rejected as an unknown command. After implementation, `VectorSnapshot::document_count()` counts unique non-deleted vector document IDs, metadata exposes count/ID-only local coverage queries, and `resume-cli benchmark-corpus-summary --json` emits redacted aggregate `document_count`, `searchable_document_count`, `vector_indexed_document_count`, active vector document/vector/tombstone counts, vector index state/backend, and explicit false raw-data/path/query/sample-ID booleans. The CLI regression proves section vectors do not inflate coverage, deleted vectors are ignored, orphan vectors are not counted as benchmark-indexed searchable documents, and stdout omits synthetic private text, filenames, document IDs, and data-dir paths. | This slice adds a local preflight for private benchmark coverage counts only. It does not create or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 | S279 | CI Windows daemon import IPC wait hardening complete locally | GitHub Actions PR #9 `windows-latest` failed after S278 in `resume-daemon --test s20_ipc` because `daemon_import_command_ipc_feeds_running_import_worker_loop` did not see the daemon status reach two searchable documents within the old 120-request, 25ms polling window. The same test passed locally on macOS, and all other hosted checks passed, so the root cause was a too-small Windows hosted wait budget for the combined IPC/import-worker test. After implementation, the s20 IPC helper uses explicit endpoint/import-worker timeouts, a larger but bounded status request budget, 50ms polling, and redacted store-state/last-response diagnostics on timeout; both s20 combined import-worker tests share the hardened helper. | This slice hardens hosted Windows daemon IPC test reliability only. It does not change product daemon behavior, prove installed Windows service lifecycle, validate production installer behavior, clear platform blockers, or make stable release ready. |
+| S280 | Product private benchmark corpus-summary binding complete locally | Focused RED first failed because `benchmark-runner` had no `PrivateQueryCorpusSummary` and `PrivateQueryBenchmarkConfig::new` still accepted manually supplied hot-index counts. After implementation, `resume-benchmark private-query` requires `--corpus-summary <json>` from `resume-cli benchmark-corpus-summary --json`, validates the summary schema/privacy boundary, rejects partial hot-index coverage, derives document/searchable/vector counts from the summary instead of hand-copied flags, emits only `corpus_summary_sha256` in the redacted benchmark report, and the private real-corpus gate requires that digest. The runbook now instructs operators to save the local summary file and pass it directly to the benchmark runner. | This slice binds private benchmark reports to a local redacted corpus preflight only. It does not create or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 
 ## Command Log
+
+### S280
+
+Design target:
+
+- Bind private query benchmark reports to the product-owned redacted
+  `benchmark-corpus-summary` preflight instead of hand-copied document counts.
+- Keep the summary local: benchmark reports may include only a SHA-256 digest
+  plus aggregate counts, never local summary paths, raw query text, resume text,
+  filenames, sample IDs, or diagnostics.
+- Reject private benchmark execution when the summary does not prove full
+  hot-index coverage for all visible documents.
+
+TDD RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner private_query_corpus_summary_rejects_partial_hot_index_coverage --locked -- --exact
+```
+
+Output summary:
+
+- The test failed before implementation because `PrivateQueryCorpusSummary` was
+  not exported and `PrivateQueryBenchmarkConfig::new` still required manual
+  `usize` document/searchable/vector counts.
+
+Focused checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner private_query_corpus_summary_rejects_partial_hot_index_coverage --offline -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner private_query_benchmark_outputs_redacted_gateable_report --offline -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_outputs_redacted_gateable_report --offline -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_rejects_partial_corpus_summary_without_path_leaks --offline -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s161_release_readiness --offline
+```
+
+Output summary:
+
+- The partial-summary library regression passed.
+- The private-query report regression passed and emitted
+  `corpus_summary_sha256` without local paths or raw query text.
+- The CLI `--corpus-summary` success and partial-summary rejection regressions
+  passed without leaking the summary path, query-set path, command path, or raw
+  private query sentinel.
+- `s161_release_readiness` passed all 5 tests after the private benchmark report
+  schema was tightened.
+
+Acceptance:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --locked
+PATH=<cargo-bin>:$PATH cargo clippy -p benchmark-runner -p resume-cli --tests --locked -- -D warnings
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-readiness.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+git diff -U0 | rg -n <changed-line-private-data-and-secret-patterns>
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- `cargo test -p benchmark-runner --locked`: exit 0; 2 lib tests, 36
+  `s17_benchmark_cli` tests, 67 `s17_benchmark_runner` tests, and doc-tests
+  passed.
+- `cargo test -p resume-cli --locked`: exit 0; all resume-cli tests passed.
+- Focused clippy passed for `benchmark-runner` and `resume-cli`.
+- Runbook and release-readiness script checks passed.
+- `git diff --check`, the public-repo guard, and the changed-line privacy scan
+  passed. An earlier whole-file scan only matched pre-existing synthetic
+  sentinels and historical PROGRESS references, not newly added leak material.
+- Full `verify-local.sh` passed, including workspace clippy/tests, CLI and
+  daemon closed-loop checks, benchmark/OCR/vector gates, benchmark smoke,
+  license/runbook/workflow/release-readiness checks, release artifact/signing/
+  notarization/SBOM/macOS package/macOS installer evidence, Windows evidence
+  scripts, and the final public-repo guard.
+
+Scope note:
+
+- S280 is production benchmark evidence hardening only. It does not run or pass
+  the actual 500-query private local benchmark, clear OCR/vector/model blockers,
+  or make the complete product release-ready.
 
 ### S279
 

@@ -204,6 +204,7 @@ dependencies = [
  "rank-fusion",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

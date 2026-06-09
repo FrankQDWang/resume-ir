@@ -158,6 +158,8 @@ fn resume_benchmark_gate_rejects_synthetic_without_explicit_allowance() {
 fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
     let query_set = private_query_set_file("private-query-cli-set", 500);
     let command = query_fixture_script("private-query-cli-command");
+    let corpus_summary =
+        private_query_corpus_summary_file("private-query-cli-summary", 8_720, true);
     let report_dir = temp_dir("private-query-cli-report");
     let report_path = report_dir.join("private-query-report.json");
 
@@ -168,12 +170,8 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
             path_str(&query_set),
             "--command",
             path_str(&command),
-            "--document-count",
-            "8720",
-            "--searchable-document-count",
-            "8720",
-            "--vector-indexed-document-count",
-            "8720",
+            "--corpus-summary",
+            path_str(&corpus_summary),
             "--max-queries",
             "500",
             "--top-k",
@@ -204,6 +202,7 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
     assert!(stdout.contains("\"document_count\":8720"));
     assert!(stdout.contains("\"searchable_document_count\":8720"));
     assert!(stdout.contains("\"vector_indexed_document_count\":8720"));
+    assert!(stdout.contains("\"corpus_summary_sha256\":\""));
     assert!(stdout.contains("\"query_count\":500"));
     assert!(stdout.contains("\"target_claim\":\"query_latency_target_met\""));
     assert!(stdout.contains("\"query_mode\":\"hybrid\""));
@@ -214,6 +213,7 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
     assert!(stdout.contains("\"contains_queries\":false"));
     assert!(!stdout.contains(path_str(&query_set)));
     assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains(path_str(&corpus_summary)));
     assert!(!stdout.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
     assert!(!stdout.contains("private-query-sample-"));
     fs::write(&report_path, &output.stdout).unwrap();
@@ -252,9 +252,44 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
 }
 
 #[test]
+fn resume_benchmark_private_query_rejects_partial_corpus_summary_without_path_leaks() {
+    let query_set = private_query_set_file("private-query-cli-partial-set", 1);
+    let command = query_fixture_script("private-query-cli-partial-command");
+    let corpus_summary =
+        private_query_corpus_summary_file("private-query-cli-partial-summary", 8_720, false);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "private-query",
+            "--query-set",
+            path_str(&query_set),
+            "--command",
+            path_str(&command),
+            "--corpus-summary",
+            path_str(&corpus_summary),
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--query-set-sha256",
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--json",
+        ])
+        .output()
+        .expect("run resume-benchmark private-query with partial corpus summary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("private_query_corpus_summary_hot_index"));
+    assert!(!stderr.contains(path_str(&corpus_summary)));
+    assert!(!stderr.contains(path_str(&query_set)));
+    assert!(!stderr.contains(path_str(&command)));
+}
+
+#[test]
 fn resume_benchmark_private_query_passes_command_args_without_leaking_them() {
     let query_set = private_query_set_file("private-query-cli-command-args-set", 3);
     let command = query_fixture_script_requiring_args("private-query-cli-command-args-command");
+    let corpus_summary =
+        private_query_corpus_summary_file("private-query-cli-command-args-summary", 8_720, true);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
         .args([
@@ -267,12 +302,8 @@ fn resume_benchmark_private_query_passes_command_args_without_leaking_them() {
             "resume-cli",
             "--command-arg",
             "benchmark-query-protocol",
-            "--document-count",
-            "8720",
-            "--searchable-document-count",
-            "8720",
-            "--vector-indexed-document-count",
-            "8720",
+            "--corpus-summary",
+            path_str(&corpus_summary),
             "--max-queries",
             "3",
             "--top-k",
@@ -301,12 +332,14 @@ fn resume_benchmark_private_query_passes_command_args_without_leaking_them() {
     assert!(stdout.contains("\"query_mode\":\"hybrid\""));
     assert!(!stdout.contains(path_str(&query_set)));
     assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains(path_str(&corpus_summary)));
     assert!(!stdout.contains("resume-cli"));
     assert!(!stdout.contains("benchmark-query-protocol"));
     assert!(!stdout.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
 
     remove_dir(query_set.parent().unwrap());
     remove_dir(command.parent().unwrap());
+    remove_dir(corpus_summary.parent().unwrap());
 }
 
 #[test]
@@ -356,6 +389,7 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
             "\"contains_queries\":false,",
             "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
             "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
         ),
@@ -441,6 +475,7 @@ fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
             "\"contains_queries\":false,",
             "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
             "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
         ),
@@ -518,6 +553,7 @@ fn resume_benchmark_gate_rejects_million_release_sampled_confidence() {
             "\"contains_queries\":false,",
             "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
             "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
         ),
@@ -595,6 +631,7 @@ fn resume_benchmark_gate_rejects_private_real_too_few_query_samples() {
             "\"contains_queries\":false,",
             "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
             "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
         ),
@@ -2373,6 +2410,51 @@ fn private_query_set_file(label: &str, query_count: usize) -> PathBuf {
         ));
     }
     fs::write(&path, lines).unwrap();
+    path
+}
+
+fn private_query_corpus_summary_file(
+    label: &str,
+    document_count: usize,
+    hot_index: bool,
+) -> PathBuf {
+    let path = temp_dir(label).join("benchmark-corpus-summary.json");
+    let searchable_count = if hot_index {
+        document_count
+    } else {
+        document_count.saturating_sub(1)
+    };
+    let vector_count = if hot_index {
+        document_count
+    } else {
+        document_count.saturating_sub(2)
+    };
+    fs::write(
+        &path,
+        format!(
+            concat!(
+                "{{",
+                "\"schema_version\":\"benchmark-corpus-summary.v1\",",
+                "\"privacy_boundary\":\"redacted_local_aggregate\",",
+                "\"document_count\":{},",
+                "\"searchable_document_count\":{},",
+                "\"vector_indexed_document_count\":{},",
+                "\"active_vector_document_count\":{},",
+                "\"vector_count\":{},",
+                "\"vector_deleted_count\":0,",
+                "\"vector_index_state\":\"available\",",
+                "\"vector_search_backend\":\"hnsw_ann\",",
+                "\"hot_index_fully_covered\":{},",
+                "\"contains_raw_resume_text\":false,",
+                "\"contains_resume_paths\":false,",
+                "\"contains_queries\":false,",
+                "\"contains_sample_ids\":false",
+                "}}"
+            ),
+            document_count, searchable_count, vector_count, vector_count, vector_count, hot_index
+        ),
+    )
+    .unwrap();
     path
 }
 

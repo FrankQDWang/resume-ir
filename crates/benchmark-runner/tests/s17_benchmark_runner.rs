@@ -14,9 +14,9 @@ use benchmark_runner::{
     PrivateDedupeQualityManifestDigests, PrivateFieldQualityManifestDigests,
     PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests, PrivateOcrThroughputConfig,
     PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand, PrivateQueryBenchmarkConfig,
-    PrivateQueryManifestDigests, PrivateVectorQualityManifestDigests, SyntheticBenchmarkConfig,
-    SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine, VectorQualityConfig,
-    VectorQualityGateConfig,
+    PrivateQueryCorpusSummary, PrivateQueryManifestDigests, PrivateVectorQualityManifestDigests,
+    SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine,
+    VectorQualityConfig, VectorQualityGateConfig,
 };
 
 #[test]
@@ -64,6 +64,10 @@ fn synthetic_query_benchmark_rejects_empty_workloads() {
 fn private_query_benchmark_outputs_redacted_gateable_report() {
     let query_set = private_query_set_file("private-query-benchmark-set", 500);
     let command = query_fixture_script("private-query-benchmark-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
     let manifests = PrivateQueryManifestDigests::new(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
@@ -72,9 +76,7 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
     let config = PrivateQueryBenchmarkConfig::new(
         &query_set,
         PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
-        8_720,
-        8_720,
-        8_720,
+        corpus_summary,
         manifests,
     )
     .unwrap()
@@ -102,6 +104,7 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
     assert!(json.contains("\"document_count\":8720"));
     assert!(json.contains("\"searchable_document_count\":8720"));
     assert!(json.contains("\"vector_indexed_document_count\":8720"));
+    assert!(json.contains("\"corpus_summary_sha256\":\""));
     assert!(json.contains("\"query_count\":500"));
     assert!(json.contains("\"target_claim\":\"query_latency_target_met\""));
     assert!(json.contains("\"query_mode\":\"hybrid\""));
@@ -129,6 +132,18 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
 
     remove_dir(query_set.parent().unwrap());
     remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_corpus_summary_rejects_partial_hot_index_coverage() {
+    let error = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, false),
+    )
+    .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private_query_corpus_summary_hot_index"));
 }
 
 #[test]
@@ -273,7 +288,8 @@ fn benchmark_gate_rejects_private_real_report_without_hot_hybrid_evidence() {
         ",\"contains_resume_paths\":false",
         ",\"contains_queries\":false",
         ",\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
-        ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\""
+        ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\"",
+        ",\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
     ));
     report.push('}');
     let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
@@ -1714,7 +1730,8 @@ fn minimal_private_real_benchmark_json_without_hot_coverage(
         ",\"contains_resume_paths\":false",
         ",\"contains_queries\":false",
         ",\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
-        ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\""
+        ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\"",
+        ",\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
     ));
     report.push('}');
     report
@@ -2014,6 +2031,42 @@ fn private_query_set_file(label: &str, query_count: usize) -> PathBuf {
     }
     fs::write(&path, lines).unwrap();
     path
+}
+
+fn private_query_corpus_summary_json(document_count: usize, hot_index: bool) -> Vec<u8> {
+    let searchable_count = if hot_index {
+        document_count
+    } else {
+        document_count.saturating_sub(1)
+    };
+    let vector_count = if hot_index {
+        document_count
+    } else {
+        document_count.saturating_sub(2)
+    };
+    format!(
+        concat!(
+            "{{",
+            "\"schema_version\":\"benchmark-corpus-summary.v1\",",
+            "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"document_count\":{},",
+            "\"searchable_document_count\":{},",
+            "\"vector_indexed_document_count\":{},",
+            "\"active_vector_document_count\":{},",
+            "\"vector_count\":{},",
+            "\"vector_deleted_count\":0,",
+            "\"vector_index_state\":\"available\",",
+            "\"vector_search_backend\":\"hnsw_ann\",",
+            "\"hot_index_fully_covered\":{},",
+            "\"contains_raw_resume_text\":false,",
+            "\"contains_resume_paths\":false,",
+            "\"contains_queries\":false,",
+            "\"contains_sample_ids\":false",
+            "}}"
+        ),
+        document_count, searchable_count, vector_count, vector_count, vector_count, hot_index
+    )
+    .into_bytes()
 }
 
 fn private_business_field_quality_dataset() -> String {

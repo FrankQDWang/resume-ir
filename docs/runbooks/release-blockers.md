@@ -143,8 +143,9 @@ reports. The report must use `dataset_kind: "private-real-corpus"`,
 `searchable_document_count` and `vector_indexed_document_count` hot-index
 coverage fields, false hot-path OCR/parsing/heavy-model-inference booleans,
 false raw-data/path/query booleans, and sha256 digests for the local dataset
-manifest plus query set. It must also have internally consistent aggregate
-metrics: hot-index coverage counts are non-zero and no larger than
+manifest, query set, and redacted `benchmark-corpus-summary` preflight. It must
+also have internally consistent aggregate metrics: hot-index coverage counts
+are non-zero and no larger than
 `document_count`, latency samples equal query count, zero-result queries do not
 exceed query count, total hits do not exceed `query_count * top_k`, latency
 percentiles are ordered, `query_total_ms` is positive, and reported QPS matches
@@ -183,13 +184,15 @@ Before generating the benchmark report, capture local hot-index corpus coverage
 as a redacted aggregate summary:
 
 ```bash
-resume-cli --data-dir <local-data-dir> benchmark-corpus-summary --json
+resume-cli --data-dir <local-data-dir> benchmark-corpus-summary --json \
+  > benchmark-corpus-summary.local.json
 ```
 
-Use the summary's `document_count`, `searchable_document_count`, and
-`vector_indexed_document_count` fields as the matching `private-query` flags.
-The summary is local evidence only and must not contain raw resume text, local
-paths, queries, filenames, sample IDs, or document IDs.
+Pass the summary file directly to `private-query`; do not hand-copy counts.
+The benchmark runner will reject summaries that do not prove full hot-index
+coverage and will emit only the summary file's SHA-256 digest in the benchmark
+report. The summary is local evidence only and must not contain raw resume
+text, local paths, queries, filenames, sample IDs, or document IDs.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
@@ -201,9 +204,7 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   --command-arg --embedding-command --command-arg <embedding-command> \
   --command-arg --model-id --command-arg <model-id> \
   --command-arg --dimension --command-arg <dim> \
-  --document-count <document-count> \
-  --searchable-document-count <hot-searchable-documents> \
-  --vector-indexed-document-count <hot-vector-documents> \
+  --corpus-summary benchmark-corpus-summary.local.json \
   --max-queries 500 --top-k 10 \
   --dataset-manifest-sha256 <sha256> \
   --query-set-sha256 <sha256> \
