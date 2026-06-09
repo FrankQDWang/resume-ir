@@ -288,11 +288,18 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
     let dedupe_report = evidence_dir.join("private-dedupe-quality.json");
     let vector_report = evidence_dir.join("private-vector-quality.json");
     let ocr_report = evidence_dir.join("private-ocr-throughput.json");
+    let model_artifact = evidence_dir.join("reviewed-model-artifact.bin");
+    let model_manifest = evidence_dir.join("reviewed-model-manifest.json");
+    let ocr_engine_artifact = evidence_dir.join("reviewed-ocr-engine.bin");
+    let ocr_renderer_artifact = evidence_dir.join("reviewed-ocr-renderer.bin");
+    let ocr_manifest = evidence_dir.join("reviewed-ocr-manifest.json");
     fs::write(&benchmark_report, private_real_benchmark_report()).unwrap();
     fs::write(&field_report, private_business_field_quality_report()).unwrap();
     fs::write(&dedupe_report, private_business_dedupe_quality_report()).unwrap();
     fs::write(&vector_report, private_business_vector_quality_report()).unwrap();
     fs::write(&ocr_report, private_real_ocr_throughput_report()).unwrap();
+    write_reviewed_model_manifest(&model_artifact, &model_manifest);
+    write_reviewed_ocr_manifest(&ocr_engine_artifact, &ocr_renderer_artifact, &ocr_manifest);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -310,6 +317,10 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
             path_str(&vector_report),
             "--ocr-throughput-report",
             path_str(&ocr_report),
+            "--model-manifest",
+            path_str(&model_manifest),
+            "--ocr-runtime-manifest",
+            path_str(&ocr_manifest),
         ])
         .output()
         .expect("run release readiness with local evidence reports");
@@ -333,9 +344,18 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
     assert!(provided_labels.contains(&"dedupe quality"));
     assert!(provided_labels.contains(&"vector quality"));
     assert!(provided_labels.contains(&"OCR throughput"));
+    assert!(provided_labels.contains(&"embedding model license/distribution"));
+    assert!(provided_labels.contains(&"OCR engine license/distribution"));
     for evidence in provided {
         assert_eq!(evidence["status"], "provided");
-        assert_eq!(evidence["privacy_boundary"], "redacted_local_aggregate");
+        let label = evidence["label"].as_str().expect("provided label");
+        let expected_boundary = match label {
+            "embedding model license/distribution" | "OCR engine license/distribution" => {
+                "reviewed_local_manifest"
+            }
+            _ => "redacted_local_aggregate",
+        };
+        assert_eq!(evidence["privacy_boundary"], expected_boundary);
     }
 
     let blockers = report["blockers"].as_array().expect("blockers array");
@@ -348,17 +368,55 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
     assert!(!blocker_labels.contains(&"dedupe quality"));
     assert!(!blocker_labels.contains(&"vector quality"));
     assert!(!blocker_labels.contains(&"OCR throughput"));
+    assert!(!blocker_labels.contains(&"embedding model license/distribution"));
+    assert!(!blocker_labels.contains(&"OCR engine license/distribution"));
     assert!(blocker_labels.contains(&"signing certificates"));
     assert!(blocker_labels.contains(&"macOS notarization"));
-    assert!(blocker_labels.contains(&"OCR engine license/distribution"));
-    assert!(blocker_labels.contains(&"embedding model license/distribution"));
     assert!(blocker_labels.contains(&"cross-platform release validation"));
     assert!(stderr.contains("release readiness blocked"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stderr.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&evidence_dir)));
     assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&model_artifact)));
+    assert!(!stdout.contains(path_str(&ocr_engine_artifact)));
+    assert!(!stdout.contains("SYNTHETIC REVIEWED"));
     assert!(!stdout.contains("PRIVATE"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_unreviewed_model_manifest_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-unreviewed-model-private-data");
+    let evidence_dir = temp_path("release-readiness-unreviewed-model-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let model_artifact = evidence_dir.join("unreviewed-model-artifact.bin");
+    let model_manifest = evidence_dir.join("unreviewed-model-manifest.json");
+    write_unreviewed_model_manifest(&model_artifact, &model_manifest);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--model-manifest",
+            path_str(&model_manifest),
+        ])
+        .output()
+        .expect("run release readiness with unreviewed model manifest");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("model manifest blocked: license has not been reviewed"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&model_artifact)));
+    assert!(!stderr.contains(path_str(&model_manifest)));
+    assert!(!stderr.contains("SYNTHETIC UNREVIEWED MODEL ARTIFACT"));
 
     let _ = fs::remove_dir_all(&data_dir);
     let _ = fs::remove_dir_all(&evidence_dir);
@@ -472,6 +530,133 @@ fn temp_path(label: &str) -> PathBuf {
 
 fn path_str(path: &Path) -> &str {
     path.to_str().expect("test paths are utf-8")
+}
+
+fn json_path(path: &Path) -> String {
+    path_str(path).replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn write_reviewed_model_manifest(model_artifact: &Path, model_manifest: &Path) {
+    fs::write(model_artifact, b"SYNTHETIC REVIEWED MODEL ARTIFACT\n").unwrap();
+    fs::write(
+        model_manifest,
+        format!(
+            r#"{{
+  "schema_version": "resume-ir.model-manifest.v1",
+  "model_pack_id": "fixture-pack-reviewed",
+  "models": [
+    {{
+      "id": "fixture-reviewed-embedding-model",
+      "type": "embedding",
+      "dim": 4,
+      "format": "onnx",
+      "artifact": {{
+        "path": "{}",
+        "sha256": "57aac1132f550796663cdadce2ae702cb0bbf96b8620bc12f385d7b8aae0e492"
+      }},
+      "license": {{
+        "id": "Apache-2.0",
+        "reviewed": true
+      }}
+    }}
+  ]
+}}"#,
+            json_path(model_artifact)
+        ),
+    )
+    .unwrap();
+}
+
+fn write_unreviewed_model_manifest(model_artifact: &Path, model_manifest: &Path) {
+    fs::write(model_artifact, b"SYNTHETIC UNREVIEWED MODEL ARTIFACT\n").unwrap();
+    fs::write(
+        model_manifest,
+        format!(
+            r#"{{
+  "schema_version": "resume-ir.model-manifest.v1",
+  "model_pack_id": "fixture-pack-unreviewed",
+  "models": [
+    {{
+      "id": "fixture-unreviewed-embedding-model",
+      "type": "embedding",
+      "dim": 4,
+      "format": "onnx",
+      "artifact": {{
+        "path": "{}",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }},
+      "license": {{
+        "id": "Proprietary",
+        "reviewed": false
+      }}
+    }}
+  ]
+}}"#,
+            json_path(model_artifact)
+        ),
+    )
+    .unwrap();
+}
+
+fn write_reviewed_ocr_manifest(ocr_engine: &Path, ocr_renderer: &Path, ocr_manifest: &Path) {
+    fs::write(ocr_engine, b"SYNTHETIC TESSERACT RUNTIME\n").unwrap();
+    fs::write(ocr_renderer, b"SYNTHETIC PDFTOPPM RUNTIME\n").unwrap();
+    fs::write(
+        ocr_manifest,
+        format!(
+            r#"{{
+  "schema_version": "resume-ir.ocr-runtime-manifest.v1",
+  "runtime_pack_id": "fixture-ocr-pack-reviewed",
+  "components": [
+    {{
+      "id": "fixture-tesseract",
+      "kind": "ocr-engine",
+      "engine": "tesseract",
+      "version": "5.5.1",
+      "artifact": {{
+        "path": "{}",
+        "sha256": "f4c4eb4c45e595f803f076791dd942e6fd8bb93076207f8830ed6b8694f11e4a"
+      }},
+      "license": {{
+        "id": "Apache-2.0",
+        "reviewed": true
+      }}
+    }},
+    {{
+      "id": "fixture-pdftoppm",
+      "kind": "pdf-renderer",
+      "engine": "poppler-pdftoppm",
+      "version": "25.12.0",
+      "artifact": {{
+        "path": "{}",
+        "sha256": "571699d70504c3e505293c25953a85c38bdc8c13681aed7f7e3c4ce77fc8245f"
+      }},
+      "license": {{
+        "id": "GPL-2.0-or-later",
+        "reviewed": true
+      }}
+    }}
+  ],
+  "languages": [
+    {{
+      "id": "eng",
+      "artifact": {{
+        "path": "{}",
+        "sha256": "f4c4eb4c45e595f803f076791dd942e6fd8bb93076207f8830ed6b8694f11e4a"
+      }},
+      "license": {{
+        "id": "Apache-2.0",
+        "reviewed": true
+      }}
+    }}
+  ]
+}}"#,
+            json_path(ocr_engine),
+            json_path(ocr_renderer),
+            json_path(ocr_engine)
+        ),
+    )
+    .unwrap();
 }
 
 fn private_real_benchmark_report() -> String {

@@ -47,7 +47,9 @@ resume-cli --data-dir <local-data-dir> release-readiness --json
 ```
 
 After local redacted aggregate reports have been generated and reviewed, feed
-them into the readiness gate as evidence inputs:
+them into the readiness gate as evidence inputs. Reviewed model/OCR manifests
+can be supplied only after their artifacts, checksums, and licenses have been
+validated locally:
 
 ```bash
 resume-cli --data-dir <local-data-dir> release-readiness --json \
@@ -55,16 +57,21 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --field-quality-report private-field-quality.json \
   --dedupe-quality-report private-dedupe-quality.json \
   --vector-quality-report private-vector-quality.json \
-  --ocr-throughput-report private-ocr-throughput.json
+  --ocr-throughput-report private-ocr-throughput.json \
+  --model-manifest local-model-manifest.json \
+  --ocr-runtime-manifest local-ocr-runtime-manifest.json
 ```
 
 Passing these local evidence inputs marks only the corresponding local evidence
-items as `provided_evidence`. The command must still fail closed while signing,
-notarization, installer lifecycle, model/OCR licensing, cross-platform release
-validation, or hardware fault-drill blockers remain unresolved. Do not upload or
-commit generated reports unless they have been separately reviewed to contain no
-raw resume text, filenames, local paths, queries, labels, sample IDs, document
-IDs, vectors, page images, secrets, diagnostics, indexes, or model caches.
+items as `provided_evidence`; aggregate reports are marked
+`redacted_local_aggregate`, and reviewed model/OCR manifests are marked
+`reviewed_local_manifest`. The command must still fail closed while signing,
+notarization, installer lifecycle, cross-platform release validation, hardware
+fault-drill blockers, or any missing local evidence remain unresolved. Do not
+upload or commit generated reports or manifests unless they have been separately
+reviewed to contain no raw resume text, filenames, local paths, queries, labels,
+sample IDs, document IDs, vectors, page images, secrets, diagnostics, indexes,
+model files, OCR runtime binaries, or model caches.
 
 Release dry-runs must also produce a blocked signing evidence manifest, not a
 fake signature result. The manifest schema is `release.signing_evidence.v1` and
@@ -590,6 +597,10 @@ resume-cli --data-dir <local-data-dir> model validate-manifest \
 This command is governance evidence only. A valid manifest does not by itself
 complete licensed model selection, model quality evaluation, distribution
 approval, or production performance proof.
+After review, pass the same manifest to
+`resume-cli release-readiness --model-manifest <local-model-manifest.json>` so
+the release gate can validate checksum/license evidence without printing local
+paths or model contents.
 
 Validate any proposed local OCR runtime pack before worker configuration:
 
@@ -602,6 +613,11 @@ This command is governance evidence only. A valid OCR runtime manifest does not
 by itself complete OCR engine distribution approval, language-pack distribution
 approval, non-English OCR quality validation, platform installer validation, or
 production OCR throughput proof.
+After review, pass the same manifest to
+`resume-cli release-readiness --ocr-runtime-manifest
+<local-ocr-runtime-manifest.json>` so the release gate can validate checksum,
+engine, renderer, language-pack, and license evidence without printing local
+paths or runtime contents.
 
 ## Stable Release Exit Criteria
 

@@ -132,6 +132,8 @@ const RELEASE_READINESS_FIELD_QUALITY_LABEL: &str = "field extraction quality";
 const RELEASE_READINESS_DEDUPE_QUALITY_LABEL: &str = "dedupe quality";
 const RELEASE_READINESS_VECTOR_QUALITY_LABEL: &str = "vector quality";
 const RELEASE_READINESS_OCR_THROUGHPUT_LABEL: &str = "OCR throughput";
+const RELEASE_READINESS_OCR_LICENSE_LABEL: &str = "OCR engine license/distribution";
+const RELEASE_READINESS_MODEL_LICENSE_LABEL: &str = "embedding model license/distribution";
 const RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS: usize = 8_000;
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     (
@@ -175,11 +177,11 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
         "private real-corpus OCR throughput evidence is not available; release evidence requires min-pages 500, OCR p95 <= 1000ms, pages_per_second >= 1, and reviewed OCR runtime/renderer/language-pack manifests",
     ),
     (
-        "OCR engine license/distribution",
+        RELEASE_READINESS_OCR_LICENSE_LABEL,
         "reviewed OCR runtime manifest, engine distribution license, language-pack distribution license, and offline packaging evidence are not complete",
     ),
     (
-        "embedding model license/distribution",
+        RELEASE_READINESS_MODEL_LICENSE_LABEL,
         "reviewed licensed embedding model selection, model manifest, offline distribution, and license review evidence are not complete",
     ),
     (
@@ -266,7 +268,7 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
                 serde_json::json!({
                     "label": evidence.label,
                     "status": "provided",
-                    "privacy_boundary": "redacted_local_aggregate",
+                    "privacy_boundary": evidence.privacy_boundary,
                     "detail": evidence.detail,
                 })
             })
@@ -315,7 +317,7 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>]"
 }
 
 #[derive(Default)]
@@ -325,6 +327,8 @@ struct ReleaseReadinessEvidenceArgs {
     dedupe_quality_report: Option<PathBuf>,
     vector_quality_report: Option<PathBuf>,
     ocr_throughput_report: Option<PathBuf>,
+    model_manifest: Option<PathBuf>,
+    ocr_runtime_manifest: Option<PathBuf>,
 }
 
 struct ReleaseReadinessArgs {
@@ -334,6 +338,7 @@ struct ReleaseReadinessArgs {
 
 struct ReleaseReadinessProvidedEvidence {
     label: &'static str,
+    privacy_boundary: &'static str,
     detail: &'static str,
 }
 
@@ -369,6 +374,14 @@ fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs>
                 parsed.evidence.ocr_throughput_report =
                     Some(take_release_readiness_path(args, &mut index)?);
             }
+            "--model-manifest" => {
+                parsed.evidence.model_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--ocr-runtime-manifest" => {
+                parsed.evidence.ocr_runtime_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
             _ => return Err(CliError::usage(release_readiness_usage())),
         }
     }
@@ -398,6 +411,7 @@ fn validate_release_readiness_evidence(
         })?;
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_PERFORMANCE_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
             detail: "private real-corpus hot-index hybrid benchmark report passed the local release gate",
         });
     }
@@ -411,6 +425,7 @@ fn validate_release_readiness_evidence(
         })?;
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_FIELD_QUALITY_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
             detail: "private business field-quality report passed the local release gate",
         });
     }
@@ -425,6 +440,7 @@ fn validate_release_readiness_evidence(
         })?;
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_DEDUPE_QUALITY_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
             detail: "private business dedupe-quality report passed the local release gate",
         });
     }
@@ -438,6 +454,7 @@ fn validate_release_readiness_evidence(
         })?;
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_VECTOR_QUALITY_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
             detail: "private business vector-quality report passed the local release gate",
         });
     }
@@ -449,7 +466,39 @@ fn validate_release_readiness_evidence(
         })?;
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_OCR_THROUGHPUT_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
             detail: "private real-corpus OCR throughput report passed the local release gate",
+        });
+    }
+    if let Some(path) = &args.model_manifest {
+        let validation = validate_model_manifest(path).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_MODEL_LICENSE_LABEL, error)
+        })?;
+        if !validation
+            .models
+            .iter()
+            .any(|model| model.model_type == "embedding")
+        {
+            return Err(release_readiness_manifest_error(
+                RELEASE_READINESS_MODEL_LICENSE_LABEL,
+                CliError::user("model manifest blocked: embedding model is not present"),
+            ));
+        }
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_MODEL_LICENSE_LABEL,
+            privacy_boundary: "reviewed_local_manifest",
+            detail: "reviewed embedding model manifest passed checksum and license validation",
+        });
+    }
+    if let Some(path) = &args.ocr_runtime_manifest {
+        let validation = validate_ocr_runtime_manifest(path).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_OCR_LICENSE_LABEL, error)
+        })?;
+        validate_release_readiness_ocr_manifest_coverage(&validation)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_OCR_LICENSE_LABEL,
+            privacy_boundary: "reviewed_local_manifest",
+            detail: "reviewed OCR runtime manifest passed checksum and license validation",
         });
     }
     Ok(provided)
@@ -467,6 +516,41 @@ fn release_readiness_evidence_error(
     CliError::user(format!(
         "release readiness evidence failed validation: {label}: {error}"
     ))
+}
+
+fn release_readiness_manifest_error(label: &'static str, error: CliError) -> CliError {
+    CliError::user(format!(
+        "release readiness evidence failed validation: {label}: {error}"
+    ))
+}
+
+fn validate_release_readiness_ocr_manifest_coverage(
+    validation: &OcrRuntimeManifestValidation,
+) -> Result<()> {
+    let has_engine = validation
+        .components
+        .iter()
+        .any(|component| component.kind == "ocr-engine");
+    let has_renderer = validation
+        .components
+        .iter()
+        .any(|component| component.kind == "pdf-renderer");
+    let has_language_pack = !validation.languages.is_empty()
+        || validation
+            .components
+            .iter()
+            .any(|component| component.kind == "ocr-language-pack");
+
+    if !has_engine || !has_renderer || !has_language_pack {
+        return Err(release_readiness_manifest_error(
+            RELEASE_READINESS_OCR_LICENSE_LABEL,
+            CliError::user(
+                "ocr runtime manifest blocked: engine, renderer, and language-pack evidence required",
+            ),
+        ));
+    }
+
+    Ok(())
 }
 
 fn candidate_review_command(data_dir: &Path, args: &[String]) -> Result<()> {

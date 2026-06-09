@@ -104,6 +104,10 @@ production-ready scope source.
   release-readiness fixtures only; no real benchmark query set, real resume
   data, local paths, raw queries, model files, generated private reports,
   diagnostics, or model caches were committed or uploaded.
+  S283 used synthetic/private-shaped release-readiness, model-manifest, and OCR
+  runtime manifest fixtures only; no real resume data, local paths, raw queries,
+  real model files, OCR runtime binaries, generated private reports,
+  diagnostics, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -988,8 +992,91 @@ obsolete preliminary files and checklists are not product scope.
 | S280 | Product private benchmark corpus-summary binding complete locally | Focused RED first failed because `benchmark-runner` had no `PrivateQueryCorpusSummary` and `PrivateQueryBenchmarkConfig::new` still accepted manually supplied hot-index counts. After implementation, `resume-benchmark private-query` requires `--corpus-summary <json>` from `resume-cli benchmark-corpus-summary --json`, validates the summary schema/privacy boundary, rejects partial hot-index coverage, derives document/searchable/vector counts from the summary instead of hand-copied flags, emits only `corpus_summary_sha256` in the redacted benchmark report, and the private real-corpus gate requires that digest. The runbook now instructs operators to save the local summary file and pass it directly to the benchmark runner. | This slice binds private benchmark reports to a local redacted corpus preflight only. It does not create or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 | S281 | Product witness embedding and corpus preflight complete locally | Focused RED first failed because `resume-cli witness` rejected `--run-embedding` and `--probe-benchmark-corpus` as unknown witness flags. After implementation, witness can run a configured local embedding command inside its temporary private data directory, persist a temporary vector snapshot, emit redacted aggregate embedding counts and vector-indexed document coverage, run the shared benchmark corpus summary helper against the same temporary corpus, and still remove private witness data. A blocked-command regression proves `--run-embedding` without a command reports `local embedding command not configured`, keeps vector coverage at zero, runs the corpus probe, and does not persist metadata in the user-supplied data dir. | This slice adds a local redacted witness preflight for embedding/corpus coverage only. It does not run the actual private 500-query benchmark, OCR the scanned local corpus, approve or distribute a production embedding model, prove 100k/1M scale, validate platforms, or make stable release ready. |
 | S282 | Product private benchmark model-manifest binding complete locally | Focused RED first failed because `resume-benchmark gate --require-private-real-corpus` accepted a private benchmark report without any `model_manifest_sha256`, and `resume-benchmark private-query` could generate one without `--model-manifest-sha256`. After implementation, private-query requires the model-manifest digest, validates it as SHA-256, emits it in the redacted aggregate benchmark report, and the private real-corpus gate rejects reports missing the reviewed model binding. Release-readiness fixtures and the release blocker runbook now require the same digest. | This slice binds private latency evidence to a reviewed embedding model manifest only. It does not create or review the actual private query set, run the 500-query private benchmark, approve/distribute a production embedding model, prove vector quality, OCR the scanned corpus, validate 100k/1M scale, validate platforms, or make stable release ready. |
+| S283 | Product release-readiness model/OCR manifest evidence intake complete locally | Focused RED first failed because `resume-cli release-readiness --json` rejected `--model-manifest` and `--ocr-runtime-manifest`, so reviewed license/checksum manifests could not clear their corresponding evidence blockers. After implementation, release-readiness validates embedding model manifests with the existing checksum/license gate, requires at least one embedding model, validates OCR runtime manifests with the existing checksum/license gate, requires engine, renderer, and language-pack evidence, marks manifest evidence as `reviewed_local_manifest`, and rejects unreviewed manifests without local path or artifact leaks. The release blocker runbook and runbook guard now document the new evidence input surface. | This slice adds local license/distribution evidence intake only. It does not select or approve a real production embedding model or OCR runtime, commit model/runtime artifacts, prove vector quality, prove OCR throughput, validate installers/platforms, sign/notarize artifacts, or make stable release ready. |
 
 ## Command Log
+
+### S283
+
+Design target:
+
+- Let release-readiness consume reviewed local embedding model and OCR runtime
+  manifests as evidence inputs, instead of leaving those blockers impossible to
+  satisfy through the gate.
+- Reuse the existing manifest checksum/license validators and keep the output
+  redacted: no local manifest paths, artifact paths, model bytes, OCR runtime
+  bytes, diagnostics, generated reports, or model caches in output or committed
+  files.
+- Keep the stable release blocked unless every remaining criterion has current
+  evidence; reviewed manifests do not replace vector quality, OCR throughput,
+  installer, signing, notarization, platform, or hardware-drill proof.
+
+TDD RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_unreviewed_model_manifest_without_path_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The positive evidence test failed before implementation because stdout was
+  empty after `release-readiness` rejected the new manifest flags as usage.
+- The unreviewed manifest test failed before implementation because stderr did
+  not contain the expected license-review rejection; the flag was not supported.
+
+Implementation checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_unreviewed_model_manifest_without_path_leaks --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s39_embedding_worker model_manifest_validate --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s174_ocr_manifest --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-readiness.sh
+```
+
+Output summary:
+
+- The two exact RED tests passed after implementation.
+- `cargo fmt --check`: exit 0.
+- `cargo test -p resume-cli --test s161_release_readiness --locked`: exit 0; 6
+  tests passed.
+- Model manifest focused tests exited 0; 3 tests passed.
+- OCR manifest tests exited 0; 3 tests passed.
+- Focused clippy exited 0.
+- Runbook and release-readiness guards exited 0.
+
+Acceptance checks:
+
+```bash
+git diff --check
+git diff -U0 | rg -n "<local-corpus-path>|<copied-device-code>|<token-or-private-key-marker>"
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `git diff --check`: exit 0.
+- The narrow changed-line privacy scan exited 1 with no matches for the real
+  local corpus path, copied GitHub device code, token prefixes, or private-key
+  markers.
+- `./scripts/ci/guard-public-repo.sh`: exit 0; public repo guard passed.
+- `./scripts/ci/verify-local.sh`: exit 0; workspace tests and doc-tests,
+  CLI/daemon closed loops, benchmark/OCR/vector gates, runbook/license/
+  workflow/release-readiness checks, artifact/signing/notarization/SBOM checks,
+  macOS package checks, Windows evidence checks, and public repo guard passed.
+
+Scope note:
+
+- S283 is release-readiness evidence intake only. It does not clear the model or
+  OCR blockers without real reviewed manifests, and it does not clear
+  performance, quality, installer, signing, notarization, cross-platform, or
+  hardware-drill blockers.
 
 ### S282
 
