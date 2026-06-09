@@ -139,22 +139,26 @@ Run private real-corpus benchmark gates only against local redacted aggregate
 reports. The report must use `dataset_kind: "private-real-corpus"`,
 `corpus_origin: "private_local"`, `privacy_boundary:
 "redacted_local_aggregate"`, `query_mode: "hybrid"`, `retrieval_layers:
-"fulltext+field+vector+rrf"`, `hot_index: true`, false hot-path OCR/parsing/
-heavy-model-inference booleans, false raw-data/path/query booleans, and sha256
-digests for the local dataset manifest plus query set. It must also have
-internally consistent aggregate metrics: latency samples equal query count,
-zero-result queries do not exceed query count, total hits do not exceed
-`query_count * top_k`, latency percentiles are ordered, `query_total_ms` is
-positive, and reported QPS matches `query_count / (query_total_ms / 1000)`
-within rounding tolerance. Do not upload reports if they contain raw resume text,
-local paths, queries, sample IDs, or filenames.
+"fulltext+field+vector+rrf"`, `hot_index: true`, explicit aggregate
+`searchable_document_count` and `vector_indexed_document_count` hot-index
+coverage fields, false hot-path OCR/parsing/heavy-model-inference booleans,
+false raw-data/path/query booleans, and sha256 digests for the local dataset
+manifest plus query set. It must also have internally consistent aggregate
+metrics: hot-index coverage counts are non-zero and no larger than
+`document_count`, latency samples equal query count, zero-result queries do not
+exceed query count, total hits do not exceed `query_count * top_k`, latency
+percentiles are ordered, `query_total_ms` is positive, and reported QPS matches
+`query_count / (query_total_ms / 1000)` within rounding tolerance. Do not upload
+reports if they contain raw resume text, local paths, queries, sample IDs, or
+filenames.
 
 The current local private corpus is approximately ten thousand resumes, not a
 100k or 1M corpus. Local release-readiness therefore requires redacted
 hot-index hybrid evidence over the available private corpus with at least 8000
-local documents and 500 query latency samples. External 100k/1M scale
-validation remains future scale evidence for representative user environments,
-not a local prerequisite for this machine.
+local documents, at least 8000 hot-searchable documents, at least 8000
+vector-indexed documents, and 500 query latency samples. External 100k/1M
+scale validation remains future scale evidence for representative user
+environments, not a local prerequisite for this machine.
 
 Generate the private query benchmark report locally only after the target
 private corpus has been imported, indexed, and warmed, and after the local query
@@ -186,6 +190,8 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   --command-arg --model-id --command-arg <model-id> \
   --command-arg --dimension --command-arg <dim> \
   --document-count 8720 \
+  --searchable-document-count <hot-searchable-documents> \
+  --vector-indexed-document-count <hot-vector-documents> \
   --max-queries 500 --top-k 10 \
   --dataset-manifest-sha256 <sha256> \
   --query-set-sha256 <sha256> \

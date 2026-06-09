@@ -81,6 +81,10 @@ production-ready scope source.
   real resume data, filenames, paths, raw OCR text, page images, command paths,
   generated private reports, diagnostics, or model caches were committed or
   uploaded.
+  S277 used synthetic/private-shaped benchmark and release-readiness fixtures
+  only; no real benchmark query set, real resume data, local paths, raw queries,
+  generated private reports, diagnostics, or model caches were committed or
+  uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -629,8 +633,15 @@ obsolete preliminary files and checklists are not product scope.
   reports are accepted only as strict redacted local aggregate JSON with local
   corpus/query-set digests, explicit hot-index hybrid query evidence
   (`query_mode: hybrid`, `fulltext+field+vector+rrf`, no hot-path OCR, parsing,
-  or heavy model inference), and no raw text, paths, queries, filenames, or
-  sample identifiers. Private business field-quality reports are accepted only
+  or heavy model inference), aggregate `searchable_document_count` and
+  `vector_indexed_document_count` hot-index coverage counts that must be
+  non-zero, no larger than the private `document_count`, and at least the local
+  release document floor, and no raw text, paths, queries, filenames, or sample
+  identifiers. S277 tightened the private query benchmark runner, benchmark
+  gate, release-readiness gate, and runbook so a corpus that imports enough
+  documents but has too few hot-searchable or vector-indexed documents cannot
+  clear local performance evidence.
+  Private business field-quality reports are accepted only
   as strict redacted aggregate JSON with dataset/annotation manifest digests and
   production field metrics, and cannot include raw text, paths, field values, or
   sample identifiers. Private business dedupe-quality reports are accepted only
@@ -949,8 +960,88 @@ obsolete preliminary files and checklists are not product scope.
 | S274 | Product release-readiness benchmark document floor aligned locally | Focused RED first failed because `resume-cli release-readiness --json --benchmark-report <report>` accepted a private real-corpus benchmark report with `document_count: 7999`, emitted release-readiness JSON, and treated the local performance evidence as provided even though the runbook gate requires at least 8000 local documents. After implementation, release-readiness validates benchmark evidence with an 8000-document floor, keeps the 500-query, p95 <= 200ms, and zero-result-query requirements, rejects undersized private reports with a redacted validation error, and the runbook/CI guard now lock the same threshold text. | This slice fixes release-readiness evidence intake consistency only. It does not generate or review the actual private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 | S275 | Product private benchmark query protocol runner complete locally | Focused RED first failed because `resume-cli benchmark-query-protocol` was not a command, so benchmark-runner could only use external wrapper scripts; a second RED failed because `resume-benchmark private-query` rejected `--command-arg`, so it could not invoke `resume-cli --data-dir <local-data-dir> benchmark-query-protocol ...` directly. After implementation, the CLI protocol runner reads `RESUME_IR_QUERY_INPUT_PATH`, `RESUME_IR_QUERY_TOP_K`, and `RESUME_IR_QUERY_MODE`, runs the normal local search path, records redacted query telemetry, and emits only `resume-ir-query-v1` plus `hits=<n>`. The benchmark runner now passes redacted command args to the local query command without including them in benchmark reports, and the runbook/guard document the product-owned benchmark command path. | This slice removes a wrapper-script gap in private benchmark execution only. It does not create or review the actual private query set, run the 500-query private local benchmark, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 | S276 | Product OCR throughput target-claim correction complete locally | A full private local witness selected 8720 PDF/Word samples and proved the available local corpus is dominated by scanned/OCR-required documents: 146 searchable text-layer documents, 8554 OCR-required documents, and 20 parser failures, all reported only as aggregates. A 500-page private OCR throughput diagnostic using local Tesseract plus Poppler completed without run-budget exhaustion but failed the release OCR gate with p95 4214.12ms and 0.397338 pages/sec. Focused RED tests then failed because generated private OCR throughput reports still wrote `target_claim: "ocr_throughput_target_met"` even for budget-exhausted or P95-failing diagnostics. After implementation, generated private OCR throughput reports emit `not_evaluated` unless the built-in release page-count, P95, throughput, and run-budget thresholds are met; the gate still requires `ocr_throughput_target_met` after metric checks for release evidence. | This slice fixes misleading OCR report semantics and records representative local OCR throughput failure evidence. It does not clear OCR throughput, approve OCR distribution, run full-library OCR, produce reviewed manifests, validate Windows/macOS, or make stable release ready. |
+| S277 | Product private benchmark hot-index coverage gate complete locally | Focused RED first failed because a `private-real-corpus` benchmark report with valid total `document_count` but no hot-index coverage counts was accepted. After implementation, private query benchmark reports include aggregate `searchable_document_count` and `vector_indexed_document_count`; the runner requires them, the benchmark gate requires them to be non-zero and no larger than `document_count`, release-readiness requires both to meet the local 8000-document floor, and the runbook documents the new report fields and CLI flags. | This slice prevents local performance evidence from being cleared by a corpus that imported enough documents but did not make enough documents hot-searchable and vector-indexed. It does not generate or review the actual private query set, run the 500-query private local benchmark, OCR the scanned corpus, approve a production embedding model, clear performance evidence, validate platforms, or make stable release ready. |
 
 ## Command Log
+
+### S277
+
+Design target:
+
+- Align private real-corpus performance evidence with the available local
+  private corpus rule: local release-readiness may use the available roughly
+  ten-thousand-resume corpus instead of requiring a local million-resume
+  corpus, but the hot query benchmark must prove the benchmarked corpus is
+  actually searchable and vector-indexed.
+- Keep the new evidence surface aggregate-only: no raw query text, resume text,
+  paths, filenames, sample identifiers, command paths, or generated private
+  reports are committed or uploaded.
+
+TDD RED:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_without_hot_index_document_coverage --locked -- --exact
+```
+
+Output summary:
+
+- The focused regression failed before implementation because the benchmark
+  gate accepted a private real-corpus report with `document_count: 8720` and 500
+  query samples even though the report had no hot-searchable or vector-indexed
+  document coverage fields.
+
+Implementation and focused checks:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_without_hot_index_document_coverage --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner --locked
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=<cargo-bin>:$PATH cargo fmt --check
+PATH=<cargo-bin>:$PATH cargo test -p benchmark-runner --locked
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=<cargo-bin>:$PATH cargo clippy -p benchmark-runner -p resume-cli --tests --locked -- -D warnings
+```
+
+Output summary:
+
+- The RED regression passed after private real-corpus benchmark reports required
+  `searchable_document_count` and `vector_indexed_document_count`.
+- Full `benchmark-runner` tests passed: 2 library unit tests, 35 CLI tests, 66
+  runner integration tests, and doc-tests.
+- `resume-cli --test s161_release_readiness` passed all 5 release-readiness
+  tests, including rejection of benchmark evidence below the hot-index coverage
+  floor.
+- Focused clippy for `benchmark-runner` and `resume-cli` test targets passed.
+
+Final checks:
+
+```bash
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-readiness.sh
+git diff --check
+# changed-line privacy marker scan; private evidence patterns omitted from this public log
+./scripts/ci/guard-public-repo.sh
+PATH=<cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Runbook guard, release-readiness guard, diff check, changed-line privacy
+  marker scan, and public-repo guard passed.
+- Full `verify-local.sh` passed locally. The verifier covered workspace
+  clippy/tests, CLI and daemon closed-loop checks, benchmark/OCR/vector gates,
+  benchmark smoke, license/runbook/workflow/release-readiness guards, release
+  artifact and SBOM checks, macOS package and installer evidence, Windows
+  evidence scripts, and the final public-repo guard.
+
+Scope note:
+
+- S277 closes a release-evidence false-positive path only. It does not clear the
+  private real-corpus performance blocker because the actual 500-query hot
+  hybrid benchmark and reviewed query set are still missing, and the local
+  corpus remains dominated by OCR-required documents until OCR throughput and
+  full-library OCR evidence are resolved.
 
 ### S276
 

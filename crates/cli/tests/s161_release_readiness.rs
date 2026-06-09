@@ -373,7 +373,15 @@ fn release_readiness_rejects_benchmark_evidence_below_local_document_floor_witho
     fs::write(
         &benchmark_report,
         private_real_benchmark_report()
-            .replace("\"document_count\":8720,", "\"document_count\":7999,"),
+            .replace("\"document_count\":8720,", "\"document_count\":7999,")
+            .replace(
+                "\"searchable_document_count\":8720,",
+                "\"searchable_document_count\":7999,",
+            )
+            .replace(
+                "\"vector_indexed_document_count\":8720,",
+                "\"vector_indexed_document_count\":7999,",
+            ),
     )
     .unwrap();
 
@@ -407,6 +415,53 @@ fn release_readiness_rejects_benchmark_evidence_below_local_document_floor_witho
     let _ = fs::remove_dir_all(&evidence_dir);
 }
 
+#[test]
+fn release_readiness_rejects_benchmark_evidence_below_hot_index_coverage_floor_without_path_leaks()
+{
+    let data_dir = temp_path("release-readiness-benchmark-coverage-private-data");
+    let evidence_dir = temp_path("release-readiness-benchmark-coverage-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let benchmark_report = evidence_dir.join("private-benchmark-below-coverage.json");
+    fs::write(
+        &benchmark_report,
+        private_real_benchmark_report().replace(
+            "\"searchable_document_count\":8720,",
+            "\"searchable_document_count\":146,",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--benchmark-report",
+            path_str(&benchmark_report),
+        ])
+        .output()
+        .expect("reject benchmark evidence below hot-index coverage floor");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("private real-corpus performance evidence"));
+    assert!(stderr
+        .contains("private real-corpus benchmark requires hot-index document coverage evidence"));
+    assert!(!stderr.contains(path_str(&benchmark_report)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&benchmark_report)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
 fn temp_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -427,6 +482,8 @@ fn private_real_benchmark_report() -> String {
         "\"platform\":\"test/test\",",
         "\"dataset_kind\":\"private-real-corpus\",",
         "\"document_count\":8720,",
+        "\"searchable_document_count\":8720,",
+        "\"vector_indexed_document_count\":8720,",
         "\"query_count\":500,",
         "\"top_k\":10,",
         "\"build_ms\":1.0,",

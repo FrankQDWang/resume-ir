@@ -248,6 +248,8 @@ pub struct PrivateQueryBenchmarkConfig {
     query_set: PathBuf,
     command: PrivateQueryBenchmarkCommand,
     document_count: usize,
+    searchable_document_count: usize,
+    vector_indexed_document_count: usize,
     max_queries: usize,
     top_k: usize,
     timeout_ms: u64,
@@ -260,6 +262,8 @@ impl PrivateQueryBenchmarkConfig {
         query_set: impl AsRef<Path>,
         command: PrivateQueryBenchmarkCommand,
         document_count: usize,
+        searchable_document_count: usize,
+        vector_indexed_document_count: usize,
         manifests: PrivateQueryManifestDigests,
     ) -> Result<Self> {
         let query_set = query_set.as_ref().to_path_buf();
@@ -271,10 +275,22 @@ impl PrivateQueryBenchmarkConfig {
                 "private_query_document_count",
             ));
         }
+        if searchable_document_count == 0 || searchable_document_count > document_count {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_searchable_document_count",
+            ));
+        }
+        if vector_indexed_document_count == 0 || vector_indexed_document_count > document_count {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_vector_indexed_document_count",
+            ));
+        }
         Ok(Self {
             query_set,
             command,
             document_count,
+            searchable_document_count,
+            vector_indexed_document_count,
             max_queries: DEFAULT_PRIVATE_QUERY_MAX_QUERIES,
             top_k: DEFAULT_TOP_K,
             timeout_ms: DEFAULT_PRIVATE_QUERY_TIMEOUT_MS,
@@ -861,6 +877,8 @@ pub struct PrivateQueryBenchmarkReport {
     run_id: String,
     platform: String,
     document_count: usize,
+    searchable_document_count: usize,
+    vector_indexed_document_count: usize,
     query_count: usize,
     top_k: usize,
     query_total_ms: f64,
@@ -876,6 +894,14 @@ pub struct PrivateQueryBenchmarkReport {
 impl PrivateQueryBenchmarkReport {
     pub fn document_count(&self) -> usize {
         self.document_count
+    }
+
+    pub fn searchable_document_count(&self) -> usize {
+        self.searchable_document_count
+    }
+
+    pub fn vector_indexed_document_count(&self) -> usize {
+        self.vector_indexed_document_count
     }
 
     pub fn query_count(&self) -> usize {
@@ -911,6 +937,8 @@ impl PrivateQueryBenchmarkReport {
                 "\"platform\":\"{}\",",
                 "\"dataset_kind\":\"private-real-corpus\",",
                 "\"document_count\":{},",
+                "\"searchable_document_count\":{},",
+                "\"vector_indexed_document_count\":{},",
                 "\"query_count\":{},",
                 "\"top_k\":{},",
                 "\"build_ms\":0.000,",
@@ -950,6 +978,8 @@ impl PrivateQueryBenchmarkReport {
             self.run_id,
             self.platform,
             self.document_count,
+            self.searchable_document_count,
+            self.vector_indexed_document_count,
             self.query_count,
             self.top_k,
             format_consistency_number(self.query_total_ms),
@@ -980,6 +1010,11 @@ impl fmt::Debug for PrivateQueryBenchmarkReport {
             .field("platform", &self.platform)
             .field("dataset_kind", &"private-real-corpus")
             .field("document_count", &self.document_count)
+            .field("searchable_document_count", &self.searchable_document_count)
+            .field(
+                "vector_indexed_document_count",
+                &self.vector_indexed_document_count,
+            )
             .field("query_count", &self.query_count)
             .field("top_k", &self.top_k)
             .field("query_total_ms", &self.query_total_ms)
@@ -1560,6 +1595,8 @@ pub fn run_private_query_benchmark(
         run_id: generate_run_id(),
         platform: platform_label(),
         document_count: config.document_count,
+        searchable_document_count: config.searchable_document_count,
+        vector_indexed_document_count: config.vector_indexed_document_count,
         query_count: queries.len(),
         top_k: config.top_k,
         query_total_ms,
@@ -3942,6 +3979,9 @@ pub fn evaluate_benchmark_gate_json(
             "document count below gate minimum",
         ));
     }
+    if dataset_kind == "private-real-corpus" {
+        validate_private_real_hot_index_document_floor(&report, config.min_documents)?;
+    }
     if query_count < config.min_queries || samples < config.min_queries {
         return Err(BenchmarkGateError::failed(
             "query sample count below gate minimum",
@@ -4017,6 +4057,7 @@ fn validate_private_real_benchmark_boundary(
         ));
     }
     validate_private_real_hot_hybrid_evidence(report)?;
+    validate_private_real_hot_index_document_counts(report)?;
     if !is_safe_benchmark_token(private_real_str(report, "run_id")?) {
         return Err(private_real_boundary_error());
     }
@@ -4168,6 +4209,51 @@ fn validate_private_real_hot_hybrid_evidence(
         || hot_path_heavy_model_inference
     {
         return Err(error());
+    }
+    Ok(())
+}
+
+fn private_real_hot_index_document_coverage(
+    report: &serde_json::Value,
+) -> std::result::Result<(usize, usize), BenchmarkGateError> {
+    let error = private_real_hot_index_document_coverage_error;
+    let searchable_document_count = report
+        .get("searchable_document_count")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|number| usize::try_from(number).ok())
+        .ok_or_else(error)?;
+    let vector_indexed_document_count = report
+        .get("vector_indexed_document_count")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|number| usize::try_from(number).ok())
+        .ok_or_else(error)?;
+    Ok((searchable_document_count, vector_indexed_document_count))
+}
+
+fn validate_private_real_hot_index_document_counts(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let document_count = private_real_usize(report, "document_count")?;
+    let (searchable_document_count, vector_indexed_document_count) =
+        private_real_hot_index_document_coverage(report)?;
+    if searchable_document_count == 0
+        || vector_indexed_document_count == 0
+        || searchable_document_count > document_count
+        || vector_indexed_document_count > document_count
+    {
+        return Err(private_real_counts_error());
+    }
+    Ok(())
+}
+
+fn validate_private_real_hot_index_document_floor(
+    report: &serde_json::Value,
+    min_documents: usize,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let (searchable_document_count, vector_indexed_document_count) =
+        private_real_hot_index_document_coverage(report)?;
+    if searchable_document_count < min_documents || vector_indexed_document_count < min_documents {
+        return Err(private_real_hot_index_document_coverage_error());
     }
     Ok(())
 }
@@ -4718,6 +4804,12 @@ fn private_real_metric_error() -> BenchmarkGateError {
     BenchmarkGateError::failed("private real-corpus benchmark metric counts do not match scores")
 }
 
+fn private_real_hot_index_document_coverage_error() -> BenchmarkGateError {
+    BenchmarkGateError::failed(
+        "private real-corpus benchmark requires hot-index document coverage evidence",
+    )
+}
+
 fn is_sha256_hex(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
@@ -4730,6 +4822,8 @@ fn is_allowed_private_real_report_key(key: &str) -> bool {
             | "platform"
             | "dataset_kind"
             | "document_count"
+            | "searchable_document_count"
+            | "vector_indexed_document_count"
             | "query_count"
             | "top_k"
             | "build_ms"

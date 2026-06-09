@@ -73,6 +73,8 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
         &query_set,
         PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
         8_720,
+        8_720,
+        8_720,
         manifests,
     )
     .unwrap()
@@ -87,6 +89,8 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
     let report = run_private_query_benchmark(config).unwrap();
 
     assert_eq!(report.document_count(), 8_720);
+    assert_eq!(report.searchable_document_count(), 8_720);
+    assert_eq!(report.vector_indexed_document_count(), 8_720);
     assert_eq!(report.query_count(), 500);
     assert_eq!(report.top_k(), 10);
     assert_eq!(report.zero_result_queries(), 0);
@@ -96,6 +100,8 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
     assert!(json.contains("\"schema_version\":\"benchmark.v1\""));
     assert!(json.contains("\"dataset_kind\":\"private-real-corpus\""));
     assert!(json.contains("\"document_count\":8720"));
+    assert!(json.contains("\"searchable_document_count\":8720"));
+    assert!(json.contains("\"vector_indexed_document_count\":8720"));
     assert!(json.contains("\"query_count\":500"));
     assert!(json.contains("\"target_claim\":\"query_latency_target_met\""));
     assert!(json.contains("\"query_mode\":\"hybrid\""));
@@ -183,6 +189,18 @@ fn benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence() {
     assert_eq!(evaluation.document_count(), 100_000);
     assert_eq!(evaluation.query_count(), 500);
     assert_eq!(evaluation.p95_ms(), 150.0);
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_report_without_hot_index_document_coverage() {
+    let report = minimal_private_real_benchmark_json_without_hot_coverage(8_720, 500, 150.0, false);
+    let config = BenchmarkGateConfig::new(8_000, 500, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires hot-index document coverage evidence"));
 }
 
 #[test]
@@ -1641,6 +1659,26 @@ fn minimal_benchmark_json(
 }
 
 fn minimal_private_real_benchmark_json(
+    document_count: usize,
+    query_count: usize,
+    p95_ms: f64,
+    million_scale_verified: bool,
+) -> String {
+    minimal_private_real_benchmark_json_without_hot_coverage(
+        document_count,
+        query_count,
+        p95_ms,
+        million_scale_verified,
+    )
+    .replace(
+        "\"query_count\":",
+        &format!(
+            "\"searchable_document_count\":{document_count},\"vector_indexed_document_count\":{document_count},\"query_count\":"
+        ),
+    )
+}
+
+fn minimal_private_real_benchmark_json_without_hot_coverage(
     document_count: usize,
     query_count: usize,
     p95_ms: f64,

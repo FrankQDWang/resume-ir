@@ -170,6 +170,10 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
             path_str(&command),
             "--document-count",
             "8720",
+            "--searchable-document-count",
+            "8720",
+            "--vector-indexed-document-count",
+            "8720",
             "--max-queries",
             "500",
             "--top-k",
@@ -198,6 +202,8 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
     assert!(stdout.contains("\"schema_version\":\"benchmark.v1\""));
     assert!(stdout.contains("\"dataset_kind\":\"private-real-corpus\""));
     assert!(stdout.contains("\"document_count\":8720"));
+    assert!(stdout.contains("\"searchable_document_count\":8720"));
+    assert!(stdout.contains("\"vector_indexed_document_count\":8720"));
     assert!(stdout.contains("\"query_count\":500"));
     assert!(stdout.contains("\"target_claim\":\"query_latency_target_met\""));
     assert!(stdout.contains("\"query_mode\":\"hybrid\""));
@@ -263,6 +269,10 @@ fn resume_benchmark_private_query_passes_command_args_without_leaking_them() {
             "benchmark-query-protocol",
             "--document-count",
             "8720",
+            "--searchable-document-count",
+            "8720",
+            "--vector-indexed-document-count",
+            "8720",
             "--max-queries",
             "3",
             "--top-k",
@@ -311,6 +321,8 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
             "\"platform\":\"test/test\",",
             "\"dataset_kind\":\"private-real-corpus\",",
             "\"document_count\":1000000,",
+            "\"searchable_document_count\":1000000,",
+            "\"vector_indexed_document_count\":1000000,",
             "\"query_count\":500,",
             "\"top_k\":10,",
             "\"build_ms\":1.0,",
@@ -394,6 +406,8 @@ fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
             "\"platform\":\"test/test\",",
             "\"dataset_kind\":\"private-real-corpus\",",
             "\"document_count\":1000000,",
+            "\"searchable_document_count\":1000000,",
+            "\"vector_indexed_document_count\":1000000,",
             "\"query_count\":500,",
             "\"top_k\":10,",
             "\"build_ms\":1.0,",
@@ -469,6 +483,8 @@ fn resume_benchmark_gate_rejects_million_release_sampled_confidence() {
             "\"platform\":\"test/test\",",
             "\"dataset_kind\":\"private-real-corpus\",",
             "\"document_count\":1000000,",
+            "\"searchable_document_count\":1000000,",
+            "\"vector_indexed_document_count\":1000000,",
             "\"query_count\":500,",
             "\"top_k\":10,",
             "\"build_ms\":1.0,",
@@ -544,6 +560,8 @@ fn resume_benchmark_gate_rejects_private_real_too_few_query_samples() {
             "\"platform\":\"test/test\",",
             "\"dataset_kind\":\"private-real-corpus\",",
             "\"document_count\":100000,",
+            "\"searchable_document_count\":100000,",
+            "\"vector_indexed_document_count\":100000,",
             "\"query_count\":200,",
             "\"top_k\":10,",
             "\"build_ms\":1.0,",
