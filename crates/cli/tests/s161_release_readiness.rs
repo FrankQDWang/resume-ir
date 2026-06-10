@@ -539,6 +539,82 @@ fn release_readiness_json_accepts_release_artifact_and_sbom_evidence_without_cle
 }
 
 #[test]
+fn release_readiness_json_accepts_platform_package_manifest_evidence_without_clearing_blockers() {
+    let data_dir = temp_path("release-readiness-package-manifest-private-data");
+    let evidence_dir = temp_path("release-readiness-package-manifest-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let macos_package = evidence_dir.join("macos-package.json");
+    let windows_package = evidence_dir.join("windows-package.json");
+    fs::write(&macos_package, macos_package_manifest()).unwrap();
+    fs::write(&windows_package, windows_package_manifest()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--macos-package-manifest",
+            path_str(&macos_package),
+            "--windows-package-manifest",
+            path_str(&windows_package),
+        ])
+        .output()
+        .expect("run release readiness with platform package manifest evidence");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .expect("release readiness platform package evidence json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let provided_labels = provided
+        .iter()
+        .map(|evidence| evidence["label"].as_str().expect("provided label"))
+        .collect::<Vec<_>>();
+    assert!(provided_labels.contains(&"macOS package manifest evidence"));
+    assert!(provided_labels.contains(&"Windows package manifest evidence"));
+    for evidence in provided {
+        assert_eq!(evidence["status"], "provided");
+        assert_eq!(
+            evidence["privacy_boundary"],
+            "blocked_release_evidence_manifest"
+        );
+        assert!(evidence["detail"]
+            .as_str()
+            .expect("provided detail")
+            .contains("unsigned dry-run"));
+    }
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(blocker_labels.contains(&"signing certificates"));
+    assert!(blocker_labels.contains(&"macOS notarization"));
+    assert!(blocker_labels.contains(&"macOS installer lifecycle"));
+    assert!(blocker_labels.contains(&"Windows installer lifecycle"));
+    assert!(blocker_labels.contains(&"Windows service lifecycle"));
+    assert!(blocker_labels.contains(&"cross-platform release validation"));
+    assert!(!blocker_labels.contains(&"macOS package manifest evidence"));
+    assert!(!blocker_labels.contains(&"Windows package manifest evidence"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stdout.contains("resume-ir-v0.0.0"));
+    assert!(!stderr.contains("resume-ir-v0.0.0"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers() {
     let data_dir = temp_path("release-readiness-evidence-private-data");
     let evidence_dir = temp_path("release-readiness-evidence-private-reports");
@@ -1079,6 +1155,45 @@ fn release_sbom_manifest() -> String {
         "{\"spdxElementId\":\"SPDXRef-DOCUMENT\",\"relationshipType\":\"DESCRIBES\",\"relatedSpdxElement\":\"SPDXRef-Package-resume-daemon\"},",
         "{\"spdxElementId\":\"SPDXRef-DOCUMENT\",\"relationshipType\":\"DESCRIBES\",\"relatedSpdxElement\":\"SPDXRef-Package-benchmark-runner\"}",
         "]",
+        "}"
+    )
+    .to_string()
+}
+
+fn macos_package_manifest() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.macos_package.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"packaging_status\":\"unsigned_dry_run\",",
+        "\"install_location\":\"/usr/local/bin\",",
+        "\"signing_status\":\"unsigned\",",
+        "\"notarization_status\":\"not_requested\",",
+        "\"artifacts\":[",
+        "{\"kind\":\"pkg\",\"file\":\"resume-ir-v0.0.0-macos.pkg\",\"sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"bytes\":404},",
+        "{\"kind\":\"dmg\",\"file\":\"resume-ir-v0.0.0-macos.dmg\",\"sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"bytes\":505}",
+        "],",
+        "\"blocked_release_steps\":[\"signing\",\"notarization\",\"github_release_upload\",\"installer_lifecycle_validation\",\"windows_msi\"],",
+        "\"notes\":\"Unsigned local macOS package dry run only; no signing, notarization, installer lifecycle validation, GitHub Release upload, local data, or runtime data is included.\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn windows_package_manifest() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.windows_package.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"packaging_status\":\"unsigned_dry_run\",",
+        "\"installer_kind\":\"msi\",",
+        "\"install_location\":\"ProgramFilesFolder/resume-ir\",",
+        "\"signing_status\":\"unsigned\",",
+        "\"artifacts\":[",
+        "{\"kind\":\"msi\",\"file\":\"resume-ir-v0.0.0-windows.msi\",\"sha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"bytes\":606}",
+        "],",
+        "\"blocked_release_steps\":[\"signing\",\"github_release_upload\",\"installer_lifecycle_validation\",\"service_install_validation\",\"macos_notarization\"],",
+        "\"notes\":\"Unsigned Windows MSI dry run only; no signing, service lifecycle validation, installer lifecycle validation, GitHub Release upload, local data, or runtime data is included.\"",
         "}"
     )
     .to_string()

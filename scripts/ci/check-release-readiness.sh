@@ -161,6 +161,8 @@ signing_evidence="$tmpdir/signing-evidence.json"
 notarization_evidence="$tmpdir/notarization-evidence.json"
 release_artifacts="$tmpdir/release-artifacts.json"
 release_sbom="$tmpdir/release-sbom.json"
+macos_package="$tmpdir/macos-package.json"
+windows_package="$tmpdir/windows-package.json"
 macos_installer_evidence="$tmpdir/macos-installer-evidence.json"
 windows_installer_evidence="$tmpdir/windows-installer-evidence.json"
 windows_service_evidence="$tmpdir/windows-service-evidence.json"
@@ -179,6 +181,12 @@ JSON
 cat > "$release_sbom" <<'JSON'
 {"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"resume-ir-v0.0.0","documentNamespace":"https://github.com/FrankQDWang/resume-ir/sbom/v0.0.0","creationInfo":{"created":"2026-06-10T00:00:00Z","creators":["Tool: resume-ir-release-sbom"]},"packages":[{"SPDXID":"SPDXRef-Package-resume-cli","name":"resume-cli","versionInfo":"0.1.0","filesAnalyzed":false,"licenseDeclared":"MIT","externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":"pkg:cargo/resume-cli@0.1.0"}]},{"SPDXID":"SPDXRef-Package-resume-daemon","name":"resume-daemon","versionInfo":"0.1.0","filesAnalyzed":false,"licenseDeclared":"MIT","externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":"pkg:cargo/resume-daemon@0.1.0"}]},{"SPDXID":"SPDXRef-Package-benchmark-runner","name":"benchmark-runner","versionInfo":"0.1.0","filesAnalyzed":false,"licenseDeclared":"MIT","externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":"pkg:cargo/benchmark-runner@0.1.0"}]}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-Package-resume-cli"},{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-Package-resume-daemon"},{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-Package-benchmark-runner"}]}
 JSON
+cat > "$macos_package" <<'JSON'
+{"schema_version":"release.macos_package.v1","version":"v0.0.0","packaging_status":"unsigned_dry_run","install_location":"/usr/local/bin","signing_status":"unsigned","notarization_status":"not_requested","artifacts":[{"kind":"pkg","file":"resume-ir-v0.0.0-macos.pkg","sha256":"4444444444444444444444444444444444444444444444444444444444444444","bytes":404},{"kind":"dmg","file":"resume-ir-v0.0.0-macos.dmg","sha256":"5555555555555555555555555555555555555555555555555555555555555555","bytes":505}],"blocked_release_steps":["signing","notarization","github_release_upload","installer_lifecycle_validation","windows_msi"],"notes":"Unsigned local macOS package dry run only; no signing, notarization, installer lifecycle validation, GitHub Release upload, local data, or runtime data is included."}
+JSON
+cat > "$windows_package" <<'JSON'
+{"schema_version":"release.windows_package.v1","version":"v0.0.0","packaging_status":"unsigned_dry_run","installer_kind":"msi","install_location":"ProgramFilesFolder/resume-ir","signing_status":"unsigned","artifacts":[{"kind":"msi","file":"resume-ir-v0.0.0-windows.msi","sha256":"6666666666666666666666666666666666666666666666666666666666666666","bytes":606}],"blocked_release_steps":["signing","github_release_upload","installer_lifecycle_validation","service_install_validation","macos_notarization"],"notes":"Unsigned Windows MSI dry run only; no signing, service lifecycle validation, installer lifecycle validation, GitHub Release upload, local data, or runtime data is included."}
+JSON
 cat > "$macos_installer_evidence" <<'JSON'
 {"schema_version":"release.macos_installer_evidence.v1","version":"v0.0.0","installer_lifecycle_status":"blocked","evidence_boundary":"dry_run_no_macos_installer_execution","macos_package_manifest_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","required_evidence":["installer_lifecycle_validation"],"blocked_release_steps":["macos_pkg_install"],"planned_actions":[{"action":"install","action_status":"blocked"}]}
 JSON
@@ -194,6 +202,8 @@ set +e
   --data-dir "$data_dir" release-readiness --json \
   --release-artifact-manifest "$release_artifacts" \
   --release-sbom "$release_sbom" \
+  --macos-package-manifest "$macos_package" \
+  --windows-package-manifest "$windows_package" \
   --signing-evidence "$signing_evidence" \
   --notarization-evidence "$notarization_evidence" \
   --macos-installer-evidence "$macos_installer_evidence" \
@@ -211,6 +221,8 @@ require_text "$evidence_stdout_file" '"label": "signing automation evidence"'
 require_text "$evidence_stdout_file" '"label": "notarization automation evidence"'
 require_text "$evidence_stdout_file" '"label": "release artifact manifest evidence"'
 require_text "$evidence_stdout_file" '"label": "release SBOM evidence"'
+require_text "$evidence_stdout_file" '"label": "macOS package manifest evidence"'
+require_text "$evidence_stdout_file" '"label": "Windows package manifest evidence"'
 require_text "$evidence_stdout_file" '"label": "macOS installer automation evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows installer automation evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows service automation evidence"'
@@ -218,6 +230,8 @@ require_text "$evidence_stdout_file" '"privacy_boundary": "blocked_release_evide
 require_text "$evidence_stdout_file" "blocked dry-run evidence passed schema and boundary checks"
 require_text "$evidence_stdout_file" "release.artifacts.v1 dry-run manifest passed schema and artifact boundary checks"
 require_text "$evidence_stdout_file" "SPDX-2.3 release dry-run SBOM passed redaction and package boundary checks"
+require_text "$evidence_stdout_file" "release.macos_package.v1 unsigned dry-run manifest passed package boundary checks"
+require_text "$evidence_stdout_file" "release.windows_package.v1 unsigned dry-run manifest passed package boundary checks"
 require_text "$evidence_stdout_file" '"label": "signing certificates"'
 require_text "$evidence_stdout_file" '"label": "macOS notarization"'
 require_text "$evidence_stdout_file" '"label": "macOS installer lifecycle"'
@@ -252,6 +266,8 @@ require_text "$runbook" "--ocr-throughput-report private-ocr-throughput.json"
 require_text "$runbook" "--diagnostics-report redacted-diagnostics.json"
 require_text "$runbook" "--release-artifact-manifest release-artifacts.json"
 require_text "$runbook" "--release-sbom release-sbom.json"
+require_text "$runbook" "--macos-package-manifest macos-package.json"
+require_text "$runbook" "--windows-package-manifest windows-package.json"
 require_text "$runbook" "--signing-evidence signing-evidence.json"
 require_text "$runbook" "--notarization-evidence notarization-evidence.json"
 require_text "$runbook" "--macos-installer-evidence macos-installer-evidence.json"
@@ -260,6 +276,8 @@ require_text "$runbook" "--windows-service-evidence windows-service-evidence.jso
 require_text "$runbook" "blocked_release_evidence_manifest"
 require_text "$runbook" "release artifact manifest evidence"
 require_text "$runbook" "release SBOM evidence"
+require_text "$runbook" "macOS package manifest evidence"
+require_text "$runbook" "Windows package manifest evidence"
 require_text "$runbook" "signing automation evidence"
 require_text "$runbook" "Windows service automation evidence"
 require_text "$runbook" "redacted diagnostics evidence"

@@ -90,6 +90,8 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --diagnostics-report redacted-diagnostics.json \
   --release-artifact-manifest release-artifacts.json \
   --release-sbom release-sbom.json \
+  --macos-package-manifest macos-package.json \
+  --windows-package-manifest windows-package.json \
   --signing-evidence signing-evidence.json \
   --notarization-evidence notarization-evidence.json \
   --macos-installer-evidence macos-installer-evidence.json \
@@ -101,13 +103,16 @@ Passing these local evidence inputs marks only the corresponding local evidence
 items as `provided_evidence`; aggregate reports and redacted diagnostics evidence
 are marked `redacted_local_aggregate`, and reviewed model/OCR manifests are marked
 `reviewed_local_manifest`. Blocked signing, notarization, macOS installer,
-Windows installer, Windows service, release artifact, and release SBOM dry-run
-manifests are marked `blocked_release_evidence_manifest`. The labels are:
+Windows installer, Windows service, release artifact, release SBOM, macOS
+package, and Windows package dry-run manifests are marked
+`blocked_release_evidence_manifest`. The labels are:
 
 - signing automation evidence
 - notarization automation evidence
 - release artifact manifest evidence
 - release SBOM evidence
+- macOS package manifest evidence
+- Windows package manifest evidence
 - macOS installer automation evidence
 - Windows installer automation evidence
 - Windows service automation evidence

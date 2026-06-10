@@ -136,6 +136,10 @@ production-ready scope source.
   real resume data, local paths, generated release artifacts, diagnostics,
   runtime binaries, model files, signing material, notarization credentials, or
   model caches were committed or uploaded.
+  S291 used synthetic macOS and Windows package manifest fixtures only; no real
+  resume data, local paths, generated pkg/dmg/MSI artifacts, installer logs,
+  diagnostics, runtime binaries, model files, signing material, notarization
+  credentials, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1028,8 +1032,48 @@ obsolete preliminary files and checklists are not product scope.
 | S288 | Product blocked release automation evidence intake complete locally | Focused RED first failed because `release-readiness --json` rejected blocked signing, notarization, macOS installer, Windows installer, and Windows service evidence manifests. After implementation, release-readiness accepts those five dry-run manifest flags, validates their schema, blocked status, expected evidence boundary, manifest digest, required evidence, blocked release steps, and blocked planned actions for installer/service manifests, then marks them as `blocked_release_evidence_manifest` automation evidence without printing manifest paths or bodies. The evidence labels are intentionally distinct from the real blocker labels, so signing certificates, macOS notarization, installer lifecycle, service lifecycle, and cross-platform release validation remain blocked. Runbooks and CI guards now prove this fail-closed behavior. | This slice connects existing dry-run automation manifests to release-readiness only. It does not sign artifacts, notarize artifacts, run macOS or Windows installers, register/start/stop services, validate cross-platform release artifacts, obtain credentials, clear release blockers, or make stable release ready. |
 | S289 | Current-stage runtime/license boundary clarified locally | Runbook guard was tightened first and failed because the OCR worker runbook did not explicitly state the Poppler subprocess/license boundary. After the runbook update, OCR runtime guidance now says the MIT project may call a user-installed Poppler `pdftoppm` command, must not bundle Poppler by default, and must record exact installed Poppler license/version/checksum/review status in local runtime or release evidence. | This slice is documentation and CI guardrail only. It does not bundle Poppler, perform legal review, change OCR runtime code, clear OCR runtime evidence blockers, run real private OCR, or make stable release ready. |
 | S290 | Product release artifact/SBOM release-readiness intake complete locally | Focused RED first failed because `release-readiness --json --release-artifact-manifest <path> --release-sbom <path>` produced no JSON output: the flags were unsupported. After implementation, release-readiness accepts a dry-run `release.artifacts.v1` manifest and a redacted SPDX 2.3 release SBOM, validates required binary/package coverage, hashes, byte counts, blocked release steps, basename-only artifact files, SBOM package purl refs, and absence of local/private markers, then marks them as `blocked_release_evidence_manifest` evidence without printing manifest paths or bodies. The evidence labels are distinct from real blockers, so signing, notarization, installer lifecycle, GitHub Release upload, and cross-platform release validation remain blocked. | This slice connects existing artifact/SBOM dry-run manifests to release-readiness only. It does not generate real release artifacts, upload a GitHub Release, sign/notarize binaries, run installers, clear release blockers, or make stable release ready. |
+| S291 | Product platform package manifest release-readiness intake complete locally | Focused RED first failed because `release-readiness --json --macos-package-manifest <path> --windows-package-manifest <path>` produced no JSON output: the flags were unsupported. After implementation, release-readiness accepts unsigned dry-run `release.macos_package.v1` and `release.windows_package.v1` manifests, validates version, unsigned status, expected install location, package artifact kinds, basename-only artifact files, sha256, byte counts, blocked release steps, and absence of local/private markers, then marks them as `blocked_release_evidence_manifest` evidence without printing manifest paths or bodies. The evidence labels are distinct from real blockers, so signing, notarization, installer lifecycle, service lifecycle, GitHub Release upload, and cross-platform release validation remain blocked. | This slice connects existing platform package dry-run manifests to release-readiness only. It does not generate real pkg/dmg/MSI artifacts, sign/notarize artifacts, run install/upgrade/uninstall/rollback, validate Windows services, upload a GitHub Release, clear release blockers, or make stable release ready. |
 
 ## Command Log
+
+### S291
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_platform_package_manifest_evidence_without_clearing_blockers --locked
+```
+
+Output summary:
+
+- The new test failed before implementation because `release-readiness` did not
+  recognize the platform package manifest flags and emitted no JSON for the
+  test to parse.
+
+Focused verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_platform_package_manifest_evidence_without_clearing_blockers --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+sh -n scripts/ci/check-release-readiness.sh
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Single new platform package manifest release-readiness test: exit 0.
+- Full `s161_release_readiness` test file: exit 0, 10 tests passed.
+- `check-release-readiness.sh`: exit 0.
+- `cargo fmt --check`: exit 0.
+- `cargo clippy -p resume-cli --tests --locked -- -D warnings`: exit 0.
+- `sh -n scripts/ci/check-release-readiness.sh`: exit 0.
+- `git diff --check`: exit 0.
+- `verify-local.sh`: exit 0; full local verification, release evidence checks,
+  and public repo guard passed.
 
 ### S290
 

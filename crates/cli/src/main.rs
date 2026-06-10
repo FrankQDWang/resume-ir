@@ -138,6 +138,8 @@ const RELEASE_READINESS_DIAGNOSTICS_LABEL: &str = "redacted diagnostics evidence
 const RELEASE_READINESS_RELEASE_ARTIFACT_MANIFEST_LABEL: &str =
     "release artifact manifest evidence";
 const RELEASE_READINESS_RELEASE_SBOM_LABEL: &str = "release SBOM evidence";
+const RELEASE_READINESS_MACOS_PACKAGE_MANIFEST_LABEL: &str = "macOS package manifest evidence";
+const RELEASE_READINESS_WINDOWS_PACKAGE_MANIFEST_LABEL: &str = "Windows package manifest evidence";
 const RELEASE_READINESS_SIGNING_AUTOMATION_LABEL: &str = "signing automation evidence";
 const RELEASE_READINESS_NOTARIZATION_AUTOMATION_LABEL: &str = "notarization automation evidence";
 const RELEASE_READINESS_MACOS_INSTALLER_AUTOMATION_LABEL: &str =
@@ -333,7 +335,7 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>]"
 }
 
 #[derive(Default)]
@@ -348,6 +350,8 @@ struct ReleaseReadinessEvidenceArgs {
     diagnostics_report: Option<PathBuf>,
     release_artifact_manifest: Option<PathBuf>,
     release_sbom: Option<PathBuf>,
+    macos_package_manifest: Option<PathBuf>,
+    windows_package_manifest: Option<PathBuf>,
     signing_evidence: Option<PathBuf>,
     notarization_evidence: Option<PathBuf>,
     macos_installer_evidence: Option<PathBuf>,
@@ -425,6 +429,14 @@ fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs>
             }
             "--release-sbom" => {
                 parsed.evidence.release_sbom = Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--macos-package-manifest" => {
+                parsed.evidence.macos_package_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--windows-package-manifest" => {
+                parsed.evidence.windows_package_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
             }
             "--signing-evidence" => {
                 parsed.evidence.signing_evidence =
@@ -603,6 +615,33 @@ fn validate_release_readiness_evidence(
             label: RELEASE_READINESS_RELEASE_SBOM_LABEL,
             privacy_boundary: "blocked_release_evidence_manifest",
             detail: "SPDX-2.3 release dry-run SBOM passed redaction and package boundary checks",
+        });
+    }
+    if let Some(path) = &args.macos_package_manifest {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_macos_package_manifest_report(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_MACOS_PACKAGE_MANIFEST_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_MACOS_PACKAGE_MANIFEST_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail:
+                "release.macos_package.v1 unsigned dry-run manifest passed package boundary checks",
+        });
+    }
+    if let Some(path) = &args.windows_package_manifest {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_windows_package_manifest_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_WINDOWS_PACKAGE_MANIFEST_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_WINDOWS_PACKAGE_MANIFEST_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail:
+                "release.windows_package.v1 unsigned dry-run manifest passed package boundary checks",
         });
     }
     if let Some(path) = &args.signing_evidence {
@@ -796,7 +835,7 @@ fn validate_release_artifact_manifest_report(report: &str) -> Result<()> {
 fn validate_release_sbom_report(report: &str) -> Result<()> {
     const CONTEXT: &str = "release SBOM";
     if release_readiness_diagnostics_report_contains_private_marker(report)
-        || release_sbom_report_contains_forbidden_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
     {
         return Err(CliError::user(
             "release SBOM blocked: private marker is present",
@@ -850,6 +889,131 @@ fn validate_release_sbom_report(report: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_macos_package_manifest_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "macOS package manifest";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "macOS package manifest blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("macOS package manifest blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("macOS package manifest blocked: expected JSON object"))?;
+
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.macos_package.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "packaging_status", "unsigned_dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "install_location", "/usr/local/bin", CONTEXT)?;
+    require_release_evidence_string(object, "signing_status", "unsigned", CONTEXT)?;
+    require_release_evidence_string(object, "notarization_status", "not_requested", CONTEXT)?;
+    validate_release_package_artifacts(object, CONTEXT, &["pkg", "dmg"])?;
+    for step in [
+        "signing",
+        "notarization",
+        "github_release_upload",
+        "installer_lifecycle_validation",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_windows_package_manifest_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "Windows package manifest";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "Windows package manifest blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("Windows package manifest blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("Windows package manifest blocked: expected JSON object"))?;
+
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.windows_package.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "packaging_status", "unsigned_dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "installer_kind", "msi", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "install_location",
+        "ProgramFilesFolder/resume-ir",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(object, "signing_status", "unsigned", CONTEXT)?;
+    validate_release_package_artifacts(object, CONTEXT, &["msi"])?;
+    for step in [
+        "signing",
+        "github_release_upload",
+        "installer_lifecycle_validation",
+        "service_install_validation",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_release_package_artifacts(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+    required_kinds: &[&str],
+) -> Result<()> {
+    let artifacts = require_release_evidence_array(object, "artifacts", context)?;
+    let mut seen_kinds = BTreeSet::new();
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "artifacts"))?;
+        let kind = require_release_evidence_string_value(artifact, "kind", context)?;
+        if !required_kinds.contains(&kind) {
+            return Err(release_evidence_invalid(context, "artifacts"));
+        }
+        let file = require_release_evidence_string_value(artifact, "file", context)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(context, "file"));
+        }
+        require_release_evidence_sha256(artifact, "sha256", context)?;
+        require_release_evidence_positive_u64(artifact, "bytes", context)?;
+        seen_kinds.insert(kind.to_string());
+    }
+    if required_kinds.iter().all(|kind| seen_kinds.contains(*kind)) {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, "artifacts"))
+    }
+}
+
 fn validate_release_sbom_external_refs(
     package: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<()> {
@@ -878,7 +1042,7 @@ fn validate_release_sbom_external_refs(
     }
 }
 
-fn release_sbom_report_contains_forbidden_marker(report: &str) -> bool {
+fn release_evidence_report_contains_forbidden_marker(report: &str) -> bool {
     [
         "manifest_path",
         "src_path",
