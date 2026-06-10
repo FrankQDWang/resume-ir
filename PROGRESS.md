@@ -140,6 +140,10 @@ production-ready scope source.
   resume data, local paths, generated pkg/dmg/MSI artifacts, installer logs,
   diagnostics, runtime binaries, model files, signing material, notarization
   credentials, or model caches were committed or uploaded.
+  S292 changed only product-goal, runtime/license decision, and runbook guard
+  documentation; no real resume data, local paths, diagnostics, runtime
+  binaries, model files, signing material, notarization credentials, or model
+  caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1033,8 +1037,40 @@ obsolete preliminary files and checklists are not product scope.
 | S289 | Current-stage runtime/license boundary clarified locally | Runbook guard was tightened first and failed because the OCR worker runbook did not explicitly state the Poppler subprocess/license boundary. After the runbook update, OCR runtime guidance now says the MIT project may call a user-installed Poppler `pdftoppm` command, must not bundle Poppler by default, and must record exact installed Poppler license/version/checksum/review status in local runtime or release evidence. | This slice is documentation and CI guardrail only. It does not bundle Poppler, perform legal review, change OCR runtime code, clear OCR runtime evidence blockers, run real private OCR, or make stable release ready. |
 | S290 | Product release artifact/SBOM release-readiness intake complete locally | Focused RED first failed because `release-readiness --json --release-artifact-manifest <path> --release-sbom <path>` produced no JSON output: the flags were unsupported. After implementation, release-readiness accepts a dry-run `release.artifacts.v1` manifest and a redacted SPDX 2.3 release SBOM, validates required binary/package coverage, hashes, byte counts, blocked release steps, basename-only artifact files, SBOM package purl refs, and absence of local/private markers, then marks them as `blocked_release_evidence_manifest` evidence without printing manifest paths or bodies. The evidence labels are distinct from real blockers, so signing, notarization, installer lifecycle, GitHub Release upload, and cross-platform release validation remain blocked. | This slice connects existing artifact/SBOM dry-run manifests to release-readiness only. It does not generate real release artifacts, upload a GitHub Release, sign/notarize binaries, run installers, clear release blockers, or make stable release ready. |
 | S291 | Product platform package manifest release-readiness intake complete locally | Focused RED first failed because `release-readiness --json --macos-package-manifest <path> --windows-package-manifest <path>` produced no JSON output: the flags were unsupported. After implementation, release-readiness accepts unsigned dry-run `release.macos_package.v1` and `release.windows_package.v1` manifests, validates version, unsigned status, expected install location, package artifact kinds, basename-only artifact files, sha256, byte counts, blocked release steps, and absence of local/private markers, then marks them as `blocked_release_evidence_manifest` evidence without printing manifest paths or bodies. The evidence labels are distinct from real blockers, so signing, notarization, installer lifecycle, service lifecycle, GitHub Release upload, and cross-platform release validation remain blocked. | This slice connects existing platform package dry-run manifests to release-readiness only. It does not generate real pkg/dmg/MSI artifacts, sign/notarize artifacts, run install/upgrade/uninstall/rollback, validate Windows services, upload a GitHub Release, clear release blockers, or make stable release ready. |
+| S292 | Current-stage goal and PDF renderer license boundary pinned locally | Focused RED first failed because the runbook guard required the current-stage boundary in `GOAL.md` and the Poppler/PDFium runtime license decision in the dependency matrix, but those source docs did not contain the required text. After the update, `GOAL.md` states that the current stage requires reproducible benchmark baseline, observability, and local 10k validation flow, while P95/P99 reduction and 100k/1M validation move to the follow-up performance goal. The dependency matrix and technology stack now keep Poppler/pdftoppm as a user-installed external command boundary, mark PDFium as the future bundled renderer candidate, and keep MuPDF/Ghostscript as external/commercial-license evaluation options. | This slice is documentation and CI guardrail only. It does not bundle Poppler/PDFium/MuPDF/Ghostscript, perform legal review, change runtime code, run private corpus benchmarks, clear OCR/runtime/license blockers, or make stable release ready. |
 
 ## Command Log
+
+### S292
+
+TDD red check:
+
+```bash
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- The guard failed before the documentation update because `GOAL.md` did not
+  contain the required current-stage performance boundary text.
+
+Focused verification:
+
+```bash
+./scripts/ci/check-runbooks.sh
+sh -n scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- `check-runbooks.sh`: exit 0.
+- `sh -n scripts/ci/check-runbooks.sh`: exit 0.
+- `check-release-readiness.sh`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0.
 
 ### S291
 

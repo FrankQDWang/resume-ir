@@ -24,9 +24,14 @@ diagnostics_runbook="docs/runbooks/diagnostics-redaction.md"
 fault_runbook="docs/runbooks/fault-injection.md"
 worker_runbook="docs/runbooks/ocr-embedding-workers.md"
 release_runbook="docs/runbooks/release-blockers.md"
+goal_doc="GOAL.md"
+license_doc="02_execution_plan_执行方案/08_依赖许可与参考资料.md"
+
+for file in "$diagnostics_runbook" "$fault_runbook" "$worker_runbook" "$release_runbook" "$goal_doc" "$license_doc"; do
+  require_file "$file"
+done
 
 for file in "$diagnostics_runbook" "$fault_runbook" "$worker_runbook" "$release_runbook"; do
-  require_file "$file"
   require_text "$file" "Local-only"
   require_text "$file" "Do not upload"
   require_text "$file" "Synthetic fixtures"
@@ -105,5 +110,13 @@ require_text "$worker_runbook" "default in product installers"
 require_text "$worker_runbook" "exact installed Poppler license"
 require_text "$worker_runbook" "reviewed status"
 require_text "$worker_runbook" "PDFium remains the preferred future permissive-license bundled renderer candidate"
+require_text "$goal_doc" "当前阶段不要求极致性能优化"
+require_text "$goal_doc" "真实本机 1 万份本地验证流程"
+require_text "$goal_doc" "性能极致优化"
+require_text "$license_doc" "Poppler/pdftoppm"
+require_text "$license_doc" "外部命令"
+require_text "$license_doc" "不默认打包"
+require_text "$license_doc" "PDFium"
+require_text "$license_doc" "后续内置渲染器候选"
 
 printf '%s\n' "runbook check passed"
