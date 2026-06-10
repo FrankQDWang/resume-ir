@@ -237,6 +237,99 @@ fn ocr_manifest_validate_rejects_unreviewed_license_without_path_or_payload_leak
     remove_file(&manifest_file);
 }
 
+#[cfg(unix)]
+#[test]
+fn ocr_preflight_json_reports_ready_runtime_without_path_or_language_dump() {
+    let data_dir = temp_dir("ocr-preflight-ready-private-data");
+    let bin_dir = temp_dir("ocr-preflight-ready-private-bin");
+    write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
+    write_executable(
+        &bin_dir,
+        "tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--list-langs" ]; then
+  printf 'List of available languages (2):\n'
+  printf 'eng\n'
+  printf 'chi_sim\n'
+  exit 0
+fi
+exit 9
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr",
+            "preflight",
+            "--json",
+            "--ocr-lang",
+            "eng",
+        ])
+        .output()
+        .expect("run OCR runtime preflight");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\": \"ocr-runtime-preflight.v1\""));
+    assert!(stdout.contains("\"runtime_status\": \"ready\""));
+    assert!(stdout.contains("\"pdftoppm\": \"available\""));
+    assert!(stdout.contains("\"tesseract\": \"available\""));
+    assert!(stdout.contains("\"requested_language_status\": \"available\""));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(stdout.contains("\"remediation\": []"));
+    assert!(!stdout.contains("chi_sim"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn ocr_preflight_json_blocks_missing_dependencies_without_path_leak() {
+    let data_dir = temp_dir("ocr-preflight-missing-private-data");
+    let bin_dir = temp_dir("ocr-preflight-missing-private-bin");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr",
+            "preflight",
+            "--json",
+            "--ocr-lang",
+            "eng",
+        ])
+        .output()
+        .expect("run missing OCR runtime preflight");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ocr runtime preflight blocked"));
+    assert!(stdout.contains("\"schema_version\": \"ocr-runtime-preflight.v1\""));
+    assert!(stdout.contains("\"runtime_status\": \"blocked\""));
+    assert!(stdout.contains("\"pdftoppm\": \"missing\""));
+    assert!(stdout.contains("\"tesseract\": \"missing\""));
+    assert!(stdout.contains("\"requested_language_status\": \"missing\""));
+    assert!(stdout.contains("install Poppler/pdftoppm or configure --pdftoppm-command"));
+    assert!(stdout.contains("install Tesseract/tessdata or configure --tesseract-command"));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&bin_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+}
+
 fn temp_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -272,4 +365,15 @@ fn remove_dir(path: &Path) {
 
 fn remove_file(path: &Path) {
     let _ = fs::remove_file(path);
+}
+
+#[cfg(unix)]
+fn write_executable(dir: &Path, name: &str, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = dir.join(name);
+    fs::write(&path, body).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
 }

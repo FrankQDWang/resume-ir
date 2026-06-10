@@ -1809,6 +1809,7 @@ fn ocr_command(args: &[String]) -> Result<()> {
     };
 
     match action {
+        "preflight" => ocr_preflight_command(&args[1..]),
         "validate-manifest" => ocr_validate_manifest_command(&args[1..]),
         _ => Err(CliError::usage(ocr_usage())),
     }
@@ -2190,6 +2191,148 @@ fn ocr_validate_manifest_command(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct OcrPreflightArgs {
+    ocr_lang: String,
+    tesseract_command: Option<PathBuf>,
+    pdftoppm_command: Option<PathBuf>,
+}
+
+fn ocr_preflight_command(args: &[String]) -> Result<()> {
+    let preflight_args = parse_ocr_preflight_args(args)?;
+    let runtime = inspect_ocr_runtime_with_commands(
+        &preflight_args.ocr_lang,
+        preflight_args.pdftoppm_command.as_ref(),
+        preflight_args.tesseract_command.as_ref(),
+    );
+    let ready = runtime.pdftoppm == OcrRuntimeState::Available
+        && runtime.tesseract == OcrRuntimeState::Available
+        && runtime.requested_language_status == OcrRuntimeState::Available;
+    print_ocr_preflight_json(&runtime, ready);
+    if ready {
+        Ok(())
+    } else {
+        Err(CliError::user(
+            "ocr runtime preflight blocked: dependencies are not ready",
+        ))
+    }
+}
+
+fn parse_ocr_preflight_args(args: &[String]) -> Result<OcrPreflightArgs> {
+    let mut json = false;
+    let mut ocr_lang = "eng".to_string();
+    let mut seen_ocr_lang = false;
+    let mut tesseract_command = None;
+    let mut pdftoppm_command = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--json" => {
+                if json {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                json = true;
+                index += 1;
+            }
+            "--ocr-lang" => {
+                if seen_ocr_lang {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(ocr_usage()));
+                };
+                ocr_lang = parse_ocr_diagnostic_language(value, ocr_usage())?;
+                seen_ocr_lang = true;
+                index += 2;
+            }
+            "--tesseract-command" => {
+                if tesseract_command.is_some() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(ocr_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                tesseract_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--pdftoppm-command" => {
+                if pdftoppm_command.is_some() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(ocr_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                pdftoppm_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(ocr_usage())),
+        }
+    }
+
+    if !json {
+        return Err(CliError::usage(ocr_usage()));
+    }
+
+    Ok(OcrPreflightArgs {
+        ocr_lang,
+        tesseract_command,
+        pdftoppm_command,
+    })
+}
+
+fn print_ocr_preflight_json(runtime: &OcrRuntimeDiagnostic, ready: bool) {
+    println!("{{");
+    println!("  \"schema_version\": \"ocr-runtime-preflight.v1\",");
+    println!(
+        "  \"runtime_status\": \"{}\",",
+        if ready { "ready" } else { "blocked" }
+    );
+    println!("  \"runtime_boundary\": \"external_local_commands\",");
+    println!("  \"paths\": \"<redacted>\",");
+    println!("  \"dependencies\": {{");
+    println!("    \"pdftoppm\": \"{}\",", runtime.pdftoppm.label());
+    println!("    \"tesseract\": \"{}\",", runtime.tesseract.label());
+    println!(
+        "    \"requested_language\": \"{}\",",
+        runtime.requested_language
+    );
+    println!(
+        "    \"requested_language_status\": \"{}\"",
+        runtime.requested_language_status.label()
+    );
+    println!("  }},");
+    print!("  \"remediation\": [");
+    let remediation = ocr_preflight_remediation(runtime);
+    for (index, item) in remediation.iter().enumerate() {
+        if index > 0 {
+            print!(", ");
+        }
+        print!("\"{item}\"");
+    }
+    println!("]");
+    println!("}}");
+}
+
+fn ocr_preflight_remediation(runtime: &OcrRuntimeDiagnostic) -> Vec<&'static str> {
+    let mut remediation = Vec::new();
+    if runtime.pdftoppm != OcrRuntimeState::Available {
+        remediation.push("install Poppler/pdftoppm or configure --pdftoppm-command");
+    }
+    if runtime.tesseract != OcrRuntimeState::Available {
+        remediation.push("install Tesseract/tessdata or configure --tesseract-command");
+    } else if runtime.requested_language_status != OcrRuntimeState::Available {
+        remediation
+            .push("install requested Tesseract language pack or choose an installed --ocr-lang");
+    }
+    remediation
+}
+
 fn parse_ocr_validate_manifest_args(args: &[String]) -> Result<PathBuf> {
     let mut manifest = None;
     let mut index = 0;
@@ -2448,7 +2591,7 @@ fn ocr_manifest_sha256(value: &str) -> Result<String> {
 }
 
 fn ocr_usage() -> &'static str {
-    "usage: resume-cli ocr validate-manifest --manifest <path>"
+    "usage: resume-cli ocr preflight --json [--ocr-lang <lang>] [--tesseract-command <path>] [--pdftoppm-command <path>] | resume-cli ocr validate-manifest --manifest <path>"
 }
 
 fn service_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -10038,16 +10181,37 @@ impl OcrRuntimeState {
 }
 
 fn inspect_ocr_runtime(requested_language: &str) -> OcrRuntimeDiagnostic {
-    let pdftoppm = find_command_in_path("pdftoppm");
-    let tesseract = find_command_in_path("tesseract");
+    inspect_ocr_runtime_with_commands(requested_language, None, None)
+}
+
+fn inspect_ocr_runtime_with_commands(
+    requested_language: &str,
+    pdftoppm_command: Option<&PathBuf>,
+    tesseract_command: Option<&PathBuf>,
+) -> OcrRuntimeDiagnostic {
+    let discovered_pdftoppm;
+    let pdftoppm = match pdftoppm_command {
+        Some(command) => Some(command),
+        None => {
+            discovered_pdftoppm = find_command_in_path("pdftoppm");
+            discovered_pdftoppm.as_ref()
+        }
+    };
+    let discovered_tesseract;
+    let tesseract = match tesseract_command {
+        Some(command) => Some(command),
+        None => {
+            discovered_tesseract = find_command_in_path("tesseract");
+            discovered_tesseract.as_ref()
+        }
+    };
     let requested_language_status = tesseract
-        .as_ref()
         .map(|path| inspect_tesseract_language(path, requested_language))
         .unwrap_or(OcrRuntimeState::Missing);
 
     OcrRuntimeDiagnostic {
-        pdftoppm: tool_state(pdftoppm.as_ref()),
-        tesseract: tool_state(tesseract.as_ref()),
+        pdftoppm: tool_state(pdftoppm),
+        tesseract: tool_state(tesseract),
         requested_language: requested_language.to_string(),
         requested_language_status,
     }

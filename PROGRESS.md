@@ -148,6 +148,10 @@ production-ready scope source.
   only; no real resume data, local paths, generated pkg/dmg/MSI artifacts,
   installer logs, diagnostics, runtime binaries, model files, signing material,
   notarization credentials, or model caches were committed or uploaded.
+  S294 added OCR runtime preflight and runbook guards only; no real resume data,
+  local paths, OCR text, page images, Tesseract language dumps, diagnostics,
+  runtime binaries, model files, signing material, notarization credentials, or
+  model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1043,8 +1047,44 @@ obsolete preliminary files and checklists are not product scope.
 | S291 | Product platform package manifest release-readiness intake complete locally | Focused RED first failed because `release-readiness --json --macos-package-manifest <path> --windows-package-manifest <path>` produced no JSON output: the flags were unsupported. After implementation, release-readiness accepts unsigned dry-run `release.macos_package.v1` and `release.windows_package.v1` manifests, validates version, unsigned status, expected install location, package artifact kinds, basename-only artifact files, sha256, byte counts, blocked release steps, and absence of local/private markers, then marks them as `blocked_release_evidence_manifest` evidence without printing manifest paths or bodies. The evidence labels are distinct from real blockers, so signing, notarization, installer lifecycle, service lifecycle, GitHub Release upload, and cross-platform release validation remain blocked. | This slice connects existing platform package dry-run manifests to release-readiness only. It does not generate real pkg/dmg/MSI artifacts, sign/notarize artifacts, run install/upgrade/uninstall/rollback, validate Windows services, upload a GitHub Release, clear release blockers, or make stable release ready. |
 | S292 | Current-stage goal and PDF renderer license boundary pinned locally | Focused RED first failed because the runbook guard required the current-stage boundary in `GOAL.md` and the Poppler/PDFium runtime license decision in the dependency matrix, but those source docs did not contain the required text. After the update, `GOAL.md` states that the current stage requires reproducible benchmark baseline, observability, and local 10k validation flow, while P95/P99 reduction and 100k/1M validation move to the follow-up performance goal. The dependency matrix and technology stack now keep Poppler/pdftoppm as a user-installed external command boundary, mark PDFium as the future bundled renderer candidate, and keep MuPDF/Ghostscript as external/commercial-license evaluation options. | This slice is documentation and CI guardrail only. It does not bundle Poppler/PDFium/MuPDF/Ghostscript, perform legal review, change runtime code, run private corpus benchmarks, clear OCR/runtime/license blockers, or make stable release ready. |
 | S293 | Product installer lifecycle dry-run operator plans complete locally | Focused RED first failed because the macOS and Windows installer evidence guards required lifecycle operator scripts that did not exist. After implementation, `run-macos-installer-lifecycle.sh` validates unsigned macOS package manifests and emits `release.macos_installer_lifecycle_plan.v1` dry-run JSON covering install, upgrade, uninstall, rollback, LaunchAgent start, and LaunchAgent stop; `run-windows-installer-lifecycle.ps1` validates unsigned Windows MSI manifests and emits `release.windows_installer_lifecycle_plan.v1` dry-run JSON covering install, upgrade, repair, uninstall, and rollback. Release workflow and runbook guards now require these dry-run plan artifacts and check they do not leak local paths or runtime-data markers. | This slice adds operator dry-run automation only. It does not execute `installer`, `pkgutil`, `launchctl`, or `msiexec.exe`, perform real install/upgrade/uninstall/rollback, validate Windows services, prove rollback, obtain administrator approval, clear installer lifecycle blockers, or make stable release ready. |
+| S294 | Product OCR runtime preflight complete locally | Focused RED first failed because `resume-cli ocr preflight --json` was rejected, so operators had no dedicated fail-closed dependency preflight for the accepted external Tesseract/tessdata plus Poppler/pdftoppm runtime direction. After implementation, `ocr preflight --json` checks `pdftoppm`, `tesseract`, and the requested Tesseract language pack from `PATH` or explicit command paths, emits `ocr-runtime-preflight.v1` redacted JSON, exits nonzero with remediation when dependencies are missing or unknown, and suppresses local paths, OCR text, page images, and language dumps. The OCR worker runbook and guard now document this operator step. | This slice adds local dependency preflight only. It does not install runtimes, bundle Poppler/Tesseract/tessdata, approve OCR licenses, validate full non-English OCR quality, run private real-corpus OCR throughput gates, clear OCR runtime evidence blockers, or make stable release ready. |
 
 ## Command Log
+
+### S294
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s174_ocr_manifest --locked
+```
+
+Output summary:
+
+- The two new OCR runtime preflight tests failed before implementation because
+  `resume-cli ocr preflight --json` was not implemented.
+
+Focused verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s174_ocr_manifest --locked
+./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- `s174_ocr_manifest`: exit 0, 5 tests passed.
+- `check-runbooks.sh`: exit 0.
+- `cargo fmt --check`: exit 0.
+- `cargo clippy -p resume-cli --tests --locked -- -D warnings`: exit 0.
+- `check-release-readiness.sh`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0.
 
 ### S293
 

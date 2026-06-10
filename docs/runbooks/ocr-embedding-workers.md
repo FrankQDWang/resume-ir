@@ -47,6 +47,35 @@ PDFium remains the preferred future permissive-license bundled renderer candidat
 Ghostscript can be evaluated as external command adapters, but their
 AGPL/commercial license posture is not a better default for this MIT repository.
 
+## OCR Runtime Preflight
+
+Canonical local command form:
+`resume-cli ocr preflight --json`.
+
+Before running OCR workers, check that the local external OCR runtime is
+discoverable without printing command paths:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr preflight --json \
+  --ocr-lang eng
+```
+
+If the operator keeps tools outside `PATH`, pass explicit local command paths:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr preflight --json \
+  --ocr-lang eng \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command>
+```
+
+The JSON schema is `ocr-runtime-preflight.v1`. The command exits nonzero when
+`pdftoppm`, `tesseract`, or the requested Tesseract language pack is missing or
+unknown, and it prints remediation such as installing Poppler/pdftoppm,
+Tesseract/tessdata, or the requested language pack. Output must keep paths as
+`<redacted>` and must not print command paths, OCR text, page images, Tesseract
+language dumps, model caches, indexes, or local data directories.
+
 ## OCR Runtime Manifest Validation
 
 Canonical local command form:
