@@ -462,6 +462,83 @@ fn release_readiness_json_accepts_blocked_release_automation_evidence_without_cl
 }
 
 #[test]
+fn release_readiness_json_accepts_release_artifact_and_sbom_evidence_without_clearing_blockers() {
+    let data_dir = temp_path("release-readiness-release-manifest-private-data");
+    let evidence_dir = temp_path("release-readiness-release-manifest-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let release_artifacts = evidence_dir.join("release-artifacts.json");
+    let release_sbom = evidence_dir.join("release-sbom.json");
+    fs::write(&release_artifacts, release_artifacts_manifest()).unwrap();
+    fs::write(&release_sbom, release_sbom_manifest()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--release-artifact-manifest",
+            path_str(&release_artifacts),
+            "--release-sbom",
+            path_str(&release_sbom),
+        ])
+        .output()
+        .expect("run release readiness with release artifact and SBOM evidence");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .expect("release readiness artifact/SBOM evidence json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let provided_labels = provided
+        .iter()
+        .map(|evidence| evidence["label"].as_str().expect("provided label"))
+        .collect::<Vec<_>>();
+    assert!(provided_labels.contains(&"release artifact manifest evidence"));
+    assert!(provided_labels.contains(&"release SBOM evidence"));
+    for evidence in provided {
+        assert_eq!(evidence["status"], "provided");
+        assert_eq!(
+            evidence["privacy_boundary"],
+            "blocked_release_evidence_manifest"
+        );
+        assert!(evidence["detail"]
+            .as_str()
+            .expect("provided detail")
+            .contains("dry-run"));
+    }
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(blocker_labels.contains(&"signing certificates"));
+    assert!(blocker_labels.contains(&"macOS notarization"));
+    assert!(blocker_labels.contains(&"macOS installer lifecycle"));
+    assert!(blocker_labels.contains(&"Windows installer lifecycle"));
+    assert!(blocker_labels.contains(&"Windows service lifecycle"));
+    assert!(blocker_labels.contains(&"cross-platform release validation"));
+    assert!(blocker_labels.contains(&"redacted diagnostics evidence"));
+    assert!(!blocker_labels.contains(&"release artifact manifest evidence"));
+    assert!(!blocker_labels.contains(&"release SBOM evidence"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stdout.contains("resume-ir-v0.0.0"));
+    assert!(!stderr.contains("resume-ir-v0.0.0"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers() {
     let data_dir = temp_path("release-readiness-evidence-private-data");
     let evidence_dir = temp_path("release-readiness-evidence-private-reports");
@@ -960,6 +1037,48 @@ fn blocked_windows_service_evidence() -> String {
         "\"required_evidence\":[\"administrator-elevated install transcript\",\"service_install_validation\",\"service_start_validation\",\"service_status_validation\",\"service_stop_validation\",\"service_uninstall_validation\",\"service_recovery_validation\"],",
         "\"blocked_release_steps\":[\"windows_service_install\",\"windows_service_start\",\"windows_service_status\",\"windows_service_stop\",\"windows_service_uninstall\",\"windows_service_recovery\",\"windows_service_rollback\"],",
         "\"prohibited_public_material\":[\"service_tokens\",\"administrator_passwords\",\"local_paths\",\"raw_service_logs\",\"raw_resume_data\",\"diagnostic_packages\",\"model_artifact_caches\"]",
+        "}"
+    )
+    .to_string()
+}
+
+fn release_artifacts_manifest() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.artifacts.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"packaging_status\":\"blocked\",",
+        "\"artifacts\":[",
+        "{\"name\":\"resume-cli\",\"file\":\"resume-cli\",\"sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"bytes\":101},",
+        "{\"name\":\"resume-daemon\",\"file\":\"resume-daemon\",\"sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"bytes\":202},",
+        "{\"name\":\"resume-benchmark\",\"file\":\"resume-benchmark\",\"sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"bytes\":303}",
+        "],",
+        "\"blocked_release_steps\":[\"packaging\",\"signing\",\"notarization\",\"github_release_upload\"],",
+        "\"notes\":\"Dry-run manifest only; no installer, signature, notarization ticket, release upload, local data, or runtime data is included.\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn release_sbom_manifest() -> String {
+    concat!(
+        "{",
+        "\"spdxVersion\":\"SPDX-2.3\",",
+        "\"dataLicense\":\"CC0-1.0\",",
+        "\"SPDXID\":\"SPDXRef-DOCUMENT\",",
+        "\"name\":\"resume-ir-v0.0.0\",",
+        "\"documentNamespace\":\"https://github.com/FrankQDWang/resume-ir/sbom/v0.0.0\",",
+        "\"creationInfo\":{\"created\":\"2026-06-10T00:00:00Z\",\"creators\":[\"Tool: resume-ir-release-sbom\"]},",
+        "\"packages\":[",
+        "{\"SPDXID\":\"SPDXRef-Package-resume-cli\",\"name\":\"resume-cli\",\"versionInfo\":\"0.1.0\",\"filesAnalyzed\":false,\"licenseDeclared\":\"MIT\",\"externalRefs\":[{\"referenceCategory\":\"PACKAGE-MANAGER\",\"referenceType\":\"purl\",\"referenceLocator\":\"pkg:cargo/resume-cli@0.1.0\"}]},",
+        "{\"SPDXID\":\"SPDXRef-Package-resume-daemon\",\"name\":\"resume-daemon\",\"versionInfo\":\"0.1.0\",\"filesAnalyzed\":false,\"licenseDeclared\":\"MIT\",\"externalRefs\":[{\"referenceCategory\":\"PACKAGE-MANAGER\",\"referenceType\":\"purl\",\"referenceLocator\":\"pkg:cargo/resume-daemon@0.1.0\"}]},",
+        "{\"SPDXID\":\"SPDXRef-Package-benchmark-runner\",\"name\":\"benchmark-runner\",\"versionInfo\":\"0.1.0\",\"filesAnalyzed\":false,\"licenseDeclared\":\"MIT\",\"externalRefs\":[{\"referenceCategory\":\"PACKAGE-MANAGER\",\"referenceType\":\"purl\",\"referenceLocator\":\"pkg:cargo/benchmark-runner@0.1.0\"}]}",
+        "],",
+        "\"relationships\":[",
+        "{\"spdxElementId\":\"SPDXRef-DOCUMENT\",\"relationshipType\":\"DESCRIBES\",\"relatedSpdxElement\":\"SPDXRef-Package-resume-cli\"},",
+        "{\"spdxElementId\":\"SPDXRef-DOCUMENT\",\"relationshipType\":\"DESCRIBES\",\"relatedSpdxElement\":\"SPDXRef-Package-resume-daemon\"},",
+        "{\"spdxElementId\":\"SPDXRef-DOCUMENT\",\"relationshipType\":\"DESCRIBES\",\"relatedSpdxElement\":\"SPDXRef-Package-benchmark-runner\"}",
+        "]",
         "}"
     )
     .to_string()

@@ -88,6 +88,8 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --model-manifest local-model-manifest.json \
   --ocr-runtime-manifest local-ocr-runtime-manifest.json \
   --diagnostics-report redacted-diagnostics.json \
+  --release-artifact-manifest release-artifacts.json \
+  --release-sbom release-sbom.json \
   --signing-evidence signing-evidence.json \
   --notarization-evidence notarization-evidence.json \
   --macos-installer-evidence macos-installer-evidence.json \
@@ -99,20 +101,28 @@ Passing these local evidence inputs marks only the corresponding local evidence
 items as `provided_evidence`; aggregate reports and redacted diagnostics evidence
 are marked `redacted_local_aggregate`, and reviewed model/OCR manifests are marked
 `reviewed_local_manifest`. Blocked signing, notarization, macOS installer,
-Windows installer, and Windows service dry-run manifests are marked
-`blocked_release_evidence_manifest` as signing automation evidence,
-notarization automation evidence, macOS installer automation evidence, Windows
-installer automation evidence, and Windows service automation evidence. Those
-automation evidence entries prove only that fail-closed automation and schema
-checks exist; they do not clear signing, notarization, installer lifecycle,
-service lifecycle, or cross-platform release blockers. The command must still
-fail closed while signing, notarization, installer lifecycle, cross-platform
-release validation, hardware fault-drill blockers, or any missing local evidence
-remain unresolved. Do not upload or commit generated reports or manifests unless
-they have been separately reviewed to contain no raw resume text, filenames,
-local paths, queries, labels, sample IDs, document IDs, vectors, page images,
-secrets, diagnostics, indexes, model files, OCR runtime binaries, or model
-caches.
+Windows installer, Windows service, release artifact, and release SBOM dry-run
+manifests are marked `blocked_release_evidence_manifest`. The labels are:
+
+- signing automation evidence
+- notarization automation evidence
+- release artifact manifest evidence
+- release SBOM evidence
+- macOS installer automation evidence
+- Windows installer automation evidence
+- Windows service automation evidence
+
+Those automation and dry-run manifest evidence entries prove only that
+fail-closed automation, schema checks, redacted artifact inventory, and redacted
+SBOM generation exist; they do not clear signing, notarization, installer
+lifecycle, service lifecycle, GitHub Release upload, or cross-platform release
+blockers. The command must still fail closed while signing, notarization,
+installer lifecycle, cross-platform release validation, hardware fault-drill
+blockers, or any missing local evidence remain unresolved. Do not upload or
+commit generated reports or manifests unless they have been separately reviewed
+to contain no raw resume text, filenames, local paths, queries, labels, sample
+IDs, document IDs, vectors, page images, secrets, diagnostics, indexes, model
+files, OCR runtime binaries, or model caches.
 
 Generate the diagnostics report from the same local data directory used for the
 current validation run:

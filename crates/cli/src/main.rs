@@ -135,6 +135,9 @@ const RELEASE_READINESS_OCR_THROUGHPUT_LABEL: &str = "OCR throughput";
 const RELEASE_READINESS_OCR_LICENSE_LABEL: &str = "OCR runtime manifest/dependency evidence";
 const RELEASE_READINESS_MODEL_LICENSE_LABEL: &str = "embedding model license/distribution";
 const RELEASE_READINESS_DIAGNOSTICS_LABEL: &str = "redacted diagnostics evidence";
+const RELEASE_READINESS_RELEASE_ARTIFACT_MANIFEST_LABEL: &str =
+    "release artifact manifest evidence";
+const RELEASE_READINESS_RELEASE_SBOM_LABEL: &str = "release SBOM evidence";
 const RELEASE_READINESS_SIGNING_AUTOMATION_LABEL: &str = "signing automation evidence";
 const RELEASE_READINESS_NOTARIZATION_AUTOMATION_LABEL: &str = "notarization automation evidence";
 const RELEASE_READINESS_MACOS_INSTALLER_AUTOMATION_LABEL: &str =
@@ -330,7 +333,7 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>]"
 }
 
 #[derive(Default)]
@@ -343,6 +346,8 @@ struct ReleaseReadinessEvidenceArgs {
     model_manifest: Option<PathBuf>,
     ocr_runtime_manifest: Option<PathBuf>,
     diagnostics_report: Option<PathBuf>,
+    release_artifact_manifest: Option<PathBuf>,
+    release_sbom: Option<PathBuf>,
     signing_evidence: Option<PathBuf>,
     notarization_evidence: Option<PathBuf>,
     macos_installer_evidence: Option<PathBuf>,
@@ -413,6 +418,13 @@ fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs>
             "--diagnostics-report" => {
                 parsed.evidence.diagnostics_report =
                     Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--release-artifact-manifest" => {
+                parsed.evidence.release_artifact_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--release-sbom" => {
+                parsed.evidence.release_sbom = Some(take_release_readiness_path(args, &mut index)?);
             }
             "--signing-evidence" => {
                 parsed.evidence.signing_evidence =
@@ -567,6 +579,32 @@ fn validate_release_readiness_evidence(
             detail: "diagnostics.v1 report passed local aggregate redaction and scope checks",
         });
     }
+    if let Some(path) = &args.release_artifact_manifest {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_release_artifact_manifest_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_RELEASE_ARTIFACT_MANIFEST_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_RELEASE_ARTIFACT_MANIFEST_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail:
+                "release.artifacts.v1 dry-run manifest passed schema and artifact boundary checks",
+        });
+    }
+    if let Some(path) = &args.release_sbom {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_release_sbom_report(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_RELEASE_SBOM_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_RELEASE_SBOM_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "SPDX-2.3 release dry-run SBOM passed redaction and package boundary checks",
+        });
+    }
     if let Some(path) = &args.signing_evidence {
         validate_release_automation_evidence(path, &SIGNING_AUTOMATION_EVIDENCE_SPEC)?;
         provided.push(ReleaseReadinessProvidedEvidence {
@@ -695,6 +733,273 @@ fn validate_release_automation_evidence_report(
     }
 
     Ok(())
+}
+
+fn validate_release_artifact_manifest_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "release artifact manifest";
+    if release_readiness_diagnostics_report_contains_private_marker(report) {
+        return Err(CliError::user(
+            "release artifact manifest blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("release artifact manifest blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("release artifact manifest blocked: expected JSON object"))?;
+
+    require_release_evidence_string(object, "schema_version", "release.artifacts.v1", CONTEXT)?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "packaging_status", "blocked", CONTEXT)?;
+    let artifacts = require_release_evidence_array(object, "artifacts", CONTEXT)?;
+    let required_names = ["resume-cli", "resume-daemon", "resume-benchmark"];
+    let mut seen_names = BTreeSet::new();
+
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "artifacts"))?;
+        let name = require_release_evidence_string_value(artifact, "name", CONTEXT)?;
+        if !required_names.contains(&name) {
+            return Err(release_evidence_invalid(CONTEXT, "artifacts"));
+        }
+        let file = require_release_evidence_string_value(artifact, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        require_release_evidence_sha256(artifact, "sha256", CONTEXT)?;
+        require_release_evidence_positive_u64(artifact, "bytes", CONTEXT)?;
+        seen_names.insert(name.to_string());
+    }
+
+    if !required_names.iter().all(|name| seen_names.contains(*name)) {
+        return Err(release_evidence_invalid(CONTEXT, "artifacts"));
+    }
+    for step in [
+        "packaging",
+        "signing",
+        "notarization",
+        "github_release_upload",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_release_sbom_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "release SBOM";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_sbom_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "release SBOM blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("release SBOM blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("release SBOM blocked: expected JSON object"))?;
+
+    require_release_evidence_string(object, "spdxVersion", "SPDX-2.3", CONTEXT)?;
+    require_release_evidence_string(object, "SPDXID", "SPDXRef-DOCUMENT", CONTEXT)?;
+    let name = require_release_evidence_string_value(object, "name", CONTEXT)?;
+    let Some(version) = name.strip_prefix("resume-ir-") else {
+        return Err(release_evidence_invalid(CONTEXT, "name"));
+    };
+    validate_release_evidence_version(version, CONTEXT)?;
+    let packages = require_release_evidence_array(object, "packages", CONTEXT)?;
+    let required_names = ["resume-cli", "resume-daemon", "benchmark-runner"];
+    let mut seen_names = BTreeSet::new();
+
+    for package in packages {
+        let package = package
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "packages"))?;
+        let name = require_release_evidence_string_value(package, "name", CONTEXT)?;
+        if required_names.contains(&name) {
+            seen_names.insert(name.to_string());
+        }
+        match package
+            .get("filesAnalyzed")
+            .and_then(serde_json::Value::as_bool)
+        {
+            Some(false) => {}
+            _ => return Err(release_evidence_invalid(CONTEXT, "filesAnalyzed")),
+        }
+        if require_release_evidence_string_value(package, "licenseDeclared", CONTEXT)?
+            .trim()
+            .is_empty()
+        {
+            return Err(release_evidence_invalid(CONTEXT, "licenseDeclared"));
+        }
+        validate_release_sbom_external_refs(package)?;
+    }
+
+    if !required_names.iter().all(|name| seen_names.contains(*name)) {
+        return Err(release_evidence_invalid(CONTEXT, "packages"));
+    }
+
+    Ok(())
+}
+
+fn validate_release_sbom_external_refs(
+    package: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    let external_refs = package
+        .get("externalRefs")
+        .and_then(serde_json::Value::as_array)
+        .filter(|external_refs| !external_refs.is_empty())
+        .ok_or_else(|| release_evidence_invalid("release SBOM", "externalRefs"))?;
+    let has_purl = external_refs.iter().any(|external_ref| {
+        let Some(external_ref) = external_ref.as_object() else {
+            return false;
+        };
+        external_ref
+            .get("referenceType")
+            .and_then(serde_json::Value::as_str)
+            == Some("purl")
+            && external_ref
+                .get("referenceLocator")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|locator| locator.starts_with("pkg:cargo/"))
+    });
+    if has_purl {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid("release SBOM", "externalRefs"))
+    }
+}
+
+fn release_sbom_report_contains_forbidden_marker(report: &str) -> bool {
+    [
+        "manifest_path",
+        "src_path",
+        "license_file",
+        "target/release",
+        "local-data",
+        "diagnostics.zip",
+        "model-cache",
+    ]
+    .iter()
+    .any(|marker| report.contains(marker))
+}
+
+fn require_release_evidence_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: &str,
+    context: &'static str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_str) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn require_release_evidence_string_value<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<&'a str> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| release_evidence_invalid(context, key))
+}
+
+fn require_release_evidence_array<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<&'a Vec<serde_json::Value>> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .filter(|values| !values.is_empty())
+        .ok_or_else(|| release_evidence_invalid(context, key))
+}
+
+fn require_release_evidence_array_contains_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: &str,
+    context: &'static str,
+) -> Result<()> {
+    let values = require_release_evidence_array(object, key, context)?;
+    if values.iter().any(|value| value.as_str() == Some(expected)) {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, key))
+    }
+}
+
+fn require_release_evidence_sha256(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<()> {
+    let is_sha256 = object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        });
+    if is_sha256 {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, key))
+    }
+}
+
+fn require_release_evidence_positive_u64(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_u64) {
+        Some(value) if value > 0 => Ok(()),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn validate_release_evidence_version(version: &str, context: &'static str) -> Result<()> {
+    let Some(raw_version) = version.strip_prefix('v') else {
+        return Err(release_evidence_invalid(context, "version"));
+    };
+    let parts = raw_version.split('.').collect::<Vec<_>>();
+    if parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, "version"))
+    }
+}
+
+fn is_release_evidence_basename(file: &str) -> bool {
+    !file.trim().is_empty()
+        && file != "."
+        && file != ".."
+        && !file.contains('/')
+        && !file.contains('\\')
+        && !file.contains(':')
+}
+
+fn release_evidence_invalid(context: &'static str, key: &str) -> CliError {
+    CliError::user(format!("{context} blocked: {key} is invalid"))
 }
 
 fn read_release_readiness_evidence_report(path: &Path) -> Result<String> {
