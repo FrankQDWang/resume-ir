@@ -205,6 +205,163 @@ fn model_manifest_validate_rejects_unreviewed_license_without_path_or_payload_le
     let _ = fs::remove_file(&manifest_file);
 }
 
+#[cfg(unix)]
+#[test]
+fn model_preflight_json_reports_ready_embedding_runtime_without_path_or_payload_leak() {
+    let data_dir = temp_dir("model-preflight-ready-private-data");
+    let model_file = temp_file("model-preflight-ready-private-model");
+    let manifest_file = temp_file("model-preflight-ready-private-manifest");
+    let command = write_fixture_executable(
+        "fixture-model-preflight-embedding",
+        "#!/bin/sh\nprintf 'resume-ir-embedding-v1\\n0.1 0.2 0.3 0.4\\n'\n",
+    );
+    fs::write(&model_file, b"SYNTHETIC PREFLIGHT MODEL ARTIFACT\n").unwrap();
+    fs::write(
+        &manifest_file,
+        format!(
+            r#"{{
+  "schema_version": "resume-ir.model-manifest.v1",
+  "model_pack_id": "fixture-pack-preflight",
+  "models": [
+    {{
+      "id": "fixture-preflight-embedding-model",
+      "type": "embedding",
+      "dim": 4,
+      "format": "onnx",
+      "artifact": {{
+        "path": "{}",
+        "sha256": "59d0375390fbca113f4326678f67a60fae1526667e0688e395d0faa9e137e2c5"
+      }},
+      "license": {{
+        "id": "Apache-2.0",
+        "reviewed": true
+      }}
+    }}
+  ]
+}}"#,
+            json_path(&model_file)
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "model",
+            "preflight",
+            "--json",
+            "--manifest",
+            path_str(&manifest_file),
+            "--embedding-command",
+            path_str(&command),
+            "--model-id",
+            "fixture-preflight-embedding-model",
+            "--dimension",
+            "4",
+        ])
+        .output()
+        .expect("run model preflight");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"schema_version\": \"embedding-runtime-preflight.v1\""));
+    assert!(stdout.contains("\"runtime_status\": \"ready\""));
+    assert!(stdout.contains("\"model_manifest\": \"valid\""));
+    assert!(stdout.contains("\"embedding_command\": \"available\""));
+    assert!(stdout.contains("\"model_id\": \"fixture-preflight-embedding-model\""));
+    assert!(stdout.contains("\"dimension\": 4"));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(stdout.contains("\"remediation\": []"));
+    assert!(!stdout.contains("SYNTHETIC PREFLIGHT MODEL ARTIFACT"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&model_file)));
+    assert!(!stdout.contains(path_str(&manifest_file)));
+    assert!(!stdout.contains(path_str(&command)));
+
+    remove_dir(&data_dir);
+    let _ = fs::remove_file(&model_file);
+    let _ = fs::remove_file(&manifest_file);
+}
+
+#[test]
+fn model_preflight_json_blocks_missing_embedding_command_without_path_leak() {
+    let data_dir = temp_dir("model-preflight-missing-command-private-data");
+    let model_file = temp_file("model-preflight-missing-command-private-model");
+    let manifest_file = temp_file("model-preflight-missing-command-private-manifest");
+    let missing_command = temp_file("model-preflight-missing-command-private-bin");
+    fs::write(&model_file, b"SYNTHETIC PREFLIGHT MODEL ARTIFACT\n").unwrap();
+    fs::write(
+        &manifest_file,
+        format!(
+            r#"{{
+  "schema_version": "resume-ir.model-manifest.v1",
+  "model_pack_id": "fixture-pack-preflight",
+  "models": [
+    {{
+      "id": "fixture-preflight-embedding-model",
+      "type": "embedding",
+      "dim": 4,
+      "format": "onnx",
+      "artifact": {{
+        "path": "{}",
+        "sha256": "59d0375390fbca113f4326678f67a60fae1526667e0688e395d0faa9e137e2c5"
+      }},
+      "license": {{
+        "id": "Apache-2.0",
+        "reviewed": true
+      }}
+    }}
+  ]
+}}"#,
+            json_path(&model_file)
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "model",
+            "preflight",
+            "--json",
+            "--manifest",
+            path_str(&manifest_file),
+            "--embedding-command",
+            path_str(&missing_command),
+            "--model-id",
+            "fixture-preflight-embedding-model",
+            "--dimension",
+            "4",
+        ])
+        .output()
+        .expect("run missing model preflight");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("embedding runtime preflight blocked"));
+    assert!(stdout.contains("\"schema_version\": \"embedding-runtime-preflight.v1\""));
+    assert!(stdout.contains("\"runtime_status\": \"blocked\""));
+    assert!(stdout.contains("\"model_manifest\": \"valid\""));
+    assert!(stdout.contains("\"embedding_command\": \"missing\""));
+    assert!(stdout.contains("configure --embedding-command with a local executable"));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(!stdout.contains("SYNTHETIC PREFLIGHT MODEL ARTIFACT"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&model_file)));
+    assert!(!stdout.contains(path_str(&manifest_file)));
+    assert!(!stdout.contains(path_str(&missing_command)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&missing_command)));
+
+    remove_dir(&data_dir);
+    let _ = fs::remove_file(&model_file);
+    let _ = fs::remove_file(&manifest_file);
+}
+
 #[test]
 fn embed_worker_without_command_reports_blocked_without_path_leak() {
     let data_dir = temp_dir("embed-worker-no-command-data");

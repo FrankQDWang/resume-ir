@@ -100,6 +100,29 @@ The validator reads only local files, verifies artifact checksums, and blocks
 unreviewed licenses. It must not print local paths, runtime bytes, language pack
 bytes, or complete digests.
 
+## Embedding Runtime Preflight
+
+Canonical local command form:
+`resume-cli model preflight --json`.
+
+Before running embedding workers or semantic search, verify the reviewed model
+manifest and local embedding command without printing paths:
+
+```bash
+resume-cli --data-dir <local-data-dir> model preflight --json \
+  --manifest <local-model-manifest.json> \
+  --embedding-command <local-embedding-command> \
+  --model-id <reviewed-model-id> \
+  --dimension <dimension>
+```
+
+The JSON schema is `embedding-runtime-preflight.v1`. The command validates the
+model manifest checksum/license evidence, confirms that the requested embedding
+model id and dimension are present, and exits nonzero when the embedding command
+is missing or not executable. It must not execute a network API, download model
+weights, print command paths, print model bytes, print embedding vectors, or
+include model caches, indexes, or local data directories.
+
 ## Model Manifest Validation
 
 Canonical local command form:

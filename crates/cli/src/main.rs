@@ -1798,6 +1798,7 @@ fn model_command(args: &[String]) -> Result<()> {
     };
 
     match action {
+        "preflight" => model_preflight_command(&args[1..]),
         "validate-manifest" => model_validate_manifest_command(&args[1..]),
         _ => Err(CliError::usage(model_usage())),
     }
@@ -1948,6 +1949,161 @@ fn model_validate_manifest_command(args: &[String]) -> Result<()> {
     }
     println!("paths: <redacted>");
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ModelPreflightArgs {
+    manifest_path: PathBuf,
+    embedding_command: PathBuf,
+    model_id: String,
+    dimension: usize,
+}
+
+fn model_preflight_command(args: &[String]) -> Result<()> {
+    let preflight_args = parse_model_preflight_args(args)?;
+    let validation = validate_model_manifest(&preflight_args.manifest_path)?;
+    let model = validation
+        .models
+        .iter()
+        .find(|model| {
+            model.model_id == preflight_args.model_id
+                && model.model_type == "embedding"
+                && model.dimension == Some(preflight_args.dimension)
+        })
+        .ok_or_else(|| {
+            CliError::user(
+                "embedding runtime preflight blocked: reviewed embedding model is not present",
+            )
+        })?;
+    let command_available = is_executable_file(&preflight_args.embedding_command);
+    print_model_preflight_json(model, command_available);
+    if command_available {
+        Ok(())
+    } else {
+        Err(CliError::user(
+            "embedding runtime preflight blocked: dependencies are not ready",
+        ))
+    }
+}
+
+fn parse_model_preflight_args(args: &[String]) -> Result<ModelPreflightArgs> {
+    let mut json = false;
+    let mut manifest_path = None;
+    let mut embedding_command = None;
+    let mut model_id = None;
+    let mut dimension = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--json" => {
+                if json {
+                    return Err(CliError::usage(model_usage()));
+                }
+                json = true;
+                index += 1;
+            }
+            "--manifest" => {
+                if manifest_path.is_some() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(model_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                manifest_path = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--embedding-command" => {
+                if embedding_command.is_some() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(model_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                embedding_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--model-id" => {
+                if model_id.is_some() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(model_usage()));
+                };
+                if !valid_model_manifest_identifier(value) {
+                    return Err(CliError::usage(model_usage()));
+                }
+                model_id = Some(value.clone());
+                index += 2;
+            }
+            "--dimension" => {
+                if dimension.is_some() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(model_usage()));
+                };
+                dimension = Some(
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .ok_or_else(|| CliError::usage(model_usage()))?,
+                );
+                index += 2;
+            }
+            _ => return Err(CliError::usage(model_usage())),
+        }
+    }
+
+    if !json {
+        return Err(CliError::usage(model_usage()));
+    }
+
+    Ok(ModelPreflightArgs {
+        manifest_path: manifest_path.ok_or_else(|| CliError::usage(model_usage()))?,
+        embedding_command: embedding_command.ok_or_else(|| CliError::usage(model_usage()))?,
+        model_id: model_id.ok_or_else(|| CliError::usage(model_usage()))?,
+        dimension: dimension.ok_or_else(|| CliError::usage(model_usage()))?,
+    })
+}
+
+fn print_model_preflight_json(model: &ModelManifestModelValidation, command_available: bool) {
+    println!("{{");
+    println!("  \"schema_version\": \"embedding-runtime-preflight.v1\",");
+    println!(
+        "  \"runtime_status\": \"{}\",",
+        if command_available {
+            "ready"
+        } else {
+            "blocked"
+        }
+    );
+    println!("  \"runtime_boundary\": \"external_local_command\",");
+    println!("  \"paths\": \"<redacted>\",");
+    println!("  \"model_manifest\": \"valid\",");
+    println!(
+        "  \"embedding_command\": \"{}\",",
+        if command_available {
+            "available"
+        } else {
+            "missing"
+        }
+    );
+    println!("  \"model_id\": \"{}\",", model.model_id);
+    println!("  \"dimension\": {},", model.dimension.unwrap_or(0));
+    println!("  \"license_reviewed\": true,");
+    print!("  \"remediation\": [");
+    if !command_available {
+        print!("\"configure --embedding-command with a local executable\"");
+    }
+    println!("]");
+    println!("}}");
 }
 
 fn parse_model_validate_manifest_args(args: &[String]) -> Result<PathBuf> {
@@ -2161,7 +2317,7 @@ fn valid_model_manifest_identifier(value: &str) -> bool {
 }
 
 fn model_usage() -> &'static str {
-    "usage: resume-cli model validate-manifest --manifest <path>"
+    "usage: resume-cli model preflight --json --manifest <path> --embedding-command <path> --model-id <id> --dimension <n> | resume-cli model validate-manifest --manifest <path>"
 }
 
 fn ocr_validate_manifest_command(args: &[String]) -> Result<()> {

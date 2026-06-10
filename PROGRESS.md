@@ -152,6 +152,10 @@ production-ready scope source.
   local paths, OCR text, page images, Tesseract language dumps, diagnostics,
   runtime binaries, model files, signing material, notarization credentials, or
   model caches were committed or uploaded.
+  S295 added embedding runtime preflight and runbook guards only; no real resume
+  data, local paths, model bytes, embedding vectors, diagnostics, runtime
+  binaries, model files, signing material, notarization credentials, or model
+  caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1048,8 +1052,46 @@ obsolete preliminary files and checklists are not product scope.
 | S292 | Current-stage goal and PDF renderer license boundary pinned locally | Focused RED first failed because the runbook guard required the current-stage boundary in `GOAL.md` and the Poppler/PDFium runtime license decision in the dependency matrix, but those source docs did not contain the required text. After the update, `GOAL.md` states that the current stage requires reproducible benchmark baseline, observability, and local 10k validation flow, while P95/P99 reduction and 100k/1M validation move to the follow-up performance goal. The dependency matrix and technology stack now keep Poppler/pdftoppm as a user-installed external command boundary, mark PDFium as the future bundled renderer candidate, and keep MuPDF/Ghostscript as external/commercial-license evaluation options. | This slice is documentation and CI guardrail only. It does not bundle Poppler/PDFium/MuPDF/Ghostscript, perform legal review, change runtime code, run private corpus benchmarks, clear OCR/runtime/license blockers, or make stable release ready. |
 | S293 | Product installer lifecycle dry-run operator plans complete locally | Focused RED first failed because the macOS and Windows installer evidence guards required lifecycle operator scripts that did not exist. After implementation, `run-macos-installer-lifecycle.sh` validates unsigned macOS package manifests and emits `release.macos_installer_lifecycle_plan.v1` dry-run JSON covering install, upgrade, uninstall, rollback, LaunchAgent start, and LaunchAgent stop; `run-windows-installer-lifecycle.ps1` validates unsigned Windows MSI manifests and emits `release.windows_installer_lifecycle_plan.v1` dry-run JSON covering install, upgrade, repair, uninstall, and rollback. Release workflow and runbook guards now require these dry-run plan artifacts and check they do not leak local paths or runtime-data markers. | This slice adds operator dry-run automation only. It does not execute `installer`, `pkgutil`, `launchctl`, or `msiexec.exe`, perform real install/upgrade/uninstall/rollback, validate Windows services, prove rollback, obtain administrator approval, clear installer lifecycle blockers, or make stable release ready. |
 | S294 | Product OCR runtime preflight complete locally | Focused RED first failed because `resume-cli ocr preflight --json` was rejected, so operators had no dedicated fail-closed dependency preflight for the accepted external Tesseract/tessdata plus Poppler/pdftoppm runtime direction. After implementation, `ocr preflight --json` checks `pdftoppm`, `tesseract`, and the requested Tesseract language pack from `PATH` or explicit command paths, emits `ocr-runtime-preflight.v1` redacted JSON, exits nonzero with remediation when dependencies are missing or unknown, and suppresses local paths, OCR text, page images, and language dumps. The OCR worker runbook and guard now document this operator step. | This slice adds local dependency preflight only. It does not install runtimes, bundle Poppler/Tesseract/tessdata, approve OCR licenses, validate full non-English OCR quality, run private real-corpus OCR throughput gates, clear OCR runtime evidence blockers, or make stable release ready. |
+| S295 | Product embedding runtime preflight complete locally | Focused RED first failed because `resume-cli model preflight --json` was rejected, so operators had no dedicated fail-closed preflight that ties a reviewed model manifest to a local embedding command before semantic search or embedding workers. After implementation, `model preflight --json --manifest <path> --embedding-command <path> --model-id <id> --dimension <n>` validates model manifest checksum/license evidence, verifies the requested embedding model id and dimension, checks the local embedding command is executable, emits `embedding-runtime-preflight.v1` redacted JSON, exits nonzero with remediation when the command is missing, and suppresses local paths, model bytes, and vectors. The worker runbook and guard now document this operator step. | This slice adds local embedding runtime preflight only. It does not select or approve a production embedding model, bundle model weights, execute a real model quality gate, prove vector quality, clear model license/distribution blockers, or make stable release ready. |
 
 ## Command Log
+
+### S295
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s39_embedding_worker model_preflight --locked
+```
+
+Output summary:
+
+- The two new embedding runtime preflight tests failed before implementation
+  because `resume-cli model preflight --json` was not implemented.
+
+Focused verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s39_embedding_worker model_preflight --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s39_embedding_worker --locked
+./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- Filtered `model_preflight` tests: exit 0, 2 tests passed.
+- Full `s39_embedding_worker`: exit 0, 13 tests passed.
+- `check-runbooks.sh`: exit 0.
+- `cargo fmt --check`: exit 0.
+- `cargo clippy -p resume-cli --tests --locked -- -D warnings`: exit 0.
+- `check-release-readiness.sh`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0, `public repo guard passed`.
 
 ### S294
 
