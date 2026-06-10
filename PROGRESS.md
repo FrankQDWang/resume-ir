@@ -108,6 +108,10 @@ production-ready scope source.
   runtime manifest fixtures only; no real resume data, local paths, raw queries,
   real model files, OCR runtime binaries, generated private reports,
   diagnostics, or model caches were committed or uploaded.
+  S284 used synthetic/private-shaped benchmark baseline, release-readiness, and
+  OCR runtime manifest fixtures only; no real resume data, local paths, raw
+  queries, generated private benchmark reports, OCR runtime binaries, model
+  files, diagnostics, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -993,8 +997,67 @@ obsolete preliminary files and checklists are not product scope.
 | S281 | Product witness embedding and corpus preflight complete locally | Focused RED first failed because `resume-cli witness` rejected `--run-embedding` and `--probe-benchmark-corpus` as unknown witness flags. After implementation, witness can run a configured local embedding command inside its temporary private data directory, persist a temporary vector snapshot, emit redacted aggregate embedding counts and vector-indexed document coverage, run the shared benchmark corpus summary helper against the same temporary corpus, and still remove private witness data. A blocked-command regression proves `--run-embedding` without a command reports `local embedding command not configured`, keeps vector coverage at zero, runs the corpus probe, and does not persist metadata in the user-supplied data dir. | This slice adds a local redacted witness preflight for embedding/corpus coverage only. It does not run the actual private 500-query benchmark, OCR the scanned local corpus, approve or distribute a production embedding model, prove 100k/1M scale, validate platforms, or make stable release ready. |
 | S282 | Product private benchmark model-manifest binding complete locally | Focused RED first failed because `resume-benchmark gate --require-private-real-corpus` accepted a private benchmark report without any `model_manifest_sha256`, and `resume-benchmark private-query` could generate one without `--model-manifest-sha256`. After implementation, private-query requires the model-manifest digest, validates it as SHA-256, emits it in the redacted aggregate benchmark report, and the private real-corpus gate rejects reports missing the reviewed model binding. Release-readiness fixtures and the release blocker runbook now require the same digest. | This slice binds private latency evidence to a reviewed embedding model manifest only. It does not create or review the actual private query set, run the 500-query private benchmark, approve/distribute a production embedding model, prove vector quality, OCR the scanned corpus, validate 100k/1M scale, validate platforms, or make stable release ready. |
 | S283 | Product release-readiness model/OCR manifest evidence intake complete locally | Focused RED first failed because `resume-cli release-readiness --json` rejected `--model-manifest` and `--ocr-runtime-manifest`, so reviewed license/checksum manifests could not clear their corresponding evidence blockers. After implementation, release-readiness validates embedding model manifests with the existing checksum/license gate, requires at least one embedding model, validates OCR runtime manifests with the existing checksum/license gate, requires engine, renderer, and language-pack evidence, marks manifest evidence as `reviewed_local_manifest`, and rejects unreviewed manifests without local path or artifact leaks. The release blocker runbook and runbook guard now document the new evidence input surface. | This slice adds local license/distribution evidence intake only. It does not select or approve a real production embedding model or OCR runtime, commit model/runtime artifacts, prove vector quality, prove OCR throughput, validate installers/platforms, sign/notarize artifacts, or make stable release ready. |
+| S284 | Product current-goal benchmark/OCR runtime boundary aligned locally | After the user narrowed the current goal boundary, private-query benchmark reports now emit `target_claim: "benchmark_baseline_observed"` instead of self-claiming query-latency target success; strict benchmark gates still enforce any supplied P95 threshold, while release-readiness current-stage intake accepts redacted 8000-document/500-query hot-index baseline evidence with observed P50/P95/P99 metrics instead of blocking this goal on P95/P99 optimization. Release-readiness and runbooks now treat Tesseract/tessdata as the accepted Apache-2.0 external OCR runtime direction and Poppler/pdftoppm as a user-installed external renderer dependency that is not bundled by default, while still requiring reviewed checksums/licenses, dependency detection, and fail-closed guidance. | This slice aligns current-goal evidence semantics only. It does not run the actual private 500-query baseline, optimize P95/P99, approve/distribute an embedding model, bundle OCR/PDF renderer runtimes, complete installer lifecycle proof, sign/notarize artifacts, or make stable release ready. |
 
 ## Command Log
+
+### S284
+
+Design target:
+
+- Current goal requires reproducible benchmark baseline, observability metrics,
+  and local 10k-corpus validation workflow; P95/P99 latency reduction moves to
+  a follow-up performance-optimization goal.
+- OCR runtime direction is no longer unknown: Tesseract/tessdata is the
+  accepted Apache-2.0 external OCR runtime direction, and Poppler/pdftoppm is a
+  user-installed external PDF renderer dependency that is not bundled by
+  default.
+- Keep strict fail-closed boundaries: no private data in reports, no fake
+  latency target claims, no bundled GPL renderer assumption, and no stable
+  release claim while signing/notarization/installer/legal evidence remains
+  absent.
+
+Implementation summary:
+
+- `resume-benchmark private-query` reports `benchmark_baseline_observed` for
+  private real-corpus aggregate benchmark reports.
+- Private real-corpus benchmark gates still accept baseline reports only after
+  validating privacy shape, hot-index coverage, query samples, consistency, and
+  the caller's P95 threshold.
+- `resume-cli release-readiness` current-stage benchmark evidence intake
+  validates the 8000-document/500-query hot-index baseline but does not enforce
+  P95 <= 200ms.
+- Release-readiness OCR blocker text and runbook language now document the
+  accepted external Tesseract/tessdata plus Poppler/pdftoppm dependency
+  boundary.
+
+Acceptance:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner private_query_benchmark_outputs_redacted_gateable_report --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_outputs_redacted_gateable_report --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p benchmark-runner --locked
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p benchmark-runner -p resume-cli --tests --locked -- -D warnings
+```
+
+Output summary:
+
+- `resume-cli --test s161_release_readiness`: exit 0; 6 tests passed,
+  including high-P95 private benchmark baseline intake and reviewed manifest
+  evidence without local path leaks.
+- Focused private-query benchmark-runner and CLI tests: exit 0; generated
+  private real-corpus reports now use `benchmark_baseline_observed`.
+- Full `benchmark-runner`: exit 0; 2 unit tests, 37 CLI tests, 68 runner tests,
+  and doc tests passed.
+- `check-release-readiness.sh`: exit 0.
+- `check-runbooks.sh`: exit 0 after fixing the guard to treat
+  `Poppler \`pdftoppm\`` as literal text, not shell command substitution.
+- `cargo fmt --check`: exit 0.
+- Focused clippy for `benchmark-runner` and `resume-cli` tests: exit 0.
 
 ### S283
 

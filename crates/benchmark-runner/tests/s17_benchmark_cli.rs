@@ -209,7 +209,7 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
     assert!(stdout.contains(
         "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
     ));
-    assert!(stdout.contains("\"target_claim\":\"query_latency_target_met\""));
+    assert!(stdout.contains("\"target_claim\":\"benchmark_baseline_observed\""));
     assert!(stdout.contains("\"query_mode\":\"hybrid\""));
     assert!(stdout.contains("\"retrieval_layers\":\"fulltext+field+vector+rrf\""));
     assert!(stdout.contains("\"hot_index\":true"));

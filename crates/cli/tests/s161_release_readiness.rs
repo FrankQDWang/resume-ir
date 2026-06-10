@@ -45,7 +45,8 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("available private corpus"));
     assert!(stdout.contains("min-documents 8000"));
     assert!(stdout.contains("500 query samples"));
-    assert!(stdout.contains("external 100k/1M scale validation"));
+    assert!(stdout.contains("observed P50/P95/P99 metrics"));
+    assert!(stdout.contains("follow-up performance-optimization goal"));
     assert!(!stdout.contains("100k/1M real-corpus benchmarks: blocked"));
     assert!(!stdout.contains("--require-million-scale"));
     assert!(stdout.contains("field extraction quality: blocked"));
@@ -63,11 +64,13 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("min-pages 500"));
     assert!(stdout.contains("OCR p95 <= 1000ms"));
     assert!(stdout.contains("pages_per_second >= 1"));
-    assert!(stdout.contains("OCR engine license/distribution: blocked"));
+    assert!(stdout.contains("OCR runtime manifest/dependency evidence: blocked"));
     assert!(stdout.contains("reviewed OCR runtime manifest"));
-    assert!(stdout.contains("engine distribution license"));
-    assert!(stdout.contains("language-pack distribution license"));
-    assert!(stdout.contains("offline packaging evidence"));
+    assert!(stdout.contains("Tesseract/tessdata"));
+    assert!(stdout.contains("Apache-2.0"));
+    assert!(stdout.contains("Poppler/pdftoppm"));
+    assert!(stdout.contains("not bundled by default"));
+    assert!(stdout.contains("dependency detection"));
     assert!(stdout.contains("embedding model license/distribution: blocked"));
     assert!(stdout.contains("reviewed licensed embedding model"));
     assert!(stdout.contains("model manifest"));
@@ -131,7 +134,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(labels.contains(&"dedupe quality"));
     assert!(labels.contains(&"vector quality"));
     assert!(labels.contains(&"OCR throughput"));
-    assert!(labels.contains(&"OCR engine license/distribution"));
+    assert!(labels.contains(&"OCR runtime manifest/dependency evidence"));
     assert!(labels.contains(&"embedding model license/distribution"));
     assert!(labels.contains(&"cross-platform release validation"));
     assert!(labels.contains(&"hardware fault drills"));
@@ -156,7 +159,8 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(benchmark_detail.contains("available private corpus"));
     assert!(benchmark_detail.contains("min-documents 8000"));
     assert!(benchmark_detail.contains("500 query samples"));
-    assert!(benchmark_detail.contains("external 100k/1M scale validation"));
+    assert!(benchmark_detail.contains("observed P50/P95/P99 metrics"));
+    assert!(benchmark_detail.contains("follow-up performance-optimization goal"));
     assert!(!benchmark_detail.contains("--require-million-scale"));
 
     let signing_blocker = blockers
@@ -245,13 +249,15 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
 
     let ocr_license_blocker = blockers
         .iter()
-        .find(|blocker| blocker["label"] == "OCR engine license/distribution")
+        .find(|blocker| blocker["label"] == "OCR runtime manifest/dependency evidence")
         .expect("OCR license blocker");
     let ocr_license_detail = ocr_license_blocker["detail"].as_str().unwrap();
     assert!(ocr_license_detail.contains("reviewed OCR runtime manifest"));
-    assert!(ocr_license_detail.contains("engine distribution license"));
-    assert!(ocr_license_detail.contains("language-pack distribution license"));
-    assert!(ocr_license_detail.contains("offline packaging evidence"));
+    assert!(ocr_license_detail.contains("Tesseract/tessdata"));
+    assert!(ocr_license_detail.contains("Apache-2.0"));
+    assert!(ocr_license_detail.contains("Poppler/pdftoppm"));
+    assert!(ocr_license_detail.contains("not bundled by default"));
+    assert!(ocr_license_detail.contains("dependency detection"));
 
     let model_license_blocker = blockers
         .iter()
@@ -345,12 +351,12 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
     assert!(provided_labels.contains(&"vector quality"));
     assert!(provided_labels.contains(&"OCR throughput"));
     assert!(provided_labels.contains(&"embedding model license/distribution"));
-    assert!(provided_labels.contains(&"OCR engine license/distribution"));
+    assert!(provided_labels.contains(&"OCR runtime manifest/dependency evidence"));
     for evidence in provided {
         assert_eq!(evidence["status"], "provided");
         let label = evidence["label"].as_str().expect("provided label");
         let expected_boundary = match label {
-            "embedding model license/distribution" | "OCR engine license/distribution" => {
+            "embedding model license/distribution" | "OCR runtime manifest/dependency evidence" => {
                 "reviewed_local_manifest"
             }
             _ => "redacted_local_aggregate",
@@ -369,7 +375,7 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
     assert!(!blocker_labels.contains(&"vector quality"));
     assert!(!blocker_labels.contains(&"OCR throughput"));
     assert!(!blocker_labels.contains(&"embedding model license/distribution"));
-    assert!(!blocker_labels.contains(&"OCR engine license/distribution"));
+    assert!(!blocker_labels.contains(&"OCR runtime manifest/dependency evidence"));
     assert!(blocker_labels.contains(&"signing certificates"));
     assert!(blocker_labels.contains(&"macOS notarization"));
     assert!(blocker_labels.contains(&"cross-platform release validation"));
@@ -672,15 +678,15 @@ fn private_real_benchmark_report() -> String {
         "\"query_count\":500,",
         "\"top_k\":10,",
         "\"build_ms\":1.0,",
-        "\"query_total_ms\":5000.0,",
-        "\"qps\":100.0,",
+        "\"query_total_ms\":600000.0,",
+        "\"qps\":0.833333,",
         "\"index_size_bytes\":1000,",
-        "\"query_latency_ms\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":150.0,\"max\":150.0},",
+        "\"query_latency_ms\":{\"samples\":500,\"min\":10.0,\"mean\":900.0,\"p50\":850.0,\"p95\":2500.0,\"p99\":4000.0,\"max\":5000.0},",
         "\"zero_result_queries\":0,",
         "\"total_hits\":100,",
         "\"million_scale_verified\":false,",
         "\"percentile_confidence\":\"sampled\",",
-        "\"target_claim\":\"query_latency_target_met\",",
+        "\"target_claim\":\"benchmark_baseline_observed\",",
         "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\",",
         "\"corpus_origin\":\"private_local\",",
         "\"privacy_boundary\":\"redacted_local_aggregate\",",

@@ -1019,7 +1019,7 @@ impl PrivateQueryBenchmarkReport {
                 "\"total_hits\":{},",
                 "\"million_scale_verified\":{},",
                 "\"percentile_confidence\":\"{}\",",
-                "\"target_claim\":\"query_latency_target_met\",",
+                "\"target_claim\":\"benchmark_baseline_observed\",",
                 "\"corpus_origin\":\"private_local\",",
                 "\"privacy_boundary\":\"redacted_local_aggregate\",",
                 "\"query_mode\":\"hybrid\",",
@@ -4119,9 +4119,12 @@ fn validate_private_real_benchmark_boundary(
     {
         return Err(private_real_boundary_error());
     }
-    if target_claim != "query_latency_target_met" {
+    if !matches!(
+        target_claim,
+        "benchmark_baseline_observed" | "query_latency_target_met"
+    ) {
         return Err(BenchmarkGateError::failed(
-            "private real-corpus benchmark requires query latency target claim",
+            "private real-corpus benchmark requires baseline or query latency target claim",
         ));
     }
     validate_private_real_hot_hybrid_evidence(report)?;

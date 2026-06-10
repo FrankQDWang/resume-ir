@@ -73,8 +73,14 @@ require_text "$release_runbook" 'query_mode: "hybrid"'
 require_text "$release_runbook" 'retrieval_layers:'
 require_text "$release_runbook" "hot_index: true"
 require_text "$release_runbook" "heavy-model-inference"
+require_text "$release_runbook" 'target_claim: "benchmark_baseline_observed"'
+require_text "$release_runbook" "follow-up performance"
 require_text "$release_runbook" "resume-cli --data-dir <local-data-dir> ocr validate-manifest"
 require_text "$release_runbook" "resume-cli --data-dir <local-data-dir> model validate-manifest"
+require_text "$release_runbook" "Tesseract plus tessdata"
+require_text "$release_runbook" "Apache-2.0 external OCR runtime"
+require_text "$release_runbook" 'Poppler `pdftoppm`'
+require_text "$release_runbook" "not bundled by default"
 require_text "$release_runbook" "--model-manifest local-model-manifest.json"
 require_text "$release_runbook" "--ocr-runtime-manifest local-ocr-runtime-manifest.json"
 require_text "$release_runbook" "reviewed_local_manifest"

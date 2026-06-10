@@ -110,7 +110,7 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
     assert!(json.contains(
         "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
     ));
-    assert!(json.contains("\"target_claim\":\"query_latency_target_met\""));
+    assert!(json.contains("\"target_claim\":\"benchmark_baseline_observed\""));
     assert!(json.contains("\"query_mode\":\"hybrid\""));
     assert!(json.contains("\"retrieval_layers\":\"fulltext+field+vector+rrf\""));
     assert!(json.contains("\"hot_index\":true"));

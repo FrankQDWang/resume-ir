@@ -132,7 +132,7 @@ const RELEASE_READINESS_FIELD_QUALITY_LABEL: &str = "field extraction quality";
 const RELEASE_READINESS_DEDUPE_QUALITY_LABEL: &str = "dedupe quality";
 const RELEASE_READINESS_VECTOR_QUALITY_LABEL: &str = "vector quality";
 const RELEASE_READINESS_OCR_THROUGHPUT_LABEL: &str = "OCR throughput";
-const RELEASE_READINESS_OCR_LICENSE_LABEL: &str = "OCR engine license/distribution";
+const RELEASE_READINESS_OCR_LICENSE_LABEL: &str = "OCR runtime manifest/dependency evidence";
 const RELEASE_READINESS_MODEL_LICENSE_LABEL: &str = "embedding model license/distribution";
 const RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS: usize = 8_000;
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
@@ -158,7 +158,7 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         RELEASE_READINESS_PERFORMANCE_LABEL,
-        "representative local private real-corpus hot-index hybrid performance evidence is not available; release evidence must cover the available private corpus with min-documents 8000 and at least 500 query samples, and external 100k/1M scale validation remains future scale evidence rather than a local prerequisite",
+        "reproducible local private real-corpus hot-index hybrid benchmark baseline is not available; current-stage evidence must cover the available private corpus with min-documents 8000, at least 500 query samples, and observed P50/P95/P99 metrics, while P95/P99 latency reduction and external 100k/1M scale validation move to a follow-up performance-optimization goal",
     ),
     (
         RELEASE_READINESS_FIELD_QUALITY_LABEL,
@@ -178,7 +178,7 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         RELEASE_READINESS_OCR_LICENSE_LABEL,
-        "reviewed OCR runtime manifest, engine distribution license, language-pack distribution license, and offline packaging evidence are not complete",
+        "Tesseract/tessdata is the accepted Apache-2.0 external OCR runtime direction, and Poppler/pdftoppm is an external renderer dependency that is not bundled by default; release evidence requires a reviewed OCR runtime manifest with checksums/licenses, dependency detection, and fail-closed operator guidance",
     ),
     (
         RELEASE_READINESS_MODEL_LICENSE_LABEL,
@@ -402,17 +402,20 @@ fn validate_release_readiness_evidence(
     let mut provided = Vec::new();
     if let Some(path) = &args.benchmark_report {
         let report = read_release_readiness_evidence_report(path)?;
-        let config =
-            BenchmarkGateConfig::new(RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS, 500, 200.0)
-                .with_max_zero_result_queries(0)
-                .require_private_real_corpus();
+        let config = BenchmarkGateConfig::new(
+            RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS,
+            500,
+            f64::INFINITY,
+        )
+        .with_max_zero_result_queries(0)
+        .require_private_real_corpus();
         evaluate_benchmark_gate_json(&report, config).map_err(|error| {
             release_readiness_evidence_error(RELEASE_READINESS_PERFORMANCE_LABEL, error)
         })?;
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_PERFORMANCE_LABEL,
             privacy_boundary: "redacted_local_aggregate",
-            detail: "private real-corpus hot-index hybrid benchmark report passed the local release gate",
+            detail: "private real-corpus hot-index hybrid benchmark baseline passed reproducibility and redaction checks",
         });
     }
     if let Some(path) = &args.field_quality_report {
@@ -498,7 +501,7 @@ fn validate_release_readiness_evidence(
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_OCR_LICENSE_LABEL,
             privacy_boundary: "reviewed_local_manifest",
-            detail: "reviewed OCR runtime manifest passed checksum and license validation",
+            detail: "reviewed external OCR runtime manifest passed checksum, license, and component coverage validation",
         });
     }
     Ok(provided)

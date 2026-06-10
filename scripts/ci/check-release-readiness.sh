@@ -89,11 +89,12 @@ require_text "$stdout_file" '"label": "macOS installer lifecycle"'
 require_text "$stdout_file" "signed pkg/dmg"
 require_text "$stdout_file" "install/upgrade/uninstall/rollback"
 require_text "$stdout_file" '"label": "private real-corpus performance evidence"'
-require_text "$stdout_file" "representative local private real-corpus hot-index hybrid performance evidence is not available"
+require_text "$stdout_file" "reproducible local private real-corpus hot-index hybrid benchmark baseline is not available"
 require_text "$stdout_file" "available private corpus"
 require_text "$stdout_file" "min-documents 8000"
 require_text "$stdout_file" "500 query samples"
-require_text "$stdout_file" "external 100k/1M scale validation"
+require_text "$stdout_file" "observed P50/P95/P99 metrics"
+require_text "$stdout_file" "follow-up performance-optimization goal"
 require_text "$stdout_file" '"label": "field extraction quality"'
 require_text "$stdout_file" "private business labeled field-quality evidence is not available"
 require_text "$stdout_file" "min-samples 1000"
@@ -113,11 +114,13 @@ require_text "$stdout_file" "private real-corpus OCR throughput evidence is not 
 require_text "$stdout_file" "min-pages 500"
 require_text "$stdout_file" "OCR p95 <= 1000ms"
 require_text "$stdout_file" "pages_per_second >= 1"
-require_text "$stdout_file" '"label": "OCR engine license/distribution"'
+require_text "$stdout_file" '"label": "OCR runtime manifest/dependency evidence"'
 require_text "$stdout_file" "reviewed OCR runtime manifest"
-require_text "$stdout_file" "engine distribution license"
-require_text "$stdout_file" "language-pack distribution license"
-require_text "$stdout_file" "offline packaging evidence"
+require_text "$stdout_file" "Tesseract/tessdata"
+require_text "$stdout_file" "Apache-2.0"
+require_text "$stdout_file" "Poppler/pdftoppm"
+require_text "$stdout_file" "not bundled by default"
+require_text "$stdout_file" "dependency detection"
 require_text "$stdout_file" '"label": "embedding model license/distribution"'
 require_text "$stdout_file" "reviewed licensed embedding model"
 require_text "$stdout_file" "model manifest"
