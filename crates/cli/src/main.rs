@@ -9034,7 +9034,16 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("    \"battery_mode\",");
     println!("    \"external_drive_disconnect\"");
     println!("  ],");
-    println!("  \"scope\": \"redacted skeleton; no raw resume text, paths, or queries included\"");
+    println!("  \"diagnostic_scope\": {{");
+    println!("    \"metadata\": \"aggregate_counts\",");
+    println!("    \"search_index\": \"state_and_snapshot_health\",");
+    println!("    \"vector_index\": \"state_backend_and_counts\",");
+    println!("    \"query_latency\": \"aggregate_observations\",");
+    println!("    \"runtime_dependencies\": \"presence_only\",");
+    println!("    \"fault_simulations\": \"available_cases_only\"");
+    println!("  }},");
+    println!("  \"evidence_level\": \"local_aggregate_only\",");
+    println!("  \"scope\": \"redacted local aggregate diagnostics; no raw resume text, paths, queries, tokens, or index segment contents included\"");
     println!("}}");
 
     Ok(())

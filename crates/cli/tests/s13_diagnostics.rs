@@ -92,7 +92,7 @@ fn doctor_handles_corrupt_index_snapshot_without_path_leak() {
 }
 
 #[test]
-fn export_diagnostics_redact_outputs_skeleton_without_paths() {
+fn export_diagnostics_redact_outputs_local_aggregate_evidence_without_paths() {
     let data_dir = temp_path("diagnostics-private-data");
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -117,6 +117,14 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
     assert!(stdout.contains("\"metadata_encryption\": \"sqlcipher\""));
     assert!(stdout.contains("\"ocr_cache_encryption\": \"sqlcipher\""));
     assert!(!stdout.contains("enable SQLCipher metadata encryption before production release"));
+    assert!(stdout.contains("\"evidence_level\": \"local_aggregate_only\""));
+    assert!(stdout.contains("\"diagnostic_scope\": {"));
+    assert!(stdout.contains("\"metadata\": \"aggregate_counts\""));
+    assert!(stdout.contains("\"search_index\": \"state_and_snapshot_health\""));
+    assert!(stdout.contains("\"vector_index\": \"state_backend_and_counts\""));
+    assert!(stdout.contains("\"query_latency\": \"aggregate_observations\""));
+    assert!(stdout.contains("\"runtime_dependencies\": \"presence_only\""));
+    assert!(stdout.contains("\"fault_simulations\": \"available_cases_only\""));
     assert!(stdout.contains("\"daemon_restart\""));
     assert!(stdout.contains("\"daemon_kill\""));
     assert!(stdout.contains("\"disk_space_low\""));
@@ -126,6 +134,9 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
     assert!(stdout.contains("\"model_checksum\""));
     assert!(stdout.contains("\"battery_mode\""));
     assert!(stdout.contains("\"external_drive_disconnect\""));
+    assert!(!stdout.contains("skeleton"));
+    assert!(!stdout.contains("fake"));
+    assert!(!stdout.contains("synthetic-only"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!data_dir
         .join("secrets")

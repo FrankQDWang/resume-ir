@@ -112,6 +112,10 @@ production-ready scope source.
   OCR runtime manifest fixtures only; no real resume data, local paths, raw
   queries, generated private benchmark reports, OCR runtime binaries, model
   files, diagnostics, or model caches were committed or uploaded.
+  S285 used synthetic diagnostic fixtures and temporary local data directories
+  only; no real resume data, local paths, raw queries, generated diagnostics,
+  index segment contents, runtime binaries, model files, or model caches were
+  committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -998,8 +1002,58 @@ obsolete preliminary files and checklists are not product scope.
 | S282 | Product private benchmark model-manifest binding complete locally | Focused RED first failed because `resume-benchmark gate --require-private-real-corpus` accepted a private benchmark report without any `model_manifest_sha256`, and `resume-benchmark private-query` could generate one without `--model-manifest-sha256`. After implementation, private-query requires the model-manifest digest, validates it as SHA-256, emits it in the redacted aggregate benchmark report, and the private real-corpus gate rejects reports missing the reviewed model binding. Release-readiness fixtures and the release blocker runbook now require the same digest. | This slice binds private latency evidence to a reviewed embedding model manifest only. It does not create or review the actual private query set, run the 500-query private benchmark, approve/distribute a production embedding model, prove vector quality, OCR the scanned corpus, validate 100k/1M scale, validate platforms, or make stable release ready. |
 | S283 | Product release-readiness model/OCR manifest evidence intake complete locally | Focused RED first failed because `resume-cli release-readiness --json` rejected `--model-manifest` and `--ocr-runtime-manifest`, so reviewed license/checksum manifests could not clear their corresponding evidence blockers. After implementation, release-readiness validates embedding model manifests with the existing checksum/license gate, requires at least one embedding model, validates OCR runtime manifests with the existing checksum/license gate, requires engine, renderer, and language-pack evidence, marks manifest evidence as `reviewed_local_manifest`, and rejects unreviewed manifests without local path or artifact leaks. The release blocker runbook and runbook guard now document the new evidence input surface. | This slice adds local license/distribution evidence intake only. It does not select or approve a real production embedding model or OCR runtime, commit model/runtime artifacts, prove vector quality, prove OCR throughput, validate installers/platforms, sign/notarize artifacts, or make stable release ready. |
 | S284 | Product current-goal benchmark/OCR runtime boundary aligned locally | After the user narrowed the current goal boundary, private-query benchmark reports now emit `target_claim: "benchmark_baseline_observed"` instead of self-claiming query-latency target success; strict benchmark gates still enforce any supplied P95 threshold, while release-readiness current-stage intake accepts redacted 8000-document/500-query hot-index baseline evidence with observed P50/P95/P99 metrics instead of blocking this goal on P95/P99 optimization. Release-readiness and runbooks now treat Tesseract/tessdata as the accepted Apache-2.0 external OCR runtime direction and Poppler/pdftoppm as a user-installed external renderer dependency that is not bundled by default, while still requiring reviewed checksums/licenses, dependency detection, and fail-closed guidance. | This slice aligns current-goal evidence semantics only. It does not run the actual private 500-query baseline, optimize P95/P99, approve/distribute an embedding model, bundle OCR/PDF renderer runtimes, complete installer lifecycle proof, sign/notarize artifacts, or make stable release ready. |
+| S285 | Product redacted diagnostics evidence semantics complete locally | Focused RED first failed because `resume-cli export-diagnostics --redact` still did not emit production diagnostic evidence fields and still described the output as a skeleton. After implementation, redacted diagnostics now expose a structured `diagnostic_scope`, `evidence_level: "local_aggregate_only"`, and a non-skeleton scope string that explicitly limits the output to aggregate local evidence without raw resume text, paths, queries, tokens, or index segment contents. The diagnostics runbook now documents this boundary, and early identity test names no longer describe the binaries as skeletons. | This slice fixes misleading diagnostic-output semantics only. It does not generate or upload diagnostic packages, read private resumes, clear release blockers, prove real 10k/100k/1M benchmarks, approve embedding/OCR artifacts, validate installers/platforms, sign/notarize artifacts, or make stable release ready. |
 
 ## Command Log
+
+### S285
+
+Design target:
+
+- `export-diagnostics --redact` must be a production local aggregate evidence
+  surface, not a skeleton placeholder and not a path/raw-data dump.
+- The command may report counts, health labels, runtime dependency presence,
+  aggregate query telemetry, and available fault-simulation cases, but must not
+  include raw resume text, paths, queries, tokens, model inputs, vectors, or
+  index segment contents.
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_local_aggregate_evidence_without_paths -- --exact
+```
+
+Output summary:
+
+- The focused test failed before implementation because the JSON output did not
+  contain `evidence_level: "local_aggregate_only"`.
+
+Implementation summary:
+
+- `resume-cli export-diagnostics --redact` now emits `diagnostic_scope`,
+  `evidence_level`, and a production local-aggregate scope description.
+- Diagnostics tests assert that the output does not contain `skeleton`, `fake`,
+  or `synthetic-only`.
+- The diagnostics runbook documents the local aggregate evidence boundary.
+- CLI and daemon identity tests were renamed to remove obsolete skeleton
+  wording from the active test surface.
+
+Acceptance:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s13_diagnostics export_diagnostics_redact_outputs_local_aggregate_evidence_without_paths -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test identity -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-daemon --test identity -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s13_diagnostics --locked
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- Focused red/green diagnostic test passed after implementation.
+- CLI identity and daemon identity tests passed.
+- Full `s13_diagnostics` passed: 15 tests, 0 failures.
+- Runbook check passed.
 
 ### S284
 

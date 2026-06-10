@@ -22,6 +22,12 @@ The canonical redacted diagnostic command is `resume-cli export-diagnostics --re
 Add `--data-dir <local-data-dir>` when inspecting a non-default local data
 directory.
 
+The output is local aggregate evidence only. It may report metadata counts,
+search/vector index state, query latency aggregates, runtime dependency
+presence, resource telemetry, and available fault-simulation cases. It must not
+include raw samples, paths, query text, index segment contents, model inputs, or
+resume text.
+
 ## Redaction Requirements
 
 The redacted diagnostic output must not include:
