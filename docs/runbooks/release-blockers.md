@@ -51,6 +51,8 @@ placeholder model claim to clear release evidence.
   OCR direction is not available
 - a reviewed licensed embedding model is not selected or distributed
 - Windows and macOS cross-platform validation are not complete
+- redacted diagnostics evidence from `export-diagnostics --redact` has not been
+  reviewed through release-readiness
 - hardware fault drills for actual ENOSPC, service-level daemon kill,
   battery-mode, and external-drive disconnect are not proven on release
   platforms
@@ -84,12 +86,13 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --vector-quality-report private-vector-quality.json \
   --ocr-throughput-report private-ocr-throughput.json \
   --model-manifest local-model-manifest.json \
-  --ocr-runtime-manifest local-ocr-runtime-manifest.json
+  --ocr-runtime-manifest local-ocr-runtime-manifest.json \
+  --diagnostics-report redacted-diagnostics.json
 ```
 
 Passing these local evidence inputs marks only the corresponding local evidence
-items as `provided_evidence`; aggregate reports are marked
-`redacted_local_aggregate`, and reviewed model/OCR manifests are marked
+items as `provided_evidence`; aggregate reports and redacted diagnostics evidence
+are marked `redacted_local_aggregate`, and reviewed model/OCR manifests are marked
 `reviewed_local_manifest`. The command must still fail closed while signing,
 notarization, installer lifecycle, cross-platform release validation, hardware
 fault-drill blockers, or any missing local evidence remain unresolved. Do not
@@ -97,6 +100,22 @@ upload or commit generated reports or manifests unless they have been separately
 reviewed to contain no raw resume text, filenames, local paths, queries, labels,
 sample IDs, document IDs, vectors, page images, secrets, diagnostics, indexes,
 model files, OCR runtime binaries, or model caches.
+
+Generate the diagnostics report from the same local data directory used for the
+current validation run:
+
+```bash
+resume-cli --data-dir <local-data-dir> export-diagnostics --redact \
+  > redacted-diagnostics.json
+resume-cli --data-dir <local-data-dir> release-readiness --json \
+  --diagnostics-report redacted-diagnostics.json
+```
+
+The release-readiness diagnostics intake validates only `diagnostics.v1`
+redacted local aggregate diagnostics: top-level `redacted: true`, redacted path,
+query, and resume-text sentinels, `evidence_level: "local_aggregate_only"`, and
+the expected aggregate diagnostic scope. It rejects reports with common local
+path or secret markers and never prints the report path or report body.
 
 Release dry-runs must also produce a blocked signing evidence manifest, not a
 fake signature result. The manifest schema is `release.signing_evidence.v1` and

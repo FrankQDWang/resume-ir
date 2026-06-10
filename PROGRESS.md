@@ -120,6 +120,10 @@ production-ready scope source.
   paths, generated benchmark reports, diagnostics, runtime binaries, model
   files, signing material, notarization credentials, or model caches were
   committed or uploaded.
+  S287 used synthetic diagnostic and release-readiness fixtures only; no real
+  resume data, local paths, raw queries, generated diagnostics, diagnostic
+  packages, runtime binaries, model files, signing material, notarization
+  credentials, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1008,8 +1012,80 @@ obsolete preliminary files and checklists are not product scope.
 | S284 | Product current-goal benchmark/OCR runtime boundary aligned locally | After the user narrowed the current goal boundary, private-query benchmark reports now emit `target_claim: "benchmark_baseline_observed"` instead of self-claiming query-latency target success; strict benchmark gates still enforce any supplied P95 threshold, while release-readiness current-stage intake accepts redacted 8000-document/500-query hot-index baseline evidence with observed P50/P95/P99 metrics instead of blocking this goal on P95/P99 optimization. Release-readiness and runbooks now treat Tesseract/tessdata as the accepted Apache-2.0 external OCR runtime direction and Poppler/pdftoppm as a user-installed external renderer dependency that is not bundled by default, while still requiring reviewed checksums/licenses, dependency detection, and fail-closed guidance. | This slice aligns current-goal evidence semantics only. It does not run the actual private 500-query baseline, optimize P95/P99, approve/distribute an embedding model, bundle OCR/PDF renderer runtimes, complete installer lifecycle proof, sign/notarize artifacts, or make stable release ready. |
 | S285 | Product redacted diagnostics evidence semantics complete locally | Focused RED first failed because `resume-cli export-diagnostics --redact` still did not emit production diagnostic evidence fields and still described the output as a skeleton. After implementation, redacted diagnostics now expose a structured `diagnostic_scope`, `evidence_level: "local_aggregate_only"`, and a non-skeleton scope string that explicitly limits the output to aggregate local evidence without raw resume text, paths, queries, tokens, or index segment contents. The diagnostics runbook now documents this boundary, and early identity test names no longer describe the binaries as skeletons. | This slice fixes misleading diagnostic-output semantics only. It does not generate or upload diagnostic packages, read private resumes, clear release blockers, prove real 10k/100k/1M benchmarks, approve embedding/OCR artifacts, validate installers/platforms, sign/notarize artifacts, or make stable release ready. |
 | S286 | Product current-stage boundary runbook guard complete locally | Focused RED first failed because `check-runbooks.sh` required the new current-stage boundary text and `release-blockers.md` did not contain it. After implementation, release and worker runbooks explicitly say this stage is a reproducible local 10k validation baseline with observable metrics, not P95/P99 optimization; Tesseract/tessdata is the preferred external OCR runtime, Poppler/pdftoppm is accepted only as a user-installed external renderer, PDFium is the future permissive bundled-renderer candidate, and signing/notarization are release-credential blockers handled through scripts, CI secret interfaces, fail-closed gates, and docs. | This slice clarifies and guards scope only. It does not run the actual private 10k benchmark, optimize latency, bundle Poppler/PDFium, approve an embedding model, complete installer lifecycle proof, obtain signing/notarization credentials, or make stable release ready. |
+| S287 | Product redacted diagnostics release-readiness intake complete locally | Focused RED first failed because `release-readiness --json --diagnostics-report <path>` produced no JSON output: the flag was unsupported. After implementation, release-readiness blocks by default on `redacted diagnostics evidence`, accepts a local `diagnostics.v1` report from `export-diagnostics --redact`, validates `redacted: true`, redacted path/query/resume-text sentinels, `evidence_level: "local_aggregate_only"`, aggregate diagnostic scope fields, and common private marker absence, then marks that evidence as `redacted_local_aggregate` without printing report paths or report bodies. Runbooks and CI guards now document and enforce the diagnostics evidence intake. | This slice connects redacted diagnostics to release-readiness evidence only. It does not generate real private diagnostics, upload diagnostics, clear benchmark/quality/OCR/model/platform/signing/notarization/hardware blockers, or make stable release ready. |
 
 ## Command Log
+
+### S287
+
+Design target:
+
+- Make `export-diagnostics --redact` a release-readiness evidence input instead
+  of a disconnected local command.
+- Default release-readiness must remain blocked until redacted diagnostics
+  evidence is provided.
+- The intake must validate the `diagnostics.v1` redaction/scope contract and
+  avoid printing report paths, report bodies, local paths, raw query text, or
+  resume text.
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_redacted_diagnostics_report_without_path_leaks --locked -- --exact
+```
+
+Output summary:
+
+- The focused test failed before implementation because stdout was empty and
+  could not be parsed as release-readiness JSON; `--diagnostics-report` was not
+  supported.
+
+Implementation summary:
+
+- `release-readiness` now has a `--diagnostics-report <path>` evidence input.
+- The default blocker list now includes `redacted diagnostics evidence`.
+- Diagnostics evidence validation checks `diagnostics.v1`, top-level redaction
+  sentinels, `local_aggregate_only`, aggregate diagnostic scope fields,
+  optional nested redacted path/query fields, and common private markers.
+- `docs/runbooks/release-blockers.md`,
+  `docs/runbooks/diagnostics-redaction.md`, `check-release-readiness.sh`, and
+  `check-runbooks.sh` now document and guard this evidence path.
+
+Acceptance:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_redacted_diagnostics_report_without_path_leaks --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+sh -n scripts/ci/check-runbooks.sh scripts/ci/check-release-readiness.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s13_diagnostics --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused RED/GREEN diagnostics release-readiness test: exit 0.
+- Full `s161_release_readiness`: exit 0; 7 tests passed.
+- `check-release-readiness.sh`: exit 0.
+- `check-runbooks.sh`: exit 0.
+- Shell syntax check for both CI scripts: exit 0.
+- `cargo fmt --check`: exit 0.
+- `s13_diagnostics`: exit 0; 15 tests passed.
+- Focused `resume-cli` clippy: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0 after the diagnostics private-marker check was
+  changed to runtime string composition so full secret/token shapes are not
+  committed.
+- `verify-local.sh`: exit 0; workspace tests and doc-tests, CLI/daemon
+  closed-loop checks, benchmark/OCR/vector gates, runbook/license/workflow/
+  release-readiness checks, release artifact/signing/notarization/SBOM checks,
+  macOS package/evidence checks, Windows evidence checks, and public repo guard
+  passed.
 
 ### S286
 

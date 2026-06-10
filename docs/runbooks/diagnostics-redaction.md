@@ -57,6 +57,22 @@ rg -n -i 'raw_resume_text|ipc.auth|token|PRIVATE KEY|ghp_|github_pat_|sk-|hf_' /
 The `rg` command must return no sensitive findings except expected redacted key
 names such as `"raw_resume_text": "<redacted>"`.
 
+## Release Readiness Evidence
+
+For a local release-readiness dry run, keep the generated report local and pass
+it into the release gate:
+
+```bash
+resume-cli --data-dir <local-data-dir> export-diagnostics --redact \
+  > redacted-diagnostics.json
+resume-cli --data-dir <local-data-dir> release-readiness --json \
+  --diagnostics-report redacted-diagnostics.json
+```
+
+This marks only the `redacted diagnostics evidence` item as provided. It does
+not clear signing, notarization, installer lifecycle, private benchmark,
+quality, OCR/model license, cross-platform, or hardware-drill blockers.
+
 ## Escalation
 
 Escalate as a privacy incident if redacted output contains complete paths,

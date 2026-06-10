@@ -134,6 +134,7 @@ const RELEASE_READINESS_VECTOR_QUALITY_LABEL: &str = "vector quality";
 const RELEASE_READINESS_OCR_THROUGHPUT_LABEL: &str = "OCR throughput";
 const RELEASE_READINESS_OCR_LICENSE_LABEL: &str = "OCR runtime manifest/dependency evidence";
 const RELEASE_READINESS_MODEL_LICENSE_LABEL: &str = "embedding model license/distribution";
+const RELEASE_READINESS_DIAGNOSTICS_LABEL: &str = "redacted diagnostics evidence";
 const RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS: usize = 8_000;
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     (
@@ -187,6 +188,10 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     (
         "cross-platform release validation",
         "Windows and macOS release platforms validation is not complete; release evidence requires fresh release artifacts, install/upgrade/uninstall, and service lifecycle proof",
+    ),
+    (
+        RELEASE_READINESS_DIAGNOSTICS_LABEL,
+        "redacted local aggregate diagnostics evidence is not available; release evidence requires export-diagnostics --redact output with diagnostics.v1 schema, local aggregate diagnostics scope, and redacted paths, queries, and resume text",
     ),
     (
         "hardware fault drills",
@@ -317,7 +322,7 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>]"
 }
 
 #[derive(Default)]
@@ -329,6 +334,7 @@ struct ReleaseReadinessEvidenceArgs {
     ocr_throughput_report: Option<PathBuf>,
     model_manifest: Option<PathBuf>,
     ocr_runtime_manifest: Option<PathBuf>,
+    diagnostics_report: Option<PathBuf>,
 }
 
 struct ReleaseReadinessArgs {
@@ -380,6 +386,10 @@ fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs>
             }
             "--ocr-runtime-manifest" => {
                 parsed.evidence.ocr_runtime_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--diagnostics-report" => {
+                parsed.evidence.diagnostics_report =
                     Some(take_release_readiness_path(args, &mut index)?);
             }
             _ => return Err(CliError::usage(release_readiness_usage())),
@@ -504,6 +514,17 @@ fn validate_release_readiness_evidence(
             detail: "reviewed external OCR runtime manifest passed checksum, license, and component coverage validation",
         });
     }
+    if let Some(path) = &args.diagnostics_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_release_readiness_diagnostics_report(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_DIAGNOSTICS_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_DIAGNOSTICS_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
+            detail: "diagnostics.v1 report passed local aggregate redaction and scope checks",
+        });
+    }
     Ok(provided)
 }
 
@@ -525,6 +546,102 @@ fn release_readiness_manifest_error(label: &'static str, error: CliError) -> Cli
     CliError::user(format!(
         "release readiness evidence failed validation: {label}: {error}"
     ))
+}
+
+fn validate_release_readiness_diagnostics_report(report: &str) -> Result<()> {
+    if release_readiness_diagnostics_report_contains_private_marker(report) {
+        return Err(CliError::user(
+            "diagnostics report blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("diagnostics report blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("diagnostics report blocked: expected JSON object"))?;
+
+    require_json_string(object, "schema_version", "diagnostics.v1")?;
+    require_json_bool(object, "redacted", true)?;
+    require_json_string(object, "raw_paths", "<redacted>")?;
+    require_json_string(object, "raw_queries", "<redacted>")?;
+    require_json_string(object, "raw_resume_text", "<redacted>")?;
+    require_json_string(object, "evidence_level", "local_aggregate_only")?;
+    require_optional_nested_redacted(object, "resource_telemetry", "paths")?;
+    require_optional_nested_redacted(object, "ocr_runtime", "paths")?;
+    require_optional_nested_redacted(object, "query_latency", "raw_queries")?;
+
+    let diagnostic_scope = object
+        .get("diagnostic_scope")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| CliError::user("diagnostics report blocked: diagnostic scope missing"))?;
+    for (key, expected) in [
+        ("metadata", "aggregate_counts"),
+        ("search_index", "state_and_snapshot_health"),
+        ("vector_index", "state_backend_and_counts"),
+        ("query_latency", "aggregate_observations"),
+        ("runtime_dependencies", "presence_only"),
+        ("fault_simulations", "available_cases_only"),
+    ] {
+        require_json_string(diagnostic_scope, key, expected)?;
+    }
+
+    Ok(())
+}
+
+fn require_json_bool(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: bool,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_bool) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(CliError::user(format!(
+            "diagnostics report blocked: {key} is invalid"
+        ))),
+    }
+}
+
+fn require_json_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: &str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_str) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(CliError::user(format!(
+            "diagnostics report blocked: {key} is invalid"
+        ))),
+    }
+}
+
+fn require_optional_nested_redacted(
+    object: &serde_json::Map<String, serde_json::Value>,
+    parent: &str,
+    key: &str,
+) -> Result<()> {
+    let Some(parent_value) = object.get(parent) else {
+        return Ok(());
+    };
+    let parent_object = parent_value.as_object().ok_or_else(|| {
+        CliError::user(format!("diagnostics report blocked: {parent} is invalid"))
+    })?;
+    require_json_string(parent_object, key, "<redacted>")
+}
+
+fn release_readiness_diagnostics_report_contains_private_marker(report: &str) -> bool {
+    let markers = [
+        ["/Users", "/"].concat(),
+        ["/home", "/"].concat(),
+        ["/private", "/"].concat(),
+        ["\\Users", "\\"].concat(),
+        [":", "\\"].concat(),
+        ["BEGIN ", "PRIVATE", " KEY"].concat(),
+        ["gh", "p_"].concat(),
+        ["github", "_pat_"].concat(),
+        ["s", "k-"].concat(),
+        ["h", "f_"].concat(),
+    ];
+    markers.iter().any(|marker| report.contains(marker))
 }
 
 fn validate_release_readiness_ocr_manifest_coverage(

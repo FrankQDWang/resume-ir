@@ -33,6 +33,9 @@ for file in "$diagnostics_runbook" "$fault_runbook" "$worker_runbook" "$release_
 done
 
 require_text "$diagnostics_runbook" "resume-cli export-diagnostics --redact"
+require_text "$diagnostics_runbook" "release-readiness --json"
+require_text "$diagnostics_runbook" "--diagnostics-report redacted-diagnostics.json"
+require_text "$diagnostics_runbook" "redacted diagnostics evidence"
 require_text "$diagnostics_runbook" "raw resume text"
 require_text "$diagnostics_runbook" "complete paths"
 require_text "$fault_runbook" "resume-cli fault-simulate --case disk-space-low"

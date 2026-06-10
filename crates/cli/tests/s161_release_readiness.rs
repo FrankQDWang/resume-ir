@@ -81,6 +81,10 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("fresh release artifacts"));
     assert!(stdout.contains("install/upgrade/uninstall"));
     assert!(stdout.contains("service lifecycle"));
+    assert!(stdout.contains("redacted diagnostics evidence: blocked"));
+    assert!(stdout.contains("export-diagnostics --redact"));
+    assert!(stdout.contains("diagnostics.v1"));
+    assert!(stdout.contains("local aggregate diagnostics"));
     assert!(stdout.contains("hardware fault drills: blocked"));
     assert!(stdout.contains("actual ENOSPC"));
     assert!(stdout.contains("service-level daemon kill"));
@@ -119,7 +123,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     );
 
     let blockers = report["blockers"].as_array().expect("blockers array");
-    assert_eq!(blockers.len(), 14);
+    assert_eq!(blockers.len(), 15);
     let labels = blockers
         .iter()
         .map(|blocker| blocker["label"].as_str().expect("blocker label"))
@@ -137,6 +141,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(labels.contains(&"OCR runtime manifest/dependency evidence"));
     assert!(labels.contains(&"embedding model license/distribution"));
     assert!(labels.contains(&"cross-platform release validation"));
+    assert!(labels.contains(&"redacted diagnostics evidence"));
     assert!(labels.contains(&"hardware fault drills"));
     for blocker in blockers {
         assert_eq!(blocker["status"], "blocked");
@@ -279,9 +284,77 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(platform_detail.contains("install/upgrade/uninstall"));
     assert!(platform_detail.contains("service lifecycle"));
 
+    let diagnostics_blocker = blockers
+        .iter()
+        .find(|blocker| blocker["label"] == "redacted diagnostics evidence")
+        .expect("redacted diagnostics blocker");
+    let diagnostics_detail = diagnostics_blocker["detail"].as_str().unwrap();
+    assert!(diagnostics_detail.contains("export-diagnostics --redact"));
+    assert!(diagnostics_detail.contains("diagnostics.v1"));
+    assert!(diagnostics_detail.contains("local aggregate diagnostics"));
+
     assert!(stderr.contains("release readiness blocked"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stderr.contains(path_str(&data_dir)));
+}
+
+#[test]
+fn release_readiness_json_accepts_redacted_diagnostics_report_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-diagnostics-private-data");
+    let evidence_dir = temp_path("release-readiness-diagnostics-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let diagnostics_report = evidence_dir.join("redacted-diagnostics.json");
+    fs::write(&diagnostics_report, redacted_diagnostics_report()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--diagnostics-report",
+            path_str(&diagnostics_report),
+        ])
+        .output()
+        .expect("run release readiness with redacted diagnostics report");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("release readiness diagnostics json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let diagnostics = provided
+        .iter()
+        .find(|evidence| evidence["label"] == "redacted diagnostics evidence")
+        .expect("redacted diagnostics evidence");
+    assert_eq!(diagnostics["status"], "provided");
+    assert_eq!(diagnostics["privacy_boundary"], "redacted_local_aggregate");
+    assert!(diagnostics["detail"]
+        .as_str()
+        .unwrap()
+        .contains("diagnostics.v1"));
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(!blocker_labels.contains(&"redacted diagnostics evidence"));
+    assert!(blocker_labels.contains(&"signing certificates"));
+    assert!(blocker_labels.contains(&"private real-corpus performance evidence"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stdout.contains("raw resume"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
 }
 
 #[test]
@@ -376,6 +449,7 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
     assert!(!blocker_labels.contains(&"OCR throughput"));
     assert!(!blocker_labels.contains(&"embedding model license/distribution"));
     assert!(!blocker_labels.contains(&"OCR runtime manifest/dependency evidence"));
+    assert!(blocker_labels.contains(&"redacted diagnostics evidence"));
     assert!(blocker_labels.contains(&"signing certificates"));
     assert!(blocker_labels.contains(&"macOS notarization"));
     assert!(blocker_labels.contains(&"cross-platform release validation"));
@@ -663,6 +737,35 @@ fn write_reviewed_ocr_manifest(ocr_engine: &Path, ocr_renderer: &Path, ocr_manif
         ),
     )
     .unwrap();
+}
+
+fn redacted_diagnostics_report() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"diagnostics.v1\",",
+        "\"redacted\":true,",
+        "\"raw_paths\":\"<redacted>\",",
+        "\"raw_queries\":\"<redacted>\",",
+        "\"raw_resume_text\":\"<redacted>\",",
+        "\"metadata\":{\"indexed_documents\":8720,\"searchable_documents\":8720,\"ocr_queue_depth\":0},",
+        "\"search_index_state\":\"available\",",
+        "\"vector_index_state\":\"available\",",
+        "\"query_latency\":{\"sample_count\":500,\"p50_ms\":120,\"p95_ms\":2400,\"p99_ms\":4000,\"raw_queries\":\"<redacted>\"},",
+        "\"resource_telemetry\":{\"paths\":\"<redacted>\"},",
+        "\"ocr_runtime\":{\"paths\":\"<redacted>\",\"pdftoppm\":\"available\",\"tesseract\":\"available\"},",
+        "\"diagnostic_scope\":{",
+        "\"metadata\":\"aggregate_counts\",",
+        "\"search_index\":\"state_and_snapshot_health\",",
+        "\"vector_index\":\"state_backend_and_counts\",",
+        "\"query_latency\":\"aggregate_observations\",",
+        "\"runtime_dependencies\":\"presence_only\",",
+        "\"fault_simulations\":\"available_cases_only\"",
+        "},",
+        "\"evidence_level\":\"local_aggregate_only\",",
+        "\"scope\":\"redacted local aggregate diagnostics; no raw resume text, paths, queries, tokens, or index segment contents included\"",
+        "}"
+    )
+    .to_string()
 }
 
 fn private_real_benchmark_report() -> String {
