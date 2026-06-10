@@ -128,6 +128,10 @@ production-ready scope source.
   real resume data, local paths, generated release artifacts, signing material,
   notarization credentials, installer logs, diagnostics, runtime binaries, model
   files, or model caches were committed or uploaded.
+  S289 changed runbook and CI text guards only; no real resume data, local
+  paths, generated benchmark reports, diagnostics, runtime binaries, model
+  files, Poppler binaries, signing material, notarization credentials, or model
+  caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1018,8 +1022,45 @@ obsolete preliminary files and checklists are not product scope.
 | S286 | Product current-stage boundary runbook guard complete locally | Focused RED first failed because `check-runbooks.sh` required the new current-stage boundary text and `release-blockers.md` did not contain it. After implementation, release and worker runbooks explicitly say this stage is a reproducible local 10k validation baseline with observable metrics, not P95/P99 optimization; Tesseract/tessdata is the preferred external OCR runtime, Poppler/pdftoppm is accepted only as a user-installed external renderer, PDFium is the future permissive bundled-renderer candidate, and signing/notarization are release-credential blockers handled through scripts, CI secret interfaces, fail-closed gates, and docs. | This slice clarifies and guards scope only. It does not run the actual private 10k benchmark, optimize latency, bundle Poppler/PDFium, approve an embedding model, complete installer lifecycle proof, obtain signing/notarization credentials, or make stable release ready. |
 | S287 | Product redacted diagnostics release-readiness intake complete locally | Focused RED first failed because `release-readiness --json --diagnostics-report <path>` produced no JSON output: the flag was unsupported. After implementation, release-readiness blocks by default on `redacted diagnostics evidence`, accepts a local `diagnostics.v1` report from `export-diagnostics --redact`, validates `redacted: true`, redacted path/query/resume-text sentinels, `evidence_level: "local_aggregate_only"`, aggregate diagnostic scope fields, and common private marker absence, then marks that evidence as `redacted_local_aggregate` without printing report paths or report bodies. Runbooks and CI guards now document and enforce the diagnostics evidence intake. | This slice connects redacted diagnostics to release-readiness evidence only. It does not generate real private diagnostics, upload diagnostics, clear benchmark/quality/OCR/model/platform/signing/notarization/hardware blockers, or make stable release ready. |
 | S288 | Product blocked release automation evidence intake complete locally | Focused RED first failed because `release-readiness --json` rejected blocked signing, notarization, macOS installer, Windows installer, and Windows service evidence manifests. After implementation, release-readiness accepts those five dry-run manifest flags, validates their schema, blocked status, expected evidence boundary, manifest digest, required evidence, blocked release steps, and blocked planned actions for installer/service manifests, then marks them as `blocked_release_evidence_manifest` automation evidence without printing manifest paths or bodies. The evidence labels are intentionally distinct from the real blocker labels, so signing certificates, macOS notarization, installer lifecycle, service lifecycle, and cross-platform release validation remain blocked. Runbooks and CI guards now prove this fail-closed behavior. | This slice connects existing dry-run automation manifests to release-readiness only. It does not sign artifacts, notarize artifacts, run macOS or Windows installers, register/start/stop services, validate cross-platform release artifacts, obtain credentials, clear release blockers, or make stable release ready. |
+| S289 | Current-stage runtime/license boundary clarified locally | Runbook guard was tightened first and failed because the OCR worker runbook did not explicitly state the Poppler subprocess/license boundary. After the runbook update, OCR runtime guidance now says the MIT project may call a user-installed Poppler `pdftoppm` command, must not bundle Poppler by default, and must record exact installed Poppler license/version/checksum/review status in local runtime or release evidence. | This slice is documentation and CI guardrail only. It does not bundle Poppler, perform legal review, change OCR runtime code, clear OCR runtime evidence blockers, run real private OCR, or make stable release ready. |
 
 ## Command Log
+
+### S289
+
+TDD red check:
+
+```bash
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- `check-runbooks.sh` failed before the runbook update because
+  `docs/runbooks/ocr-embedding-workers.md` lacked the required text
+  `MIT project may call a user-installed Poppler command`.
+
+Verification:
+
+```bash
+./scripts/ci/check-runbooks.sh
+sh -n scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `check-runbooks.sh`: exit 0.
+- `sh -n scripts/ci/check-runbooks.sh`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- `verify-local.sh`: exit 0; workspace tests, closed-loop checks, benchmark/
+  OCR/vector gates, license/runbook/workflow/release-readiness guards,
+  release artifact/SBOM checks, macOS package/installer evidence checks,
+  Windows package skip on non-Windows, Windows installer/service evidence
+  checks, and public repo guard all passed.
 
 ### S288
 

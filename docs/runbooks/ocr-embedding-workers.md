@@ -15,7 +15,25 @@ and distribution is approved.
 
 Tesseract/tessdata is the preferred external OCR runtime for the current stage.
 It is treated as a local command runtime with reviewed checksum and license
-evidence, not as an opaque bundled dependency. Poppler/pdftoppm is an accepted user-installed external PDF renderer and may be configured by command path, but it is not bundled by default.
+evidence, not as an opaque bundled dependency. Poppler/pdftoppm is an accepted
+user-installed external PDF renderer and may be configured by command path, but
+it is not bundled by default.
+
+## PDF Renderer License Boundary
+
+The MIT project may call a user-installed Poppler command such as `pdftoppm`
+through a local subprocess boundary. That does not make the repository's Rust
+code a Poppler distribution, and it keeps the default install path compatible
+with the current MIT public repository goal. Do not bundle Poppler/pdftoppm by
+default in product installers.
+
+If a future release bundles Poppler binaries, that release becomes a separate
+GPL-family distribution review item. The installer/release evidence must record
+the exact installed Poppler license from the selected distribution, include the
+required license/source-offer materials, and pass legal review before the
+release blocker can be cleared. Runtime manifests should record the exact
+installed Poppler license, version, artifact checksum, and reviewed status
+instead of assuming Poppler is MIT-licensed.
 
 This is no longer an unresolved runtime-choice blocker. Current engineering
 work is dependency detection, local manifest validation, checksum/license
