@@ -574,6 +574,26 @@ upgrade, uninstall, prove rollback, start/stop a LaunchAgent, or clear the macOS
 installer lifecycle blocker until administrator-elevated release-runner
 evidence exists.
 
+Generate the macOS installer lifecycle dry-run operator plan without executing
+installer commands:
+
+```bash
+scripts/release/run-macos-installer-lifecycle.sh \
+  --version v0.1.0 \
+  --macos-package-manifest release-dry-run/macos-package.json \
+  --out release-dry-run/macos-installer-lifecycle-dry-run.json \
+  --dry-run
+```
+
+The generated `macos-installer-lifecycle-dry-run.json` has schema
+`release.macos_installer_lifecycle_plan.v1`. It records only artifact
+filenames, the macOS package manifest digest, planned install, upgrade,
+uninstall, rollback, LaunchAgent start, and LaunchAgent stop actions, plus the
+commands that a release runner must execute later. It must not contain local
+paths, administrator passwords, installer logs, resume data, diagnostics,
+indexes, or model caches. It is an operator plan only and does not clear the
+macOS installer lifecycle blocker.
+
 On Windows only, generate an unsigned MSI dry-run artifact after release
 binaries have been built and the WiX .NET tool is installed:
 
@@ -610,6 +630,26 @@ This Windows installer evidence manifest is a fail-closed release evidence
 validator. It does not run `msiexec`, install, upgrade, repair, uninstall,
 prove rollback, or clear the Windows installer lifecycle blocker until
 administrator-elevated release-runner evidence exists.
+
+Generate the Windows installer lifecycle dry-run operator plan without
+executing MSI commands:
+
+```powershell
+scripts/release/run-windows-installer-lifecycle.ps1 `
+  -Version v0.1.0 `
+  -WindowsPackageManifest release-dry-run/windows-package.json `
+  -Out release-dry-run/windows-installer-lifecycle-dry-run.json `
+  -DryRun
+```
+
+The generated `windows-installer-lifecycle-dry-run.json` has schema
+`release.windows_installer_lifecycle_plan.v1`. It records only artifact
+filenames, the Windows package manifest digest, planned install, upgrade,
+repair, uninstall, and rollback actions, plus the `msiexec.exe` command that a
+release runner must execute later. It must not contain local paths,
+administrator passwords, installer logs, resume data, diagnostics, indexes, or
+model caches. It is an operator plan only and does not clear the Windows
+installer lifecycle blocker.
 
 Generate local Windows Service dry-run evidence without registering a service:
 

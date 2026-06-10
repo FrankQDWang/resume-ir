@@ -29,17 +29,21 @@ reject_text() {
 }
 
 installer_script="scripts/release/create-macos-installer-evidence.sh"
+lifecycle_script="scripts/release/run-macos-installer-lifecycle.sh"
 verify_script="scripts/ci/verify-local.sh"
 workflow_guard="scripts/ci/check-workflows.sh"
 release_workflow=".github/workflows/release.yml"
 runbook="docs/runbooks/release-blockers.md"
 
-for file in "$installer_script" "$verify_script" "$workflow_guard" "$release_workflow" "$runbook"; do
+for file in "$installer_script" "$lifecycle_script" "$verify_script" "$workflow_guard" "$release_workflow" "$runbook"; do
   require_file "$file"
 done
 
 if [ ! -x "$installer_script" ]; then
   fail "macOS installer evidence script is not executable"
+fi
+if [ ! -x "$lifecycle_script" ]; then
+  fail "macOS installer lifecycle script is not executable"
 fi
 
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-macos-installer-evidence-check.XXXXXX")
@@ -121,6 +125,36 @@ reject_text "$manifest" "model-cache"
 reject_text "$manifest" "installer-token"
 reject_text "$manifest" "administrator-password"
 
+lifecycle_out="$out_dir/macos-installer-lifecycle-dry-run.json"
+"$lifecycle_script" \
+  --version v0.0.0 \
+  --macos-package-manifest "$package_manifest" \
+  --out "$lifecycle_out" \
+  --dry-run >/dev/null
+require_file "$lifecycle_out"
+require_text "$lifecycle_out" '"schema_version": "release.macos_installer_lifecycle_plan.v1"'
+require_text "$lifecycle_out" '"execution_mode": "dry_run"'
+require_text "$lifecycle_out" '"installer_lifecycle_status": "blocked"'
+require_text "$lifecycle_out" '"action": "install"'
+require_text "$lifecycle_out" '"action": "upgrade"'
+require_text "$lifecycle_out" '"action": "uninstall"'
+require_text "$lifecycle_out" '"action": "rollback"'
+require_text "$lifecycle_out" '"action": "launch-agent-start"'
+require_text "$lifecycle_out" '"action": "launch-agent-stop"'
+require_text "$lifecycle_out" '"command": "installer"'
+require_text "$lifecycle_out" '"command": "pkgutil"'
+require_text "$lifecycle_out" '"command": "launchctl"'
+require_text "$lifecycle_out" '"requires_approval": true'
+require_text "$lifecycle_out" '"admin_elevation": "required_not_observed"'
+reject_text "$lifecycle_out" "$tmpdir"
+reject_text "$lifecycle_out" "/Users/"
+reject_text "$lifecycle_out" "target/release"
+reject_text "$lifecycle_out" "local-data"
+reject_text "$lifecycle_out" "diagnostics"
+reject_text "$lifecycle_out" "model-cache"
+reject_text "$lifecycle_out" "installer-token"
+reject_text "$lifecycle_out" "administrator-password"
+
 if "$installer_script" --version 0.0.0 --macos-package-manifest "$package_manifest" --out-dir "$out_dir/invalid" >/dev/null 2>&1; then
   fail "macOS installer evidence script accepted an invalid version"
 fi
@@ -132,8 +166,12 @@ fi
 require_text "$verify_script" "./scripts/ci/check-macos-installer-evidence.sh"
 require_text "$workflow_guard" "check-macos-installer-evidence.sh"
 require_text "$release_workflow" "scripts/release/create-macos-installer-evidence.sh"
+require_text "$release_workflow" "scripts/release/run-macos-installer-lifecycle.sh"
 require_text "$release_workflow" "macos-installer-evidence.json"
+require_text "$release_workflow" "macos-installer-lifecycle-dry-run.json"
 require_text "$runbook" "create-macos-installer-evidence.sh"
+require_text "$runbook" "run-macos-installer-lifecycle.sh"
 require_text "$runbook" "release.macos_installer_evidence.v1"
+require_text "$runbook" "release.macos_installer_lifecycle_plan.v1"
 
 printf '%s\n' "macOS installer evidence check passed"

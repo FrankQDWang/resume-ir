@@ -29,18 +29,30 @@ reject_text() {
 }
 
 installer_script="scripts/release/create-windows-installer-evidence.sh"
+lifecycle_script="scripts/release/run-windows-installer-lifecycle.ps1"
 verify_script="scripts/ci/verify-local.sh"
 workflow_guard="scripts/ci/check-workflows.sh"
 release_workflow=".github/workflows/release.yml"
 runbook="docs/runbooks/release-blockers.md"
 
-for file in "$installer_script" "$verify_script" "$workflow_guard" "$release_workflow" "$runbook"; do
+for file in "$installer_script" "$lifecycle_script" "$verify_script" "$workflow_guard" "$release_workflow" "$runbook"; do
   require_file "$file"
 done
 
 if [ ! -x "$installer_script" ]; then
   fail "Windows installer evidence script is not executable"
 fi
+require_text "$lifecycle_script" 'schema_version = "release.windows_installer_lifecycle_plan.v1"'
+require_text "$lifecycle_script" 'execution_mode = "dry_run"'
+require_text "$lifecycle_script" 'installer_lifecycle_status = "blocked"'
+require_text "$lifecycle_script" 'msiexec.exe'
+require_text "$lifecycle_script" 'install'
+require_text "$lifecycle_script" 'upgrade'
+require_text "$lifecycle_script" 'repair'
+require_text "$lifecycle_script" 'uninstall'
+require_text "$lifecycle_script" 'rollback'
+require_text "$lifecycle_script" 'requires_approval = $true'
+require_text "$lifecycle_script" 'admin_elevation = "required_not_observed"'
 
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-windows-installer-evidence-check.XXXXXX")
 trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
@@ -121,8 +133,12 @@ fi
 require_text "$verify_script" "./scripts/ci/check-windows-installer-evidence.sh"
 require_text "$workflow_guard" "check-windows-installer-evidence.sh"
 require_text "$release_workflow" "scripts/release/create-windows-installer-evidence.sh"
+require_text "$release_workflow" "scripts/release/run-windows-installer-lifecycle.ps1"
 require_text "$release_workflow" "windows-installer-evidence.json"
+require_text "$release_workflow" "windows-installer-lifecycle-dry-run.json"
 require_text "$runbook" "create-windows-installer-evidence.sh"
+require_text "$runbook" "run-windows-installer-lifecycle.ps1"
 require_text "$runbook" "release.windows_installer_evidence.v1"
+require_text "$runbook" "release.windows_installer_lifecycle_plan.v1"
 
 printf '%s\n' "Windows installer evidence check passed"
