@@ -11,6 +11,24 @@ The product does not bundle a licensed OCR engine or embedding model yet. Those
 remain BLOCKED until OCR runtime, model, and language-pack licenses are reviewed
 and distribution is approved.
 
+## External runtime decision
+
+Tesseract/tessdata is the preferred external OCR runtime for the current stage.
+It is treated as a local command runtime with reviewed checksum and license
+evidence, not as an opaque bundled dependency. Poppler/pdftoppm is an accepted user-installed external PDF renderer and may be configured by command path, but it is not bundled by default.
+
+This is no longer an unresolved runtime-choice blocker. Current engineering
+work is dependency detection, local manifest validation, checksum/license
+recording, fail-closed operator errors, and redacted diagnostics. If the
+operator does not have Tesseract, tessdata, or pdftoppm installed, commands
+should report the missing dependency and remediation without printing local
+paths, raw resume text, OCR text, page images, command stderr, model caches, or
+index contents.
+
+PDFium remains the preferred future permissive-license bundled renderer candidate if the product later needs an included PDF renderer. MuPDF and
+Ghostscript can be evaluated as external command adapters, but their
+AGPL/commercial license posture is not a better default for this MIT repository.
+
 ## OCR Runtime Manifest Validation
 
 Canonical local command form:

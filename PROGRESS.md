@@ -116,6 +116,10 @@ production-ready scope source.
   only; no real resume data, local paths, raw queries, generated diagnostics,
   index segment contents, runtime binaries, model files, or model caches were
   committed or uploaded.
+  S286 changed runbooks and CI text guards only; no real resume data, local
+  paths, generated benchmark reports, diagnostics, runtime binaries, model
+  files, signing material, notarization credentials, or model caches were
+  committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1003,8 +1007,66 @@ obsolete preliminary files and checklists are not product scope.
 | S283 | Product release-readiness model/OCR manifest evidence intake complete locally | Focused RED first failed because `resume-cli release-readiness --json` rejected `--model-manifest` and `--ocr-runtime-manifest`, so reviewed license/checksum manifests could not clear their corresponding evidence blockers. After implementation, release-readiness validates embedding model manifests with the existing checksum/license gate, requires at least one embedding model, validates OCR runtime manifests with the existing checksum/license gate, requires engine, renderer, and language-pack evidence, marks manifest evidence as `reviewed_local_manifest`, and rejects unreviewed manifests without local path or artifact leaks. The release blocker runbook and runbook guard now document the new evidence input surface. | This slice adds local license/distribution evidence intake only. It does not select or approve a real production embedding model or OCR runtime, commit model/runtime artifacts, prove vector quality, prove OCR throughput, validate installers/platforms, sign/notarize artifacts, or make stable release ready. |
 | S284 | Product current-goal benchmark/OCR runtime boundary aligned locally | After the user narrowed the current goal boundary, private-query benchmark reports now emit `target_claim: "benchmark_baseline_observed"` instead of self-claiming query-latency target success; strict benchmark gates still enforce any supplied P95 threshold, while release-readiness current-stage intake accepts redacted 8000-document/500-query hot-index baseline evidence with observed P50/P95/P99 metrics instead of blocking this goal on P95/P99 optimization. Release-readiness and runbooks now treat Tesseract/tessdata as the accepted Apache-2.0 external OCR runtime direction and Poppler/pdftoppm as a user-installed external renderer dependency that is not bundled by default, while still requiring reviewed checksums/licenses, dependency detection, and fail-closed guidance. | This slice aligns current-goal evidence semantics only. It does not run the actual private 500-query baseline, optimize P95/P99, approve/distribute an embedding model, bundle OCR/PDF renderer runtimes, complete installer lifecycle proof, sign/notarize artifacts, or make stable release ready. |
 | S285 | Product redacted diagnostics evidence semantics complete locally | Focused RED first failed because `resume-cli export-diagnostics --redact` still did not emit production diagnostic evidence fields and still described the output as a skeleton. After implementation, redacted diagnostics now expose a structured `diagnostic_scope`, `evidence_level: "local_aggregate_only"`, and a non-skeleton scope string that explicitly limits the output to aggregate local evidence without raw resume text, paths, queries, tokens, or index segment contents. The diagnostics runbook now documents this boundary, and early identity test names no longer describe the binaries as skeletons. | This slice fixes misleading diagnostic-output semantics only. It does not generate or upload diagnostic packages, read private resumes, clear release blockers, prove real 10k/100k/1M benchmarks, approve embedding/OCR artifacts, validate installers/platforms, sign/notarize artifacts, or make stable release ready. |
+| S286 | Product current-stage boundary runbook guard complete locally | Focused RED first failed because `check-runbooks.sh` required the new current-stage boundary text and `release-blockers.md` did not contain it. After implementation, release and worker runbooks explicitly say this stage is a reproducible local 10k validation baseline with observable metrics, not P95/P99 optimization; Tesseract/tessdata is the preferred external OCR runtime, Poppler/pdftoppm is accepted only as a user-installed external renderer, PDFium is the future permissive bundled-renderer candidate, and signing/notarization are release-credential blockers handled through scripts, CI secret interfaces, fail-closed gates, and docs. | This slice clarifies and guards scope only. It does not run the actual private 10k benchmark, optimize latency, bundle Poppler/PDFium, approve an embedding model, complete installer lifecycle proof, obtain signing/notarization credentials, or make stable release ready. |
 
 ## Command Log
+
+### S286
+
+Design target:
+
+- Make the current-stage boundary explicit and machine-checked: reproducible
+  local 10k baseline, observability metrics, and local validation workflow are
+  in scope; P95/P99 reduction and 100k/1M real-corpus validation move to the
+  follow-up performance-optimization goal.
+- Treat OCR runtime direction as chosen for this stage: Tesseract/tessdata as
+  external OCR runtime, Poppler/pdftoppm as user-installed external renderer,
+  and PDFium as the preferred future permissive-license bundled renderer
+  candidate.
+- Keep signing/notarization as release-credential blockers requiring scripts,
+  CI secret interfaces, fail-closed gates, and documentation only.
+
+TDD red check:
+
+```bash
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- The focused guard failed before implementation because
+  `docs/runbooks/release-blockers.md` was missing the required
+  `Current-stage boundary` text.
+
+Implementation summary:
+
+- `docs/runbooks/release-blockers.md` now contains the current-stage boundary,
+  signing/notarization credential boundary, embedding legal-blocker guidance,
+  and renderer license/distribution guidance.
+- `docs/runbooks/ocr-embedding-workers.md` now records the external OCR/runtime
+  decision and the PDF renderer tradeoff.
+- `scripts/ci/check-runbooks.sh` now requires the boundary and runtime decision
+  text so future edits cannot silently revert this scope.
+
+Acceptance:
+
+```bash
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-readiness.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- `check-runbooks.sh`: exit 0 after preserving required literal phrases on one
+  line for CI matching.
+- `check-release-readiness.sh`: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `sh -n scripts/ci/check-runbooks.sh`: exit 0.
+- `guard-public-repo.sh`: exit 0.
 
 ### S285
 

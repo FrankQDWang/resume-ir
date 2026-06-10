@@ -9,6 +9,30 @@ material. Synthetic fixtures are the only public reproduction input.
 This repository is not ready for stable release while any BLOCKED item below is
 unresolved.
 
+## Current-stage boundary
+
+The current goal is a reproducible local baseline, not final latency tuning.
+Completion evidence for this stage is a local 10k validation baseline over the
+available private corpus, observable aggregate metrics, and a repeatable
+operator workflow. P95/P99 reduction, stricter latency targets, and external
+100k/1M real-corpus validation belong to the deferred performance-optimization goal.
+
+OCR runtime selection is no longer an open product blocker for this stage:
+Tesseract/tessdata is the accepted external OCR engine direction, and
+Poppler/pdftoppm is accepted only as a user-installed external PDF renderer.
+The current-stage work is runtime manifests, checksum/license records,
+dependency detection, fail-closed errors, and runbooks.
+
+Signing and notarization are release-credential blockers. This repository must
+provide scripts, CI secret interfaces, fail-closed gates, and documentation, but
+real certificates, private keys, Apple Developer credentials, Windows signing
+credentials, and notarization credentials are human-provided release inputs.
+
+Embedding runtime work must use a real local offline runtime path with a model
+manifest, checksum, license record, and failure guidance. If a model weight
+license is not reviewed, mark the model as external/legal blocked; do not use a
+placeholder model claim to clear release evidence.
+
 ## Current BLOCKED Items
 
 - signing certificates are not available for production installers
@@ -224,7 +248,6 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   --json > private-benchmark-local.json
 ```
 
-```bash
 The strict gate below remains available for the follow-up performance
 optimization goal and should not be used as this goal's completion blocker:
 
@@ -615,6 +638,19 @@ renderer dependency, and the product must keep dependency detection plus
 fail-closed operator guidance in place. A valid manifest does not by itself
 complete non-English OCR quality validation, platform installer validation, or
 production OCR throughput proof.
+
+Poppler/pdftoppm is operationally strong and widely packaged, but its licensing
+and distribution review must stay separate from this MIT repository's default
+release artifacts. It is acceptable as an external command discovered on the
+operator's machine or explicitly configured by path. Do not bundle Poppler
+binaries into default installers until legal review approves the exact binary
+source, license notices, source-offer obligations, and installer composition.
+PDFium remains the preferred future permissive-license bundled renderer
+candidate if the product later needs an included PDF renderer. MuPDF and
+Ghostscript are viable external command alternatives in some deployments, but
+their AGPL/commercial licensing posture is not a better default for a permissive
+MIT distribution.
+
 After review, pass the same manifest to
 `resume-cli release-readiness --ocr-runtime-manifest
 <local-ocr-runtime-manifest.json>` so the release gate can validate checksum,
