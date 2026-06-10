@@ -157,6 +157,71 @@ reject_text "$stderr_file" "diagnostics.zip"
 reject_text "$stdout_file" "model-cache"
 reject_text "$stderr_file" "model-cache"
 
+signing_evidence="$tmpdir/signing-evidence.json"
+notarization_evidence="$tmpdir/notarization-evidence.json"
+macos_installer_evidence="$tmpdir/macos-installer-evidence.json"
+windows_installer_evidence="$tmpdir/windows-installer-evidence.json"
+windows_service_evidence="$tmpdir/windows-service-evidence.json"
+evidence_stdout_file="$tmpdir/evidence-stdout.txt"
+evidence_stderr_file="$tmpdir/evidence-stderr.txt"
+
+cat > "$signing_evidence" <<'JSON'
+{"schema_version":"release.signing_evidence.v1","version":"v0.0.0","signing_status":"blocked","evidence_boundary":"dry_run_no_signing_material","artifact_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","required_evidence":["certificate_chain"],"blocked_release_steps":["production_signing_certificates"]}
+JSON
+cat > "$notarization_evidence" <<'JSON'
+{"schema_version":"release.notarization_evidence.v1","version":"v0.0.0","notarization_status":"blocked","evidence_boundary":"dry_run_no_notarization_credentials","macos_package_manifest_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","required_evidence":["notarization_ticket"],"blocked_release_steps":["notarytool_submission"]}
+JSON
+cat > "$macos_installer_evidence" <<'JSON'
+{"schema_version":"release.macos_installer_evidence.v1","version":"v0.0.0","installer_lifecycle_status":"blocked","evidence_boundary":"dry_run_no_macos_installer_execution","macos_package_manifest_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","required_evidence":["installer_lifecycle_validation"],"blocked_release_steps":["macos_pkg_install"],"planned_actions":[{"action":"install","action_status":"blocked"}]}
+JSON
+cat > "$windows_installer_evidence" <<'JSON'
+{"schema_version":"release.windows_installer_evidence.v1","version":"v0.0.0","installer_lifecycle_status":"blocked","evidence_boundary":"dry_run_no_windows_installer_execution","windows_package_manifest_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","required_evidence":["installer_lifecycle_validation"],"blocked_release_steps":["windows_msi_install"],"planned_actions":[{"action":"install","action_status":"blocked"}]}
+JSON
+cat > "$windows_service_evidence" <<'JSON'
+{"schema_version":"release.windows_service_evidence.v1","version":"v0.0.0","service_lifecycle_status":"blocked","evidence_boundary":"dry_run_no_windows_service_registration","windows_package_manifest_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","required_evidence":["service_install_validation"],"blocked_release_steps":["windows_service_install"],"planned_actions":[{"action":"install","action_status":"blocked"}]}
+JSON
+
+set +e
+"$CARGO_BIN" run --quiet -p resume-cli --locked -- \
+  --data-dir "$data_dir" release-readiness --json \
+  --signing-evidence "$signing_evidence" \
+  --notarization-evidence "$notarization_evidence" \
+  --macos-installer-evidence "$macos_installer_evidence" \
+  --windows-installer-evidence "$windows_installer_evidence" \
+  --windows-service-evidence "$windows_service_evidence" \
+  > "$evidence_stdout_file" 2> "$evidence_stderr_file"
+evidence_status=$?
+set -e
+
+if [ "$evidence_status" -eq 0 ]; then
+  fail "release-readiness command unexpectedly accepted blocked automation evidence as a stable release"
+fi
+
+require_text "$evidence_stdout_file" '"label": "signing automation evidence"'
+require_text "$evidence_stdout_file" '"label": "notarization automation evidence"'
+require_text "$evidence_stdout_file" '"label": "macOS installer automation evidence"'
+require_text "$evidence_stdout_file" '"label": "Windows installer automation evidence"'
+require_text "$evidence_stdout_file" '"label": "Windows service automation evidence"'
+require_text "$evidence_stdout_file" '"privacy_boundary": "blocked_release_evidence_manifest"'
+require_text "$evidence_stdout_file" "blocked dry-run evidence passed schema and boundary checks"
+require_text "$evidence_stdout_file" '"label": "signing certificates"'
+require_text "$evidence_stdout_file" '"label": "macOS notarization"'
+require_text "$evidence_stdout_file" '"label": "macOS installer lifecycle"'
+require_text "$evidence_stdout_file" '"label": "Windows installer lifecycle"'
+require_text "$evidence_stdout_file" '"label": "Windows service lifecycle"'
+require_text "$evidence_stdout_file" '"label": "cross-platform release validation"'
+require_text "$evidence_stderr_file" "release readiness blocked: stable release criteria are not met"
+reject_text "$evidence_stdout_file" "$tmpdir"
+reject_text "$evidence_stderr_file" "$tmpdir"
+reject_text "$evidence_stdout_file" "PRIVATE-release-readiness-data"
+reject_text "$evidence_stderr_file" "PRIVATE-release-readiness-data"
+reject_text "$evidence_stdout_file" "/Users/"
+reject_text "$evidence_stderr_file" "/Users/"
+reject_text "$evidence_stdout_file" "resume-ir-v0.0.0"
+reject_text "$evidence_stderr_file" "resume-ir-v0.0.0"
+reject_text "$evidence_stdout_file" "local-data"
+reject_text "$evidence_stderr_file" "local-data"
+
 require_text "$verify_script" "./scripts/ci/check-release-readiness.sh"
 require_text "$workflow_guard" "check-release-readiness.sh"
 require_text "$release_workflow" "./scripts/ci/check-release-readiness.sh"
@@ -171,6 +236,14 @@ require_text "$runbook" "--dedupe-quality-report private-dedupe-quality.json"
 require_text "$runbook" "--vector-quality-report private-vector-quality.json"
 require_text "$runbook" "--ocr-throughput-report private-ocr-throughput.json"
 require_text "$runbook" "--diagnostics-report redacted-diagnostics.json"
+require_text "$runbook" "--signing-evidence signing-evidence.json"
+require_text "$runbook" "--notarization-evidence notarization-evidence.json"
+require_text "$runbook" "--macos-installer-evidence macos-installer-evidence.json"
+require_text "$runbook" "--windows-installer-evidence windows-installer-evidence.json"
+require_text "$runbook" "--windows-service-evidence windows-service-evidence.json"
+require_text "$runbook" "blocked_release_evidence_manifest"
+require_text "$runbook" "signing automation evidence"
+require_text "$runbook" "Windows service automation evidence"
 require_text "$runbook" "redacted diagnostics evidence"
 require_text "$runbook" "provided_evidence"
 require_text "$runbook" "hardware fault drills"

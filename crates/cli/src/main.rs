@@ -135,6 +135,14 @@ const RELEASE_READINESS_OCR_THROUGHPUT_LABEL: &str = "OCR throughput";
 const RELEASE_READINESS_OCR_LICENSE_LABEL: &str = "OCR runtime manifest/dependency evidence";
 const RELEASE_READINESS_MODEL_LICENSE_LABEL: &str = "embedding model license/distribution";
 const RELEASE_READINESS_DIAGNOSTICS_LABEL: &str = "redacted diagnostics evidence";
+const RELEASE_READINESS_SIGNING_AUTOMATION_LABEL: &str = "signing automation evidence";
+const RELEASE_READINESS_NOTARIZATION_AUTOMATION_LABEL: &str = "notarization automation evidence";
+const RELEASE_READINESS_MACOS_INSTALLER_AUTOMATION_LABEL: &str =
+    "macOS installer automation evidence";
+const RELEASE_READINESS_WINDOWS_INSTALLER_AUTOMATION_LABEL: &str =
+    "Windows installer automation evidence";
+const RELEASE_READINESS_WINDOWS_SERVICE_AUTOMATION_LABEL: &str =
+    "Windows service automation evidence";
 const RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS: usize = 8_000;
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     (
@@ -322,7 +330,7 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>]"
 }
 
 #[derive(Default)]
@@ -335,6 +343,11 @@ struct ReleaseReadinessEvidenceArgs {
     model_manifest: Option<PathBuf>,
     ocr_runtime_manifest: Option<PathBuf>,
     diagnostics_report: Option<PathBuf>,
+    signing_evidence: Option<PathBuf>,
+    notarization_evidence: Option<PathBuf>,
+    macos_installer_evidence: Option<PathBuf>,
+    windows_installer_evidence: Option<PathBuf>,
+    windows_service_evidence: Option<PathBuf>,
 }
 
 struct ReleaseReadinessArgs {
@@ -346,6 +359,15 @@ struct ReleaseReadinessProvidedEvidence {
     label: &'static str,
     privacy_boundary: &'static str,
     detail: &'static str,
+}
+
+struct ReleaseAutomationEvidenceSpec {
+    label: &'static str,
+    schema_version: &'static str,
+    status_key: &'static str,
+    evidence_boundary: &'static str,
+    digest_key: &'static str,
+    require_planned_actions: bool,
 }
 
 fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs> {
@@ -390,6 +412,26 @@ fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs>
             }
             "--diagnostics-report" => {
                 parsed.evidence.diagnostics_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--signing-evidence" => {
+                parsed.evidence.signing_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--notarization-evidence" => {
+                parsed.evidence.notarization_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--macos-installer-evidence" => {
+                parsed.evidence.macos_installer_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--windows-installer-evidence" => {
+                parsed.evidence.windows_installer_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--windows-service-evidence" => {
+                parsed.evidence.windows_service_evidence =
                     Some(take_release_readiness_path(args, &mut index)?);
             }
             _ => return Err(CliError::usage(release_readiness_usage())),
@@ -525,7 +567,134 @@ fn validate_release_readiness_evidence(
             detail: "diagnostics.v1 report passed local aggregate redaction and scope checks",
         });
     }
+    if let Some(path) = &args.signing_evidence {
+        validate_release_automation_evidence(path, &SIGNING_AUTOMATION_EVIDENCE_SPEC)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_SIGNING_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.signing_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.notarization_evidence {
+        validate_release_automation_evidence(path, &NOTARIZATION_AUTOMATION_EVIDENCE_SPEC)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_NOTARIZATION_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.notarization_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.macos_installer_evidence {
+        validate_release_automation_evidence(path, &MACOS_INSTALLER_AUTOMATION_EVIDENCE_SPEC)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_MACOS_INSTALLER_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.macos_installer_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.windows_installer_evidence {
+        validate_release_automation_evidence(path, &WINDOWS_INSTALLER_AUTOMATION_EVIDENCE_SPEC)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_WINDOWS_INSTALLER_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.windows_installer_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.windows_service_evidence {
+        validate_release_automation_evidence(path, &WINDOWS_SERVICE_AUTOMATION_EVIDENCE_SPEC)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_WINDOWS_SERVICE_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.windows_service_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
     Ok(provided)
+}
+
+const SIGNING_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
+    ReleaseAutomationEvidenceSpec {
+        label: RELEASE_READINESS_SIGNING_AUTOMATION_LABEL,
+        schema_version: "release.signing_evidence.v1",
+        status_key: "signing_status",
+        evidence_boundary: "dry_run_no_signing_material",
+        digest_key: "artifact_manifest_sha256",
+        require_planned_actions: false,
+    };
+
+const NOTARIZATION_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
+    ReleaseAutomationEvidenceSpec {
+        label: RELEASE_READINESS_NOTARIZATION_AUTOMATION_LABEL,
+        schema_version: "release.notarization_evidence.v1",
+        status_key: "notarization_status",
+        evidence_boundary: "dry_run_no_notarization_credentials",
+        digest_key: "macos_package_manifest_sha256",
+        require_planned_actions: false,
+    };
+
+const MACOS_INSTALLER_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
+    ReleaseAutomationEvidenceSpec {
+        label: RELEASE_READINESS_MACOS_INSTALLER_AUTOMATION_LABEL,
+        schema_version: "release.macos_installer_evidence.v1",
+        status_key: "installer_lifecycle_status",
+        evidence_boundary: "dry_run_no_macos_installer_execution",
+        digest_key: "macos_package_manifest_sha256",
+        require_planned_actions: true,
+    };
+
+const WINDOWS_INSTALLER_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
+    ReleaseAutomationEvidenceSpec {
+        label: RELEASE_READINESS_WINDOWS_INSTALLER_AUTOMATION_LABEL,
+        schema_version: "release.windows_installer_evidence.v1",
+        status_key: "installer_lifecycle_status",
+        evidence_boundary: "dry_run_no_windows_installer_execution",
+        digest_key: "windows_package_manifest_sha256",
+        require_planned_actions: true,
+    };
+
+const WINDOWS_SERVICE_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
+    ReleaseAutomationEvidenceSpec {
+        label: RELEASE_READINESS_WINDOWS_SERVICE_AUTOMATION_LABEL,
+        schema_version: "release.windows_service_evidence.v1",
+        status_key: "service_lifecycle_status",
+        evidence_boundary: "dry_run_no_windows_service_registration",
+        digest_key: "windows_package_manifest_sha256",
+        require_planned_actions: true,
+    };
+
+fn validate_release_automation_evidence(
+    path: &Path,
+    spec: &ReleaseAutomationEvidenceSpec,
+) -> Result<()> {
+    let report = read_release_readiness_evidence_report(path)?;
+    validate_release_automation_evidence_report(&report, spec)
+        .map_err(|error| release_readiness_manifest_error(spec.label, error))
+}
+
+fn validate_release_automation_evidence_report(
+    report: &str,
+    spec: &ReleaseAutomationEvidenceSpec,
+) -> Result<()> {
+    if release_readiness_diagnostics_report_contains_private_marker(report) {
+        return Err(CliError::user(
+            "release automation evidence blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("release automation evidence blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("release automation evidence blocked: expected JSON object")
+    })?;
+
+    require_release_json_string(object, "schema_version", spec.schema_version)?;
+    require_release_json_string(object, spec.status_key, "blocked")?;
+    require_release_json_string(object, "evidence_boundary", spec.evidence_boundary)?;
+    require_release_json_sha256(object, spec.digest_key)?;
+    require_release_json_non_empty_array(object, "required_evidence")?;
+    require_release_json_non_empty_array(object, "blocked_release_steps")?;
+    if spec.require_planned_actions {
+        require_release_blocked_planned_actions(object)?;
+    }
+
+    Ok(())
 }
 
 fn read_release_readiness_evidence_report(path: &Path) -> Result<String> {
@@ -626,6 +795,74 @@ fn require_optional_nested_redacted(
         CliError::user(format!("diagnostics report blocked: {parent} is invalid"))
     })?;
     require_json_string(parent_object, key, "<redacted>")
+}
+
+fn require_release_json_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: &str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_str) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(CliError::user(format!(
+            "release automation evidence blocked: {key} is invalid"
+        ))),
+    }
+}
+
+fn require_release_json_sha256(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<()> {
+    let is_sha256 = object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        });
+    if is_sha256 {
+        Ok(())
+    } else {
+        Err(CliError::user(format!(
+            "release automation evidence blocked: {key} is invalid"
+        )))
+    }
+}
+
+fn require_release_json_non_empty_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_array) {
+        Some(values) if !values.is_empty() => Ok(()),
+        _ => Err(CliError::user(format!(
+            "release automation evidence blocked: {key} is invalid"
+        ))),
+    }
+}
+
+fn require_release_blocked_planned_actions(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    let actions = object
+        .get("planned_actions")
+        .and_then(serde_json::Value::as_array)
+        .filter(|actions| !actions.is_empty())
+        .ok_or_else(|| {
+            CliError::user("release automation evidence blocked: planned_actions is invalid")
+        })?;
+    for action in actions {
+        let Some(action_object) = action.as_object() else {
+            return Err(CliError::user(
+                "release automation evidence blocked: planned_actions is invalid",
+            ));
+        };
+        require_release_json_string(action_object, "action_status", "blocked")?;
+    }
+    Ok(())
 }
 
 fn release_readiness_diagnostics_report_contains_private_marker(report: &str) -> bool {

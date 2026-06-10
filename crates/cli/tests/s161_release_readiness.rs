@@ -358,6 +358,110 @@ fn release_readiness_json_accepts_redacted_diagnostics_report_without_path_leaks
 }
 
 #[test]
+fn release_readiness_json_accepts_blocked_release_automation_evidence_without_clearing_blockers() {
+    let data_dir = temp_path("release-readiness-release-evidence-private-data");
+    let evidence_dir = temp_path("release-readiness-release-evidence-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let signing_evidence = evidence_dir.join("signing-evidence.json");
+    let notarization_evidence = evidence_dir.join("notarization-evidence.json");
+    let macos_installer_evidence = evidence_dir.join("macos-installer-evidence.json");
+    let windows_installer_evidence = evidence_dir.join("windows-installer-evidence.json");
+    let windows_service_evidence = evidence_dir.join("windows-service-evidence.json");
+    fs::write(&signing_evidence, blocked_signing_evidence()).unwrap();
+    fs::write(&notarization_evidence, blocked_notarization_evidence()).unwrap();
+    fs::write(
+        &macos_installer_evidence,
+        blocked_macos_installer_evidence(),
+    )
+    .unwrap();
+    fs::write(
+        &windows_installer_evidence,
+        blocked_windows_installer_evidence(),
+    )
+    .unwrap();
+    fs::write(
+        &windows_service_evidence,
+        blocked_windows_service_evidence(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--signing-evidence",
+            path_str(&signing_evidence),
+            "--notarization-evidence",
+            path_str(&notarization_evidence),
+            "--macos-installer-evidence",
+            path_str(&macos_installer_evidence),
+            "--windows-installer-evidence",
+            path_str(&windows_installer_evidence),
+            "--windows-service-evidence",
+            path_str(&windows_service_evidence),
+        ])
+        .output()
+        .expect("run release readiness with blocked release automation evidence");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("release readiness automation evidence json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let provided_labels = provided
+        .iter()
+        .map(|evidence| evidence["label"].as_str().expect("provided label"))
+        .collect::<Vec<_>>();
+    assert!(provided_labels.contains(&"signing automation evidence"));
+    assert!(provided_labels.contains(&"notarization automation evidence"));
+    assert!(provided_labels.contains(&"macOS installer automation evidence"));
+    assert!(provided_labels.contains(&"Windows installer automation evidence"));
+    assert!(provided_labels.contains(&"Windows service automation evidence"));
+    for evidence in provided {
+        assert_eq!(evidence["status"], "provided");
+        assert_eq!(
+            evidence["privacy_boundary"],
+            "blocked_release_evidence_manifest"
+        );
+        assert!(evidence["detail"]
+            .as_str()
+            .expect("provided detail")
+            .contains("blocked dry-run evidence"));
+    }
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(blocker_labels.contains(&"signing certificates"));
+    assert!(blocker_labels.contains(&"macOS notarization"));
+    assert!(blocker_labels.contains(&"macOS installer lifecycle"));
+    assert!(blocker_labels.contains(&"Windows installer lifecycle"));
+    assert!(blocker_labels.contains(&"Windows service lifecycle"));
+    assert!(blocker_labels.contains(&"cross-platform release validation"));
+    assert!(blocker_labels.contains(&"redacted diagnostics evidence"));
+    assert!(!blocker_labels.contains(&"signing automation evidence"));
+    assert!(!blocker_labels.contains(&"notarization automation evidence"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stdout.contains("resume-ir-v0.0.0"));
+    assert!(!stderr.contains("resume-ir-v0.0.0"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers() {
     let data_dir = temp_path("release-readiness-evidence-private-data");
     let evidence_dir = temp_path("release-readiness-evidence-private-reports");
@@ -763,6 +867,99 @@ fn redacted_diagnostics_report() -> String {
         "},",
         "\"evidence_level\":\"local_aggregate_only\",",
         "\"scope\":\"redacted local aggregate diagnostics; no raw resume text, paths, queries, tokens, or index segment contents included\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn blocked_signing_evidence() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.signing_evidence.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"signing_status\":\"blocked\",",
+        "\"evidence_boundary\":\"dry_run_no_signing_material\",",
+        "\"artifact_manifest_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",",
+        "\"required_evidence\":[\"certificate_chain\",\"private_key_custody\",\"signature_verification_evidence\"],",
+        "\"blocked_release_steps\":[\"production_signing_certificates\",\"certificate_chain_review\",\"private_key_custody\",\"artifact_signature_verification\"],",
+        "\"prohibited_public_material\":[\"signing_private_key\",\"certificate_password\",\"signing_token\",\"local_paths\",\"raw_resume_data\"]",
+        "}"
+    )
+    .to_string()
+}
+
+fn blocked_notarization_evidence() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.notarization_evidence.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"notarization_status\":\"blocked\",",
+        "\"evidence_boundary\":\"dry_run_no_notarization_credentials\",",
+        "\"macos_package_manifest_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",",
+        "\"required_evidence\":[\"apple_developer_id_certificate\",\"notarytool_submission\",\"notarization_ticket\",\"stapled_ticket\",\"gatekeeper_validation\"],",
+        "\"blocked_release_steps\":[\"apple_developer_id_certificate\",\"notarytool_submission\",\"notarization_ticket_stapling\",\"spctl_gatekeeper_validation\"],",
+        "\"prohibited_public_material\":[\"notary_credentials\",\"notary_password\",\"notary_api_secret\",\"local_paths\",\"raw_resume_data\"]",
+        "}"
+    )
+    .to_string()
+}
+
+fn blocked_macos_installer_evidence() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.macos_installer_evidence.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"installer_lifecycle_status\":\"blocked\",",
+        "\"evidence_boundary\":\"dry_run_no_macos_installer_execution\",",
+        "\"macos_package_manifest_sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",",
+        "\"admin_elevation\":\"required_not_observed\",",
+        "\"installation_status\":\"not_installed\",",
+        "\"rollback_validation_status\":\"blocked\",",
+        "\"launch_agent_validation_status\":\"blocked\",",
+        "\"planned_actions\":[{\"action\":\"install\",\"action_status\":\"blocked\"},{\"action\":\"upgrade\",\"action_status\":\"blocked\"},{\"action\":\"uninstall\",\"action_status\":\"blocked\"},{\"action\":\"rollback\",\"action_status\":\"blocked\"},{\"action\":\"launch-agent-start\",\"action_status\":\"blocked\"},{\"action\":\"launch-agent-stop\",\"action_status\":\"blocked\"}],",
+        "\"required_evidence\":[\"administrator-elevated install transcript\",\"installer_lifecycle_validation\",\"upgrade_validation\",\"uninstall_validation\",\"rollback_validation\",\"launch_agent_start_validation\",\"launch_agent_stop_validation\"],",
+        "\"blocked_release_steps\":[\"macos_pkg_install\",\"macos_pkg_upgrade\",\"macos_pkg_uninstall\",\"macos_pkg_rollback\",\"macos_launch_agent_start\",\"macos_launch_agent_stop\"],",
+        "\"prohibited_public_material\":[\"installer_tokens\",\"administrator_passwords\",\"local_paths\",\"raw_installer_logs\",\"raw_resume_data\",\"diagnostic_packages\",\"model_artifact_caches\"]",
+        "}"
+    )
+    .to_string()
+}
+
+fn blocked_windows_installer_evidence() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.windows_installer_evidence.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"installer_lifecycle_status\":\"blocked\",",
+        "\"evidence_boundary\":\"dry_run_no_windows_installer_execution\",",
+        "\"windows_package_manifest_sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",",
+        "\"admin_elevation\":\"required_not_observed\",",
+        "\"installation_status\":\"not_installed\",",
+        "\"rollback_validation_status\":\"blocked\",",
+        "\"planned_actions\":[{\"action\":\"install\",\"action_status\":\"blocked\"},{\"action\":\"upgrade\",\"action_status\":\"blocked\"},{\"action\":\"repair\",\"action_status\":\"blocked\"},{\"action\":\"uninstall\",\"action_status\":\"blocked\"},{\"action\":\"rollback\",\"action_status\":\"blocked\"}],",
+        "\"required_evidence\":[\"administrator-elevated install transcript\",\"installer_lifecycle_validation\",\"upgrade_validation\",\"repair_validation\",\"uninstall_validation\",\"rollback_validation\"],",
+        "\"blocked_release_steps\":[\"windows_msi_install\",\"windows_msi_upgrade\",\"windows_msi_repair\",\"windows_msi_uninstall\",\"windows_msi_rollback\"],",
+        "\"prohibited_public_material\":[\"installer_tokens\",\"administrator_passwords\",\"local_paths\",\"raw_installer_logs\",\"raw_resume_data\",\"diagnostic_packages\",\"model_artifact_caches\"]",
+        "}"
+    )
+    .to_string()
+}
+
+fn blocked_windows_service_evidence() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.windows_service_evidence.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"service_lifecycle_status\":\"blocked\",",
+        "\"evidence_boundary\":\"dry_run_no_windows_service_registration\",",
+        "\"windows_package_manifest_sha256\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",",
+        "\"admin_elevation\":\"required_not_observed\",",
+        "\"registration_status\":\"not_registered\",",
+        "\"recovery_validation_status\":\"blocked\",",
+        "\"planned_actions\":[{\"action\":\"install\",\"action_status\":\"blocked\"},{\"action\":\"start\",\"action_status\":\"blocked\"},{\"action\":\"status\",\"action_status\":\"blocked\"},{\"action\":\"stop\",\"action_status\":\"blocked\"},{\"action\":\"uninstall\",\"action_status\":\"blocked\"},{\"action\":\"recovery\",\"action_status\":\"blocked\"}],",
+        "\"required_evidence\":[\"administrator-elevated install transcript\",\"service_install_validation\",\"service_start_validation\",\"service_status_validation\",\"service_stop_validation\",\"service_uninstall_validation\",\"service_recovery_validation\"],",
+        "\"blocked_release_steps\":[\"windows_service_install\",\"windows_service_start\",\"windows_service_status\",\"windows_service_stop\",\"windows_service_uninstall\",\"windows_service_recovery\",\"windows_service_rollback\"],",
+        "\"prohibited_public_material\":[\"service_tokens\",\"administrator_passwords\",\"local_paths\",\"raw_service_logs\",\"raw_resume_data\",\"diagnostic_packages\",\"model_artifact_caches\"]",
         "}"
     )
     .to_string()

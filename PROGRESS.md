@@ -124,6 +124,10 @@ production-ready scope source.
   resume data, local paths, raw queries, generated diagnostics, diagnostic
   packages, runtime binaries, model files, signing material, notarization
   credentials, or model caches were committed or uploaded.
+  S288 used synthetic blocked release automation evidence fixtures only; no
+  real resume data, local paths, generated release artifacts, signing material,
+  notarization credentials, installer logs, diagnostics, runtime binaries, model
+  files, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1013,8 +1017,85 @@ obsolete preliminary files and checklists are not product scope.
 | S285 | Product redacted diagnostics evidence semantics complete locally | Focused RED first failed because `resume-cli export-diagnostics --redact` still did not emit production diagnostic evidence fields and still described the output as a skeleton. After implementation, redacted diagnostics now expose a structured `diagnostic_scope`, `evidence_level: "local_aggregate_only"`, and a non-skeleton scope string that explicitly limits the output to aggregate local evidence without raw resume text, paths, queries, tokens, or index segment contents. The diagnostics runbook now documents this boundary, and early identity test names no longer describe the binaries as skeletons. | This slice fixes misleading diagnostic-output semantics only. It does not generate or upload diagnostic packages, read private resumes, clear release blockers, prove real 10k/100k/1M benchmarks, approve embedding/OCR artifacts, validate installers/platforms, sign/notarize artifacts, or make stable release ready. |
 | S286 | Product current-stage boundary runbook guard complete locally | Focused RED first failed because `check-runbooks.sh` required the new current-stage boundary text and `release-blockers.md` did not contain it. After implementation, release and worker runbooks explicitly say this stage is a reproducible local 10k validation baseline with observable metrics, not P95/P99 optimization; Tesseract/tessdata is the preferred external OCR runtime, Poppler/pdftoppm is accepted only as a user-installed external renderer, PDFium is the future permissive bundled-renderer candidate, and signing/notarization are release-credential blockers handled through scripts, CI secret interfaces, fail-closed gates, and docs. | This slice clarifies and guards scope only. It does not run the actual private 10k benchmark, optimize latency, bundle Poppler/PDFium, approve an embedding model, complete installer lifecycle proof, obtain signing/notarization credentials, or make stable release ready. |
 | S287 | Product redacted diagnostics release-readiness intake complete locally | Focused RED first failed because `release-readiness --json --diagnostics-report <path>` produced no JSON output: the flag was unsupported. After implementation, release-readiness blocks by default on `redacted diagnostics evidence`, accepts a local `diagnostics.v1` report from `export-diagnostics --redact`, validates `redacted: true`, redacted path/query/resume-text sentinels, `evidence_level: "local_aggregate_only"`, aggregate diagnostic scope fields, and common private marker absence, then marks that evidence as `redacted_local_aggregate` without printing report paths or report bodies. Runbooks and CI guards now document and enforce the diagnostics evidence intake. | This slice connects redacted diagnostics to release-readiness evidence only. It does not generate real private diagnostics, upload diagnostics, clear benchmark/quality/OCR/model/platform/signing/notarization/hardware blockers, or make stable release ready. |
+| S288 | Product blocked release automation evidence intake complete locally | Focused RED first failed because `release-readiness --json` rejected blocked signing, notarization, macOS installer, Windows installer, and Windows service evidence manifests. After implementation, release-readiness accepts those five dry-run manifest flags, validates their schema, blocked status, expected evidence boundary, manifest digest, required evidence, blocked release steps, and blocked planned actions for installer/service manifests, then marks them as `blocked_release_evidence_manifest` automation evidence without printing manifest paths or bodies. The evidence labels are intentionally distinct from the real blocker labels, so signing certificates, macOS notarization, installer lifecycle, service lifecycle, and cross-platform release validation remain blocked. Runbooks and CI guards now prove this fail-closed behavior. | This slice connects existing dry-run automation manifests to release-readiness only. It does not sign artifacts, notarize artifacts, run macOS or Windows installers, register/start/stop services, validate cross-platform release artifacts, obtain credentials, clear release blockers, or make stable release ready. |
 
 ## Command Log
+
+### S288
+
+Design target:
+
+- Accept existing blocked signing, notarization, macOS installer, Windows
+  installer, and Windows service dry-run evidence manifests as release-readiness
+  inputs.
+- Treat them as automation evidence only, never as proof that real signing,
+  notarization, installer lifecycle, service lifecycle, or cross-platform
+  release blockers are cleared.
+- Keep output redacted: no local paths, manifest paths, manifest bodies,
+  artifact filenames, signing material, credentials, installer logs, diagnostics,
+  or model caches.
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_blocked_release_automation_evidence_without_clearing_blockers --locked -- --exact
+```
+
+Output summary:
+
+- The focused test failed before implementation because stdout was empty and
+  could not be parsed as release-readiness JSON; the new evidence flags were not
+  supported.
+
+Implementation summary:
+
+- `release-readiness` now accepts `--signing-evidence`,
+  `--notarization-evidence`, `--macos-installer-evidence`,
+  `--windows-installer-evidence`, and `--windows-service-evidence`.
+- Each manifest intake validates the expected `release.*_evidence.v1` schema,
+  blocked status, dry-run evidence boundary, lowercase sha256 manifest digest,
+  non-empty `required_evidence`, non-empty `blocked_release_steps`, and blocked
+  `planned_actions` for installer/service lifecycle evidence.
+- Provided automation labels are distinct from release blocker labels:
+  `signing automation evidence`, `notarization automation evidence`,
+  `macOS installer automation evidence`, `Windows installer automation evidence`,
+  and `Windows service automation evidence`.
+- `docs/runbooks/release-blockers.md` and
+  `scripts/ci/check-release-readiness.sh` now document and guard the fail-closed
+  behavior.
+
+Acceptance:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_blocked_release_automation_evidence_without_clearing_blockers --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+sh -n scripts/ci/check-release-readiness.sh scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused RED/GREEN blocked release automation evidence intake test: exit 0.
+- Full `s161_release_readiness`: exit 0; 8 tests passed.
+- `check-release-readiness.sh`: exit 0 and proved automation evidence does not
+  pass stable release or clear real release blockers.
+- `check-runbooks.sh`: exit 0.
+- Shell syntax check for both CI scripts: exit 0.
+- `cargo fmt --check`: exit 0.
+- Focused `resume-cli` clippy: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- `verify-local.sh`: exit 0; workspace tests and doc-tests, CLI/daemon
+  closed-loop checks, benchmark/OCR/vector gates, runbook/license/workflow/
+  release-readiness checks, release artifact/signing/notarization/SBOM checks,
+  macOS package/evidence checks, Windows evidence checks, and public repo guard
+  passed.
 
 ### S287
 
