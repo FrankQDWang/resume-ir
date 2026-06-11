@@ -53,12 +53,23 @@ SQLite data, diagnostics, or model/runtime caches. Operators may pass
 omitted, execute mode computes the digest from
 `<local-evidence-dir>/dataset-manifest.local.json`.
 
+If `--query-set <local-query-set.jsonl>` is omitted, execute mode drafts a
+local private query set after import/OCR/embedding work by running
+`resume-cli benchmark-query-set draft`. The generated JSONL schema is
+`resume-ir.query-set.jsonl.v1` and its privacy boundary is
+`local_only_private_query_set`. The query-set file may contain private query
+terms derived from high-confidence non-contact fields and must stay local under
+the evidence directory; stdout and the current-stage evidence manifest include
+only counts, basenames, and SHA-256 digests. The draft command excludes names,
+emails, phones, local paths, filenames, raw resume text, document IDs, and
+sample IDs derived from source data.
+
 ```bash
 scripts/local/run-current-stage-validation.sh --dry-run \
   --resume-root <private-local-root> \
   --data-dir <local-data-dir> \
   --out-dir <local-evidence-dir> \
-  --query-set <local-query-set.jsonl> \
+  [--query-set <local-query-set.jsonl>] \
   --model-manifest <local-model-manifest.json> \
   --ocr-runtime-manifest <local-ocr-runtime-manifest.json> \
   --model-artifact <local-model-artifact> \
@@ -110,7 +121,7 @@ scripts/local/run-current-stage-validation.sh --execute \
   --resume-root <private-local-root> \
   --data-dir <local-data-dir> \
   --out-dir <local-evidence-dir> \
-  --query-set <local-query-set.jsonl> \
+  [--query-set <local-query-set.jsonl>] \
   --model-manifest <local-model-manifest.json> \
   --ocr-runtime-manifest <local-ocr-runtime-manifest.json> \
   --model-artifact <local-model-artifact> \

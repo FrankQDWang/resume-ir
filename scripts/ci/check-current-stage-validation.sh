@@ -71,7 +71,6 @@ mkdir -p "$resume_root" "$data_dir" "$out_dir"
   --resume-root "$resume_root" \
   --data-dir "$data_dir" \
   --out-dir "$out_dir" \
-  --query-set "$query_set" \
   --model-manifest "$model_manifest" \
   --ocr-runtime-manifest "$ocr_manifest" \
   --model-artifact "$model_artifact" \
@@ -122,6 +121,7 @@ require_text "$plan" 'resume-cli --data-dir <local-data-dir> model draft-manifes
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> model preflight --json'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> model validate-manifest --manifest <local-model-manifest>'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> import --root <local-resume-root> --profile explicit --max-files 10000'
+require_text "$plan" 'resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries 500 --min-queries 500'
 require_text "$plan" 'resume-daemon --data-dir <local-data-dir> run --foreground --once --work-ocr-once'
 require_text "$plan" 'resume-daemon --data-dir <local-data-dir> run --foreground --once --work-embeddings-once'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> benchmark-corpus-summary --json > <local-evidence-dir>/benchmark-corpus-summary.local.json'
@@ -209,6 +209,12 @@ case "$cmd:$sub" in
     printf 'schema: resume-ir.dataset-manifest.v1\n'
     printf 'privacy boundary: local_only_redacted_dataset_manifest\n'
     ;;
+  benchmark-query-set:draft)
+    write_out_arg "$@"
+    printf 'query set: written\n'
+    printf 'schema: resume-ir.query-set.jsonl.v1\n'
+    printf 'privacy boundary: local_only_private_query_set\n'
+    ;;
   ocr:preflight)
     printf '{"schema_version":"ocr-runtime-preflight.v1","ready":true}\n'
     ;;
@@ -294,7 +300,6 @@ run_execute_smoke() {
     --resume-root "$execute_resume_root" \
     --data-dir "$execute_data_dir" \
     --out-dir "$execute_out_dir" \
-    --query-set "$execute_query_set" \
     --model-manifest "$execute_model_manifest" \
     --ocr-runtime-manifest "$execute_ocr_manifest" \
     --model-artifact "$execute_model_artifact" \
@@ -312,7 +317,6 @@ run_execute_smoke() {
     --engine-license Apache-2.0 \
     --renderer-license GPL-2.0-or-later \
     --language-license Apache-2.0 \
-    --query-set-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
     --model-manifest-sha256 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
     --max-files 10000 \
     --max-queries 500 \
@@ -343,10 +347,13 @@ require_text "$evidence_manifest" '"release_readiness_exit": 1'
 require_text "$evidence_manifest" '"stable_release_expected_blocked": true'
 expected_dataset_sha256=$(sha256_file "$execute_out_dir/dataset-manifest.local.json")
 require_text "$evidence_manifest" "\"dataset_manifest_sha256\": \"$expected_dataset_sha256\""
-require_text "$evidence_manifest" '"query_set_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"'
+expected_query_set_sha256=$(sha256_file "$execute_out_dir/private-query-set.local.jsonl")
+require_text "$evidence_manifest" "\"query_set_sha256\": \"$expected_query_set_sha256\""
 require_text "$evidence_manifest" '"model_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"'
 require_text "$evidence_manifest" '"dataset-manifest.local.json"'
 require_text "$evidence_manifest" '"dataset-manifest.stdout.txt"'
+require_text "$evidence_manifest" '"private-query-set.local.jsonl"'
+require_text "$evidence_manifest" '"query-set-draft.stdout.txt"'
 require_text "$evidence_manifest" '"benchmark-corpus-summary.local.json"'
 require_text "$evidence_manifest" '"private-benchmark-local.json"'
 require_text "$evidence_manifest" '"redacted-diagnostics.json"'
@@ -381,19 +388,24 @@ require_text "$script" "--execute"
 require_text "$script" "resume-ir.current-stage-validation-plan.v1"
 require_text "$script" "resume-ir.current-stage-validation-evidence.v1"
 require_text "$script" "resume-ir.dataset-manifest.v1"
+require_text "$script" "resume-ir.query-set.jsonl.v1"
 require_text "$script" "local_only_redacted_plan"
 require_text "$script" "local_only_redacted_evidence_manifest"
 require_text "$script" "local_only_redacted_dataset_manifest"
+require_text "$script" "local_only_private_query_set"
 require_text "$script" "performance_optimization_deferred"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"
 require_text "$runbook" "resume-ir.current-stage-validation-plan.v1"
 require_text "$runbook" "resume-ir.current-stage-validation-evidence.v1"
 require_text "$runbook" "resume-ir.dataset-manifest.v1"
+require_text "$runbook" "resume-ir.query-set.jsonl.v1"
 require_text "$runbook" "local_only_redacted_plan"
 require_text "$runbook" "local_only_redacted_evidence_manifest"
 require_text "$runbook" "local_only_redacted_dataset_manifest"
+require_text "$runbook" "local_only_private_query_set"
 require_text "$runbook" "privacy dataset-manifest"
+require_text "$runbook" "benchmark-query-set draft"
 require_text "$runbook" "--current-stage-evidence current-stage-validation-evidence.json"
 require_text "$runbook" "--max-p95-ms 86400000"
 require_text "$runbook" "performance_optimization_deferred"

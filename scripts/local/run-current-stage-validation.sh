@@ -4,7 +4,7 @@ set -eu
 usage() {
   cat >&2 <<'EOF'
 usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
-  --resume-root DIR --data-dir DIR --out-dir DIR --query-set FILE
+  --resume-root DIR --data-dir DIR --out-dir DIR [--query-set FILE]
   --model-manifest FILE --ocr-runtime-manifest FILE
   --model-artifact FILE --embedding-command FILE
   --model-pack-id ID --model-id ID --model-format ID --dimension N --model-license ID
@@ -280,7 +280,6 @@ done
 require_arg "--resume-root" "$resume_root"
 require_arg "--data-dir" "$data_dir"
 require_arg "--out-dir" "$out_dir"
-require_arg "--query-set" "$query_set"
 require_arg "--model-manifest" "$model_manifest"
 require_arg "--ocr-runtime-manifest" "$ocr_runtime_manifest"
 require_arg "--model-artifact" "$model_artifact"
@@ -392,6 +391,10 @@ if [ "$mode" = "dry-run" ]; then
       "command": "resume-cli --data-dir <local-data-dir> benchmark-corpus-summary --json > <local-evidence-dir>/benchmark-corpus-summary.local.json"
     },
     {
+      "id": "query_set_draft",
+      "command": "resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries $max_queries --min-queries $max_queries"
+    },
+    {
       "id": "private_query_baseline",
       "command": "resume-benchmark private-query --query-set <local-query-set> --command resume-cli --command-arg --data-dir --command-arg <local-data-dir> --command-arg benchmark-query-protocol --command-arg --embedding-command --command-arg <local-embedding-command> --command-arg --model-id --command-arg <reviewed-local-model-id> --command-arg --dimension --command-arg <dimension> --corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json --max-queries $max_queries --top-k $top_k --dataset-manifest-sha256 <dataset-manifest-sha256> --query-set-sha256 <query-set-sha256> --model-manifest-sha256 <model-manifest-sha256> --json > <local-evidence-dir>/private-benchmark-local.json"
     },
@@ -425,6 +428,7 @@ if [ "$mode" = "dry-run" ]; then
   "notes": [
     "Dry-run does not read the private resume root.",
     "Execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
+    "If --query-set is omitted, execute mode writes resume-ir.query-set.jsonl.v1 under <local-evidence-dir> with privacy boundary local_only_private_query_set, then uses its sha256 as the query-set digest.",
     "Execute mode keeps all evidence local under <local-evidence-dir>.",
     "The baseline shape gate deliberately uses --max-p95-ms 86400000; P95/P99 reduction is deferred.",
     "Release-readiness is expected to remain blocked while signing, notarization, platform installer, and other private quality evidence are missing."
@@ -436,9 +440,20 @@ fi
 
 [ "$mode" = "execute" ] || usage
 [ -d "$resume_root" ] || fail "resume root must exist and be a directory"
-[ -f "$query_set" ] || fail "query set must exist and stay local"
 mkdir -p "$data_dir" "$out_dir"
 dataset_manifest="$out_dir/dataset-manifest.local.json"
+query_set_generated="false"
+if [ -z "$query_set" ]; then
+  query_set="$out_dir/private-query-set.local.jsonl"
+  query_set_generated="true"
+else
+  [ -f "$query_set" ] || fail "query set must exist and stay local"
+  provided_query_set="$query_set"
+  query_set="$out_dir/private-query-set.local.jsonl"
+  if [ "$provided_query_set" != "$query_set" ]; then
+    cp "$provided_query_set" "$query_set" || fail "query set must stay local and readable"
+  fi
+fi
 
 ocr_reviewed_arg=""
 if [ "$reviewed_ocr_runtime" = "true" ]; then
@@ -514,9 +529,6 @@ printf '%s\n' "current-stage validation: model preflight"
   --dimension "$dimension" \
   > "$out_dir/model-preflight.json"
 
-if [ -z "$query_set_sha256" ]; then
-  query_set_sha256=$(sha256_file "$query_set")
-fi
 if [ -z "$model_manifest_sha256" ]; then
   model_manifest_sha256=$(sha256_file "$model_manifest")
 fi
@@ -557,6 +569,26 @@ printf '%s\n' "current-stage validation: bounded embedding worker"
 printf '%s\n' "current-stage validation: corpus summary"
 "$resume_cli" --data-dir "$data_dir" benchmark-corpus-summary --json \
   > "$out_dir/benchmark-corpus-summary.local.json"
+
+printf '%s\n' "current-stage validation: query set"
+if [ "$query_set_generated" = "true" ]; then
+  "$resume_cli" --data-dir "$data_dir" benchmark-query-set draft \
+    --out "$query_set" \
+    --max-queries "$max_queries" \
+    --min-queries "$max_queries" \
+    > "$out_dir/query-set-draft.stdout.txt"
+else
+  {
+    printf '%s\n' "query set: provided"
+    printf '%s\n' "schema: resume-ir.query-set.jsonl.v1"
+    printf '%s\n' "privacy boundary: local_only_private_query_set"
+    printf '%s\n' "queries: <redacted>"
+    printf '%s\n' "paths: <redacted>"
+  } > "$out_dir/query-set-draft.stdout.txt"
+fi
+if [ -z "$query_set_sha256" ]; then
+  query_set_sha256=$(sha256_file "$query_set")
+fi
 
 printf '%s\n' "current-stage validation: private query baseline"
 "$resume_benchmark" private-query \
@@ -634,6 +666,8 @@ import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
 ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
 embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
 corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
+query_set_output_sha256=$(sha256_file "$query_set")
+query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
 private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
 private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
 redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
@@ -676,6 +710,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
+    {"id": "query_set_draft", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "success"},
     {"id": "redacted_diagnostics", "status": "success"},
@@ -694,6 +729,8 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
+    {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
+    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},

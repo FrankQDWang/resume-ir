@@ -86,6 +86,7 @@ const OCR_LANGUAGE_REMEDIATION: &str =
 const METADATA_ENCRYPTION_REMEDIATION: &str =
     "enable SQLCipher metadata encryption before production release";
 const DATASET_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.dataset-manifest.v1";
+const QUERY_SET_SCHEMA_VERSION: &str = "resume-ir.query-set.jsonl.v1";
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const OCR_RUNTIME_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.ocr-runtime-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
@@ -127,7 +128,7 @@ const WITNESS_IMPORT_FAILURE_KINDS: &[ImportFailureKind] = &[
     ImportFailureKind::ParserInternal,
     ImportFailureKind::EmptyText,
 ];
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, benchmark-query-protocol, benchmark-corpus-summary, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, benchmark-query-set, benchmark-query-protocol, benchmark-corpus-summary, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
 const RELEASE_READINESS_PERFORMANCE_LABEL: &str = "private real-corpus performance evidence";
 const RELEASE_READINESS_FIELD_QUALITY_LABEL: &str = "field extraction quality";
 const RELEASE_READINESS_DEDUPE_QUALITY_LABEL: &str = "dedupe quality";
@@ -239,6 +240,7 @@ fn run() -> Result<()> {
         "status" => status_command(&data_dir, &args[1..]),
         "import" => import_command(&data_dir, &args[1..]),
         "search" => search_command(&data_dir, &args[1..]),
+        "benchmark-query-set" => benchmark_query_set_command(&data_dir, &args[1..]),
         "benchmark-query-protocol" => benchmark_query_protocol_command(&data_dir, &args[1..]),
         "benchmark-corpus-summary" => benchmark_corpus_summary_command(&data_dir, &args[1..]),
         "detail" => detail_command(&data_dir, &args[1..]),
@@ -8343,6 +8345,260 @@ fn validate_benchmark_query_protocol_args(args: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BenchmarkQuerySetDraftArgs {
+    out: PathBuf,
+    max_queries: usize,
+    min_queries: usize,
+}
+
+fn benchmark_query_set_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    };
+    match action {
+        "draft" => benchmark_query_set_draft_command(data_dir, &args[1..]),
+        _ => Err(CliError::usage(benchmark_query_set_usage())),
+    }
+}
+
+fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let args = parse_benchmark_query_set_draft_args(args)?;
+    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
+    store.run_migrations().map_err(CliError::store)?;
+    let queries = draft_local_private_queries(&store, args.max_queries)?;
+    if queries.len() < args.min_queries {
+        return Err(CliError::user(
+            "query set blocked: not enough local field queries",
+        ));
+    }
+
+    if let Some(parent) = args.out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+        }
+    }
+    let mut output = String::new();
+    for (index, query) in queries.iter().enumerate() {
+        output.push_str(
+            &serde_json::json!({
+                "sample_id": format!("local-query-{number:06}", number = index + 1),
+                "query": query,
+            })
+            .to_string(),
+        );
+        output.push('\n');
+    }
+    fs::write(&args.out, output)
+        .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+    let query_set_sha256 = file_sha256_hex(&args.out)
+        .map_err(|_| CliError::user("query set blocked: checksum unavailable"))?;
+
+    println!("query set: written");
+    println!("schema: {QUERY_SET_SCHEMA_VERSION}");
+    println!("privacy boundary: local_only_private_query_set");
+    println!("queries: {}", queries.len());
+    println!("query set sha256: {query_set_sha256}");
+    println!("queries: <redacted>");
+    println!("sample ids: <redacted>");
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuerySetDraftArgs> {
+    let mut out = None;
+    let mut max_queries = 500_usize;
+    let mut max_queries_seen = false;
+    let mut min_queries = 1_usize;
+    let mut min_queries_seen = false;
+    let mut index = 0_usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--out" => {
+                if out.is_some() {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                out = Some(take_benchmark_query_set_path(args, &mut index)?);
+            }
+            "--max-queries" => {
+                if max_queries_seen {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                max_queries = take_benchmark_query_set_positive_usize(args, &mut index)?;
+                max_queries_seen = true;
+            }
+            "--min-queries" => {
+                if min_queries_seen {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                min_queries = take_benchmark_query_set_positive_usize(args, &mut index)?;
+                min_queries_seen = true;
+            }
+            _ => return Err(CliError::usage(benchmark_query_set_usage())),
+        }
+    }
+    if min_queries > max_queries {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    }
+    Ok(BenchmarkQuerySetDraftArgs {
+        out: out.ok_or_else(|| CliError::usage(benchmark_query_set_usage()))?,
+        max_queries,
+        min_queries,
+    })
+}
+
+fn take_benchmark_query_set_path(args: &[String], index: &mut usize) -> Result<PathBuf> {
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    }
+    *index += 2;
+    Ok(PathBuf::from(value))
+}
+
+fn take_benchmark_query_set_positive_usize(args: &[String], index: &mut usize) -> Result<usize> {
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    };
+    let parsed = value
+        .parse::<usize>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| CliError::usage(benchmark_query_set_usage()))?;
+    *index += 2;
+    Ok(parsed)
+}
+
+fn benchmark_query_set_usage() -> &'static str {
+    "usage: resume-cli benchmark-query-set draft --out <path> [--max-queries <count>] [--min-queries <count>]"
+}
+
+fn draft_local_private_queries(store: &MetaStore, max_queries: usize) -> Result<Vec<String>> {
+    let mut queries = BTreeSet::<String>::new();
+    let candidate_budget = max_queries.saturating_mul(10).max(max_queries);
+    for document_id in store
+        .searchable_document_ids()
+        .map_err(CliError::store)?
+        .into_iter()
+    {
+        let Some(version) = store
+            .latest_visible_resume_version_for_document(&document_id)
+            .map_err(CliError::store)?
+        else {
+            continue;
+        };
+        if version.visibility != ResumeVisibility::Searchable {
+            continue;
+        }
+        let mentions = store
+            .entity_mentions_for_version(&version.id)
+            .map_err(CliError::store)?;
+        add_query_candidates_for_mentions(&mentions, &mut queries, candidate_budget);
+        if queries.len() >= candidate_budget {
+            break;
+        }
+    }
+    Ok(queries.into_iter().take(max_queries).collect())
+}
+
+fn add_query_candidates_for_mentions(
+    mentions: &[EntityMention],
+    queries: &mut BTreeSet<String>,
+    max_queries: usize,
+) {
+    let skills = benchmark_query_values(mentions, EntityType::Skill);
+    let titles = benchmark_query_values(mentions, EntityType::Title);
+    let companies = benchmark_query_values(mentions, EntityType::Company);
+    let schools = benchmark_query_values(mentions, EntityType::School);
+    let majors = benchmark_query_values(mentions, EntityType::Major);
+    let certificates = benchmark_query_values(mentions, EntityType::Certificate);
+    let locations = benchmark_query_values(mentions, EntityType::Location);
+    let degrees = benchmark_query_values(mentions, EntityType::Degree);
+
+    for title in &titles {
+        for skill in &skills {
+            insert_benchmark_query_candidate(queries, &[title, skill], max_queries);
+        }
+        for company in &companies {
+            insert_benchmark_query_candidate(queries, &[company, title], max_queries);
+        }
+        for location in &locations {
+            insert_benchmark_query_candidate(queries, &[location, title], max_queries);
+        }
+    }
+    for school in &schools {
+        for major in &majors {
+            insert_benchmark_query_candidate(queries, &[school, major], max_queries);
+        }
+    }
+    for skill in &skills {
+        insert_benchmark_query_candidate(queries, &[skill], max_queries);
+    }
+    for certificate in &certificates {
+        insert_benchmark_query_candidate(queries, &[certificate], max_queries);
+    }
+    for degree in &degrees {
+        for skill in &skills {
+            insert_benchmark_query_candidate(queries, &[degree, skill], max_queries);
+        }
+    }
+}
+
+fn benchmark_query_values(mentions: &[EntityMention], entity_type: EntityType) -> Vec<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type
+                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| {
+            let value = mention
+                .normalized_value
+                .as_deref()
+                .unwrap_or(&mention.raw_value);
+            normalize_benchmark_query_value(value)
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn normalize_benchmark_query_value(value: &str) -> Option<String> {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = normalized.trim();
+    if normalized.len() < 2
+        || normalized.len() > 120
+        || normalized.contains('@')
+        || normalized.contains('/')
+        || normalized.contains('\\')
+    {
+        return None;
+    }
+    Some(normalized.to_string())
+}
+
+fn insert_benchmark_query_candidate(
+    queries: &mut BTreeSet<String>,
+    parts: &[&String],
+    max_queries: usize,
+) {
+    if queries.len() >= max_queries {
+        return;
+    }
+    let query = parts
+        .iter()
+        .map(|part| part.as_str())
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if normalize_benchmark_query_value(&query).is_some() {
+        queries.insert(query);
+    }
 }
 
 fn benchmark_corpus_summary_command(data_dir: &Path, args: &[String]) -> Result<()> {
