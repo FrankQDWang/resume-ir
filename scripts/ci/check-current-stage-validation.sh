@@ -146,6 +146,190 @@ reject_text "$plan" "$pdftoppm_command"
 reject_text "$plan" "$language_pack"
 reject_text "$plan" "/Users/"
 
+fake_resume_cli="$tmpdir/fake-resume-cli"
+fake_resume_daemon="$tmpdir/fake-resume-daemon"
+fake_resume_benchmark="$tmpdir/fake-resume-benchmark"
+execute_resume_root="$tmpdir/PRIVATE-current-stage-execute-resumes"
+execute_data_dir="$tmpdir/PRIVATE-current-stage-execute-data"
+execute_out_dir="$tmpdir/PRIVATE-current-stage-execute-evidence"
+execute_query_set="$tmpdir/PRIVATE-current-stage-execute-query-set.jsonl"
+execute_model_manifest="$tmpdir/PRIVATE-current-stage-execute-model-manifest.json"
+execute_ocr_manifest="$tmpdir/PRIVATE-current-stage-execute-ocr-manifest.json"
+execute_model_artifact="$tmpdir/PRIVATE-current-stage-execute-model.onnx"
+execute_embedding_command="$tmpdir/PRIVATE-current-stage-execute-embedding"
+execute_tesseract_command="$tmpdir/PRIVATE-current-stage-execute-tesseract"
+execute_pdftoppm_command="$tmpdir/PRIVATE-current-stage-execute-pdftoppm"
+execute_language_pack="$tmpdir/PRIVATE-current-stage-execute-tessdata.traineddata"
+
+mkdir -p "$execute_resume_root" "$execute_data_dir" "$execute_out_dir"
+printf '%s\n' '{"query":"private fake query"}' > "$execute_query_set"
+printf '%s\n' 'fake model bytes' > "$execute_model_artifact"
+printf '%s\n' 'fake language bytes' > "$execute_language_pack"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$execute_embedding_command"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$execute_tesseract_command"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$execute_pdftoppm_command"
+chmod 700 "$execute_embedding_command" "$execute_tesseract_command" "$execute_pdftoppm_command"
+
+cat > "$fake_resume_cli" <<'SH'
+#!/usr/bin/env sh
+set -eu
+if [ "${1:-}" = "--data-dir" ]; then
+  shift 2
+fi
+cmd="${1:-}"
+sub="${2:-}"
+write_out_arg() {
+  out=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--out" ]; then
+      shift
+      out="${1:-}"
+      break
+    fi
+    shift
+  done
+  [ -n "$out" ] || exit 64
+  printf '{"schema_version":"fake-local-manifest.v1"}\n' > "$out"
+}
+case "$cmd:$sub" in
+  ocr:preflight)
+    printf '{"schema_version":"ocr-runtime-preflight.v1","ready":true}\n'
+    ;;
+  ocr:draft-manifest)
+    write_out_arg "$@"
+    printf 'ocr manifest drafted\n'
+    ;;
+  ocr:validate-manifest)
+    printf 'ocr manifest valid\n'
+    ;;
+  model:draft-manifest)
+    write_out_arg "$@"
+    printf 'model manifest drafted\n'
+    ;;
+  model:validate-manifest)
+    printf 'model manifest valid\n'
+    ;;
+  model:preflight)
+    printf '{"schema_version":"embedding-runtime-preflight.v1","ready":true}\n'
+    ;;
+  import:*)
+    printf 'import task submitted\nstatus: completed\n'
+    ;;
+  benchmark-corpus-summary:*)
+    printf '{"schema_version":"benchmark-corpus-summary.v1","document_count":8720,"searchable_document_count":8720,"vector_indexed_document_count":8720,"hot_index_fully_covered":true}\n'
+    ;;
+  export-diagnostics:*)
+    printf '{"schema_version":"diagnostics.v1","redacted":true,"evidence_level":"local_aggregate_only"}\n'
+    ;;
+  release-readiness:*)
+    printf '{"schema_version":"release-readiness.v1","stable_release":"blocked"}\n'
+    if [ "${FAKE_RELEASE_READINESS_MODE:-blocked}" = "evidence-failed" ]; then
+      printf 'release readiness evidence failed validation: fake evidence rejected\n' >&2
+      exit 1
+    fi
+    printf 'release readiness blocked: stable release criteria are not met\n' >&2
+    exit 1
+    ;;
+  *)
+    printf 'unexpected fake resume-cli command\n' >&2
+    exit 64
+    ;;
+esac
+SH
+chmod 700 "$fake_resume_cli"
+
+cat > "$fake_resume_daemon" <<'SH'
+#!/usr/bin/env sh
+set -eu
+printf 'fake worker completed\n'
+SH
+chmod 700 "$fake_resume_daemon"
+
+cat > "$fake_resume_benchmark" <<'SH'
+#!/usr/bin/env sh
+set -eu
+case "${1:-}" in
+  private-query)
+    printf '{"schema_version":"benchmark.private-query.v1","dataset_kind":"private-real-corpus","target_claim":"benchmark_baseline_observed"}\n'
+    ;;
+  gate)
+    printf 'benchmark gate passed\n'
+    ;;
+  *)
+    printf 'unexpected fake resume-benchmark command\n' >&2
+    exit 64
+    ;;
+esac
+SH
+chmod 700 "$fake_resume_benchmark"
+
+run_execute_smoke() {
+  mode="$1"
+  stdout_file="$tmpdir/execute-$mode-stdout.txt"
+  stderr_file="$tmpdir/execute-$mode-stderr.txt"
+  rm -rf "$execute_data_dir" "$execute_out_dir"
+  mkdir -p "$execute_data_dir" "$execute_out_dir"
+  set +e
+  FAKE_RELEASE_READINESS_MODE="$mode" "$script" --execute \
+    --resume-cli "$fake_resume_cli" \
+    --resume-daemon "$fake_resume_daemon" \
+    --resume-benchmark "$fake_resume_benchmark" \
+    --resume-root "$execute_resume_root" \
+    --data-dir "$execute_data_dir" \
+    --out-dir "$execute_out_dir" \
+    --query-set "$execute_query_set" \
+    --model-manifest "$execute_model_manifest" \
+    --ocr-runtime-manifest "$execute_ocr_manifest" \
+    --model-artifact "$execute_model_artifact" \
+    --embedding-command "$execute_embedding_command" \
+    --model-pack-id reviewed-local-model-pack \
+    --model-id reviewed-local-embedding-model \
+    --model-format onnx \
+    --dimension 384 \
+    --model-license Apache-2.0 \
+    --runtime-pack-id reviewed-local-ocr-pack \
+    --tesseract-command "$execute_tesseract_command" \
+    --pdftoppm-command "$execute_pdftoppm_command" \
+    --language eng \
+    --language-pack "$execute_language_pack" \
+    --engine-license Apache-2.0 \
+    --renderer-license GPL-2.0-or-later \
+    --language-license Apache-2.0 \
+    --dataset-manifest-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    --query-set-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+    --model-manifest-sha256 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+    --max-files 10000 \
+    --max-queries 500 \
+    --top-k 10 \
+    > "$stdout_file" 2> "$stderr_file"
+  status=$?
+  set -e
+  printf '%s' "$status" > "$tmpdir/execute-$mode-status.txt"
+}
+
+run_execute_smoke blocked
+blocked_status=$(cat "$tmpdir/execute-blocked-status.txt")
+if [ "$blocked_status" -ne 0 ]; then
+  fail "current-stage execute rejected expected blocked release-readiness status"
+fi
+require_text "$tmpdir/execute-blocked-stdout.txt" "current-stage validation: release-readiness exit 1"
+require_text "$tmpdir/execute-blocked-stdout.txt" "current-stage validation: local evidence written under <local-evidence-dir>"
+reject_text "$tmpdir/execute-blocked-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-blocked-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-blocked-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-blocked-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke evidence-failed
+failed_status=$(cat "$tmpdir/execute-evidence-failed-status.txt")
+if [ "$failed_status" -eq 0 ]; then
+  fail "current-stage execute accepted invalid release-readiness evidence"
+fi
+require_text "$tmpdir/execute-evidence-failed-stderr.txt" "current-stage validation blocked: release-readiness evidence failed validation"
+reject_text "$tmpdir/execute-evidence-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-evidence-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-evidence-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-evidence-failed-stderr.txt" "PRIVATE-current-stage"
+
 require_text "$script" "--execute"
 require_text "$script" "resume-ir.current-stage-validation-plan.v1"
 require_text "$script" "local_only_redacted_plan"

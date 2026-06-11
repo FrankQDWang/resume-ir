@@ -174,6 +174,11 @@ production-ready scope source.
   runtime manifests, model files, runtime binaries, indexes, SQLite databases,
   signing material, notarization credentials, or model caches were committed or
   uploaded.
+  S300 used synthetic/private-shaped fake execute fixtures only; no real resume
+  data, raw queries, local paths, generated private benchmark reports,
+  generated diagnostics, local runtime manifests, model files, runtime
+  binaries, indexes, SQLite databases, signing material, notarization
+  credentials, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1075,8 +1080,46 @@ obsolete preliminary files and checklists are not product scope.
 | S297 | Product model manifest draft generation complete locally | Focused RED first failed because `resume-cli model draft-manifest ...` was rejected, so operators still had to hand-write local model manifests before embedding preflight, vector quality, and private benchmark gates. After implementation, `model draft-manifest --out <path> --model-pack-id <id> --model-id <id> --model-type embedding --dimension <n> --format <id> --artifact <path> --license <id> [--reviewed]` writes a local `resume-ir.model-manifest.v1` manifest with artifact path, checksum, format, dimension, license ID, and reviewed status while stdout remains redacted. A reviewed draft validates through the existing checksum/license validator, and an unreviewed draft intentionally fails validation without leaking paths or model bytes. | This slice makes local model manifest creation reproducible only. It does not select, approve, download, or distribute a production embedding model; it does not clear model license/distribution blockers, prove vector quality, run private benchmark evidence, bundle weights, or make stable release ready. |
 | S298 | CI Windows model manifest draft assertion portable | GitHub Actions PR #9 `windows-latest` failed after S297 because `model_manifest_draft_writes_local_manifest_without_stdout_path_or_payload_leak` searched the raw JSON manifest string for a Windows path. `serde_json` correctly escaped backslashes in the file, so the product command wrote valid JSON but the test assertion was Unix-biased. After implementation, the test parses the generated manifest JSON and compares `models[0].artifact.path` structurally, preserving the same privacy and validation coverage while making the assertion portable across Windows/macOS. | This slice fixes test portability only. It does not change product behavior, select or approve a model, clear Windows platform release validation, clear model blockers, or make stable release ready. |
 | S299 | Product current-stage local validation flow complete locally | Focused RED first failed because `scripts/ci/check-current-stage-validation.sh` could not find `scripts/local/run-current-stage-validation.sh`, so the current-stage 10k validation workflow was still only scattered across runbook fragments. After implementation, `run-current-stage-validation.sh --dry-run` emits a redacted `resume-ir.current-stage-validation-plan.v1` JSON plan with placeholder paths, local-only privacy boundary, ordered OCR/model manifest, import, bounded worker, benchmark, diagnostics, and release-readiness steps, and explicit `performance_optimization_deferred: true`; `--execute` runs the same local-only sequence with bounded OCR/embedding worker loops and local evidence outputs under `--out-dir`. `verify-local.sh` now runs the CI guard that validates the dry-run plan shape and rejects local path/private marker leakage. | This slice adds the reproducible operator flow and guard only. It does not run the actual private 10k corpus, generate private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
+| S300 | Current-stage execute release-readiness fail-closed validation complete locally | Focused RED first failed because `run-current-stage-validation.sh --execute` accepted a fake `release-readiness` failure whose stderr said `release readiness evidence failed validation`; after implementation, execute mode still accepts the expected stable-release blocker sentinel, but exits nonzero with a generic redacted error when release-readiness rejects invalid evidence or returns an unexpected nonzero failure. The CI guard now exercises both fake execute paths and rejects temp paths/private markers from stdout and stderr. | This slice tightens fail-closed execute validation only. It does not run the actual private 10k corpus, generate private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 
 ## Command Log
+
+### S300
+
+TDD red check:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Failed as expected with `current-stage execute accepted invalid
+  release-readiness evidence`.
+
+Focused verification:
+
+```bash
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-validation.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Shell syntax checks: exit 0.
+- `check-current-stage-validation.sh`: exit 0, `current-stage validation
+  check passed`.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0, `public repo guard passed`.
+- Full local verification exited 0.
+- Included `cargo metadata --no-deps --locked`, `cargo fmt --check`,
+  workspace clippy with `-D warnings`, `cargo test --workspace --locked`, CLI
+  and daemon closed-loop checks, benchmark smoke/gates, license/runbook/current-
+  stage/workflow/release-readiness checks, release artifact/SBOM/package/
+  installer evidence checks, and public repo guard.
 
 ### S299
 

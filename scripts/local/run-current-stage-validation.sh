@@ -580,5 +580,17 @@ set +e
   2> "$out_dir/release-readiness.stderr.txt"
 release_status=$?
 set -e
+if [ "$release_status" -ne 0 ]; then
+  if grep -Fq "release readiness evidence failed validation" "$out_dir/release-readiness.stderr.txt"; then
+    printf '%s\n' \
+      "current-stage validation blocked: release-readiness evidence failed validation" >&2
+    exit 1
+  fi
+  if ! grep -Fq "release readiness blocked: stable release criteria are not met" "$out_dir/release-readiness.stderr.txt"; then
+    printf '%s\n' \
+      "current-stage validation blocked: release-readiness returned an unexpected error" >&2
+    exit 1
+  fi
+fi
 printf 'current-stage validation: release-readiness exit %s\n' "$release_status"
 printf '%s\n' "current-stage validation: local evidence written under <local-evidence-dir>"
