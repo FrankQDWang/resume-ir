@@ -266,7 +266,11 @@ fn model_manifest_draft_writes_local_manifest_without_stdout_path_or_payload_lea
     assert!(manifest.contains("\"dim\": 4"));
     assert!(manifest.contains("\"format\": \"onnx\""));
     assert!(manifest.contains("\"reviewed\": true"));
-    assert!(manifest.contains(path_str(&model_file)));
+    let manifest_json: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    assert_eq!(
+        manifest_json["models"][0]["artifact"]["path"],
+        path_str(&model_file)
+    );
 
     let validate = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
