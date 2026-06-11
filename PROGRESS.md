@@ -185,6 +185,11 @@ production-ready scope source.
   generated diagnostics, local runtime manifests, model files, runtime
   binaries, indexes, SQLite databases, signing material, notarization
   credentials, or model caches were committed or uploaded.
+  S302 used synthetic/private-shaped current-stage evidence manifest fixtures
+  only; no real resume data, raw queries, local paths, generated private
+  benchmark reports, generated diagnostics, local runtime manifests, model
+  files, runtime binaries, indexes, SQLite databases, signing material,
+  notarization credentials, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1088,8 +1093,67 @@ obsolete preliminary files and checklists are not product scope.
 | S299 | Product current-stage local validation flow complete locally | Focused RED first failed because `scripts/ci/check-current-stage-validation.sh` could not find `scripts/local/run-current-stage-validation.sh`, so the current-stage 10k validation workflow was still only scattered across runbook fragments. After implementation, `run-current-stage-validation.sh --dry-run` emits a redacted `resume-ir.current-stage-validation-plan.v1` JSON plan with placeholder paths, local-only privacy boundary, ordered OCR/model manifest, import, bounded worker, benchmark, diagnostics, and release-readiness steps, and explicit `performance_optimization_deferred: true`; `--execute` runs the same local-only sequence with bounded OCR/embedding worker loops and local evidence outputs under `--out-dir`. `verify-local.sh` now runs the CI guard that validates the dry-run plan shape and rejects local path/private marker leakage. | This slice adds the reproducible operator flow and guard only. It does not run the actual private 10k corpus, generate private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S300 | Current-stage execute release-readiness fail-closed validation complete locally | Focused RED first failed because `run-current-stage-validation.sh --execute` accepted a fake `release-readiness` failure whose stderr said `release readiness evidence failed validation`; after implementation, execute mode still accepts the expected stable-release blocker sentinel, but exits nonzero with a generic redacted error when release-readiness rejects invalid evidence or returns an unexpected nonzero failure. The CI guard now exercises both fake execute paths and rejects temp paths/private markers from stdout and stderr. | This slice tightens fail-closed execute validation only. It does not run the actual private 10k corpus, generate private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S301 | Current-stage execute redacted evidence manifest complete locally | Focused RED first failed because `run-current-stage-validation.sh --execute` did not write `current-stage-validation-evidence.json`. After implementation, execute mode writes a local `resume-ir.current-stage-validation-evidence.v1` manifest with privacy boundary `local_only_redacted_evidence_manifest`, current-stage target, deferred-performance marker, release-readiness exit code, input digests, constant output filenames with SHA-256 digests, step statuses, and explicit false privacy sentinels for local paths, raw resume text, raw query text, model bytes, runtime binaries, and report bodies. The guard validates the fake execute manifest JSON and rejects temp paths, private markers, and private query text. | This slice makes local current-stage evidence auditable without exposing report bodies or paths. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
+| S302 | Current-stage evidence release-readiness intake complete locally | Focused RED first failed because `resume-cli release-readiness --json --current-stage-evidence <path>` produced no JSON report and rejected the new flag. After implementation, release-readiness accepts `resume-ir.current-stage-validation-evidence.v1` manifests, validates the `local_only_redacted_evidence_manifest` boundary, current-stage target, deferred-performance marker, blocked release-readiness exit, input digests, required step statuses, basename-only redacted output digests, false privacy sentinels, and must-not-upload list. Invalid manifests with private markers fail closed without printing paths or manifest bodies. CI and runbook guards now document and verify the intake. | This slice is production complete for the redacted current-stage evidence manifest intake only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 
 ## Command Log
+
+### S302
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness current_stage --locked
+```
+
+Output summary:
+
+- Failed as expected: both new current-stage evidence tests failed before
+  implementation. The success-path test could not parse release-readiness JSON
+  because stdout was empty, and the rejection-path test did not receive the
+  expected evidence validation failure.
+
+Focused and broad verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness current_stage --locked
+sh -n scripts/ci/check-release-readiness.sh scripts/ci/check-current-stage-validation.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused current-stage evidence tests passed after implementation: 2 passed.
+- Full release-readiness test file passed: 12 passed.
+- Shell syntax checks exited 0.
+- `check-release-readiness.sh`: exit 0, `release readiness check passed`.
+- `check-current-stage-validation.sh`: exit 0, `current-stage validation
+  check passed`.
+- `check-runbooks.sh`: exit 0, `runbook check passed`.
+- `cargo fmt --check`: exit 0.
+- Focused `resume-cli` clippy with `-D warnings`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0, `public repo guard passed`.
+- Full local verification exited 0; it included cargo metadata, fmt, workspace
+  clippy/tests/doc-tests, CLI and daemon closed-loop checks, benchmark/OCR/
+  vector smoke and gates, license, runbook/current-stage/workflow/
+  release-readiness checks, release artifact/signing/notarization/SBOM/package/
+  installer/service evidence checks, and public repo guard.
+
+Scope note:
+
+- S302 makes the current-stage redacted evidence manifest consumable by
+  release-readiness. The current-stage manifest is intentionally separate from
+  blocker-clearing benchmark, quality, model, OCR runtime, diagnostics,
+  platform, signing, notarization, and hardware-drill evidence. Complete
+  product readiness remains not complete.
 
 ### S301
 

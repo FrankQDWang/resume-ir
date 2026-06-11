@@ -85,6 +85,12 @@ input digests, output file digests, the `release-readiness` exit code, and
 privacy sentinels only. It must not contain local paths, raw resume text, raw
 query text, report bodies, model bytes, runtime binaries, indexes, or SQLite
 data.
+After the execute run writes the manifest, operators may pass it back to
+`release-readiness` with
+`--current-stage-evidence current-stage-validation-evidence.json` to validate
+the redacted manifest schema, required step statuses, SHA-256 output digests,
+and privacy sentinels without exposing the local evidence directory or report
+bodies.
 Add `--reviewed-model` and `--reviewed-ocr-runtime` only after the selected
 model weights, OCR engine, renderer, and language pack have actually been
 reviewed; otherwise validation must fail closed.
@@ -183,6 +189,7 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --model-manifest local-model-manifest.json \
   --ocr-runtime-manifest local-ocr-runtime-manifest.json \
   --diagnostics-report redacted-diagnostics.json \
+  --current-stage-evidence current-stage-validation-evidence.json \
   --release-artifact-manifest release-artifacts.json \
   --release-sbom release-sbom.json \
   --macos-package-manifest macos-package.json \
@@ -200,7 +207,12 @@ are marked `redacted_local_aggregate`, and reviewed model/OCR manifests are mark
 `reviewed_local_manifest`. Blocked signing, notarization, macOS installer,
 Windows installer, Windows service, release artifact, release SBOM, macOS
 package, and Windows package dry-run manifests are marked
-`blocked_release_evidence_manifest`. The labels are:
+`blocked_release_evidence_manifest`. The current-stage validation evidence
+manifest is marked `local_only_redacted_evidence_manifest`; it records the
+local operator flow, input/output digests, step statuses, and privacy sentinels,
+but it does not replace the benchmark, quality, model, OCR runtime, signing,
+notarization, installer, platform, diagnostics, or hardware-drill evidence
+items. The labels are:
 
 - signing automation evidence
 - notarization automation evidence
@@ -211,6 +223,7 @@ package, and Windows package dry-run manifests are marked
 - macOS installer automation evidence
 - Windows installer automation evidence
 - Windows service automation evidence
+- current-stage validation evidence manifest
 
 Those automation and dry-run manifest evidence entries prove only that
 fail-closed automation, schema checks, redacted artifact inventory, and redacted

@@ -166,6 +166,7 @@ windows_package="$tmpdir/windows-package.json"
 macos_installer_evidence="$tmpdir/macos-installer-evidence.json"
 windows_installer_evidence="$tmpdir/windows-installer-evidence.json"
 windows_service_evidence="$tmpdir/windows-service-evidence.json"
+current_stage_evidence="$tmpdir/current-stage-validation-evidence.json"
 evidence_stdout_file="$tmpdir/evidence-stdout.txt"
 evidence_stderr_file="$tmpdir/evidence-stderr.txt"
 
@@ -196,6 +197,71 @@ JSON
 cat > "$windows_service_evidence" <<'JSON'
 {"schema_version":"release.windows_service_evidence.v1","version":"v0.0.0","service_lifecycle_status":"blocked","evidence_boundary":"dry_run_no_windows_service_registration","windows_package_manifest_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","required_evidence":["service_install_validation"],"blocked_release_steps":["windows_service_install"],"planned_actions":[{"action":"install","action_status":"blocked"}]}
 JSON
+cat > "$current_stage_evidence" <<'JSON'
+{
+  "schema_version": "resume-ir.current-stage-validation-evidence.v1",
+  "privacy_boundary": "local_only_redacted_evidence_manifest",
+  "current_stage_target": "reproducible_local_10k_baseline",
+  "performance_optimization_deferred": true,
+  "release_readiness_exit": 1,
+  "stable_release_expected_blocked": true,
+  "input_digests": {
+    "dataset_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "query_set_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "model_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "ocr_runtime_manifest_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "parameters": {
+    "max_files": 10000,
+    "max_queries": 500,
+    "top_k": 10,
+    "embedding_dimension": 384,
+    "ocr_worker_ticks": 10000,
+    "embedding_worker_ticks": 10000
+  },
+  "steps": [
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "success"},
+    {"id": "ocr_manifest_validate", "status": "success"},
+    {"id": "model_manifest_draft", "status": "success"},
+    {"id": "model_manifest_validate", "status": "success"},
+    {"id": "model_preflight", "status": "success"},
+    {"id": "import_private_corpus", "status": "success"},
+    {"id": "ocr_worker_bounded_loop", "status": "success"},
+    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "corpus_summary", "status": "success"},
+    {"id": "private_query_baseline", "status": "success"},
+    {"id": "baseline_shape_gate", "status": "success"},
+    {"id": "redacted_diagnostics", "status": "success"},
+    {"id": "release_readiness_intake", "status": "expected_blocked", "exit_code": 1}
+  ],
+  "redacted_outputs": [
+    {"file": "benchmark-corpus-summary.local.json", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
+    {"file": "private-benchmark-local.json", "sha256": "2222222222222222222222222222222222222222222222222222222222222222"},
+    {"file": "redacted-diagnostics.json", "sha256": "3333333333333333333333333333333333333333333333333333333333333333"},
+    {"file": "release-readiness.json", "sha256": "4444444444444444444444444444444444444444444444444444444444444444"}
+  ],
+  "privacy_sentinels": {
+    "local_paths_included": false,
+    "raw_resume_text_included": false,
+    "raw_query_text_included": false,
+    "model_bytes_included": false,
+    "runtime_binaries_included": false,
+    "report_bodies_included": false
+  },
+  "must_not_upload": [
+    "raw resumes",
+    "query set",
+    "local manifests",
+    "benchmark reports",
+    "diagnostics",
+    "indexes",
+    "SQLite databases",
+    "model caches",
+    "runtime binaries"
+  ]
+}
+JSON
 
 set +e
 "$CARGO_BIN" run --quiet -p resume-cli --locked -- \
@@ -209,6 +275,7 @@ set +e
   --macos-installer-evidence "$macos_installer_evidence" \
   --windows-installer-evidence "$windows_installer_evidence" \
   --windows-service-evidence "$windows_service_evidence" \
+  --current-stage-evidence "$current_stage_evidence" \
   > "$evidence_stdout_file" 2> "$evidence_stderr_file"
 evidence_status=$?
 set -e
@@ -226,8 +293,11 @@ require_text "$evidence_stdout_file" '"label": "Windows package manifest evidenc
 require_text "$evidence_stdout_file" '"label": "macOS installer automation evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows installer automation evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows service automation evidence"'
+require_text "$evidence_stdout_file" '"label": "current-stage validation evidence manifest"'
 require_text "$evidence_stdout_file" '"privacy_boundary": "blocked_release_evidence_manifest"'
+require_text "$evidence_stdout_file" '"privacy_boundary": "local_only_redacted_evidence_manifest"'
 require_text "$evidence_stdout_file" "blocked dry-run evidence passed schema and boundary checks"
+require_text "$evidence_stdout_file" "current-stage validation evidence manifest passed redacted schema and digest checks"
 require_text "$evidence_stdout_file" "release.artifacts.v1 dry-run manifest passed schema and artifact boundary checks"
 require_text "$evidence_stdout_file" "SPDX-2.3 release dry-run SBOM passed redaction and package boundary checks"
 require_text "$evidence_stdout_file" "release.macos_package.v1 unsigned dry-run manifest passed package boundary checks"
@@ -264,6 +334,7 @@ require_text "$runbook" "--dedupe-quality-report private-dedupe-quality.json"
 require_text "$runbook" "--vector-quality-report private-vector-quality.json"
 require_text "$runbook" "--ocr-throughput-report private-ocr-throughput.json"
 require_text "$runbook" "--diagnostics-report redacted-diagnostics.json"
+require_text "$runbook" "--current-stage-evidence current-stage-validation-evidence.json"
 require_text "$runbook" "--release-artifact-manifest release-artifacts.json"
 require_text "$runbook" "--release-sbom release-sbom.json"
 require_text "$runbook" "--macos-package-manifest macos-package.json"
@@ -280,6 +351,8 @@ require_text "$runbook" "macOS package manifest evidence"
 require_text "$runbook" "Windows package manifest evidence"
 require_text "$runbook" "signing automation evidence"
 require_text "$runbook" "Windows service automation evidence"
+require_text "$runbook" "current-stage validation evidence manifest"
+require_text "$runbook" "local_only_redacted_evidence_manifest"
 require_text "$runbook" "redacted diagnostics evidence"
 require_text "$runbook" "provided_evidence"
 require_text "$runbook" "hardware fault drills"

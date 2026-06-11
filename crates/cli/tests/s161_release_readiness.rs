@@ -725,6 +725,118 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
 }
 
 #[test]
+fn release_readiness_json_accepts_current_stage_evidence_without_clearing_blockers() {
+    let data_dir = temp_path("release-readiness-current-stage-private-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    fs::write(&current_stage_evidence, current_stage_evidence_manifest()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("run release readiness with current-stage evidence manifest");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("release readiness current-stage json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let current_stage = provided
+        .iter()
+        .find(|evidence| evidence["label"] == "current-stage validation evidence manifest")
+        .expect("current-stage evidence manifest");
+    assert_eq!(current_stage["status"], "provided");
+    assert_eq!(
+        current_stage["privacy_boundary"],
+        "local_only_redacted_evidence_manifest"
+    );
+    assert!(current_stage["detail"]
+        .as_str()
+        .unwrap()
+        .contains("current-stage validation evidence manifest"));
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(blocker_labels.contains(&"private real-corpus performance evidence"));
+    assert!(blocker_labels.contains(&"embedding model license/distribution"));
+    assert!(blocker_labels.contains(&"OCR runtime manifest/dependency evidence"));
+    assert!(blocker_labels.contains(&"redacted diagnostics evidence"));
+    assert!(blocker_labels.contains(&"signing certificates"));
+    assert!(blocker_labels.contains(&"macOS notarization"));
+    assert!(blocker_labels.contains(&"cross-platform release validation"));
+    assert!(!blocker_labels.contains(&"current-stage validation evidence manifest"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stdout.contains("private fake query"));
+    assert!(!stdout.contains("/Users/"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_current_stage_evidence_with_private_marker_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-current-stage-marker-private-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-marker-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    fs::write(
+        &current_stage_evidence,
+        current_stage_evidence_manifest().replace(
+            "\"dataset_manifest_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+            "\"dataset_manifest_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"private_path\":\"/Users/frank/private-resumes\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence with private marker");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence manifest"));
+    assert!(stderr.contains("private marker is present"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains("/Users/frank"));
+    assert!(!stderr.contains("private-resumes"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_unreviewed_model_manifest_without_path_leaks() {
     let data_dir = temp_path("release-readiness-unreviewed-model-private-data");
     let evidence_dir = temp_path("release-readiness-unreviewed-model-private-reports");
@@ -1020,6 +1132,76 @@ fn redacted_diagnostics_report() -> String {
         "},",
         "\"evidence_level\":\"local_aggregate_only\",",
         "\"scope\":\"redacted local aggregate diagnostics; no raw resume text, paths, queries, tokens, or index segment contents included\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn current_stage_evidence_manifest() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"resume-ir.current-stage-validation-evidence.v1\",",
+        "\"privacy_boundary\":\"local_only_redacted_evidence_manifest\",",
+        "\"current_stage_target\":\"reproducible_local_10k_baseline\",",
+        "\"performance_optimization_deferred\":true,",
+        "\"release_readiness_exit\":1,",
+        "\"stable_release_expected_blocked\":true,",
+        "\"input_digests\":{",
+        "\"dataset_manifest_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",",
+        "\"query_set_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",",
+        "\"model_manifest_sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",",
+        "\"ocr_runtime_manifest_sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"",
+        "},",
+        "\"parameters\":{",
+        "\"max_files\":10000,",
+        "\"max_queries\":500,",
+        "\"top_k\":10,",
+        "\"embedding_dimension\":384,",
+        "\"ocr_worker_ticks\":10000,",
+        "\"embedding_worker_ticks\":10000",
+        "},",
+        "\"steps\":[",
+        "{\"id\":\"ocr_preflight\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_manifest_draft\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_manifest_validate\",\"status\":\"success\"},",
+        "{\"id\":\"model_manifest_draft\",\"status\":\"success\"},",
+        "{\"id\":\"model_manifest_validate\",\"status\":\"success\"},",
+        "{\"id\":\"model_preflight\",\"status\":\"success\"},",
+        "{\"id\":\"import_private_corpus\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_worker_bounded_loop\",\"status\":\"success\"},",
+        "{\"id\":\"embedding_worker_bounded_loop\",\"status\":\"success\"},",
+        "{\"id\":\"corpus_summary\",\"status\":\"success\"},",
+        "{\"id\":\"private_query_baseline\",\"status\":\"success\"},",
+        "{\"id\":\"baseline_shape_gate\",\"status\":\"success\"},",
+        "{\"id\":\"redacted_diagnostics\",\"status\":\"success\"},",
+        "{\"id\":\"release_readiness_intake\",\"status\":\"expected_blocked\",\"exit_code\":1}",
+        "],",
+        "\"redacted_outputs\":[",
+        "{\"file\":\"benchmark-corpus-summary.local.json\",\"sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"},",
+        "{\"file\":\"private-benchmark-local.json\",\"sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\"},",
+        "{\"file\":\"redacted-diagnostics.json\",\"sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\"},",
+        "{\"file\":\"release-readiness.json\",\"sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\"},",
+        "{\"file\":\"current-stage-validation-evidence.json\",\"sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\"}",
+        "],",
+        "\"privacy_sentinels\":{",
+        "\"local_paths_included\":false,",
+        "\"raw_resume_text_included\":false,",
+        "\"raw_query_text_included\":false,",
+        "\"model_bytes_included\":false,",
+        "\"runtime_binaries_included\":false,",
+        "\"report_bodies_included\":false",
+        "},",
+        "\"must_not_upload\":[",
+        "\"raw resumes\",",
+        "\"query set\",",
+        "\"local manifests\",",
+        "\"benchmark reports\",",
+        "\"diagnostics\",",
+        "\"indexes\",",
+        "\"SQLite databases\",",
+        "\"model caches\",",
+        "\"runtime binaries\"",
+        "]",
         "}"
     )
     .to_string()
