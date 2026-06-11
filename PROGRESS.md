@@ -1198,8 +1198,56 @@ obsolete preliminary files and checklists are not product scope.
 | S315 | Current-stage smoke validation profile complete locally | Focused RED first failed because `run-current-stage-validation.sh` rejected `--validation-profile smoke`, so the only scripted execute profile was the full 10k/8000-document current-stage baseline that can block for a long OCR-dominated private corpus. After implementation, the script has explicit `full` and `smoke` validation profiles: `full` keeps the release-readiness evidence path and 8000-document/500-query gates, while `smoke` runs runtime preflight, manifests, import, bounded OCR/embedding, query-set generation, private-query protocol, a low-floor smoke gate, and redacted diagnostics, then writes `current-stage-smoke-summary.json` without generating `current-stage-validation-evidence.json` or running release-readiness. The guard proves the smoke plan and fake execute output are redacted and cannot be confused with full release evidence. | This slice is production complete for current-stage smoke-profile wiring only. It does not clear the full 10k/8000-document current-stage baseline, 500-query private benchmark, full OCR completion, OCR/model/license/platform/signing/notarization/quality/performance blockers, P95/P99 optimization, 100k/1M real-corpus validation, or stable release readiness. |
 | S316 | Current-stage full-profile benchmark blocked summary complete locally | Focused RED first failed because a full-profile current-stage execute that reached `resume-benchmark gate` and then failed exited without writing any structured redacted failure summary, leaving the next operator to inspect private local reports. After implementation, full profile benchmark-gate failure writes `current-stage-blocked-summary.json` with schema `resume-ir.current-stage-blocked-summary.v1`, privacy boundary `local_only_redacted_blocked_summary`, blocked step/category/reason, input digests, passed runtime probes, completed step statuses, and basename-only output digests, then exits non-zero before release-readiness and without writing full current-stage evidence. The guard proves the summary is redacted and not confusable with release evidence. | This slice is production complete for current-stage benchmark blocked failure classification only. It does not clear the full 10k/8000-document current-stage baseline, 500-query private benchmark, full OCR completion, OCR/model/license/platform/signing/notarization/quality/performance blockers, P95/P99 optimization, 100k/1M real-corpus validation, or stable release readiness. |
 | S317 | Current-stage smoke gate confidence and real local smoke witness complete locally | Focused RED first failed because `resume-benchmark gate --require-private-real-corpus` rejected a one-query private-real smoke report with `percentile_confidence: "smoke"`, and the current-stage smoke script had no explicit way to distinguish smoke confidence from full/release baseline confidence. After implementation, benchmark gate supports `--allow-smoke-confidence` / `BenchmarkGateConfig::allow_smoke_confidence()`, defaults still reject smoke confidence, and `run-current-stage-validation.sh --validation-profile smoke` is the only current-stage profile that passes the flag. A private local-only one-document smoke witness against the user-authorized local resume root used local Tesseract/Poppler plus a temporary local `sentence-transformers/all-MiniLM-L6-v2` Apache-2.0 embedding runtime: OCR preflight passed, embedding protocol passed, one OCR-required document imported/OCRed/embedded, hot-index coverage reached 1/1, private-query benchmark produced one query, zero zero-result queries, one hit, redacted aggregate privacy boundary, and the smoke summary was written without release evidence. | This slice is production complete for bounded current-stage smoke chain verification only. It does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR completion, auto query-set coverage for tiny samples, OCR failure triage across the corpus, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
+| S318 | Current-stage smoke query-set keyword fallback complete locally | Focused RED first failed because `resume-cli benchmark-query-set draft --allow-keyword-fallback` was rejected as an unknown flag, leaving the current-stage smoke flow unable to draft any local query when a tiny OCR-heavy sample had searchable text but too few high-confidence non-contact field mentions. After implementation, query-set drafting remains field-backed and strict by default, but an explicit `--allow-keyword-fallback` can fill a local private smoke query set from sanitized searchable-text tokens when field queries are insufficient; stdout reports only redacted counts, digest, and `query fallback: keyword|none`. `run-current-stage-validation.sh --validation-profile smoke` is the only current-stage profile that passes the fallback flag; full profile continues to require the full field-backed 500-query baseline. | This slice is production complete for current-stage smoke query-set resilience only. It does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR completion, OCR/import/parser failure triage across the corpus, field extraction quality targets, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 
 ## Command Log
+
+### S318
+
+TDD red check:
+
+```bash
+PATH=<local-cargo-bin>:$PATH cargo test -p resume-cli --test s304_query_set --locked
+```
+
+Output summary:
+
+- The new `benchmark_query_set_draft_can_use_explicit_keyword_fallback_for_smoke`
+  test failed because `resume-cli benchmark-query-set draft` rejected
+  `--allow-keyword-fallback` as an unknown flag. The existing strict
+  insufficient-field-query test still passed.
+
+Focused verification:
+
+```bash
+PATH=<local-cargo-bin>:$PATH cargo test -p resume-cli --test s304_query_set --locked
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-runbooks.sh
+PATH=<local-cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The S304 query-set test file exited 0 with 3 tests passed. Coverage includes
+  default strict rejection, field-backed private query drafting without stdout
+  leaks, and explicit keyword fallback without stdout/path/contact leaks.
+- Shell syntax checking exited 0 for the current-stage validation scripts.
+- The current-stage validation guard exited 0 and proves the smoke dry-run plan
+  includes `--allow-keyword-fallback`, while full profile remains strict.
+- The runbook guard exited 0 after documenting the smoke-only fallback boundary.
+- Full `verify-local.sh` exited 0 after workspace clippy/test/doc-test checks,
+  CLI/daemon closed-loop checks, benchmark/OCR/vector gates, license/runbook/
+  current-stage/workflow/release-readiness checks, package/signing/notarization/
+  SBOM checks, installer evidence checks, Windows package skip on non-Windows,
+  Windows installer/service evidence checks, and public repo guard.
+
+Scope note:
+
+- S318 makes small current-stage smoke runs less brittle when OCR/import
+  produces searchable text before enough field mentions exist. It is not a
+  substitute for the full 500-query field-backed private baseline, field
+  extraction quality work, full-corpus OCR/import triage, or release readiness.
 
 ### S317
 

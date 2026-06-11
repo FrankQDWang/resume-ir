@@ -8687,6 +8687,13 @@ struct BenchmarkQuerySetDraftArgs {
     out: PathBuf,
     max_queries: usize,
     min_queries: usize,
+    allow_keyword_fallback: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DraftedLocalPrivateQueries {
+    queries: Vec<String>,
+    used_keyword_fallback: bool,
 }
 
 fn benchmark_query_set_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -8703,7 +8710,9 @@ fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result
     let args = parse_benchmark_query_set_draft_args(args)?;
     let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
     store.run_migrations().map_err(CliError::store)?;
-    let queries = draft_local_private_queries(&store, args.max_queries)?;
+    let drafted =
+        draft_local_private_queries(&store, args.max_queries, args.allow_keyword_fallback)?;
+    let queries = drafted.queries;
     if queries.len() < args.min_queries {
         return Err(CliError::user(
             "query set blocked: not enough local field queries",
@@ -8736,6 +8745,14 @@ fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result
     println!("schema: {QUERY_SET_SCHEMA_VERSION}");
     println!("privacy boundary: local_only_private_query_set");
     println!("queries: {}", queries.len());
+    println!(
+        "query fallback: {}",
+        if drafted.used_keyword_fallback {
+            "keyword"
+        } else {
+            "none"
+        }
+    );
     println!("query set sha256: {query_set_sha256}");
     println!("queries: <redacted>");
     println!("sample ids: <redacted>");
@@ -8749,6 +8766,7 @@ fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuer
     let mut max_queries_seen = false;
     let mut min_queries = 1_usize;
     let mut min_queries_seen = false;
+    let mut allow_keyword_fallback = false;
     let mut index = 0_usize;
     while index < args.len() {
         match args[index].as_str() {
@@ -8772,6 +8790,13 @@ fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuer
                 min_queries = take_benchmark_query_set_positive_usize(args, &mut index)?;
                 min_queries_seen = true;
             }
+            "--allow-keyword-fallback" => {
+                if allow_keyword_fallback {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                allow_keyword_fallback = true;
+                index += 1;
+            }
             _ => return Err(CliError::usage(benchmark_query_set_usage())),
         }
     }
@@ -8782,6 +8807,7 @@ fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuer
         out: out.ok_or_else(|| CliError::usage(benchmark_query_set_usage()))?,
         max_queries,
         min_queries,
+        allow_keyword_fallback,
     })
 }
 
@@ -8810,19 +8836,20 @@ fn take_benchmark_query_set_positive_usize(args: &[String], index: &mut usize) -
 }
 
 fn benchmark_query_set_usage() -> &'static str {
-    "usage: resume-cli benchmark-query-set draft --out <path> [--max-queries <count>] [--min-queries <count>]"
+    "usage: resume-cli benchmark-query-set draft --out <path> [--max-queries <count>] [--min-queries <count>] [--allow-keyword-fallback]"
 }
 
-fn draft_local_private_queries(store: &MetaStore, max_queries: usize) -> Result<Vec<String>> {
-    let mut queries = BTreeSet::<String>::new();
+fn draft_local_private_queries(
+    store: &MetaStore,
+    max_queries: usize,
+    allow_keyword_fallback: bool,
+) -> Result<DraftedLocalPrivateQueries> {
+    let mut field_queries = BTreeSet::<String>::new();
     let candidate_budget = max_queries.saturating_mul(10).max(max_queries);
-    for document_id in store
-        .searchable_document_ids()
-        .map_err(CliError::store)?
-        .into_iter()
-    {
+    let document_ids = store.searchable_document_ids().map_err(CliError::store)?;
+    for document_id in document_ids.iter() {
         let Some(version) = store
-            .latest_visible_resume_version_for_document(&document_id)
+            .latest_visible_resume_version_for_document(document_id)
             .map_err(CliError::store)?
         else {
             continue;
@@ -8833,12 +8860,47 @@ fn draft_local_private_queries(store: &MetaStore, max_queries: usize) -> Result<
         let mentions = store
             .entity_mentions_for_version(&version.id)
             .map_err(CliError::store)?;
-        add_query_candidates_for_mentions(&mentions, &mut queries, candidate_budget);
-        if queries.len() >= candidate_budget {
+        add_query_candidates_for_mentions(&mentions, &mut field_queries, candidate_budget);
+        if field_queries.len() >= candidate_budget {
             break;
         }
     }
-    Ok(queries.into_iter().take(max_queries).collect())
+    let mut queries = field_queries
+        .into_iter()
+        .take(max_queries)
+        .collect::<Vec<_>>();
+    let mut seen = queries.iter().cloned().collect::<BTreeSet<_>>();
+    let mut used_keyword_fallback = false;
+    if allow_keyword_fallback && queries.len() < max_queries {
+        for document_id in document_ids {
+            let Some(version) = store
+                .latest_visible_resume_version_for_document(&document_id)
+                .map_err(CliError::store)?
+            else {
+                continue;
+            };
+            if version.visibility != ResumeVisibility::Searchable {
+                continue;
+            }
+            let Some(text) = version
+                .clean_text
+                .as_deref()
+                .or(version.raw_text.as_deref())
+            else {
+                continue;
+            };
+            if add_keyword_fallback_queries(text, &mut queries, &mut seen, max_queries) {
+                used_keyword_fallback = true;
+            }
+            if queries.len() >= max_queries {
+                break;
+            }
+        }
+    }
+    Ok(DraftedLocalPrivateQueries {
+        queries,
+        used_keyword_fallback,
+    })
 }
 
 fn add_query_candidates_for_mentions(
@@ -8934,6 +8996,75 @@ fn insert_benchmark_query_candidate(
     if normalize_benchmark_query_value(&query).is_some() {
         queries.insert(query);
     }
+}
+
+fn add_keyword_fallback_queries(
+    text: &str,
+    queries: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+    max_queries: usize,
+) -> bool {
+    let mut inserted = false;
+    for token in keyword_fallback_tokens(text) {
+        if queries.len() >= max_queries {
+            break;
+        }
+        if seen.insert(token.clone()) {
+            queries.push(token);
+            inserted = true;
+        }
+    }
+    inserted
+}
+
+fn keyword_fallback_tokens(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .filter(|segment| {
+            !segment.contains('@')
+                && !segment.contains('/')
+                && !segment.contains('\\')
+                && segment.chars().filter(|ch| ch.is_ascii_digit()).count() < 5
+        })
+        .filter_map(normalize_keyword_fallback_token)
+        .collect()
+}
+
+fn normalize_keyword_fallback_token(segment: &str) -> Option<String> {
+    let normalized = segment
+        .chars()
+        .filter(|ch| ch.is_alphanumeric() || *ch == '+' || *ch == '#')
+        .collect::<String>()
+        .to_lowercase();
+    let char_count = normalized.chars().count();
+    if !(3..=40).contains(&char_count)
+        || normalized.chars().all(|ch| ch.is_ascii_digit())
+        || is_keyword_fallback_stopword(&normalized)
+    {
+        return None;
+    }
+    Some(normalized)
+}
+
+fn is_keyword_fallback_stopword(value: &str) -> bool {
+    matches!(
+        value,
+        "and"
+            | "are"
+            | "candidate"
+            | "email"
+            | "for"
+            | "from"
+            | "has"
+            | "local"
+            | "ocr"
+            | "only"
+            | "phone"
+            | "resume"
+            | "that"
+            | "the"
+            | "this"
+            | "with"
+    )
 }
 
 fn benchmark_corpus_summary_command(data_dir: &Path, args: &[String]) -> Result<()> {

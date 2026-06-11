@@ -92,6 +92,14 @@ only counts, basenames, and SHA-256 digests. The draft command excludes names,
 emails, phones, local paths, filenames, raw resume text, document IDs, and
 sample IDs derived from source data.
 
+The smoke profile passes `--allow-keyword-fallback` to the local query-set
+draft command. That fallback is only for proving the current-stage wiring when
+a tiny OCR-heavy sample has searchable text but too few high-confidence
+non-contact field mentions. It still writes only a local private JSONL query
+set and redacted stdout. The full profile does not use the fallback: the full
+500-query baseline remains blocked until the local corpus can produce the
+required field-backed query set.
+
 ```bash
 scripts/local/run-current-stage-validation.sh --dry-run \
   --validation-profile full \

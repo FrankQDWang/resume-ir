@@ -217,7 +217,7 @@ require_text "$smoke_plan" '"validation_profile": "smoke"'
 require_text "$smoke_plan" '"current_stage_target": "local_real_corpus_smoke_chain"'
 require_text "$smoke_plan" '"full_baseline_satisfied": false'
 require_text "$smoke_plan" '"release_readiness_evidence": false'
-require_text "$smoke_plan" 'benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries 3 --min-queries 1'
+require_text "$smoke_plan" 'benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries 3 --min-queries 1 --allow-keyword-fallback'
 require_text "$smoke_plan" 'resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --allow-smoke-confidence --min-documents 1 --min-queries 1'
 require_text "$smoke_plan" 'write <local-evidence-dir>/current-stage-smoke-summary.json'
 reject_text "$smoke_plan" "release-readiness --json"

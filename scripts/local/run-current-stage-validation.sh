@@ -340,6 +340,8 @@ case "$validation_profile" in
     baseline_min_queries="500"
     benchmark_gate_smoke_arg=""
     benchmark_gate_smoke_plan=""
+    query_set_keyword_fallback_arg=""
+    query_set_keyword_fallback_plan=""
     full_baseline_satisfied="false"
     release_readiness_evidence="true"
     terminal_plan_steps='    {
@@ -358,6 +360,8 @@ case "$validation_profile" in
     baseline_min_queries="1"
     benchmark_gate_smoke_arg="--allow-smoke-confidence"
     benchmark_gate_smoke_plan=" --allow-smoke-confidence"
+    query_set_keyword_fallback_arg="--allow-keyword-fallback"
+    query_set_keyword_fallback_plan=" --allow-keyword-fallback"
     full_baseline_satisfied="false"
     release_readiness_evidence="false"
     terminal_plan_steps='    {
@@ -451,7 +455,7 @@ if [ "$mode" = "dry-run" ]; then
     },
     {
       "id": "query_set_draft",
-      "command": "resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries $max_queries --min-queries $query_set_min_queries"
+      "command": "resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries $max_queries --min-queries $query_set_min_queries$query_set_keyword_fallback_plan"
     },
     {
       "id": "private_query_baseline",
@@ -655,6 +659,7 @@ if [ "$query_set_generated" = "true" ]; then
     --out "$query_set" \
     --max-queries "$max_queries" \
     --min-queries "$query_set_min_queries" \
+    $query_set_keyword_fallback_arg \
     > "$out_dir/query-set-draft.stdout.txt"
 else
   [ -f "$provided_query_set" ] || fail "query set must exist and stay local"

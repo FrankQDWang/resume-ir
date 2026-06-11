@@ -199,10 +199,102 @@ fn benchmark_query_set_draft_rejects_insufficient_queries_without_path_leak() {
     remove_dir(&out_dir);
 }
 
+#[test]
+fn benchmark_query_set_draft_can_use_explicit_keyword_fallback_for_smoke() {
+    let data_dir = temp_dir("query-set-keyword-fallback-data");
+    let out_dir = temp_dir("query-set-keyword-fallback-private-out");
+    let query_set = out_dir.join("private-query-set.local.jsonl");
+    seed_searchable_document_with_mentions_and_text(
+        &data_dir,
+        "ocr-only-private-resume.pdf",
+        &[mention(
+            EntityType::Email,
+            "ocr.only@example.test",
+            "ocr.only@example.test",
+            0.99,
+        )],
+        "This local OCR candidate has rust indexing retrieval and offline ranking experience.",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "benchmark-query-set",
+            "draft",
+            "--out",
+            path_str(&query_set),
+            "--max-queries",
+            "3",
+            "--min-queries",
+            "1",
+            "--allow-keyword-fallback",
+        ])
+        .output()
+        .expect("draft local private query set with keyword fallback");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("query set: written"));
+    assert!(stdout.contains("schema: resume-ir.query-set.jsonl.v1"));
+    assert!(stdout.contains("privacy boundary: local_only_private_query_set"));
+    assert!(stdout.contains("query fallback: keyword"));
+    assert!(stdout.contains("queries: 3"));
+    assert!(stdout.contains("queries: <redacted>"));
+    for forbidden in [
+        path_str(&data_dir),
+        path_str(&out_dir),
+        "ocr.only@example.test",
+        "ocr-only-private-resume",
+    ] {
+        assert!(!stdout.contains(forbidden), "stdout leaked {forbidden}");
+    }
+
+    let query_set_text = fs::read_to_string(&query_set).unwrap();
+    let lines = query_set_text.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 3);
+    assert!(query_set_text.contains("rust"));
+    assert!(query_set_text.contains("indexing"));
+    for forbidden in [
+        path_str(&data_dir),
+        path_str(&out_dir),
+        "ocr.only@example.test",
+        "ocr-only-private-resume",
+    ] {
+        assert!(
+            !query_set_text.contains(forbidden),
+            "query set leaked {forbidden}"
+        );
+    }
+
+    remove_dir(&data_dir);
+    remove_dir(&out_dir);
+}
+
 fn seed_searchable_document_with_mentions(
     data_dir: &Path,
     file_name: &str,
     mentions: &[SeedMention],
+) {
+    seed_searchable_document_with_mentions_and_text(
+        data_dir,
+        file_name,
+        mentions,
+        &format!("synthetic text for {file_name}"),
+    );
+}
+
+fn seed_searchable_document_with_mentions_and_text(
+    data_dir: &Path,
+    file_name: &str,
+    mentions: &[SeedMention],
+    text: &str,
 ) {
     let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
@@ -235,8 +327,8 @@ fn seed_searchable_document_with_mentions(
             schema_version: "schema-v1".to_string(),
             language_set: vec!["en".to_string()],
             page_count: Some(1),
-            raw_text: Some(format!("synthetic text for {file_name}")),
-            clean_text: Some(format!("synthetic text for {file_name}")),
+            raw_text: Some(text.to_string()),
+            clean_text: Some(text.to_string()),
             quality_score: Some(0.8),
             visibility: ResumeVisibility::Searchable,
         })
