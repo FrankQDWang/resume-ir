@@ -77,10 +77,14 @@ resume-cli --data-dir <local-data-dir> ocr preflight --json \
 
 The JSON schema is `ocr-runtime-preflight.v1`. The command exits nonzero when
 `pdftoppm`, `tesseract`, or the requested Tesseract language pack is missing or
-unknown, and it prints remediation such as installing Poppler/pdftoppm,
-Tesseract/tessdata, or the requested language pack. Output must keep paths as
-`<redacted>` and must not print command paths, OCR text, page images, Tesseract
-language dumps, model caches, indexes, or local data directories.
+unknown. When dependencies are available, it also runs one synthetic local runtime probe:
+render a blank local PDF through `pdftoppm`, pass the rendered page to
+Tesseract, and require a successful TSV response. The JSON includes
+`runtime_probe` with `passed`, `failed`, or `not_run`, and remediation such as
+installing Poppler/pdftoppm, Tesseract/tessdata, the requested language pack, or
+fixing the local render/OCR commands. Output must keep paths as `<redacted>` and
+must not print command paths, OCR text, page images, Tesseract language dumps,
+synthetic probe payloads, model caches, indexes, or local data directories.
 
 ## OCR Runtime Manifest Validation
 

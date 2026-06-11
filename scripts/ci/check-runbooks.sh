@@ -56,6 +56,8 @@ require_text "$fault_runbook" "real hardware drill: blocked"
 require_text "$worker_runbook" "resume-cli ocr-worker --once"
 require_text "$worker_runbook" "resume-cli ocr preflight --json"
 require_text "$worker_runbook" "ocr-runtime-preflight.v1"
+require_text "$worker_runbook" "runtime_probe"
+require_text "$worker_runbook" "synthetic local runtime probe"
 require_text "$worker_runbook" "--tesseract-command <local-tesseract-command>"
 require_text "$worker_runbook" "--pdftoppm-command <local-pdftoppm-command>"
 require_text "$worker_runbook" "exits nonzero"
@@ -105,6 +107,7 @@ require_text "$release_runbook" 'target_claim: "benchmark_baseline_observed"'
 require_text "$release_runbook" "follow-up performance"
 require_text "$release_runbook" "resume-cli --data-dir <local-data-dir> ocr validate-manifest"
 require_text "$release_runbook" "resume-cli --data-dir <local-data-dir> model validate-manifest"
+require_text "$release_runbook" 'runtime_probe: "passed"'
 require_text "$release_runbook" 'embedding_protocol: "passed"'
 require_text "$release_runbook" "Tesseract plus tessdata"
 require_text "$release_runbook" "Apache-2.0 external OCR runtime"

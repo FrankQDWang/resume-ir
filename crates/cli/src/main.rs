@@ -3489,15 +3489,29 @@ struct OcrPreflightArgs {
 
 fn ocr_preflight_command(args: &[String]) -> Result<()> {
     let preflight_args = parse_ocr_preflight_args(args)?;
+    let pdftoppm_command =
+        resolve_ocr_preflight_command(preflight_args.pdftoppm_command.as_ref(), "pdftoppm");
+    let tesseract_command =
+        resolve_ocr_preflight_command(preflight_args.tesseract_command.as_ref(), "tesseract");
     let runtime = inspect_ocr_runtime_with_commands(
         &preflight_args.ocr_lang,
-        preflight_args.pdftoppm_command.as_ref(),
-        preflight_args.tesseract_command.as_ref(),
+        pdftoppm_command.as_ref(),
+        tesseract_command.as_ref(),
     );
-    let ready = runtime.pdftoppm == OcrRuntimeState::Available
+    let dependencies_ready = runtime.pdftoppm == OcrRuntimeState::Available
         && runtime.tesseract == OcrRuntimeState::Available
         && runtime.requested_language_status == OcrRuntimeState::Available;
-    print_ocr_preflight_json(&runtime, ready);
+    let probe_status = if dependencies_ready {
+        ocr_preflight_probe_status(
+            pdftoppm_command.as_ref(),
+            tesseract_command.as_ref(),
+            &preflight_args.ocr_lang,
+        )
+    } else {
+        OcrPreflightProbeStatus::NotRun
+    };
+    let ready = dependencies_ready && probe_status == OcrPreflightProbeStatus::Passed;
+    print_ocr_preflight_json(&runtime, ready, probe_status);
     if ready {
         Ok(())
     } else {
@@ -3505,6 +3519,101 @@ fn ocr_preflight_command(args: &[String]) -> Result<()> {
             "ocr runtime preflight blocked: dependencies are not ready",
         ))
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OcrPreflightProbeStatus {
+    Passed,
+    Failed,
+    NotRun,
+}
+
+impl OcrPreflightProbeStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::NotRun => "not_run",
+        }
+    }
+}
+
+fn resolve_ocr_preflight_command(configured: Option<&PathBuf>, name: &str) -> Option<PathBuf> {
+    configured.cloned().or_else(|| find_command_in_path(name))
+}
+
+fn ocr_preflight_probe_status(
+    pdftoppm_command: Option<&PathBuf>,
+    tesseract_command: Option<&PathBuf>,
+    ocr_lang: &str,
+) -> OcrPreflightProbeStatus {
+    let Some(pdftoppm_command) = pdftoppm_command else {
+        return OcrPreflightProbeStatus::NotRun;
+    };
+    let Some(tesseract_command) = tesseract_command else {
+        return OcrPreflightProbeStatus::NotRun;
+    };
+
+    let budget = match OcrWorkerBudget::new(5_000) {
+        Ok(budget) => budget,
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+    let cancellation = CancellationToken::new();
+    let render_spec = match PdftoppmRenderSpec::new(pdftoppm_command.clone()) {
+        Ok(spec) => spec,
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+    let renderer = PdftoppmPdfRenderer::new(render_spec);
+    let rendered = match renderer.render_page(
+        &ocr_preflight_blank_pdf_bytes(),
+        1,
+        72,
+        budget,
+        &cancellation,
+    ) {
+        Ok(rendered) => rendered,
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+    let tesseract = match TesseractOcrSpec::new(tesseract_command.clone(), "preflight-tesseract") {
+        Ok(spec) => TesseractOcrClient::new(spec),
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+    let options = match OcrOptions::new(ocr_lang, "preflight") {
+        Ok(options) => options,
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+    let request = match OcrPageRequest::new(rendered, options) {
+        Ok(request) => request,
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+
+    match tesseract.recognize_page(request, budget, &cancellation) {
+        Ok(page) if page.page_no() == 1 => OcrPreflightProbeStatus::Passed,
+        _ => OcrPreflightProbeStatus::Failed,
+    }
+}
+
+fn ocr_preflight_blank_pdf_bytes() -> Vec<u8> {
+    let mut output = Vec::new();
+    output.extend_from_slice(b"%PDF-1.4\n");
+    let object_1 = output.len();
+    output.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    let object_2 = output.len();
+    output.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+    let object_3 = output.len();
+    output.extend_from_slice(
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources << >> >>\nendobj\n",
+    );
+    let xref = output.len();
+    output.extend_from_slice(b"xref\n0 4\n");
+    output.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in [object_1, object_2, object_3] {
+        output.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    output.extend_from_slice(
+        format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    output
 }
 
 fn parse_ocr_preflight_args(args: &[String]) -> Result<OcrPreflightArgs> {
@@ -3575,7 +3684,11 @@ fn parse_ocr_preflight_args(args: &[String]) -> Result<OcrPreflightArgs> {
     })
 }
 
-fn print_ocr_preflight_json(runtime: &OcrRuntimeDiagnostic, ready: bool) {
+fn print_ocr_preflight_json(
+    runtime: &OcrRuntimeDiagnostic,
+    ready: bool,
+    probe_status: OcrPreflightProbeStatus,
+) {
     println!("{{");
     println!("  \"schema_version\": \"ocr-runtime-preflight.v1\",");
     println!(
@@ -3596,8 +3709,9 @@ fn print_ocr_preflight_json(runtime: &OcrRuntimeDiagnostic, ready: bool) {
         runtime.requested_language_status.label()
     );
     println!("  }},");
+    println!("  \"runtime_probe\": \"{}\",", probe_status.label());
     print!("  \"remediation\": [");
-    let remediation = ocr_preflight_remediation(runtime);
+    let remediation = ocr_preflight_remediation(runtime, probe_status);
     for (index, item) in remediation.iter().enumerate() {
         if index > 0 {
             print!(", ");
@@ -3608,7 +3722,10 @@ fn print_ocr_preflight_json(runtime: &OcrRuntimeDiagnostic, ready: bool) {
     println!("}}");
 }
 
-fn ocr_preflight_remediation(runtime: &OcrRuntimeDiagnostic) -> Vec<&'static str> {
+fn ocr_preflight_remediation(
+    runtime: &OcrRuntimeDiagnostic,
+    probe_status: OcrPreflightProbeStatus,
+) -> Vec<&'static str> {
     let mut remediation = Vec::new();
     if runtime.pdftoppm != OcrRuntimeState::Available {
         remediation.push("install Poppler/pdftoppm or configure --pdftoppm-command");
@@ -3618,6 +3735,9 @@ fn ocr_preflight_remediation(runtime: &OcrRuntimeDiagnostic) -> Vec<&'static str
     } else if runtime.requested_language_status != OcrRuntimeState::Available {
         remediation
             .push("install requested Tesseract language pack or choose an installed --ocr-lang");
+    }
+    if probe_status == OcrPreflightProbeStatus::Failed {
+        remediation.push("verify pdftoppm can render and Tesseract can OCR a local probe");
     }
     remediation
 }

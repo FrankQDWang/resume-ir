@@ -359,7 +359,17 @@ exit 0
 fn ocr_preflight_json_reports_ready_runtime_without_path_or_language_dump() {
     let data_dir = temp_dir("ocr-preflight-ready-private-data");
     let bin_dir = temp_dir("ocr-preflight-ready-private-bin");
-    let _ = write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
+    let _ = write_executable(
+        &bin_dir,
+        "pdftoppm",
+        r#"#!/bin/sh
+out=""
+for arg in "$@"; do
+  out="$arg"
+done
+printf 'P6\n1 1\n255\nzzz' > "${out}.ppm"
+"#,
+    );
     let _ = write_executable(
         &bin_dir,
         "tesseract",
@@ -370,7 +380,8 @@ if [ "$1" = "--list-langs" ]; then
   printf 'chi_sim\n'
   exit 0
 fi
-exit 9
+printf 'level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n'
+printf '5\t1\t1\t1\t1\t1\t0\t0\t1\t1\t95\tProbe\n'
 "#,
     );
 
@@ -396,9 +407,11 @@ exit 9
     assert!(stdout.contains("\"pdftoppm\": \"available\""));
     assert!(stdout.contains("\"tesseract\": \"available\""));
     assert!(stdout.contains("\"requested_language_status\": \"available\""));
+    assert!(stdout.contains("\"runtime_probe\": \"passed\""));
     assert!(stdout.contains("\"paths\": \"<redacted>\""));
     assert!(stdout.contains("\"remediation\": []"));
     assert!(!stdout.contains("chi_sim"));
+    assert!(!stdout.contains("Probe"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&bin_dir)));
 
@@ -435,6 +448,7 @@ fn ocr_preflight_json_blocks_missing_dependencies_without_path_leak() {
     assert!(stdout.contains("\"pdftoppm\": \"missing\""));
     assert!(stdout.contains("\"tesseract\": \"missing\""));
     assert!(stdout.contains("\"requested_language_status\": \"missing\""));
+    assert!(stdout.contains("\"runtime_probe\": \"not_run\""));
     assert!(stdout.contains("install Poppler/pdftoppm or configure --pdftoppm-command"));
     assert!(stdout.contains("install Tesseract/tessdata or configure --tesseract-command"));
     assert!(stdout.contains("\"paths\": \"<redacted>\""));
@@ -442,6 +456,71 @@ fn ocr_preflight_json_blocks_missing_dependencies_without_path_leak() {
     assert!(!stdout.contains(path_str(&bin_dir)));
     assert!(!stderr.contains(path_str(&data_dir)));
     assert!(!stderr.contains(path_str(&bin_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn ocr_preflight_json_blocks_renderer_probe_failure_without_path_or_payload_leak() {
+    let data_dir = temp_dir("ocr-preflight-renderer-probe-private-data");
+    let bin_dir = temp_dir("ocr-preflight-renderer-probe-private-bin");
+    let _ = write_executable(
+        &bin_dir,
+        "pdftoppm",
+        r#"#!/bin/sh
+printf 'PRIVATE_RENDER_PROBE_PAYLOAD\n' >&2
+exit 0
+"#,
+    );
+    let _ = write_executable(
+        &bin_dir,
+        "tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--list-langs" ]; then
+  printf 'List of available languages (1):\n'
+  printf 'eng\n'
+  exit 0
+fi
+printf 'level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n'
+printf '5\t1\t1\t1\t1\t1\t0\t0\t1\t1\t94\tProbe\n'
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr",
+            "preflight",
+            "--json",
+            "--ocr-lang",
+            "eng",
+        ])
+        .output()
+        .expect("run OCR runtime preflight with bad renderer");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ocr runtime preflight blocked"));
+    assert!(stdout.contains("\"schema_version\": \"ocr-runtime-preflight.v1\""));
+    assert!(stdout.contains("\"runtime_status\": \"blocked\""));
+    assert!(stdout.contains("\"pdftoppm\": \"available\""));
+    assert!(stdout.contains("\"tesseract\": \"available\""));
+    assert!(stdout.contains("\"requested_language_status\": \"available\""));
+    assert!(stdout.contains("\"runtime_probe\": \"failed\""));
+    assert!(stdout.contains("verify pdftoppm can render and Tesseract can OCR a local probe"));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(!stdout.contains("PRIVATE_RENDER_PROBE_PAYLOAD"));
+    assert!(!stdout.contains("Probe"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&bin_dir)));
+    assert!(!stderr.contains("PRIVATE_RENDER_PROBE_PAYLOAD"));
 
     remove_dir(&data_dir);
     remove_dir(&bin_dir);

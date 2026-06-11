@@ -243,6 +243,11 @@ production-ready scope source.
   vectors, generated diagnostics, local manifests, model files, runtime
   binaries, indexes, SQLite databases, signing material, notarization
   credentials, or model caches were committed or uploaded.
+  S313 used synthetic/private-shaped OCR runtime preflight fixtures only; no
+  real resume data, OCR text, page images, local paths, command paths, stderr
+  payloads, generated diagnostics, local manifests, runtime binaries, model
+  files, indexes, SQLite databases, signing material, notarization credentials,
+  or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -639,7 +644,11 @@ obsolete preliminary files and checklists are not product scope.
   export-diagnostics, daemon status IPC, and CLI status-over-IPC now surface a
   redacted aggregate `ocr_language_unavailable` blocker count and remediation
   message for these failed OCR jobs without exposing requested language names or
-  local runtime paths.
+  local runtime paths. OCR runtime preflight now also performs a synthetic local
+  render/OCR probe after dependency and language checks, reports
+  `runtime_probe` as `passed`, `failed`, or `not_run`, and fails closed without
+  printing command paths, probe text, page images, or subprocess stderr payloads
+  when `pdftoppm` cannot render or Tesseract cannot OCR the local probe.
   OCR runtime manifest validation now exists for reviewed local OCR runtime
   packs: `resume-cli ocr validate-manifest` verifies the local Tesseract/
   renderer/language-pack artifact checksums and reviewed license metadata
@@ -1157,8 +1166,58 @@ obsolete preliminary files and checklists are not product scope.
 | S310 | Current-stage evidence exact step-list gate complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted manifests with duplicate conflicting step IDs and manifests with unknown extra steps, as long as a success entry for each required step existed somewhere in the array. After implementation, current-stage evidence intake requires the `steps` array to exactly match the ordered local validation flow with no duplicates or unknown entries, while still requiring the `release_readiness_intake` exit code. The runbook documents that duplicate or extra steps are rejected. | This slice is production complete for current-stage evidence step-list integrity only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S311 | Current-stage evidence exact output inventory gate complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted manifests with an unknown extra `redacted_outputs` entry when the filename was basename-only and had a valid SHA-256. After implementation, current-stage evidence intake requires the `redacted_outputs` inventory to contain exactly the expected local-flow basenames, rejecting unknown extras while preserving duplicate detection and digest binding for dataset, query set, model manifest, and OCR runtime manifest. The runbook documents that unknown output files are rejected. | This slice is production complete for current-stage redacted output inventory integrity only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S312 | Embedding runtime preflight protocol probe complete locally | Focused RED first failed because `model preflight --json` marked an executable embedding command as ready even when the command returned the wrong model id and malformed protocol output. After implementation, model preflight validates the reviewed manifest, confirms the requested model id/dimension, executes one synthetic local `resume-ir-embedding-v1` probe through the configured command, reports `embedding_protocol` as `passed`, `failed`, or `not_run`, and fails closed without printing paths, model bytes, vectors, stderr payloads, or synthetic probe text. Runbooks and guards now document that current-stage execution requires the protocol probe before private corpus access. | This slice is production complete for embedding runtime protocol preflight only. It does not select, approve, download, bundle, or distribute a production embedding model, prove semantic quality, run private 10k/500-query benchmark evidence, clear model license/distribution blockers, validate platforms, or make stable release ready. |
+| S313 | OCR runtime preflight render/OCR probe complete locally | Focused RED first failed because `ocr preflight --json` marked an executable `pdftoppm` as ready even when it produced no rendered page. After implementation, OCR preflight resolves the local `pdftoppm` and Tesseract commands, keeps the existing dependency and language-pack checks, renders one synthetic local PDF page, requires Tesseract TSV OCR on that rendered page, reports `runtime_probe` as `passed`, `failed`, or `not_run`, and fails closed without printing local paths, OCR text, page images, probe payloads, command paths, or subprocess stderr. Runbooks and guards now document that current-stage execution requires this OCR runtime probe before private corpus access. | This slice is production complete for OCR runtime preflight smoke only. It does not install, bundle, approve, or distribute OCR runtimes; run private 10k OCR, prove OCR quality or throughput, clear Poppler/Tesseract/tessdata license and checksum evidence, validate platforms, sign/notarize artifacts, or make stable release ready. |
 
 ## Command Log
+
+### S313
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s174_ocr_manifest ocr_preflight_json_blocks_renderer_probe_failure_without_path_or_payload_leak --locked -- --exact
+```
+
+Output summary:
+
+- Failed as expected because OCR preflight still accepted an executable
+  `pdftoppm` command that exited successfully without producing a rendered page.
+
+Focused verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s174_ocr_manifest ocr_preflight --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s174_ocr_manifest --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- The filtered OCR-preflight suite exited 0 with 3/3 tests passing.
+- The full OCR manifest/preflight test file exited 0 with 7/7 tests passing.
+- Runbook and current-stage validation guards exited 0.
+
+Final local gates:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+./scripts/ci/guard-public-repo.sh
+tmp_log="${TMPDIR:-/tmp}/resume-ir-verify-local-s313.log"; PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh > "$tmp_log" 2>&1; rc=$?; tail -n 160 "$tmp_log"; exit "$rc"
+```
+
+Output summary:
+
+- Formatting, diff whitespace, focused clippy, public repo guard, and
+  `verify-local.sh` exited 0.
+
+Scope note:
+
+- S313 strengthens OCR runtime preflight only. It does not claim OCR runtime
+  distribution approval, OCR quality/throughput evidence, private full-corpus
+  OCR completion, platform validation, or stable release readiness.
 
 ### S312
 

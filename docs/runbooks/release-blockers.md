@@ -44,7 +44,9 @@ embed, benchmark, or read the private corpus:
 
 The execute flow first performs OCR and embedding runtime preflight, drafts
 local OCR/model manifests, and validates those manifests before reading the
-private resume root. Embedding preflight must run a synthetic local
+private resume root. OCR preflight must run a synthetic local PDF render plus
+Tesseract TSV probe and record `runtime_probe: "passed"` before private corpus
+access continues. Embedding preflight must run a synthetic local
 `resume-ir-embedding-v1` protocol probe and record `embedding_protocol: "passed"`
 before private corpus access continues. If runtime preflight or manifest
 validation fails, execute mode stops before scanning the private corpus or
