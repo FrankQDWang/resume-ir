@@ -239,11 +239,128 @@ fn ocr_manifest_validate_rejects_unreviewed_license_without_path_or_payload_leak
 
 #[cfg(unix)]
 #[test]
+fn ocr_manifest_draft_writes_local_manifest_without_stdout_path_or_payload_leak() {
+    let data_dir = temp_dir("ocr-manifest-draft-private-data");
+    let manifest_file = temp_file("ocr-manifest-draft-private-manifest");
+    let bin_dir = temp_dir("ocr-manifest-draft-private-bin");
+    let language_pack = temp_file("ocr-manifest-draft-private-tessdata");
+    let tesseract = write_executable(
+        &bin_dir,
+        "tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'tesseract 5.5.1\n'
+  exit 0
+fi
+exit 0
+"#,
+    );
+    let pdftoppm = write_executable(
+        &bin_dir,
+        "pdftoppm",
+        r#"#!/bin/sh
+if [ "$1" = "-v" ]; then
+  printf 'pdftoppm version 25.12.0\n'
+  exit 0
+fi
+exit 0
+"#,
+    );
+    fs::write(&language_pack, b"SYNTHETIC OCR LANGUAGE PACK\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr",
+            "draft-manifest",
+            "--out",
+            path_str(&manifest_file),
+            "--runtime-pack-id",
+            "fixture-ocr-pack-draft",
+            "--tesseract-command",
+            path_str(&tesseract),
+            "--pdftoppm-command",
+            path_str(&pdftoppm),
+            "--language",
+            "eng",
+            "--language-pack",
+            path_str(&language_pack),
+            "--engine-license",
+            "Apache-2.0",
+            "--renderer-license",
+            "GPL-2.0-or-later",
+            "--language-license",
+            "Apache-2.0",
+            "--reviewed",
+        ])
+        .output()
+        .expect("draft OCR manifest");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr runtime manifest draft: written"));
+    assert!(stdout.contains("schema: resume-ir.ocr-runtime-manifest.v1"));
+    assert!(stdout.contains("runtime pack: fixture-ocr-pack-draft"));
+    assert!(stdout.contains("license reviewed: yes"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&manifest_file)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stdout.contains(path_str(&tesseract)));
+    assert!(!stdout.contains(path_str(&pdftoppm)));
+    assert!(!stdout.contains(path_str(&language_pack)));
+    assert!(!stdout.contains("SYNTHETIC OCR LANGUAGE PACK"));
+
+    let manifest = fs::read_to_string(&manifest_file).unwrap();
+    assert!(manifest.contains("\"schema_version\": \"resume-ir.ocr-runtime-manifest.v1\""));
+    assert!(manifest.contains("\"runtime_pack_id\": \"fixture-ocr-pack-draft\""));
+    assert!(manifest.contains("\"engine\": \"tesseract\""));
+    assert!(manifest.contains("\"engine\": \"poppler-pdftoppm\""));
+    assert!(manifest.contains("\"id\": \"eng\""));
+    assert!(manifest.contains("\"reviewed\": true"));
+    assert!(manifest.contains(path_str(&tesseract)));
+    assert!(manifest.contains(path_str(&pdftoppm)));
+    assert!(manifest.contains(path_str(&language_pack)));
+
+    let validate = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr",
+            "validate-manifest",
+            "--manifest",
+            path_str(&manifest_file),
+        ])
+        .output()
+        .expect("validate drafted OCR manifest");
+
+    assert!(
+        validate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&validate.stdout),
+        String::from_utf8_lossy(&validate.stderr)
+    );
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+    remove_file(&language_pack);
+    remove_file(&manifest_file);
+}
+
+#[cfg(unix)]
+#[test]
 fn ocr_preflight_json_reports_ready_runtime_without_path_or_language_dump() {
     let data_dir = temp_dir("ocr-preflight-ready-private-data");
     let bin_dir = temp_dir("ocr-preflight-ready-private-bin");
-    write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
-    write_executable(
+    let _ = write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
+    let _ = write_executable(
         &bin_dir,
         "tesseract",
         r#"#!/bin/sh
@@ -368,7 +485,7 @@ fn remove_file(path: &Path) {
 }
 
 #[cfg(unix)]
-fn write_executable(dir: &Path, name: &str, body: &str) {
+fn write_executable(dir: &Path, name: &str, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let path = dir.join(name);
@@ -376,4 +493,5 @@ fn write_executable(dir: &Path, name: &str, body: &str) {
     let mut permissions = fs::metadata(&path).unwrap().permissions();
     permissions.set_mode(0o700);
     fs::set_permissions(&path, permissions).unwrap();
+    path
 }

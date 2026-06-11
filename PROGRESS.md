@@ -156,6 +156,10 @@ production-ready scope source.
   data, local paths, model bytes, embedding vectors, diagnostics, runtime
   binaries, model files, signing material, notarization credentials, or model
   caches were committed or uploaded.
+  S296 added OCR runtime manifest draft generation and runbook guards only; no
+  real resume data, OCR text, page images, diagnostics, runtime binaries,
+  generated local runtime manifests, local tessdata files, signing material,
+  notarization credentials, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1053,8 +1057,46 @@ obsolete preliminary files and checklists are not product scope.
 | S293 | Product installer lifecycle dry-run operator plans complete locally | Focused RED first failed because the macOS and Windows installer evidence guards required lifecycle operator scripts that did not exist. After implementation, `run-macos-installer-lifecycle.sh` validates unsigned macOS package manifests and emits `release.macos_installer_lifecycle_plan.v1` dry-run JSON covering install, upgrade, uninstall, rollback, LaunchAgent start, and LaunchAgent stop; `run-windows-installer-lifecycle.ps1` validates unsigned Windows MSI manifests and emits `release.windows_installer_lifecycle_plan.v1` dry-run JSON covering install, upgrade, repair, uninstall, and rollback. Release workflow and runbook guards now require these dry-run plan artifacts and check they do not leak local paths or runtime-data markers. | This slice adds operator dry-run automation only. It does not execute `installer`, `pkgutil`, `launchctl`, or `msiexec.exe`, perform real install/upgrade/uninstall/rollback, validate Windows services, prove rollback, obtain administrator approval, clear installer lifecycle blockers, or make stable release ready. |
 | S294 | Product OCR runtime preflight complete locally | Focused RED first failed because `resume-cli ocr preflight --json` was rejected, so operators had no dedicated fail-closed dependency preflight for the accepted external Tesseract/tessdata plus Poppler/pdftoppm runtime direction. After implementation, `ocr preflight --json` checks `pdftoppm`, `tesseract`, and the requested Tesseract language pack from `PATH` or explicit command paths, emits `ocr-runtime-preflight.v1` redacted JSON, exits nonzero with remediation when dependencies are missing or unknown, and suppresses local paths, OCR text, page images, and language dumps. The OCR worker runbook and guard now document this operator step. | This slice adds local dependency preflight only. It does not install runtimes, bundle Poppler/Tesseract/tessdata, approve OCR licenses, validate full non-English OCR quality, run private real-corpus OCR throughput gates, clear OCR runtime evidence blockers, or make stable release ready. |
 | S295 | Product embedding runtime preflight complete locally | Focused RED first failed because `resume-cli model preflight --json` was rejected, so operators had no dedicated fail-closed preflight that ties a reviewed model manifest to a local embedding command before semantic search or embedding workers. After implementation, `model preflight --json --manifest <path> --embedding-command <path> --model-id <id> --dimension <n>` validates model manifest checksum/license evidence, verifies the requested embedding model id and dimension, checks the local embedding command is executable, emits `embedding-runtime-preflight.v1` redacted JSON, exits nonzero with remediation when the command is missing, and suppresses local paths, model bytes, and vectors. The worker runbook and guard now document this operator step. | This slice adds local embedding runtime preflight only. It does not select or approve a production embedding model, bundle model weights, execute a real model quality gate, prove vector quality, clear model license/distribution blockers, or make stable release ready. |
+| S296 | Product OCR runtime manifest draft generation complete locally | Focused RED first failed because `resume-cli ocr draft-manifest ...` was rejected, so operators still had to hand-write local OCR runtime manifests after dependency preflight. After implementation, `ocr draft-manifest --out <path> --runtime-pack-id <id> --tesseract-command <path> --pdftoppm-command <path> --language <lang> --language-pack <path> --engine-license <id> --renderer-license <id> --language-license <id> [--reviewed]` writes a local `resume-ir.ocr-runtime-manifest.v1` manifest with artifact paths, checksums, detected command versions, license IDs, and reviewed status, while stdout remains redacted. The generated manifest validates through the existing checksum/license validator when `--reviewed` is supplied, and runbooks now document the fail-closed no-review path. | This slice makes local OCR runtime manifest creation reproducible only. It does not install Tesseract/tessdata/Poppler, bundle Poppler or OCR binaries, perform legal review, prove OCR quality or throughput on the private corpus, clear OCR runtime release blockers, or make stable release ready. |
 
 ## Command Log
+
+### S296
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s174_ocr_manifest ocr_manifest_draft --locked
+```
+
+Output summary:
+
+- The new OCR runtime manifest draft test failed before implementation because
+  `resume-cli ocr draft-manifest` was not implemented and returned OCR usage.
+
+Focused verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s174_ocr_manifest ocr_manifest_draft --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s174_ocr_manifest --locked
+./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- Filtered `ocr_manifest_draft` test: exit 0, 1 test passed.
+- Full `s174_ocr_manifest`: exit 0, 6 tests passed.
+- `check-runbooks.sh`: exit 0.
+- `cargo fmt --check`: exit 0.
+- `cargo clippy -p resume-cli --tests --locked -- -D warnings`: exit 0.
+- `check-release-readiness.sh`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0, `public repo guard passed`.
 
 ### S295
 

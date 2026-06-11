@@ -1810,6 +1810,7 @@ fn ocr_command(args: &[String]) -> Result<()> {
     };
 
     match action {
+        "draft-manifest" => ocr_draft_manifest_command(&args[1..]),
         "preflight" => ocr_preflight_command(&args[1..]),
         "validate-manifest" => ocr_validate_manifest_command(&args[1..]),
         _ => Err(CliError::usage(ocr_usage())),
@@ -2348,6 +2349,297 @@ fn ocr_validate_manifest_command(args: &[String]) -> Result<()> {
 }
 
 #[derive(Debug, Clone)]
+struct OcrDraftManifestArgs {
+    out: PathBuf,
+    runtime_pack_id: String,
+    tesseract_command: PathBuf,
+    pdftoppm_command: PathBuf,
+    language: String,
+    language_pack: PathBuf,
+    engine_license: String,
+    renderer_license: String,
+    language_license: String,
+    reviewed: bool,
+}
+
+fn ocr_draft_manifest_command(args: &[String]) -> Result<()> {
+    let draft_args = parse_ocr_draft_manifest_args(args)?;
+    if !is_executable_file(&draft_args.tesseract_command) {
+        return Err(CliError::user(
+            "ocr runtime manifest draft blocked: tesseract command is unavailable",
+        ));
+    }
+    if !is_executable_file(&draft_args.pdftoppm_command) {
+        return Err(CliError::user(
+            "ocr runtime manifest draft blocked: pdftoppm command is unavailable",
+        ));
+    }
+    if !draft_args.language_pack.is_file() {
+        return Err(CliError::user(
+            "ocr runtime manifest draft blocked: language pack is unavailable",
+        ));
+    }
+
+    let tesseract_sha256 = file_sha256_hex(&draft_args.tesseract_command).map_err(|_| {
+        CliError::user("ocr runtime manifest draft blocked: tesseract checksum unavailable")
+    })?;
+    let pdftoppm_sha256 = file_sha256_hex(&draft_args.pdftoppm_command).map_err(|_| {
+        CliError::user("ocr runtime manifest draft blocked: pdftoppm checksum unavailable")
+    })?;
+    let language_sha256 = file_sha256_hex(&draft_args.language_pack).map_err(|_| {
+        CliError::user("ocr runtime manifest draft blocked: language pack checksum unavailable")
+    })?;
+    let tesseract_version =
+        local_command_version_token(&draft_args.tesseract_command, &["--version"]);
+    let pdftoppm_version = local_command_version_token(&draft_args.pdftoppm_command, &["-v"]);
+
+    let manifest = serde_json::json!({
+        "schema_version": OCR_RUNTIME_MANIFEST_SCHEMA_VERSION,
+        "runtime_pack_id": draft_args.runtime_pack_id,
+        "components": [
+            {
+                "id": "tesseract",
+                "kind": "ocr-engine",
+                "engine": "tesseract",
+                "version": tesseract_version,
+                "artifact": {
+                    "path": path_string_lossless(&draft_args.tesseract_command)?,
+                    "sha256": tesseract_sha256
+                },
+                "license": {
+                    "id": draft_args.engine_license,
+                    "reviewed": draft_args.reviewed
+                }
+            },
+            {
+                "id": "poppler-pdftoppm",
+                "kind": "pdf-renderer",
+                "engine": "poppler-pdftoppm",
+                "version": pdftoppm_version,
+                "artifact": {
+                    "path": path_string_lossless(&draft_args.pdftoppm_command)?,
+                    "sha256": pdftoppm_sha256
+                },
+                "license": {
+                    "id": draft_args.renderer_license,
+                    "reviewed": draft_args.reviewed
+                }
+            }
+        ],
+        "languages": [
+            {
+                "id": draft_args.language,
+                "artifact": {
+                    "path": path_string_lossless(&draft_args.language_pack)?,
+                    "sha256": language_sha256
+                },
+                "license": {
+                    "id": draft_args.language_license,
+                    "reviewed": draft_args.reviewed
+                }
+            }
+        ]
+    });
+    let manifest_text = serde_json::to_string_pretty(&manifest)
+        .map_err(|_| CliError::user("ocr runtime manifest draft blocked: invalid manifest"))?;
+    if let Some(parent) = draft_args.out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|_| {
+                CliError::user("ocr runtime manifest draft blocked: output is unavailable")
+            })?;
+        }
+    }
+    fs::write(&draft_args.out, format!("{manifest_text}\n"))
+        .map_err(|_| CliError::user("ocr runtime manifest draft blocked: output is unavailable"))?;
+
+    println!("ocr runtime manifest draft: written");
+    println!("schema: {OCR_RUNTIME_MANIFEST_SCHEMA_VERSION}");
+    println!(
+        "runtime pack: {}",
+        manifest["runtime_pack_id"].as_str().unwrap_or("unknown")
+    );
+    println!("components: 2");
+    println!("languages: 1");
+    println!(
+        "license reviewed: {}",
+        if draft_args.reviewed { "yes" } else { "no" }
+    );
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn parse_ocr_draft_manifest_args(args: &[String]) -> Result<OcrDraftManifestArgs> {
+    let mut out = None;
+    let mut runtime_pack_id = None;
+    let mut tesseract_command = None;
+    let mut pdftoppm_command = None;
+    let mut language = None;
+    let mut language_pack = None;
+    let mut engine_license = None;
+    let mut renderer_license = None;
+    let mut language_license = None;
+    let mut reviewed = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--out" => {
+                out = Some(take_ocr_path_arg(args, &mut index, out.is_some())?);
+            }
+            "--runtime-pack-id" => {
+                runtime_pack_id = Some(take_ocr_identifier_arg(
+                    args,
+                    &mut index,
+                    runtime_pack_id.is_some(),
+                )?);
+            }
+            "--tesseract-command" => {
+                tesseract_command = Some(take_ocr_path_arg(
+                    args,
+                    &mut index,
+                    tesseract_command.is_some(),
+                )?);
+            }
+            "--pdftoppm-command" => {
+                pdftoppm_command = Some(take_ocr_path_arg(
+                    args,
+                    &mut index,
+                    pdftoppm_command.is_some(),
+                )?);
+            }
+            "--language" => {
+                language = Some(take_ocr_identifier_arg(
+                    args,
+                    &mut index,
+                    language.is_some(),
+                )?);
+            }
+            "--language-pack" => {
+                language_pack = Some(take_ocr_path_arg(
+                    args,
+                    &mut index,
+                    language_pack.is_some(),
+                )?);
+            }
+            "--engine-license" => {
+                engine_license = Some(take_ocr_identifier_arg(
+                    args,
+                    &mut index,
+                    engine_license.is_some(),
+                )?);
+            }
+            "--renderer-license" => {
+                renderer_license = Some(take_ocr_identifier_arg(
+                    args,
+                    &mut index,
+                    renderer_license.is_some(),
+                )?);
+            }
+            "--language-license" => {
+                language_license = Some(take_ocr_identifier_arg(
+                    args,
+                    &mut index,
+                    language_license.is_some(),
+                )?);
+            }
+            "--reviewed" => {
+                if reviewed {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                reviewed = true;
+                index += 1;
+            }
+            _ => return Err(CliError::usage(ocr_usage())),
+        }
+    }
+
+    Ok(OcrDraftManifestArgs {
+        out: out.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        runtime_pack_id: runtime_pack_id.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        tesseract_command: tesseract_command.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        pdftoppm_command: pdftoppm_command.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        language: language.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        language_pack: language_pack.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        engine_license: engine_license.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        renderer_license: renderer_license.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        language_license: language_license.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        reviewed,
+    })
+}
+
+fn take_ocr_path_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<PathBuf> {
+    if duplicate {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(ocr_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    *index += 2;
+    Ok(PathBuf::from(value))
+}
+
+fn take_ocr_identifier_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<String> {
+    if duplicate {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(ocr_usage()));
+    };
+    if !valid_model_manifest_identifier(value) {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    *index += 2;
+    Ok(value.clone())
+}
+
+fn path_string_lossless(path: &Path) -> Result<String> {
+    path.to_str()
+        .map(str::to_string)
+        .ok_or_else(|| CliError::user("ocr runtime manifest draft blocked: invalid path"))
+}
+
+fn local_command_version_token(command: &Path, args: &[&str]) -> String {
+    let output = Command::new(command).args(args).output();
+    let Ok(output) = output else {
+        return "unknown".to_string();
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stdout
+        .split_whitespace()
+        .chain(stderr.split_whitespace())
+        .find_map(safe_version_token)
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn safe_version_token(token: &str) -> Option<String> {
+    let token = token
+        .trim_matches(|character: char| {
+            matches!(
+                character,
+                '"' | '\'' | '(' | ')' | '[' | ']' | ',' | ';' | ':'
+            )
+        })
+        .trim_start_matches('v');
+    if token.is_empty() || !token.chars().any(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    let normalized = token
+        .chars()
+        .take_while(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_' | '+')
+        })
+        .collect::<String>();
+    if valid_model_manifest_identifier(&normalized) {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
 struct OcrPreflightArgs {
     ocr_lang: String,
     tesseract_command: Option<PathBuf>,
@@ -2747,7 +3039,7 @@ fn ocr_manifest_sha256(value: &str) -> Result<String> {
 }
 
 fn ocr_usage() -> &'static str {
-    "usage: resume-cli ocr preflight --json [--ocr-lang <lang>] [--tesseract-command <path>] [--pdftoppm-command <path>] | resume-cli ocr validate-manifest --manifest <path>"
+    "usage: resume-cli ocr draft-manifest --out <path> --runtime-pack-id <id> --tesseract-command <path> --pdftoppm-command <path> --language <lang> --language-pack <path> --engine-license <id> --renderer-license <id> --language-license <id> [--reviewed] | resume-cli ocr preflight --json [--ocr-lang <lang>] [--tesseract-command <path>] [--pdftoppm-command <path>] | resume-cli ocr validate-manifest --manifest <path>"
 }
 
 fn service_command(data_dir: &Path, args: &[String]) -> Result<()> {

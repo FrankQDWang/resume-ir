@@ -78,6 +78,33 @@ language dumps, model caches, indexes, or local data directories.
 
 ## OCR Runtime Manifest Validation
 
+Canonical local draft command form:
+`resume-cli ocr draft-manifest --out <path>`.
+
+After dependency preflight, create a local-only manifest draft from the selected
+external commands and language pack:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr draft-manifest \
+  --out <local-ocr-runtime-manifest.json> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language eng \
+  --language-pack <local-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --reviewed
+```
+
+The draft command writes the manifest to the local `--out` file and keeps stdout
+redacted. The manifest file itself contains local artifact paths because the
+validator must read those files to verify checksums. Do not commit, upload, or
+paste this manifest unless it has been separately reviewed and stripped of local
+paths. Omit `--reviewed` when legal review is not complete; subsequent
+validation and release-readiness intake must then fail closed.
+
 Canonical local command form:
 `resume-cli ocr validate-manifest --manifest <path>`.
 
