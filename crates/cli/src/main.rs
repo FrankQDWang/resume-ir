@@ -892,24 +892,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
     )?;
 
     let redacted_outputs = require_release_evidence_array(object, "redacted_outputs", CONTEXT)?;
-    let mut output_digests = BTreeMap::new();
-    for output in redacted_outputs {
-        let output = output
-            .as_object()
-            .ok_or_else(|| release_evidence_invalid(CONTEXT, "redacted_outputs"))?;
-        let file = require_release_evidence_string_value(output, "file", CONTEXT)?;
-        if !is_release_evidence_basename(file) {
-            return Err(release_evidence_invalid(CONTEXT, "file"));
-        }
-        let sha256 = require_release_evidence_sha256_value(output, "sha256", CONTEXT)?;
-        if output_digests
-            .insert(file.to_string(), sha256.to_string())
-            .is_some()
-        {
-            return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
-        }
-    }
-    for required_file in [
+    let required_output_files = [
         "dataset-manifest.local.json",
         "dataset-manifest.stdout.txt",
         "ocr-runtime-manifest.local.json",
@@ -931,7 +914,31 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         "redacted-diagnostics.json",
         "release-readiness.json",
         "release-readiness.stderr.txt",
-    ] {
+    ];
+    let mut output_digests = BTreeMap::new();
+    for output in redacted_outputs {
+        let output = output
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "redacted_outputs"))?;
+        let file = require_release_evidence_string_value(output, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        if !required_output_files.contains(&file) {
+            return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+        }
+        let sha256 = require_release_evidence_sha256_value(output, "sha256", CONTEXT)?;
+        if output_digests
+            .insert(file.to_string(), sha256.to_string())
+            .is_some()
+        {
+            return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+        }
+    }
+    if output_digests.len() != required_output_files.len() {
+        return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+    }
+    for required_file in required_output_files {
         if !output_digests.contains_key(required_file) {
             return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
         }

@@ -1094,6 +1094,49 @@ fn release_readiness_rejects_current_stage_evidence_with_unknown_step_without_pa
 }
 
 #[test]
+fn release_readiness_rejects_current_stage_evidence_with_unknown_redacted_output_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-unknown-output-private-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-unknown-output-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    fs::write(
+        &current_stage_evidence,
+        current_stage_evidence_manifest().replace(
+            "\"redacted_outputs\":[",
+            "\"redacted_outputs\":[{\"file\":\"unexpected-private-report.txt\",\"sha256\":\"9999999999999999999999999999999999999999999999999999999999999999\"},",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject unknown current-stage redacted output");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence manifest"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_current_stage_evidence_with_private_marker_without_path_leaks() {
     let data_dir = temp_path("release-readiness-current-stage-marker-private-data");
     let evidence_dir = temp_path("release-readiness-current-stage-marker-private-reports");
