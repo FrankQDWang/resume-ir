@@ -190,6 +190,12 @@ production-ready scope source.
   benchmark reports, generated diagnostics, local runtime manifests, model
   files, runtime binaries, indexes, SQLite databases, signing material,
   notarization credentials, or model caches were committed or uploaded.
+  S303 used synthetic/private-shaped local dataset manifest fixtures and fake
+  current-stage execute fixtures only; no real resume data, filenames, raw
+  resume text, per-file hashes, local paths, generated private benchmark
+  reports, generated diagnostics, local runtime manifests, model files,
+  runtime binaries, indexes, SQLite databases, signing material, notarization
+  credentials, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1094,8 +1100,67 @@ obsolete preliminary files and checklists are not product scope.
 | S300 | Current-stage execute release-readiness fail-closed validation complete locally | Focused RED first failed because `run-current-stage-validation.sh --execute` accepted a fake `release-readiness` failure whose stderr said `release readiness evidence failed validation`; after implementation, execute mode still accepts the expected stable-release blocker sentinel, but exits nonzero with a generic redacted error when release-readiness rejects invalid evidence or returns an unexpected nonzero failure. The CI guard now exercises both fake execute paths and rejects temp paths/private markers from stdout and stderr. | This slice tightens fail-closed execute validation only. It does not run the actual private 10k corpus, generate private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S301 | Current-stage execute redacted evidence manifest complete locally | Focused RED first failed because `run-current-stage-validation.sh --execute` did not write `current-stage-validation-evidence.json`. After implementation, execute mode writes a local `resume-ir.current-stage-validation-evidence.v1` manifest with privacy boundary `local_only_redacted_evidence_manifest`, current-stage target, deferred-performance marker, release-readiness exit code, input digests, constant output filenames with SHA-256 digests, step statuses, and explicit false privacy sentinels for local paths, raw resume text, raw query text, model bytes, runtime binaries, and report bodies. The guard validates the fake execute manifest JSON and rejects temp paths, private markers, and private query text. | This slice makes local current-stage evidence auditable without exposing report bodies or paths. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S302 | Current-stage evidence release-readiness intake complete locally | Focused RED first failed because `resume-cli release-readiness --json --current-stage-evidence <path>` produced no JSON report and rejected the new flag. After implementation, release-readiness accepts `resume-ir.current-stage-validation-evidence.v1` manifests, validates the `local_only_redacted_evidence_manifest` boundary, current-stage target, deferred-performance marker, blocked release-readiness exit, input digests, required step statuses, basename-only redacted output digests, false privacy sentinels, and must-not-upload list. Invalid manifests with private markers fail closed without printing paths or manifest bodies. CI and runbook guards now document and verify the intake. | This slice is production complete for the redacted current-stage evidence manifest intake only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
+| S303 | Current-stage redacted dataset manifest generation complete locally | Focused RED first failed because `resume-cli privacy dataset-manifest ...` was rejected as an unknown privacy command, and the current-stage script still required a manually supplied dataset digest. After implementation, `privacy dataset-manifest --root <path> --out <path> [--profile explicit|discovery] [--max-files N]` scans the selected local root through the crawler and writes `resume-ir.dataset-manifest.v1` with privacy boundary `local_only_redacted_dataset_manifest`, aggregate file/extension/budget counts, a corpus fingerprint, and explicit false sentinels for paths, file names, raw resume text, and per-file hashes. `run-current-stage-validation.sh --execute` now generates that local manifest under the evidence directory, computes its SHA-256, optionally checks a caller-provided digest, and records only digests/basenames in current-stage evidence; dry-run/runbook/CI guards document and verify the flow. | This slice is production complete for redacted local dataset manifest generation and current-stage wiring only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 
 ## Command Log
+
+### S303
+
+TDD red checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s303_dataset_manifest --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- `cargo test -p resume-cli --test s303_dataset_manifest --locked` first
+  failed because `privacy dataset-manifest` was rejected by the CLI usage.
+- `check-current-stage-validation.sh` first failed after the guard update
+  because `run-current-stage-validation.sh` still required
+  `--dataset-manifest-sha256`.
+
+Focused verification:
+
+```bash
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s303_dataset_manifest --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s142_privacy_key_cli --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s146_metadata_key_cli --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness current_stage --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Shell syntax check exited 0.
+- `s303_dataset_manifest` exited 0; 2 tests passed, covering redacted manifest
+  generation and missing-root fail-closed errors without path or payload leaks.
+- `check-current-stage-validation.sh` exited 0; the dry-run plan and fake
+  execute flow now include local dataset manifest generation, computed digest
+  evidence, and leak rejection.
+- `check-runbooks.sh` exited 0; runbooks now guard the dataset-manifest schema,
+  privacy boundary, and local-only current-stage instructions.
+- `cargo clippy -p resume-cli --tests --locked -- -D warnings` exited 0.
+- `s142_privacy_key_cli`, `s146_metadata_key_cli`, and current-stage
+  `s161_release_readiness` focused tests exited 0.
+- `cargo fmt --check`, `git diff --check`, and `guard-public-repo.sh` exited 0.
+- `verify-local.sh` exited 0; the full local gate completed workspace clippy,
+  workspace tests, runbook/current-stage/workflow/release checks, package dry-run
+  checks, and public repository guard.
+
+Scope note:
+
+- S303 does not claim the private 10k validation run has happened. It only adds
+  the local redacted dataset manifest primitive and current-stage script wiring
+  needed for that run.
 
 ### S302
 

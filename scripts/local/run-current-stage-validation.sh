@@ -11,7 +11,7 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   --runtime-pack-id ID --tesseract-command FILE --pdftoppm-command FILE
   --language LANG --language-pack FILE
   --engine-license ID --renderer-license ID --language-license ID
-  --dataset-manifest-sha256 SHA256 [--query-set-sha256 SHA256]
+  [--dataset-manifest-sha256 SHA256] [--query-set-sha256 SHA256]
   [--model-manifest-sha256 SHA256]
   [--ocr-runtime-manifest-sha256 SHA256]
   [--renderer-manifest-sha256 SHA256]
@@ -298,8 +298,6 @@ require_arg "--language-pack" "$language_pack"
 require_arg "--engine-license" "$engine_license"
 require_arg "--renderer-license" "$renderer_license"
 require_arg "--language-license" "$language_license"
-require_arg "--dataset-manifest-sha256" "$dataset_manifest_sha256"
-
 require_positive_int "--dimension" "$dimension"
 require_positive_int "--max-files" "$max_files"
 require_positive_int "--max-queries" "$max_queries"
@@ -313,7 +311,7 @@ require_positive_int "--ocr-render-dpi" "$ocr_render_dpi"
 require_positive_int "--embedding-max-docs" "$embedding_max_docs"
 require_positive_int "--embedding-max-text-bytes" "$embedding_max_text_bytes"
 require_positive_int "--embedding-timeout-ms" "$embedding_timeout_ms"
-require_sha256 "--dataset-manifest-sha256" "$dataset_manifest_sha256"
+[ -z "$dataset_manifest_sha256" ] || require_sha256 "--dataset-manifest-sha256" "$dataset_manifest_sha256"
 [ -z "$query_set_sha256" ] || require_sha256 "--query-set-sha256" "$query_set_sha256"
 [ -z "$model_manifest_sha256" ] || require_sha256 "--model-manifest-sha256" "$model_manifest_sha256"
 [ -z "$ocr_runtime_manifest_sha256" ] || require_sha256 "--ocr-runtime-manifest-sha256" "$ocr_runtime_manifest_sha256"
@@ -341,6 +339,10 @@ if [ "$mode" = "dry-run" ]; then
     "embedding_worker_ticks": $embedding_worker_ticks
   },
   "ordered_steps": [
+    {
+      "id": "dataset_manifest",
+      "command": "resume-cli --data-dir <local-data-dir> privacy dataset-manifest --root <local-resume-root> --out <local-evidence-dir>/dataset-manifest.local.json --profile explicit --max-files $max_files"
+    },
     {
       "id": "ocr_preflight",
       "command": "resume-cli --data-dir <local-data-dir> ocr preflight --json --ocr-lang <ocr-language> --tesseract-command <local-tesseract-command> --pdftoppm-command <local-pdftoppm-command>"
@@ -422,6 +424,7 @@ if [ "$mode" = "dry-run" ]; then
   ],
   "notes": [
     "Dry-run does not read the private resume root.",
+    "Execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
     "Execute mode keeps all evidence local under <local-evidence-dir>.",
     "The baseline shape gate deliberately uses --max-p95-ms 86400000; P95/P99 reduction is deferred.",
     "Release-readiness is expected to remain blocked while signing, notarization, platform installer, and other private quality evidence are missing."
@@ -435,6 +438,7 @@ fi
 [ -d "$resume_root" ] || fail "resume root must exist and be a directory"
 [ -f "$query_set" ] || fail "query set must exist and stay local"
 mkdir -p "$data_dir" "$out_dir"
+dataset_manifest="$out_dir/dataset-manifest.local.json"
 
 ocr_reviewed_arg=""
 if [ "$reviewed_ocr_runtime" = "true" ]; then
@@ -444,6 +448,19 @@ model_reviewed_arg=""
 if [ "$reviewed_model" = "true" ]; then
   model_reviewed_arg="--reviewed"
 fi
+
+printf '%s\n' "current-stage validation: dataset manifest"
+"$resume_cli" --data-dir "$data_dir" privacy dataset-manifest \
+  --root "$resume_root" \
+  --out "$dataset_manifest" \
+  --profile explicit \
+  --max-files "$max_files" \
+  > "$out_dir/dataset-manifest.stdout.txt"
+generated_dataset_manifest_sha256=$(sha256_file "$dataset_manifest")
+if [ -n "$dataset_manifest_sha256" ] && [ "$dataset_manifest_sha256" != "$generated_dataset_manifest_sha256" ]; then
+  fail "dataset manifest digest mismatch"
+fi
+dataset_manifest_sha256="$generated_dataset_manifest_sha256"
 
 printf '%s\n' "current-stage validation: ocr preflight"
 "$resume_cli" --data-dir "$data_dir" ocr preflight --json \
@@ -622,6 +639,8 @@ private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.std
 redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
 release_readiness_sha256=$(sha256_file "$out_dir/release-readiness.json")
 release_readiness_stderr_sha256=$(sha256_file "$out_dir/release-readiness.stderr.txt")
+dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
+dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
 
 cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
 {
@@ -646,6 +665,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     "embedding_worker_ticks": $embedding_worker_ticks
   },
   "steps": [
+    {"id": "dataset_manifest", "status": "success"},
     {"id": "ocr_preflight", "status": "success"},
     {"id": "ocr_manifest_draft", "status": "success"},
     {"id": "ocr_manifest_validate", "status": "success"},
@@ -662,6 +682,8 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"id": "release_readiness_intake", "status": "$release_readiness_step_status", "exit_code": $release_status}
   ],
   "redacted_outputs": [
+    {"file": "dataset-manifest.local.json", "sha256": "$dataset_manifest_sha256_output"},
+    {"file": "dataset-manifest.stdout.txt", "sha256": "$dataset_manifest_stdout_sha256"},
     {"file": "ocr-preflight.json", "sha256": "$ocr_preflight_sha256"},
     {"file": "ocr-draft-manifest.stdout.txt", "sha256": "$ocr_draft_stdout_sha256"},
     {"file": "ocr-validate-manifest.stdout.txt", "sha256": "$ocr_validate_stdout_sha256"},

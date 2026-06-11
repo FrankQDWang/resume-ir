@@ -28,6 +28,17 @@ reject_text() {
   fi
 }
 
+sha256_file() {
+  path="$1"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  else
+    fail "sha256 tool is required"
+  fi
+}
+
 script="scripts/local/run-current-stage-validation.sh"
 runbook="docs/runbooks/release-blockers.md"
 worker_runbook="docs/runbooks/ocr-embedding-workers.md"
@@ -78,7 +89,6 @@ mkdir -p "$resume_root" "$data_dir" "$out_dir"
   --engine-license Apache-2.0 \
   --renderer-license GPL-2.0-or-later \
   --language-license Apache-2.0 \
-  --dataset-manifest-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   --query-set-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
   --model-manifest-sha256 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
   --ocr-runtime-manifest-sha256 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
@@ -104,6 +114,7 @@ require_text "$plan" '"data_dir": "<local-data-dir>"'
 require_text "$plan" '"out_dir": "<local-evidence-dir>"'
 require_text "$plan" '"current_stage_target": "reproducible_local_10k_baseline"'
 require_text "$plan" '"performance_optimization_deferred": true'
+require_text "$plan" 'resume-cli --data-dir <local-data-dir> privacy dataset-manifest --root <local-resume-root> --out <local-evidence-dir>/dataset-manifest.local.json --profile explicit --max-files 10000'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> ocr preflight --json'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> ocr draft-manifest'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> ocr validate-manifest --manifest <local-ocr-runtime-manifest>'
@@ -192,6 +203,12 @@ write_out_arg() {
   printf '{"schema_version":"fake-local-manifest.v1"}\n' > "$out"
 }
 case "$cmd:$sub" in
+  privacy:dataset-manifest)
+    write_out_arg "$@"
+    printf 'dataset manifest: written\n'
+    printf 'schema: resume-ir.dataset-manifest.v1\n'
+    printf 'privacy boundary: local_only_redacted_dataset_manifest\n'
+    ;;
   ocr:preflight)
     printf '{"schema_version":"ocr-runtime-preflight.v1","ready":true}\n'
     ;;
@@ -295,7 +312,6 @@ run_execute_smoke() {
     --engine-license Apache-2.0 \
     --renderer-license GPL-2.0-or-later \
     --language-license Apache-2.0 \
-    --dataset-manifest-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     --query-set-sha256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
     --model-manifest-sha256 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
     --max-files 10000 \
@@ -325,9 +341,12 @@ require_text "$evidence_manifest" '"current_stage_target": "reproducible_local_1
 require_text "$evidence_manifest" '"performance_optimization_deferred": true'
 require_text "$evidence_manifest" '"release_readiness_exit": 1'
 require_text "$evidence_manifest" '"stable_release_expected_blocked": true'
-require_text "$evidence_manifest" '"dataset_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+expected_dataset_sha256=$(sha256_file "$execute_out_dir/dataset-manifest.local.json")
+require_text "$evidence_manifest" "\"dataset_manifest_sha256\": \"$expected_dataset_sha256\""
 require_text "$evidence_manifest" '"query_set_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"'
 require_text "$evidence_manifest" '"model_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"'
+require_text "$evidence_manifest" '"dataset-manifest.local.json"'
+require_text "$evidence_manifest" '"dataset-manifest.stdout.txt"'
 require_text "$evidence_manifest" '"benchmark-corpus-summary.local.json"'
 require_text "$evidence_manifest" '"private-benchmark-local.json"'
 require_text "$evidence_manifest" '"redacted-diagnostics.json"'
@@ -361,15 +380,20 @@ reject_text "$tmpdir/execute-evidence-failed-stderr.txt" "PRIVATE-current-stage"
 require_text "$script" "--execute"
 require_text "$script" "resume-ir.current-stage-validation-plan.v1"
 require_text "$script" "resume-ir.current-stage-validation-evidence.v1"
+require_text "$script" "resume-ir.dataset-manifest.v1"
 require_text "$script" "local_only_redacted_plan"
 require_text "$script" "local_only_redacted_evidence_manifest"
+require_text "$script" "local_only_redacted_dataset_manifest"
 require_text "$script" "performance_optimization_deferred"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"
 require_text "$runbook" "resume-ir.current-stage-validation-plan.v1"
 require_text "$runbook" "resume-ir.current-stage-validation-evidence.v1"
+require_text "$runbook" "resume-ir.dataset-manifest.v1"
 require_text "$runbook" "local_only_redacted_plan"
 require_text "$runbook" "local_only_redacted_evidence_manifest"
+require_text "$runbook" "local_only_redacted_dataset_manifest"
+require_text "$runbook" "privacy dataset-manifest"
 require_text "$runbook" "--current-stage-evidence current-stage-validation-evidence.json"
 require_text "$runbook" "--max-p95-ms 86400000"
 require_text "$runbook" "performance_optimization_deferred"

@@ -42,6 +42,17 @@ before touching private resumes. The dry-run emits
 `performance_optimization_deferred: true`. It does not scan, import, OCR,
 embed, benchmark, or read the private corpus:
 
+The execute flow first generates a local redacted dataset manifest with
+`resume-cli privacy dataset-manifest`. The manifest schema is
+`resume-ir.dataset-manifest.v1` and its privacy boundary is
+`local_only_redacted_dataset_manifest`. It records only aggregate counts,
+supported-extension counts, budget state, and a corpus fingerprint; it must not
+contain local paths, file names, raw resume text, per-file hashes, indexes,
+SQLite data, diagnostics, or model/runtime caches. Operators may pass
+`--dataset-manifest-sha256 <sha256>` only as an optional consistency check; if
+omitted, execute mode computes the digest from
+`<local-evidence-dir>/dataset-manifest.local.json`.
+
 ```bash
 scripts/local/run-current-stage-validation.sh --dry-run \
   --resume-root <private-local-root> \
@@ -65,7 +76,6 @@ scripts/local/run-current-stage-validation.sh --dry-run \
   --engine-license Apache-2.0 \
   --renderer-license <installed-poppler-license> \
   --language-license Apache-2.0 \
-  --dataset-manifest-sha256 <sha256> \
   --max-files 10000 \
   --max-queries 500 \
   --top-k 10
@@ -118,7 +128,7 @@ scripts/local/run-current-stage-validation.sh --execute \
   --engine-license Apache-2.0 \
   --renderer-license <installed-poppler-license> \
   --language-license Apache-2.0 \
-  --dataset-manifest-sha256 <sha256> \
+  [--dataset-manifest-sha256 <sha256>] \
   --reviewed-model \
   --reviewed-ocr-runtime \
   --max-files 10000 \

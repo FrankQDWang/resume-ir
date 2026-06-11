@@ -85,6 +85,7 @@ const OCR_LANGUAGE_REMEDIATION: &str =
     "install requested OCR language packs or choose an installed OCR language";
 const METADATA_ENCRYPTION_REMEDIATION: &str =
     "enable SQLCipher metadata encryption before production release";
+const DATASET_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.dataset-manifest.v1";
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const OCR_RUNTIME_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.ocr-runtime-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
@@ -2020,6 +2021,7 @@ fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
     };
 
     match action {
+        "dataset-manifest" => privacy_dataset_manifest_command(&args[1..]),
         "backup-contact-key" => {
             let key_args = parse_privacy_key_file_args(&args[1..], "--output")?;
             let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
@@ -2061,6 +2063,210 @@ fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
             Ok(())
         }
         _ => Err(CliError::usage(privacy_usage())),
+    }
+}
+
+struct PrivacyDatasetManifestArgs {
+    root: PathBuf,
+    out: PathBuf,
+    profile: fs_crawler::ScanProfile,
+    max_files: Option<usize>,
+}
+
+fn privacy_dataset_manifest_command(args: &[String]) -> Result<()> {
+    let args = parse_privacy_dataset_manifest_args(args)?;
+    let report = crawl_directory_with_options(
+        &args.root,
+        CrawlerScanOptions {
+            profile: args.profile,
+            max_files: args.max_files,
+        },
+    )
+    .map_err(|_| CliError::user("dataset manifest blocked: root must exist and be readable"))?;
+    let manifest = redacted_dataset_manifest(&report, args.profile, args.max_files);
+    let manifest_text = serde_json::to_string_pretty(&manifest)
+        .map_err(|_| CliError::user("dataset manifest blocked: manifest is unavailable"))?;
+
+    if let Some(parent) = args.out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|_| CliError::user("dataset manifest blocked: output is unavailable"))?;
+        }
+    }
+    fs::write(&args.out, format!("{manifest_text}\n"))
+        .map_err(|_| CliError::user("dataset manifest blocked: output is unavailable"))?;
+    let manifest_sha256 = file_sha256_hex(&args.out)
+        .map_err(|_| CliError::user("dataset manifest blocked: checksum unavailable"))?;
+
+    println!("dataset manifest: written");
+    println!("schema: {DATASET_MANIFEST_SCHEMA_VERSION}");
+    println!("privacy boundary: local_only_redacted_dataset_manifest");
+    println!("files: {}", report.files.len());
+    println!("manifest sha256: {manifest_sha256}");
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn parse_privacy_dataset_manifest_args(args: &[String]) -> Result<PrivacyDatasetManifestArgs> {
+    let mut root = None;
+    let mut out = None;
+    let mut profile = fs_crawler::ScanProfile::Explicit;
+    let mut profile_seen = false;
+    let mut max_files = None;
+    let mut index = 0_usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--root" => root = Some(take_privacy_path_arg(args, &mut index, root.is_some())?),
+            "--out" => out = Some(take_privacy_path_arg(args, &mut index, out.is_some())?),
+            "--profile" => {
+                if profile_seen {
+                    return Err(CliError::usage(privacy_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(privacy_usage()));
+                };
+                profile = match value.as_str() {
+                    "explicit" => fs_crawler::ScanProfile::Explicit,
+                    "discovery" => fs_crawler::ScanProfile::Discovery,
+                    _ => return Err(CliError::usage(privacy_usage())),
+                };
+                profile_seen = true;
+                index += 2;
+            }
+            "--max-files" => {
+                if max_files.is_some() {
+                    return Err(CliError::usage(privacy_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(privacy_usage()));
+                };
+                max_files = Some(parse_privacy_positive_usize(value)?);
+                index += 2;
+            }
+            _ => return Err(CliError::usage(privacy_usage())),
+        }
+    }
+
+    Ok(PrivacyDatasetManifestArgs {
+        root: root.ok_or_else(|| CliError::usage(privacy_usage()))?,
+        out: out.ok_or_else(|| CliError::usage(privacy_usage()))?,
+        profile,
+        max_files,
+    })
+}
+
+fn take_privacy_path_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<PathBuf> {
+    if duplicate {
+        return Err(CliError::usage(privacy_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(privacy_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(privacy_usage()));
+    }
+    *index += 2;
+    Ok(PathBuf::from(value))
+}
+
+fn parse_privacy_positive_usize(value: &str) -> Result<usize> {
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|parsed| *parsed > 0)
+        .ok_or_else(|| CliError::usage(privacy_usage()))
+}
+
+fn redacted_dataset_manifest(
+    report: &fs_crawler::ScanReport,
+    profile: fs_crawler::ScanProfile,
+    max_files: Option<usize>,
+) -> serde_json::Value {
+    let mut extension_counts = BTreeMap::<String, usize>::new();
+    let mut total_bytes = 0_u64;
+    let mut readonly_file_count = 0_usize;
+    let mut fingerprint_sampled_bytes = 0_u64;
+    let mut corpus_hasher = Sha256::new();
+    update_sha256_string(&mut corpus_hasher, DATASET_MANIFEST_SCHEMA_VERSION);
+    update_sha256_string(&mut corpus_hasher, profile.label());
+
+    for file in &report.files {
+        let extension = dataset_file_extension_label(&file.extension);
+        *extension_counts.entry(extension.to_string()).or_insert(0) += 1;
+        total_bytes = total_bytes.saturating_add(file.byte_size);
+        fingerprint_sampled_bytes =
+            fingerprint_sampled_bytes.saturating_add(file.fingerprint.sampled_bytes);
+        if file.permissions.readonly {
+            readonly_file_count += 1;
+        }
+        update_sha256_string(&mut corpus_hasher, extension);
+        update_sha256_u64(&mut corpus_hasher, file.byte_size);
+        update_sha256_i64(&mut corpus_hasher, file.mtime.as_unix_seconds());
+        update_sha256_string(&mut corpus_hasher, file.fingerprint.as_str());
+    }
+
+    let scan_budget = report
+        .budget_exhausted
+        .map(|budget| {
+            serde_json::json!({
+                "exhausted": true,
+                "kind": "files",
+                "limit": budget.limit,
+                "observed": budget.observed,
+            })
+        })
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "exhausted": false,
+                "kind": serde_json::Value::Null,
+                "limit": max_files,
+                "observed": report.files.len(),
+            })
+        });
+
+    serde_json::json!({
+        "schema_version": DATASET_MANIFEST_SCHEMA_VERSION,
+        "privacy_boundary": "local_only_redacted_dataset_manifest",
+        "dataset_kind": "private-local-corpus",
+        "scan_profile": profile.label(),
+        "max_files": max_files,
+        "file_count": report.files.len(),
+        "ignored_entries": report.ignored_count,
+        "scan_error_count": report.errors.len(),
+        "scanned_directory_count": report.scanned_directories.len(),
+        "skipped_directory_count": report.skipped_directories.len(),
+        "scan_budget": scan_budget,
+        "total_bytes": total_bytes,
+        "readonly_file_count": readonly_file_count,
+        "fingerprint_sampled_bytes": fingerprint_sampled_bytes,
+        "supported_extensions": ["doc", "docx", "pdf", "txt"],
+        "extension_counts": extension_counts,
+        "corpus_fingerprint_sha256": hex_encode_lower(&corpus_hasher.finalize()),
+        "contains_paths": false,
+        "contains_file_names": false,
+        "contains_raw_resume_text": false,
+        "contains_file_hashes": false,
+        "must_not_upload": [
+            "raw resumes",
+            "local paths",
+            "file names",
+            "raw resume text",
+            "per-file hashes",
+            "diagnostic packages",
+            "indexes",
+            "SQLite databases"
+        ]
+    })
+}
+
+fn dataset_file_extension_label(extension: &FileExtension) -> &'static str {
+    match extension {
+        FileExtension::Doc => "doc",
+        FileExtension::Docx => "docx",
+        FileExtension::Pdf => "pdf",
+        FileExtension::Txt => "txt",
+        FileExtension::Image => "image",
+        FileExtension::Other(_) => "other",
     }
 }
 
@@ -2125,7 +2331,7 @@ fn read_privacy_passphrase_file(path: &Path) -> Result<Vec<u8>> {
 }
 
 fn privacy_usage() -> &'static str {
-    "usage: resume-cli privacy backup-contact-key --output <path> --passphrase-file <path> | resume-cli privacy restore-contact-key --input <path> --passphrase-file <path> | resume-cli privacy backup-metadata-key --output <path> --passphrase-file <path> | resume-cli privacy restore-metadata-key --input <path> --passphrase-file <path> | resume-cli privacy rotate-metadata-key"
+    "usage: resume-cli privacy dataset-manifest --root <path> --out <path> [--profile explicit|discovery] [--max-files <count>] | resume-cli privacy backup-contact-key --output <path> --passphrase-file <path> | resume-cli privacy restore-contact-key --input <path> --passphrase-file <path> | resume-cli privacy backup-metadata-key --output <path> --passphrase-file <path> | resume-cli privacy restore-metadata-key --input <path> --passphrase-file <path> | resume-cli privacy rotate-metadata-key"
 }
 
 fn model_validate_manifest_command(args: &[String]) -> Result<()> {
@@ -4912,6 +5118,19 @@ fn hex_encode_lower(bytes: &[u8]) -> String {
         output.push(HEX[(byte & 0x0f) as usize] as char);
     }
     output
+}
+
+fn update_sha256_string(hasher: &mut Sha256, value: &str) {
+    update_sha256_u64(hasher, value.len() as u64);
+    hasher.update(value.as_bytes());
+}
+
+fn update_sha256_u64(hasher: &mut Sha256, value: u64) {
+    hasher.update(value.to_le_bytes());
+}
+
+fn update_sha256_i64(hasher: &mut Sha256, value: i64) {
+    hasher.update(value.to_le_bytes());
 }
 
 fn checksum_prefix(checksum: &str) -> &str {
