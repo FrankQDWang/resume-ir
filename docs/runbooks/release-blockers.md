@@ -77,6 +77,14 @@ reviewed manifests, imports the selected root, runs bounded OCR and embedding
 worker loops, writes `benchmark-corpus-summary.local.json`, writes the private
 query baseline report, runs the current-stage baseline shape gate, exports
 redacted diagnostics, and feeds the local evidence into `release-readiness`.
+At the end it also writes
+`current-stage-validation-evidence.json` with schema
+`resume-ir.current-stage-validation-evidence.v1` and privacy boundary
+`local_only_redacted_evidence_manifest`. That manifest contains step statuses,
+input digests, output file digests, the `release-readiness` exit code, and
+privacy sentinels only. It must not contain local paths, raw resume text, raw
+query text, report bodies, model bytes, runtime binaries, indexes, or SQLite
+data.
 Add `--reviewed-model` and `--reviewed-ocr-runtime` only after the selected
 model weights, OCR engine, renderer, and language pack have actually been
 reviewed; otherwise validation must fail closed.

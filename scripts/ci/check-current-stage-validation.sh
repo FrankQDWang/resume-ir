@@ -312,6 +312,34 @@ blocked_status=$(cat "$tmpdir/execute-blocked-status.txt")
 if [ "$blocked_status" -ne 0 ]; then
   fail "current-stage execute rejected expected blocked release-readiness status"
 fi
+evidence_manifest="$execute_out_dir/current-stage-validation-evidence.json"
+if [ ! -s "$evidence_manifest" ]; then
+  fail "current-stage execute did not write redacted evidence manifest"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$evidence_manifest" >/dev/null
+fi
+require_text "$evidence_manifest" '"schema_version": "resume-ir.current-stage-validation-evidence.v1"'
+require_text "$evidence_manifest" '"privacy_boundary": "local_only_redacted_evidence_manifest"'
+require_text "$evidence_manifest" '"current_stage_target": "reproducible_local_10k_baseline"'
+require_text "$evidence_manifest" '"performance_optimization_deferred": true'
+require_text "$evidence_manifest" '"release_readiness_exit": 1'
+require_text "$evidence_manifest" '"stable_release_expected_blocked": true'
+require_text "$evidence_manifest" '"dataset_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+require_text "$evidence_manifest" '"query_set_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"'
+require_text "$evidence_manifest" '"model_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"'
+require_text "$evidence_manifest" '"benchmark-corpus-summary.local.json"'
+require_text "$evidence_manifest" '"private-benchmark-local.json"'
+require_text "$evidence_manifest" '"redacted-diagnostics.json"'
+require_text "$evidence_manifest" '"release-readiness.json"'
+require_text "$evidence_manifest" '"local_paths_included": false'
+require_text "$evidence_manifest" '"raw_resume_text_included": false'
+require_text "$evidence_manifest" '"raw_query_text_included": false'
+require_text "$evidence_manifest" '"model_bytes_included": false'
+require_text "$evidence_manifest" '"runtime_binaries_included": false'
+reject_text "$evidence_manifest" "$tmpdir"
+reject_text "$evidence_manifest" "PRIVATE-current-stage"
+reject_text "$evidence_manifest" "private fake query"
 require_text "$tmpdir/execute-blocked-stdout.txt" "current-stage validation: release-readiness exit 1"
 require_text "$tmpdir/execute-blocked-stdout.txt" "current-stage validation: local evidence written under <local-evidence-dir>"
 reject_text "$tmpdir/execute-blocked-stdout.txt" "$tmpdir"
@@ -332,12 +360,16 @@ reject_text "$tmpdir/execute-evidence-failed-stderr.txt" "PRIVATE-current-stage"
 
 require_text "$script" "--execute"
 require_text "$script" "resume-ir.current-stage-validation-plan.v1"
+require_text "$script" "resume-ir.current-stage-validation-evidence.v1"
 require_text "$script" "local_only_redacted_plan"
+require_text "$script" "local_only_redacted_evidence_manifest"
 require_text "$script" "performance_optimization_deferred"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"
 require_text "$runbook" "resume-ir.current-stage-validation-plan.v1"
+require_text "$runbook" "resume-ir.current-stage-validation-evidence.v1"
 require_text "$runbook" "local_only_redacted_plan"
+require_text "$runbook" "local_only_redacted_evidence_manifest"
 require_text "$runbook" "--max-p95-ms 86400000"
 require_text "$runbook" "performance_optimization_deferred"
 require_text "$worker_runbook" "run-current-stage-validation.sh"

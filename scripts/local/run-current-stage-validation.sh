@@ -404,6 +404,10 @@ if [ "$mode" = "dry-run" ]; then
     {
       "id": "release_readiness_intake",
       "command": "resume-cli --data-dir <local-data-dir> release-readiness --json --benchmark-report <local-evidence-dir>/private-benchmark-local.json --model-manifest <local-model-manifest> --ocr-runtime-manifest <local-ocr-runtime-manifest> --diagnostics-report <local-evidence-dir>/redacted-diagnostics.json > <local-evidence-dir>/release-readiness.json"
+    },
+    {
+      "id": "redacted_evidence_manifest",
+      "command": "write <local-evidence-dir>/current-stage-validation-evidence.json with schema resume-ir.current-stage-validation-evidence.v1, file digests, step statuses, and privacy sentinels"
     }
   ],
   "must_not_upload": [
@@ -592,5 +596,109 @@ if [ "$release_status" -ne 0 ]; then
     exit 1
   fi
 fi
+if [ -z "$ocr_runtime_manifest_sha256" ]; then
+  ocr_runtime_manifest_sha256=$(sha256_file "$ocr_runtime_manifest")
+fi
+if [ "$release_status" -eq 0 ]; then
+  stable_release_expected_blocked="false"
+  release_readiness_step_status="success"
+else
+  stable_release_expected_blocked="true"
+  release_readiness_step_status="expected_blocked"
+fi
+
+ocr_preflight_sha256=$(sha256_file "$out_dir/ocr-preflight.json")
+ocr_draft_stdout_sha256=$(sha256_file "$out_dir/ocr-draft-manifest.stdout.txt")
+ocr_validate_stdout_sha256=$(sha256_file "$out_dir/ocr-validate-manifest.stdout.txt")
+model_draft_stdout_sha256=$(sha256_file "$out_dir/model-draft-manifest.stdout.txt")
+model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
+model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
+import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
+ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
+embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
+private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
+private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
+redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
+release_readiness_sha256=$(sha256_file "$out_dir/release-readiness.json")
+release_readiness_stderr_sha256=$(sha256_file "$out_dir/release-readiness.stderr.txt")
+
+cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
+{
+  "schema_version": "resume-ir.current-stage-validation-evidence.v1",
+  "privacy_boundary": "local_only_redacted_evidence_manifest",
+  "current_stage_target": "reproducible_local_10k_baseline",
+  "performance_optimization_deferred": true,
+  "release_readiness_exit": $release_status,
+  "stable_release_expected_blocked": $stable_release_expected_blocked,
+  "input_digests": {
+    "dataset_manifest_sha256": "$dataset_manifest_sha256",
+    "query_set_sha256": "$query_set_sha256",
+    "model_manifest_sha256": "$model_manifest_sha256",
+    "ocr_runtime_manifest_sha256": "$ocr_runtime_manifest_sha256"
+  },
+  "parameters": {
+    "max_files": $max_files,
+    "max_queries": $max_queries,
+    "top_k": $top_k,
+    "embedding_dimension": $dimension,
+    "ocr_worker_ticks": $ocr_worker_ticks,
+    "embedding_worker_ticks": $embedding_worker_ticks
+  },
+  "steps": [
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "success"},
+    {"id": "ocr_manifest_validate", "status": "success"},
+    {"id": "model_manifest_draft", "status": "success"},
+    {"id": "model_manifest_validate", "status": "success"},
+    {"id": "model_preflight", "status": "success"},
+    {"id": "import_private_corpus", "status": "success"},
+    {"id": "ocr_worker_bounded_loop", "status": "success"},
+    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "corpus_summary", "status": "success"},
+    {"id": "private_query_baseline", "status": "success"},
+    {"id": "baseline_shape_gate", "status": "success"},
+    {"id": "redacted_diagnostics", "status": "success"},
+    {"id": "release_readiness_intake", "status": "$release_readiness_step_status", "exit_code": $release_status}
+  ],
+  "redacted_outputs": [
+    {"file": "ocr-preflight.json", "sha256": "$ocr_preflight_sha256"},
+    {"file": "ocr-draft-manifest.stdout.txt", "sha256": "$ocr_draft_stdout_sha256"},
+    {"file": "ocr-validate-manifest.stdout.txt", "sha256": "$ocr_validate_stdout_sha256"},
+    {"file": "model-draft-manifest.stdout.txt", "sha256": "$model_draft_stdout_sha256"},
+    {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
+    {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
+    {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
+    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
+    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
+    {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
+    {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
+    {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
+    {"file": "release-readiness.json", "sha256": "$release_readiness_sha256"},
+    {"file": "release-readiness.stderr.txt", "sha256": "$release_readiness_stderr_sha256"}
+  ],
+  "privacy_sentinels": {
+    "local_paths_included": false,
+    "raw_resume_text_included": false,
+    "raw_query_text_included": false,
+    "model_bytes_included": false,
+    "runtime_binaries_included": false,
+    "report_bodies_included": false
+  },
+  "must_not_upload": [
+    "raw resumes",
+    "query set",
+    "local manifests",
+    "benchmark reports",
+    "diagnostics",
+    "indexes",
+    "SQLite databases",
+    "model caches",
+    "runtime binaries"
+  ]
+}
+EOF
 printf 'current-stage validation: release-readiness exit %s\n' "$release_status"
+printf '%s\n' "current-stage validation: redacted evidence manifest written under <local-evidence-dir>"
 printf '%s\n' "current-stage validation: local evidence written under <local-evidence-dir>"
