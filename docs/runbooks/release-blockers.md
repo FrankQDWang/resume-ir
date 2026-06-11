@@ -158,6 +158,20 @@ Add `--reviewed-model` and `--reviewed-ocr-runtime` only after the selected
 model weights, OCR engine, renderer, and language pack have actually been
 reviewed; otherwise validation must fail closed.
 
+If the full profile reaches the private benchmark report but the baseline shape
+gate fails, execute mode writes `current-stage-blocked-summary.json` with schema
+`resume-ir.current-stage-blocked-summary.v1` and privacy boundary
+`local_only_redacted_blocked_summary`, then exits non-zero before
+`release-readiness`. That file records the blocked step/category/reason, input
+digests, preflight probe statuses, completed step statuses, and basename-only
+output digests. It is not release-readiness evidence and must not be passed to
+`--current-stage-evidence`; it exists so the next operator can see whether the
+failure was benchmark coverage/query/gate related without exposing local paths,
+private query text, report bodies, indexes, or diagnostics.
+When the baseline shape gate fails, treat the full current-stage baseline as
+not complete and continue from the blocked summary rather than reading private
+reports directly.
+
 ```bash
 scripts/local/run-current-stage-validation.sh --execute \
   --validation-profile full \

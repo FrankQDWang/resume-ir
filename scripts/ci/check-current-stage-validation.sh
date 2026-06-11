@@ -348,6 +348,10 @@ case "${1:-}" in
     printf '{"schema_version":"benchmark.private-query.v1","dataset_kind":"private-real-corpus","target_claim":"benchmark_baseline_observed"}\n'
     ;;
   gate)
+    if [ "${FAKE_BENCHMARK_MODE:-pass}" = "gate-failed" ]; then
+      printf 'benchmark gate blocked: private real-corpus hot-index coverage floor not met\n' >&2
+      exit 1
+    fi
     printf 'benchmark gate passed\n'
     ;;
   *)
@@ -366,7 +370,11 @@ run_execute_smoke() {
   rm -rf "$execute_data_dir" "$execute_out_dir"
   mkdir -p "$execute_data_dir" "$execute_out_dir"
   set +e
-  FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
+  benchmark_mode="pass"
+  if [ "$mode" = "benchmark-gate-failed" ]; then
+    benchmark_mode="gate-failed"
+  fi
+  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
     --resume-daemon "$fake_resume_daemon" \
     --resume-benchmark "$fake_resume_benchmark" \
@@ -495,6 +503,47 @@ reject_text "$tmpdir/execute-smoke-profile-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-smoke-profile-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-smoke-profile-stderr.txt" "PRIVATE-current-stage"
 
+run_execute_smoke benchmark-gate-failed
+benchmark_gate_failed_status=$(cat "$tmpdir/execute-benchmark-gate-failed-status.txt")
+if [ "$benchmark_gate_failed_status" -eq 0 ]; then
+  fail "current-stage full profile accepted failed benchmark gate"
+fi
+blocked_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$blocked_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on benchmark gate failure"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage full profile wrote full evidence after benchmark gate failure"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage full profile ran release-readiness after benchmark gate failure"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$blocked_summary" >/dev/null
+fi
+require_text "$blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$blocked_summary" '"privacy_boundary": "local_only_redacted_blocked_summary"'
+require_text "$blocked_summary" '"validation_profile": "full"'
+require_text "$blocked_summary" '"current_stage_target": "reproducible_local_10k_baseline"'
+require_text "$blocked_summary" '"full_baseline_satisfied": false'
+require_text "$blocked_summary" '"release_readiness_evidence": false'
+require_text "$blocked_summary" '"blocked_step": "baseline_shape_gate"'
+require_text "$blocked_summary" '"blocked_category": "benchmark"'
+require_text "$blocked_summary" '"blocked_reason": "baseline_shape_gate_failed"'
+require_text "$blocked_summary" '"ocr_runtime_probe": "passed"'
+require_text "$blocked_summary" '"embedding_protocol": "passed"'
+require_text "$blocked_summary" '"private-benchmark-local.json"'
+require_text "$blocked_summary" '"private-benchmark-gate.stdout.txt"'
+require_text "$blocked_summary" '"full 10k/8000-document current-stage baseline"'
+reject_text "$blocked_summary" "$tmpdir"
+reject_text "$blocked_summary" "PRIVATE-current-stage"
+reject_text "$blocked_summary" "private fake query"
+require_text "$tmpdir/execute-benchmark-gate-failed-stderr.txt" "current-stage validation blocked: baseline shape gate failed"
+reject_text "$tmpdir/execute-benchmark-gate-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-benchmark-gate-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-benchmark-gate-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-benchmark-gate-failed-stderr.txt" "PRIVATE-current-stage"
+
 run_execute_smoke ocr-digest-mismatch \
   --ocr-runtime-manifest-sha256 0000000000000000000000000000000000000000000000000000000000000000
 ocr_digest_mismatch_status=$(cat "$tmpdir/execute-ocr-digest-mismatch-status.txt")
@@ -571,6 +620,7 @@ require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"
 require_text "$runbook" "resume-ir.current-stage-validation-plan.v1"
 require_text "$runbook" "resume-ir.current-stage-validation-evidence.v1"
+require_text "$runbook" "resume-ir.current-stage-blocked-summary.v1"
 require_text "$runbook" "resume-ir.dataset-manifest.v1"
 require_text "$runbook" "resume-ir.query-set.jsonl.v1"
 require_text "$runbook" "local_only_redacted_plan"
@@ -582,6 +632,8 @@ require_text "$runbook" "private resume root"
 require_text "$runbook" "stops before scanning the private corpus"
 require_text "$runbook" "privacy dataset-manifest"
 require_text "$runbook" "benchmark-query-set draft"
+require_text "$runbook" "baseline shape gate fails"
+require_text "$runbook" "current-stage-blocked-summary.json"
 require_text "$runbook" "--current-stage-evidence current-stage-validation-evidence.json"
 require_text "$runbook" "--max-p95-ms 86400000"
 require_text "$runbook" "performance_optimization_deferred"

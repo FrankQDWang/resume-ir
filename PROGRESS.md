@@ -259,6 +259,11 @@ production-ready scope source.
   generated diagnostics, local manifests, model files, runtime binaries,
   indexes, SQLite databases, signing material, notarization credentials, or
   model caches were committed or uploaded.
+  S316 used fake local current-stage execute fixtures only; no real resume data,
+  private query sets, local paths, generated private benchmark reports,
+  generated diagnostics, local manifests, model files, runtime binaries,
+  indexes, SQLite databases, signing material, notarization credentials, or
+  model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1185,8 +1190,66 @@ obsolete preliminary files and checklists are not product scope.
 | S313 | OCR runtime preflight render/OCR probe complete locally | Focused RED first failed because `ocr preflight --json` marked an executable `pdftoppm` as ready even when it produced no rendered page. After implementation, OCR preflight resolves the local `pdftoppm` and Tesseract commands, keeps the existing dependency and language-pack checks, renders one synthetic local PDF page, requires Tesseract TSV OCR on that rendered page, reports `runtime_probe` as `passed`, `failed`, or `not_run`, and fails closed without printing local paths, OCR text, page images, probe payloads, command paths, or subprocess stderr. Runbooks and guards now document that current-stage execution requires this OCR runtime probe before private corpus access. | This slice is production complete for OCR runtime preflight smoke only. It does not install, bundle, approve, or distribute OCR runtimes; run private 10k OCR, prove OCR quality or throughput, clear Poppler/Tesseract/tessdata license and checksum evidence, validate platforms, sign/notarize artifacts, or make stable release ready. |
 | S314 | Current-stage preflight probe evidence binding complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted a current-stage manifest that omitted structured OCR/embedding preflight probe statuses while still listing successful preflight steps and stdout digests. After implementation, execute mode checks OCR preflight JSON for `runtime_probe: "passed"` and model preflight JSON for `embedding_protocol: "passed"` before private corpus access continues, writes those facts under `preflight_probes`, and release-readiness rejects manifests that omit the structure or downgrade either probe. Runbooks and guards document the same manifest gate. | This slice is production complete for current-stage preflight probe evidence binding only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute OCR/model runtimes, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S315 | Current-stage smoke validation profile complete locally | Focused RED first failed because `run-current-stage-validation.sh` rejected `--validation-profile smoke`, so the only scripted execute profile was the full 10k/8000-document current-stage baseline that can block for a long OCR-dominated private corpus. After implementation, the script has explicit `full` and `smoke` validation profiles: `full` keeps the release-readiness evidence path and 8000-document/500-query gates, while `smoke` runs runtime preflight, manifests, import, bounded OCR/embedding, query-set generation, private-query protocol, a low-floor smoke gate, and redacted diagnostics, then writes `current-stage-smoke-summary.json` without generating `current-stage-validation-evidence.json` or running release-readiness. The guard proves the smoke plan and fake execute output are redacted and cannot be confused with full release evidence. | This slice is production complete for current-stage smoke-profile wiring only. It does not clear the full 10k/8000-document current-stage baseline, 500-query private benchmark, full OCR completion, OCR/model/license/platform/signing/notarization/quality/performance blockers, P95/P99 optimization, 100k/1M real-corpus validation, or stable release readiness. |
+| S316 | Current-stage full-profile benchmark blocked summary complete locally | Focused RED first failed because a full-profile current-stage execute that reached `resume-benchmark gate` and then failed exited without writing any structured redacted failure summary, leaving the next operator to inspect private local reports. After implementation, full profile benchmark-gate failure writes `current-stage-blocked-summary.json` with schema `resume-ir.current-stage-blocked-summary.v1`, privacy boundary `local_only_redacted_blocked_summary`, blocked step/category/reason, input digests, passed runtime probes, completed step statuses, and basename-only output digests, then exits non-zero before release-readiness and without writing full current-stage evidence. The guard proves the summary is redacted and not confusable with release evidence. | This slice is production complete for current-stage benchmark blocked failure classification only. It does not clear the full 10k/8000-document current-stage baseline, 500-query private benchmark, full OCR completion, OCR/model/license/platform/signing/notarization/quality/performance blockers, P95/P99 optimization, 100k/1M real-corpus validation, or stable release readiness. |
 
 ## Command Log
+
+### S316
+
+TDD red check:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Failed as expected with `current-stage full profile did not write redacted
+  blocked summary on benchmark gate failure` because full-profile benchmark
+  gate failure exited without a structured blocked summary.
+
+Focused verification:
+
+```bash
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Shell syntax validation exited 0.
+- Current-stage validation guard exited 0. It verified a simulated full-profile
+  benchmark gate failure writes `current-stage-blocked-summary.json`, exits
+  non-zero, does not write `current-stage-validation-evidence.json`, does not
+  run `release-readiness`, records `baseline_shape_gate_failed`, records passed
+  OCR/embedding preflight probes, and omits temporary paths, private markers,
+  and fake private query text.
+
+Final local gates:
+
+```bash
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-readiness.sh
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+tmp_log="${TMPDIR:-/tmp}/resume-ir-verify-local-s316.log"; PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh > "$tmp_log" 2>&1; rc=$?; tail -n 180 "$tmp_log"; exit "$rc"
+```
+
+Output summary:
+
+- Runbook guard, release-readiness guard, formatting, diff whitespace, public
+  repository guard, and full `verify-local.sh` exited 0.
+- `verify-local.sh` output included workspace tests/doc-tests, CLI and daemon
+  closed-loop checks, benchmark/OCR/vector smoke gates, license/runbook/
+  current-stage/workflow/release readiness checks, package/signing/
+  notarization/SBOM checks, and public repo guard.
+
+Scope note:
+
+- S316 improves current-stage failure handoff only. It is not full
+  current-stage evidence, not stable release evidence, and not proof that the
+  private 10k corpus has completed OCR or benchmark gates.
 
 ### S315
 
