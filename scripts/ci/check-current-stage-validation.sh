@@ -182,6 +182,49 @@ reject_text "$plan" "$pdftoppm_command"
 reject_text "$plan" "$language_pack"
 reject_text "$plan" "/Users/"
 
+smoke_plan="$tmpdir/current-stage-validation-smoke-plan.json"
+"$script" --dry-run \
+  --validation-profile smoke \
+  --resume-root "$resume_root" \
+  --data-dir "$data_dir" \
+  --out-dir "$out_dir" \
+  --model-manifest "$model_manifest" \
+  --ocr-runtime-manifest "$ocr_manifest" \
+  --model-artifact "$model_artifact" \
+  --embedding-command "$embedding_command" \
+  --model-pack-id reviewed-local-model-pack \
+  --model-id reviewed-local-embedding-model \
+  --model-format onnx \
+  --dimension 384 \
+  --model-license Apache-2.0 \
+  --runtime-pack-id reviewed-local-ocr-pack \
+  --tesseract-command "$tesseract_command" \
+  --pdftoppm-command "$pdftoppm_command" \
+  --language eng \
+  --language-pack "$language_pack" \
+  --engine-license Apache-2.0 \
+  --renderer-license GPL-2.0-or-later \
+  --language-license Apache-2.0 \
+  --max-files 6 \
+  --max-queries 3 \
+  --top-k 5 \
+  > "$smoke_plan"
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$smoke_plan" >/dev/null
+fi
+require_text "$smoke_plan" '"validation_profile": "smoke"'
+require_text "$smoke_plan" '"current_stage_target": "local_real_corpus_smoke_chain"'
+require_text "$smoke_plan" '"full_baseline_satisfied": false'
+require_text "$smoke_plan" '"release_readiness_evidence": false'
+require_text "$smoke_plan" 'benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries 3 --min-queries 1'
+require_text "$smoke_plan" 'resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --min-documents 1 --min-queries 1'
+require_text "$smoke_plan" 'write <local-evidence-dir>/current-stage-smoke-summary.json'
+reject_text "$smoke_plan" "release-readiness --json"
+reject_text "$smoke_plan" "$tmpdir"
+reject_text "$smoke_plan" "PRIVATE-current-stage"
+reject_text "$smoke_plan" "/Users/"
+
 fake_resume_cli="$tmpdir/fake-resume-cli"
 fake_resume_daemon="$tmpdir/fake-resume-daemon"
 fake_resume_benchmark="$tmpdir/fake-resume-benchmark"
@@ -410,6 +453,47 @@ reject_text "$tmpdir/execute-blocked-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-blocked-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-blocked-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-blocked-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke smoke-profile \
+  --validation-profile smoke \
+  --max-files 6 \
+  --max-queries 3 \
+  --top-k 5
+smoke_status=$(cat "$tmpdir/execute-smoke-profile-status.txt")
+if [ "$smoke_status" -ne 0 ]; then
+  fail "current-stage smoke profile execute failed"
+fi
+smoke_summary="$execute_out_dir/current-stage-smoke-summary.json"
+if [ ! -s "$smoke_summary" ]; then
+  fail "current-stage smoke profile did not write redacted smoke summary"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage smoke profile wrote full current-stage release evidence"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage smoke profile ran release-readiness intake"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$smoke_summary" >/dev/null
+fi
+require_text "$smoke_summary" '"schema_version": "resume-ir.current-stage-smoke-summary.v1"'
+require_text "$smoke_summary" '"privacy_boundary": "local_only_redacted_aggregate_summary"'
+require_text "$smoke_summary" '"current_stage_target": "local_real_corpus_smoke_chain"'
+require_text "$smoke_summary" '"full_baseline_satisfied": false'
+require_text "$smoke_summary" '"release_readiness_evidence": false'
+require_text "$smoke_summary" '"ocr_runtime_probe": "passed"'
+require_text "$smoke_summary" '"embedding_protocol": "passed"'
+require_text "$smoke_summary" '"private_query_baseline"'
+require_text "$smoke_summary" '"redacted_diagnostics"'
+require_text "$smoke_summary" '"full 10k/8000-document current-stage baseline"'
+reject_text "$smoke_summary" "$tmpdir"
+reject_text "$smoke_summary" "PRIVATE-current-stage"
+reject_text "$smoke_summary" "private fake query"
+require_text "$tmpdir/execute-smoke-profile-stdout.txt" "current-stage validation: smoke summary written under <local-evidence-dir>"
+reject_text "$tmpdir/execute-smoke-profile-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-smoke-profile-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-smoke-profile-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-smoke-profile-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke ocr-digest-mismatch \
   --ocr-runtime-manifest-sha256 0000000000000000000000000000000000000000000000000000000000000000

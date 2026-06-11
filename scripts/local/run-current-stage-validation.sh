@@ -5,6 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   --resume-root DIR --data-dir DIR --out-dir DIR [--query-set FILE]
+  [--validation-profile full|smoke]
   --model-manifest FILE --ocr-runtime-manifest FILE
   --model-artifact FILE --embedding-command FILE
   --model-pack-id ID --model-id ID --model-format ID --dimension N --model-license ID
@@ -21,9 +22,10 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   [--max-files N] [--max-queries N] [--top-k N]
   [--worker-interval-ms N] [--ocr-worker-ticks N] [--embedding-worker-ticks N]
 
-Default mode is --dry-run. Dry-run prints a redacted JSON plan and never reads
-the private resume root. Execute mode runs local-only commands and writes local
-evidence under --out-dir.
+Default mode is --dry-run and default validation profile is full. Dry-run prints
+a redacted JSON plan and never reads the private resume root. Execute mode runs
+local-only commands and writes local evidence under --out-dir. The smoke profile
+proves wiring only; it does not produce release-readiness evidence.
 EOF
   exit 2
 }
@@ -95,6 +97,7 @@ resume_root=""
 data_dir=""
 out_dir=""
 query_set=""
+validation_profile="full"
 model_manifest=""
 ocr_runtime_manifest=""
 model_artifact=""
@@ -163,6 +166,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --query-set)
       need_value "$@"; query_set="$2"; shift 2
+      ;;
+    --validation-profile)
+      need_value "$@"; validation_profile="$2"; shift 2
       ;;
     --model-manifest)
       need_value "$@"; model_manifest="$2"; shift 2
@@ -326,16 +332,53 @@ require_positive_int "--embedding-timeout-ms" "$embedding_timeout_ms"
 [ -z "$renderer_manifest_sha256" ] || require_sha256 "--renderer-manifest-sha256" "$renderer_manifest_sha256"
 [ -z "$language_pack_manifest_sha256" ] || require_sha256 "--language-pack-manifest-sha256" "$language_pack_manifest_sha256"
 
+case "$validation_profile" in
+  full)
+    current_stage_target="reproducible_local_10k_baseline"
+    query_set_min_queries="$max_queries"
+    baseline_min_documents="8000"
+    baseline_min_queries="500"
+    full_baseline_satisfied="false"
+    release_readiness_evidence="true"
+    terminal_plan_steps='    {
+      "id": "release_readiness_intake",
+      "command": "resume-cli --data-dir <local-data-dir> release-readiness --json --benchmark-report <local-evidence-dir>/private-benchmark-local.json --model-manifest <local-model-manifest> --ocr-runtime-manifest <local-ocr-runtime-manifest> --diagnostics-report <local-evidence-dir>/redacted-diagnostics.json > <local-evidence-dir>/release-readiness.json"
+    },
+    {
+      "id": "redacted_evidence_manifest",
+      "command": "write <local-evidence-dir>/current-stage-validation-evidence.json with schema resume-ir.current-stage-validation-evidence.v1, file digests, step statuses, and privacy sentinels"
+    }'
+    ;;
+  smoke)
+    current_stage_target="local_real_corpus_smoke_chain"
+    query_set_min_queries="1"
+    baseline_min_documents="1"
+    baseline_min_queries="1"
+    full_baseline_satisfied="false"
+    release_readiness_evidence="false"
+    terminal_plan_steps='    {
+      "id": "redacted_smoke_summary",
+      "command": "write <local-evidence-dir>/current-stage-smoke-summary.json with schema resume-ir.current-stage-smoke-summary.v1, file digests, step statuses, and explicit non-release-evidence blockers"
+    }'
+    ;;
+  *)
+    fail "--validation-profile must be full or smoke"
+    ;;
+esac
+
 if [ "$mode" = "dry-run" ]; then
   cat <<EOF
 {
   "schema_version": "resume-ir.current-stage-validation-plan.v1",
   "mode": "dry-run",
+  "validation_profile": "$validation_profile",
   "privacy_boundary": "local_only_redacted_plan",
   "resume_root": "<local-resume-root>",
   "data_dir": "<local-data-dir>",
   "out_dir": "<local-evidence-dir>",
-  "current_stage_target": "reproducible_local_10k_baseline",
+  "current_stage_target": "$current_stage_target",
+  "full_baseline_satisfied": $full_baseline_satisfied,
+  "release_readiness_evidence": $release_readiness_evidence,
   "performance_optimization_deferred": true,
   "actual_execution_requires": "operator_local_execute_mode",
   "parameters": {
@@ -344,7 +387,10 @@ if [ "$mode" = "dry-run" ]; then
     "top_k": $top_k,
     "embedding_dimension": $dimension,
     "ocr_worker_ticks": $ocr_worker_ticks,
-    "embedding_worker_ticks": $embedding_worker_ticks
+    "embedding_worker_ticks": $embedding_worker_ticks,
+    "query_set_min_queries": $query_set_min_queries,
+    "baseline_min_documents": $baseline_min_documents,
+    "baseline_min_queries": $baseline_min_queries
   },
   "ordered_steps": [
     {
@@ -401,7 +447,7 @@ if [ "$mode" = "dry-run" ]; then
     },
     {
       "id": "query_set_draft",
-      "command": "resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries $max_queries --min-queries $max_queries"
+      "command": "resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries $max_queries --min-queries $query_set_min_queries"
     },
     {
       "id": "private_query_baseline",
@@ -409,20 +455,13 @@ if [ "$mode" = "dry-run" ]; then
     },
     {
       "id": "baseline_shape_gate",
-      "command": "resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --min-documents 8000 --min-queries 500 --max-p95-ms 86400000 --max-zero-result-queries 500"
+      "command": "resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --min-documents $baseline_min_documents --min-queries $baseline_min_queries --max-p95-ms 86400000 --max-zero-result-queries 500"
     },
     {
       "id": "redacted_diagnostics",
       "command": "resume-cli --data-dir <local-data-dir> export-diagnostics --redact > <local-evidence-dir>/redacted-diagnostics.json"
     },
-    {
-      "id": "release_readiness_intake",
-      "command": "resume-cli --data-dir <local-data-dir> release-readiness --json --benchmark-report <local-evidence-dir>/private-benchmark-local.json --model-manifest <local-model-manifest> --ocr-runtime-manifest <local-ocr-runtime-manifest> --diagnostics-report <local-evidence-dir>/redacted-diagnostics.json > <local-evidence-dir>/release-readiness.json"
-    },
-    {
-      "id": "redacted_evidence_manifest",
-      "command": "write <local-evidence-dir>/current-stage-validation-evidence.json with schema resume-ir.current-stage-validation-evidence.v1, file digests, step statuses, and privacy sentinels"
-    }
+$terminal_plan_steps
   ],
   "must_not_upload": [
     "raw resumes",
@@ -440,6 +479,7 @@ if [ "$mode" = "dry-run" ]; then
     "After runtime preflight succeeds, execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
     "If --query-set is omitted, execute mode writes resume-ir.query-set.jsonl.v1 under <local-evidence-dir> with privacy boundary local_only_private_query_set, then uses its sha256 as the query-set digest.",
     "Execute mode keeps all evidence local under <local-evidence-dir>.",
+    "The smoke validation profile proves local command wiring and never produces release-readiness evidence.",
     "The baseline shape gate deliberately uses --max-p95-ms 86400000; P95/P99 reduction is deferred.",
     "Release-readiness is expected to remain blocked while signing, notarization, platform installer, and other private quality evidence are missing."
   ]
@@ -610,7 +650,7 @@ if [ "$query_set_generated" = "true" ]; then
   "$resume_cli" --data-dir "$data_dir" benchmark-query-set draft \
     --out "$query_set" \
     --max-queries "$max_queries" \
-    --min-queries "$max_queries" \
+    --min-queries "$query_set_min_queries" \
     > "$out_dir/query-set-draft.stdout.txt"
 else
   [ -f "$provided_query_set" ] || fail "query set must exist and stay local"
@@ -653,8 +693,8 @@ printf '%s\n' "current-stage validation: baseline shape gate"
 "$resume_benchmark" gate \
   --report "$out_dir/private-benchmark-local.json" \
   --require-private-real-corpus \
-  --min-documents 8000 \
-  --min-queries 500 \
+  --min-documents "$baseline_min_documents" \
+  --min-queries "$baseline_min_queries" \
   --max-p95-ms 86400000 \
   --max-zero-result-queries 500 \
   > "$out_dir/private-benchmark-gate.stdout.txt"
@@ -662,6 +702,124 @@ printf '%s\n' "current-stage validation: baseline shape gate"
 printf '%s\n' "current-stage validation: redacted diagnostics"
 "$resume_cli" --data-dir "$data_dir" export-diagnostics --redact \
   > "$out_dir/redacted-diagnostics.json"
+
+if [ "$validation_profile" = "smoke" ]; then
+  ocr_preflight_sha256=$(sha256_file "$out_dir/ocr-preflight.json")
+  ocr_draft_stdout_sha256=$(sha256_file "$out_dir/ocr-draft-manifest.stdout.txt")
+  ocr_validate_stdout_sha256=$(sha256_file "$out_dir/ocr-validate-manifest.stdout.txt")
+  model_draft_stdout_sha256=$(sha256_file "$out_dir/model-draft-manifest.stdout.txt")
+  model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
+  model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
+  import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
+  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
+  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
+  query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+  private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
+  private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
+  redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
+  dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
+  dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
+
+  cat > "$out_dir/current-stage-smoke-summary.json" <<EOF
+{
+  "schema_version": "resume-ir.current-stage-smoke-summary.v1",
+  "privacy_boundary": "local_only_redacted_aggregate_summary",
+  "current_stage_target": "local_real_corpus_smoke_chain",
+  "full_baseline_satisfied": false,
+  "release_readiness_evidence": false,
+  "performance_optimization_deferred": true,
+  "input_digests": {
+    "dataset_manifest_sha256": "$dataset_manifest_sha256",
+    "query_set_sha256": "$query_set_sha256",
+    "model_manifest_sha256": "$model_manifest_sha256",
+    "ocr_runtime_manifest_sha256": "$ocr_runtime_manifest_sha256"
+  },
+  "parameters": {
+    "max_files": $max_files,
+    "max_queries": $max_queries,
+    "top_k": $top_k,
+    "embedding_dimension": $dimension,
+    "ocr_worker_ticks": $ocr_worker_ticks,
+    "embedding_worker_ticks": $embedding_worker_ticks,
+    "query_set_min_queries": $query_set_min_queries,
+    "baseline_min_documents": $baseline_min_documents,
+    "baseline_min_queries": $baseline_min_queries
+  },
+  "preflight_probes": {
+    "ocr_runtime_probe": "passed",
+    "embedding_protocol": "passed"
+  },
+  "steps": [
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "success"},
+    {"id": "ocr_manifest_validate", "status": "success"},
+    {"id": "model_manifest_draft", "status": "success"},
+    {"id": "model_manifest_validate", "status": "success"},
+    {"id": "model_preflight", "status": "success"},
+    {"id": "dataset_manifest", "status": "success"},
+    {"id": "import_private_corpus", "status": "success"},
+    {"id": "ocr_worker_bounded_loop", "status": "success"},
+    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "corpus_summary", "status": "success"},
+    {"id": "query_set_draft", "status": "success"},
+    {"id": "private_query_baseline", "status": "success"},
+    {"id": "baseline_shape_gate", "status": "smoke_success"},
+    {"id": "redacted_diagnostics", "status": "success"}
+  ],
+  "redacted_outputs": [
+    {"file": "dataset-manifest.local.json", "sha256": "$dataset_manifest_sha256_output"},
+    {"file": "dataset-manifest.stdout.txt", "sha256": "$dataset_manifest_stdout_sha256"},
+    {"file": "ocr-runtime-manifest.local.json", "sha256": "$ocr_runtime_manifest_sha256_output"},
+    {"file": "ocr-preflight.json", "sha256": "$ocr_preflight_sha256"},
+    {"file": "ocr-draft-manifest.stdout.txt", "sha256": "$ocr_draft_stdout_sha256"},
+    {"file": "ocr-validate-manifest.stdout.txt", "sha256": "$ocr_validate_stdout_sha256"},
+    {"file": "model-manifest.local.json", "sha256": "$model_manifest_sha256_output"},
+    {"file": "model-draft-manifest.stdout.txt", "sha256": "$model_draft_stdout_sha256"},
+    {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
+    {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
+    {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
+    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
+    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
+    {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
+    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
+    {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
+    {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
+    {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"}
+  ],
+  "privacy_sentinels": {
+    "local_paths_included": false,
+    "raw_resume_text_included": false,
+    "raw_query_text_included": false,
+    "model_bytes_included": false,
+    "runtime_binaries_included": false,
+    "report_bodies_included": false
+  },
+  "not_completed": [
+    "full 10k/8000-document current-stage baseline",
+    "500-query private baseline gate",
+    "P95/P99 latency reduction",
+    "external 100k/1M validation",
+    "stable release readiness"
+  ],
+  "must_not_upload": [
+    "raw resumes",
+    "query set",
+    "local manifests",
+    "benchmark reports",
+    "diagnostics",
+    "indexes",
+    "SQLite databases",
+    "model caches",
+    "runtime binaries"
+  ]
+}
+EOF
+  printf '%s\n' "current-stage validation: smoke summary written under <local-evidence-dir>"
+  printf '%s\n' "current-stage validation: local smoke evidence written under <local-evidence-dir>"
+  exit 0
+fi
 
 printf '%s\n' "current-stage validation: release-readiness intake"
 set +e

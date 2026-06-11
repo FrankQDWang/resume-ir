@@ -66,6 +66,21 @@ SQLite data, diagnostics, or model/runtime caches. Operators may pass
 omitted, execute mode computes the digest from
 `<local-evidence-dir>/dataset-manifest.local.json`.
 
+The default `--validation-profile full` is the only profile intended to produce
+`resume-ir.current-stage-validation-evidence.v1` for `release-readiness
+--current-stage-evidence`. The `--validation-profile smoke` profile is a
+bounded local command-wiring proof for situations where the local private corpus
+is dominated by OCR-required files and full OCR would make the current
+interaction run for too long. Smoke still performs runtime preflight, manifest
+validation, import, bounded OCR/embedding workers, query-set generation,
+private-query benchmark protocol, a low-floor benchmark gate, and redacted
+diagnostics, then writes `current-stage-smoke-summary.json` with schema
+`resume-ir.current-stage-smoke-summary.v1`. Smoke output is explicitly not
+release-readiness evidence, must not be passed as proof of the 10k/8000-document
+baseline, and must keep full baseline, 500-query baseline, P95/P99 optimization,
+100k/1M validation, and stable release readiness marked not complete or
+BLOCKED.
+
 If `--query-set <local-query-set.jsonl>` is omitted, execute mode drafts a
 local private query set after import/OCR/embedding work by running
 `resume-cli benchmark-query-set draft`. The generated JSONL schema is
@@ -79,6 +94,7 @@ sample IDs derived from source data.
 
 ```bash
 scripts/local/run-current-stage-validation.sh --dry-run \
+  --validation-profile full \
   --resume-root <private-local-root> \
   --data-dir <local-data-dir> \
   --out-dir <local-evidence-dir> \
@@ -144,6 +160,7 @@ reviewed; otherwise validation must fail closed.
 
 ```bash
 scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile full \
   --resume-root <private-local-root> \
   --data-dir <local-data-dir> \
   --out-dir <local-evidence-dir> \
@@ -170,6 +187,42 @@ scripts/local/run-current-stage-validation.sh --execute \
   --reviewed-ocr-runtime \
   --max-files 10000 \
   --max-queries 500 \
+  --top-k 10
+```
+
+For bounded local command-wiring validation, use smoke mode and keep all outputs
+local. The summary records only redacted aggregate status and output digests; it
+does not write `current-stage-validation-evidence.json` and does not run
+`release-readiness`:
+
+```bash
+scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile smoke \
+  --resume-root <private-local-root-or-small-local-sample-root> \
+  --data-dir <local-data-dir> \
+  --out-dir <local-evidence-dir> \
+  [--query-set <local-query-set.jsonl>] \
+  --model-manifest <local-model-manifest.json> \
+  --ocr-runtime-manifest <local-ocr-runtime-manifest.json> \
+  --model-artifact <local-model-artifact> \
+  --embedding-command <local-embedding-command> \
+  --model-pack-id <reviewed-model-pack-id> \
+  --model-id <reviewed-local-model-id> \
+  --model-format <model-format> \
+  --dimension <dimension> \
+  --model-license <model-license-id> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language eng \
+  --language-pack <local-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --reviewed-model \
+  --reviewed-ocr-runtime \
+  --max-files <bounded-file-count> \
+  --max-queries <bounded-query-count> \
   --top-k 10
 ```
 
