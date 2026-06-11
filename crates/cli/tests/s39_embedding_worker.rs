@@ -205,6 +205,159 @@ fn model_manifest_validate_rejects_unreviewed_license_without_path_or_payload_le
     let _ = fs::remove_file(&manifest_file);
 }
 
+#[test]
+fn model_manifest_draft_writes_local_manifest_without_stdout_path_or_payload_leak() {
+    let data_dir = temp_dir("model-manifest-draft-private-data");
+    let model_file = temp_file("model-manifest-draft-private-model");
+    let manifest_file = temp_file("model-manifest-draft-private-manifest");
+    fs::write(&model_file, b"SYNTHETIC DRAFT MODEL ARTIFACT\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "model",
+            "draft-manifest",
+            "--out",
+            path_str(&manifest_file),
+            "--model-pack-id",
+            "fixture-pack-draft",
+            "--model-id",
+            "fixture-draft-embedding-model",
+            "--model-type",
+            "embedding",
+            "--dimension",
+            "4",
+            "--format",
+            "onnx",
+            "--artifact",
+            path_str(&model_file),
+            "--license",
+            "Apache-2.0",
+            "--reviewed",
+        ])
+        .output()
+        .expect("draft model manifest");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("model manifest draft: written"));
+    assert!(stdout.contains("schema: resume-ir.model-manifest.v1"));
+    assert!(stdout.contains("model pack: fixture-pack-draft"));
+    assert!(stdout.contains("model id: fixture-draft-embedding-model"));
+    assert!(stdout.contains("license reviewed: yes"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains("SYNTHETIC DRAFT MODEL ARTIFACT"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&model_file)));
+    assert!(!stdout.contains(path_str(&manifest_file)));
+
+    let manifest = fs::read_to_string(&manifest_file).unwrap();
+    assert!(manifest.contains("\"schema_version\": \"resume-ir.model-manifest.v1\""));
+    assert!(manifest.contains("\"model_pack_id\": \"fixture-pack-draft\""));
+    assert!(manifest.contains("\"id\": \"fixture-draft-embedding-model\""));
+    assert!(manifest.contains("\"type\": \"embedding\""));
+    assert!(manifest.contains("\"dim\": 4"));
+    assert!(manifest.contains("\"format\": \"onnx\""));
+    assert!(manifest.contains("\"reviewed\": true"));
+    assert!(manifest.contains(path_str(&model_file)));
+
+    let validate = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "model",
+            "validate-manifest",
+            "--manifest",
+            path_str(&manifest_file),
+        ])
+        .output()
+        .expect("validate drafted model manifest");
+
+    assert!(
+        validate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&validate.stdout),
+        String::from_utf8_lossy(&validate.stderr)
+    );
+
+    remove_dir(&data_dir);
+    let _ = fs::remove_file(&model_file);
+    let _ = fs::remove_file(&manifest_file);
+}
+
+#[test]
+fn model_manifest_draft_without_review_fails_validation_without_path_or_payload_leak() {
+    let data_dir = temp_dir("model-manifest-draft-unreviewed-private-data");
+    let model_file = temp_file("model-manifest-draft-unreviewed-private-model");
+    let manifest_file = temp_file("model-manifest-draft-unreviewed-private-manifest");
+    fs::write(&model_file, b"SYNTHETIC UNREVIEWED DRAFT MODEL ARTIFACT\n").unwrap();
+
+    let draft = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "model",
+            "draft-manifest",
+            "--out",
+            path_str(&manifest_file),
+            "--model-pack-id",
+            "fixture-pack-draft-unreviewed",
+            "--model-id",
+            "fixture-draft-unreviewed-embedding-model",
+            "--model-type",
+            "embedding",
+            "--dimension",
+            "4",
+            "--format",
+            "onnx",
+            "--artifact",
+            path_str(&model_file),
+            "--license",
+            "Apache-2.0",
+        ])
+        .output()
+        .expect("draft unreviewed model manifest");
+
+    assert!(draft.status.success());
+    let draft_stdout = String::from_utf8_lossy(&draft.stdout);
+    assert!(draft_stdout.contains("license reviewed: no"));
+    assert!(draft_stdout.contains("paths: <redacted>"));
+    assert!(!draft_stdout.contains(path_str(&model_file)));
+    assert!(!draft_stdout.contains("SYNTHETIC UNREVIEWED DRAFT MODEL ARTIFACT"));
+
+    let validate = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "model",
+            "validate-manifest",
+            "--manifest",
+            path_str(&manifest_file),
+        ])
+        .output()
+        .expect("reject unreviewed drafted model manifest");
+
+    assert!(!validate.status.success());
+    assert!(validate.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&validate.stderr);
+    assert!(stderr.contains("model manifest blocked: license has not been reviewed"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&model_file)));
+    assert!(!stderr.contains(path_str(&manifest_file)));
+    assert!(!stderr.contains("SYNTHETIC UNREVIEWED DRAFT MODEL ARTIFACT"));
+
+    remove_dir(&data_dir);
+    let _ = fs::remove_file(&model_file);
+    let _ = fs::remove_file(&manifest_file);
+}
+
 #[cfg(unix)]
 #[test]
 fn model_preflight_json_reports_ready_embedding_runtime_without_path_or_payload_leak() {

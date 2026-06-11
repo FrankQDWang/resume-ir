@@ -1798,6 +1798,7 @@ fn model_command(args: &[String]) -> Result<()> {
     };
 
     match action {
+        "draft-manifest" => model_draft_manifest_command(&args[1..]),
         "preflight" => model_preflight_command(&args[1..]),
         "validate-manifest" => model_validate_manifest_command(&args[1..]),
         _ => Err(CliError::usage(model_usage())),
@@ -1950,6 +1951,231 @@ fn model_validate_manifest_command(args: &[String]) -> Result<()> {
     }
     println!("paths: <redacted>");
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ModelDraftManifestArgs {
+    out: PathBuf,
+    model_pack_id: String,
+    model_id: String,
+    model_type: String,
+    dimension: Option<usize>,
+    format: String,
+    artifact: PathBuf,
+    license: String,
+    reviewed: bool,
+}
+
+fn model_draft_manifest_command(args: &[String]) -> Result<()> {
+    let draft_args = parse_model_draft_manifest_args(args)?;
+    if !draft_args.artifact.is_file() {
+        return Err(CliError::user(
+            "model manifest draft blocked: artifact is unavailable",
+        ));
+    }
+    let artifact_sha256 = file_sha256_hex(&draft_args.artifact)
+        .map_err(|_| CliError::user("model manifest draft blocked: checksum unavailable"))?;
+    let mut model = serde_json::json!({
+        "id": draft_args.model_id,
+        "type": draft_args.model_type,
+        "format": draft_args.format,
+        "artifact": {
+            "path": path_string_lossless(&draft_args.artifact)?,
+            "sha256": artifact_sha256
+        },
+        "license": {
+            "id": draft_args.license,
+            "reviewed": draft_args.reviewed
+        }
+    });
+    if let Some(dimension) = draft_args.dimension {
+        model
+            .as_object_mut()
+            .expect("model draft is an object")
+            .insert("dim".to_string(), serde_json::json!(dimension));
+    }
+    let manifest = serde_json::json!({
+        "schema_version": MODEL_MANIFEST_SCHEMA_VERSION,
+        "model_pack_id": draft_args.model_pack_id,
+        "models": [model]
+    });
+    let manifest_text = serde_json::to_string_pretty(&manifest)
+        .map_err(|_| CliError::user("model manifest draft blocked: invalid manifest"))?;
+    if let Some(parent) = draft_args.out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|_| {
+                CliError::user("model manifest draft blocked: output is unavailable")
+            })?;
+        }
+    }
+    fs::write(&draft_args.out, format!("{manifest_text}\n"))
+        .map_err(|_| CliError::user("model manifest draft blocked: output is unavailable"))?;
+
+    println!("model manifest draft: written");
+    println!("schema: {MODEL_MANIFEST_SCHEMA_VERSION}");
+    println!(
+        "model pack: {}",
+        manifest["model_pack_id"].as_str().unwrap_or("unknown")
+    );
+    println!(
+        "model id: {}",
+        manifest["models"][0]["id"].as_str().unwrap_or("unknown")
+    );
+    println!(
+        "type: {}",
+        manifest["models"][0]["type"].as_str().unwrap_or("unknown")
+    );
+    if let Some(dimension) = manifest["models"][0]["dim"].as_u64() {
+        println!("dimension: {dimension}");
+    }
+    println!(
+        "license reviewed: {}",
+        if draft_args.reviewed { "yes" } else { "no" }
+    );
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn parse_model_draft_manifest_args(args: &[String]) -> Result<ModelDraftManifestArgs> {
+    let mut out = None;
+    let mut model_pack_id = None;
+    let mut model_id = None;
+    let mut model_type = None;
+    let mut dimension = None;
+    let mut format = None;
+    let mut artifact = None;
+    let mut license = None;
+    let mut reviewed = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--out" => out = Some(take_model_path_arg(args, &mut index, out.is_some())?),
+            "--model-pack-id" => {
+                model_pack_id = Some(take_model_identifier_arg(
+                    args,
+                    &mut index,
+                    model_pack_id.is_some(),
+                )?)
+            }
+            "--model-id" => {
+                model_id = Some(take_model_identifier_arg(
+                    args,
+                    &mut index,
+                    model_id.is_some(),
+                )?)
+            }
+            "--model-type" => {
+                model_type = Some(take_model_identifier_arg(
+                    args,
+                    &mut index,
+                    model_type.is_some(),
+                )?)
+            }
+            "--dimension" => {
+                dimension = Some(take_model_dimension_arg(
+                    args,
+                    &mut index,
+                    dimension.is_some(),
+                )?)
+            }
+            "--format" => {
+                format = Some(take_model_identifier_arg(
+                    args,
+                    &mut index,
+                    format.is_some(),
+                )?)
+            }
+            "--artifact" => {
+                artifact = Some(take_model_path_arg(args, &mut index, artifact.is_some())?)
+            }
+            "--license" => {
+                license = Some(take_model_identifier_arg(
+                    args,
+                    &mut index,
+                    license.is_some(),
+                )?)
+            }
+            "--reviewed" => {
+                if reviewed {
+                    return Err(CliError::usage(model_usage()));
+                }
+                reviewed = true;
+                index += 1;
+            }
+            _ => return Err(CliError::usage(model_usage())),
+        }
+    }
+
+    let model_type = model_type.ok_or_else(|| CliError::usage(model_usage()))?;
+    if !matches!(model_type.as_str(), "embedding" | "ner" | "ocr") {
+        return Err(CliError::usage(model_usage()));
+    }
+    if model_type == "embedding" && dimension.is_none() {
+        return Err(CliError::usage(model_usage()));
+    }
+    if model_type != "embedding" && dimension.is_some() {
+        return Err(CliError::usage(model_usage()));
+    }
+
+    Ok(ModelDraftManifestArgs {
+        out: out.ok_or_else(|| CliError::usage(model_usage()))?,
+        model_pack_id: model_pack_id.ok_or_else(|| CliError::usage(model_usage()))?,
+        model_id: model_id.ok_or_else(|| CliError::usage(model_usage()))?,
+        model_type,
+        dimension,
+        format: format.ok_or_else(|| CliError::usage(model_usage()))?,
+        artifact: artifact.ok_or_else(|| CliError::usage(model_usage()))?,
+        license: license.ok_or_else(|| CliError::usage(model_usage()))?,
+        reviewed,
+    })
+}
+
+fn take_model_path_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<PathBuf> {
+    if duplicate {
+        return Err(CliError::usage(model_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(model_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(model_usage()));
+    }
+    *index += 2;
+    Ok(PathBuf::from(value))
+}
+
+fn take_model_identifier_arg(
+    args: &[String],
+    index: &mut usize,
+    duplicate: bool,
+) -> Result<String> {
+    if duplicate {
+        return Err(CliError::usage(model_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(model_usage()));
+    };
+    if !valid_model_manifest_identifier(value) {
+        return Err(CliError::usage(model_usage()));
+    }
+    *index += 2;
+    Ok(value.clone())
+}
+
+fn take_model_dimension_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<usize> {
+    if duplicate {
+        return Err(CliError::usage(model_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(model_usage()));
+    };
+    let dimension = value
+        .parse::<usize>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| CliError::usage(model_usage()))?;
+    *index += 2;
+    Ok(dimension)
 }
 
 #[derive(Debug, Clone)]
@@ -2318,7 +2544,7 @@ fn valid_model_manifest_identifier(value: &str) -> bool {
 }
 
 fn model_usage() -> &'static str {
-    "usage: resume-cli model preflight --json --manifest <path> --embedding-command <path> --model-id <id> --dimension <n> | resume-cli model validate-manifest --manifest <path>"
+    "usage: resume-cli model draft-manifest --out <path> --model-pack-id <id> --model-id <id> --model-type embedding --dimension <n> --format <id> --artifact <path> --license <id> [--reviewed] | resume-cli model preflight --json --manifest <path> --embedding-command <path> --model-id <id> --dimension <n> | resume-cli model validate-manifest --manifest <path>"
 }
 
 fn ocr_validate_manifest_command(args: &[String]) -> Result<()> {

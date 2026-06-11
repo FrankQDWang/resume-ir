@@ -152,6 +152,35 @@ include model caches, indexes, or local data directories.
 
 ## Model Manifest Validation
 
+Canonical local draft command form:
+`resume-cli model draft-manifest --out <path>`.
+
+After selecting a local offline embedding artifact, create a local-only model
+manifest draft:
+
+```bash
+resume-cli --data-dir <local-data-dir> model draft-manifest \
+  --out <local-model-manifest.json> \
+  --model-pack-id <reviewed-model-pack-id> \
+  --model-id <reviewed-model-id> \
+  --model-type embedding \
+  --dimension <dimension> \
+  --format <model-format> \
+  --artifact <local-model-artifact> \
+  --license <model-license-id> \
+  --reviewed
+```
+
+The draft command writes the manifest to the local `--out` file and keeps stdout
+redacted. The manifest file itself contains the local artifact path because the
+validator must read the model file to verify its checksum. Do not commit,
+upload, or paste this manifest unless it has been separately reviewed and
+stripped of local paths.
+
+Omit `--reviewed` when model weight license review is not complete. Validation,
+preflight, release-readiness, vector-quality, and private benchmark gates must
+then fail closed.
+
 Canonical local command form:
 `resume-cli model validate-manifest --manifest <path>`.
 
