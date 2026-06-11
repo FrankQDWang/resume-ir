@@ -113,9 +113,12 @@ data.
 After the execute run writes the manifest, operators may pass it back to
 `release-readiness` with
 `--current-stage-evidence current-stage-validation-evidence.json` to validate
-the redacted manifest schema, required step statuses, SHA-256 output digests,
-and privacy sentinels without exposing the local evidence directory or report
-bodies.
+the redacted manifest schema, the complete local-flow step statuses, required
+basename-only output files with SHA-256 digests, and privacy sentinels without
+exposing the local evidence directory or report bodies. The required output
+inventory includes the dataset manifest, query set, OCR/model preflight logs,
+bounded worker stdout, corpus summary, private benchmark report, benchmark gate
+stdout, redacted diagnostics, and release-readiness stdout/stderr digests.
 Add `--reviewed-model` and `--reviewed-ocr-runtime` only after the selected
 model weights, OCR engine, renderer, and language pack have actually been
 reviewed; otherwise validation must fail closed.

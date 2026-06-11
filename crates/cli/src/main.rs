@@ -865,10 +865,12 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         ("model_manifest_draft", "success"),
         ("model_manifest_validate", "success"),
         ("model_preflight", "success"),
+        ("dataset_manifest", "success"),
         ("import_private_corpus", "success"),
         ("ocr_worker_bounded_loop", "success"),
         ("embedding_worker_bounded_loop", "success"),
         ("corpus_summary", "success"),
+        ("query_set_draft", "success"),
         ("private_query_baseline", "success"),
         ("baseline_shape_gate", "success"),
         ("redacted_diagnostics", "success"),
@@ -891,10 +893,25 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         output_files.insert(file.to_string());
     }
     for required_file in [
+        "dataset-manifest.local.json",
+        "dataset-manifest.stdout.txt",
+        "ocr-preflight.json",
+        "ocr-draft-manifest.stdout.txt",
+        "ocr-validate-manifest.stdout.txt",
+        "model-draft-manifest.stdout.txt",
+        "model-validate-manifest.stdout.txt",
+        "model-preflight.json",
+        "import.stdout.txt",
+        "ocr-worker.stdout.txt",
+        "embedding-worker.stdout.txt",
         "benchmark-corpus-summary.local.json",
+        "private-query-set.local.jsonl",
+        "query-set-draft.stdout.txt",
         "private-benchmark-local.json",
+        "private-benchmark-gate.stdout.txt",
         "redacted-diagnostics.json",
         "release-readiness.json",
+        "release-readiness.stderr.txt",
     ] {
         if !output_files.contains(required_file) {
             return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));

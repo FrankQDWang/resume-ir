@@ -794,6 +794,45 @@ fn release_readiness_json_accepts_current_stage_evidence_without_clearing_blocke
 }
 
 #[test]
+fn release_readiness_rejects_current_stage_evidence_missing_local_flow_output_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-current-stage-missing-output-private-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-missing-output-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    fs::write(
+        &current_stage_evidence,
+        current_stage_evidence_manifest_missing_dataset_output(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence missing local flow output");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence manifest"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_current_stage_evidence_with_private_marker_without_path_leaks() {
     let data_dir = temp_path("release-readiness-current-stage-marker-private-data");
     let evidence_dir = temp_path("release-readiness-current-stage-marker-private-reports");
@@ -1167,21 +1206,115 @@ fn current_stage_evidence_manifest() -> String {
         "{\"id\":\"model_manifest_draft\",\"status\":\"success\"},",
         "{\"id\":\"model_manifest_validate\",\"status\":\"success\"},",
         "{\"id\":\"model_preflight\",\"status\":\"success\"},",
+        "{\"id\":\"dataset_manifest\",\"status\":\"success\"},",
         "{\"id\":\"import_private_corpus\",\"status\":\"success\"},",
         "{\"id\":\"ocr_worker_bounded_loop\",\"status\":\"success\"},",
         "{\"id\":\"embedding_worker_bounded_loop\",\"status\":\"success\"},",
         "{\"id\":\"corpus_summary\",\"status\":\"success\"},",
+        "{\"id\":\"query_set_draft\",\"status\":\"success\"},",
         "{\"id\":\"private_query_baseline\",\"status\":\"success\"},",
         "{\"id\":\"baseline_shape_gate\",\"status\":\"success\"},",
         "{\"id\":\"redacted_diagnostics\",\"status\":\"success\"},",
         "{\"id\":\"release_readiness_intake\",\"status\":\"expected_blocked\",\"exit_code\":1}",
         "],",
         "\"redacted_outputs\":[",
-        "{\"file\":\"benchmark-corpus-summary.local.json\",\"sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"},",
-        "{\"file\":\"private-benchmark-local.json\",\"sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\"},",
-        "{\"file\":\"redacted-diagnostics.json\",\"sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\"},",
-        "{\"file\":\"release-readiness.json\",\"sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\"},",
-        "{\"file\":\"current-stage-validation-evidence.json\",\"sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\"}",
+        "{\"file\":\"dataset-manifest.local.json\",\"sha256\":\"1010101010101010101010101010101010101010101010101010101010101010\"},",
+        "{\"file\":\"dataset-manifest.stdout.txt\",\"sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"},",
+        "{\"file\":\"ocr-preflight.json\",\"sha256\":\"1212121212121212121212121212121212121212121212121212121212121212\"},",
+        "{\"file\":\"ocr-draft-manifest.stdout.txt\",\"sha256\":\"1313131313131313131313131313131313131313131313131313131313131313\"},",
+        "{\"file\":\"ocr-validate-manifest.stdout.txt\",\"sha256\":\"1414141414141414141414141414141414141414141414141414141414141414\"},",
+        "{\"file\":\"model-draft-manifest.stdout.txt\",\"sha256\":\"1515151515151515151515151515151515151515151515151515151515151515\"},",
+        "{\"file\":\"model-validate-manifest.stdout.txt\",\"sha256\":\"1616161616161616161616161616161616161616161616161616161616161616\"},",
+        "{\"file\":\"model-preflight.json\",\"sha256\":\"1717171717171717171717171717171717171717171717171717171717171717\"},",
+        "{\"file\":\"import.stdout.txt\",\"sha256\":\"1818181818181818181818181818181818181818181818181818181818181818\"},",
+        "{\"file\":\"ocr-worker.stdout.txt\",\"sha256\":\"1919191919191919191919191919191919191919191919191919191919191919\"},",
+        "{\"file\":\"embedding-worker.stdout.txt\",\"sha256\":\"2020202020202020202020202020202020202020202020202020202020202020\"},",
+        "{\"file\":\"benchmark-corpus-summary.local.json\",\"sha256\":\"2121212121212121212121212121212121212121212121212121212121212121\"},",
+        "{\"file\":\"private-query-set.local.jsonl\",\"sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\"},",
+        "{\"file\":\"query-set-draft.stdout.txt\",\"sha256\":\"2323232323232323232323232323232323232323232323232323232323232323\"},",
+        "{\"file\":\"private-benchmark-local.json\",\"sha256\":\"2424242424242424242424242424242424242424242424242424242424242424\"},",
+        "{\"file\":\"private-benchmark-gate.stdout.txt\",\"sha256\":\"2525252525252525252525252525252525252525252525252525252525252525\"},",
+        "{\"file\":\"redacted-diagnostics.json\",\"sha256\":\"2626262626262626262626262626262626262626262626262626262626262626\"},",
+        "{\"file\":\"release-readiness.json\",\"sha256\":\"2727272727272727272727272727272727272727272727272727272727272727\"},",
+        "{\"file\":\"release-readiness.stderr.txt\",\"sha256\":\"2828282828282828282828282828282828282828282828282828282828282828\"}",
+        "],",
+        "\"privacy_sentinels\":{",
+        "\"local_paths_included\":false,",
+        "\"raw_resume_text_included\":false,",
+        "\"raw_query_text_included\":false,",
+        "\"model_bytes_included\":false,",
+        "\"runtime_binaries_included\":false,",
+        "\"report_bodies_included\":false",
+        "},",
+        "\"must_not_upload\":[",
+        "\"raw resumes\",",
+        "\"query set\",",
+        "\"local manifests\",",
+        "\"benchmark reports\",",
+        "\"diagnostics\",",
+        "\"indexes\",",
+        "\"SQLite databases\",",
+        "\"model caches\",",
+        "\"runtime binaries\"",
+        "]",
+        "}"
+    )
+    .to_string()
+}
+
+fn current_stage_evidence_manifest_missing_dataset_output() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"resume-ir.current-stage-validation-evidence.v1\",",
+        "\"privacy_boundary\":\"local_only_redacted_evidence_manifest\",",
+        "\"current_stage_target\":\"reproducible_local_10k_baseline\",",
+        "\"performance_optimization_deferred\":true,",
+        "\"release_readiness_exit\":1,",
+        "\"stable_release_expected_blocked\":true,",
+        "\"input_digests\":{",
+        "\"dataset_manifest_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",",
+        "\"query_set_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",",
+        "\"model_manifest_sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",",
+        "\"ocr_runtime_manifest_sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"",
+        "},",
+        "\"parameters\":{",
+        "\"max_files\":10000,",
+        "\"max_queries\":500,",
+        "\"top_k\":10,",
+        "\"embedding_dimension\":384,",
+        "\"ocr_worker_ticks\":10000,",
+        "\"embedding_worker_ticks\":10000",
+        "},",
+        "\"steps\":[",
+        "{\"id\":\"ocr_preflight\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_manifest_draft\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_manifest_validate\",\"status\":\"success\"},",
+        "{\"id\":\"model_manifest_draft\",\"status\":\"success\"},",
+        "{\"id\":\"model_manifest_validate\",\"status\":\"success\"},",
+        "{\"id\":\"model_preflight\",\"status\":\"success\"},",
+        "{\"id\":\"dataset_manifest\",\"status\":\"success\"},",
+        "{\"id\":\"import_private_corpus\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_worker_bounded_loop\",\"status\":\"success\"},",
+        "{\"id\":\"embedding_worker_bounded_loop\",\"status\":\"success\"},",
+        "{\"id\":\"corpus_summary\",\"status\":\"success\"},",
+        "{\"id\":\"query_set_draft\",\"status\":\"success\"},",
+        "{\"id\":\"private_query_baseline\",\"status\":\"success\"},",
+        "{\"id\":\"baseline_shape_gate\",\"status\":\"success\"},",
+        "{\"id\":\"redacted_diagnostics\",\"status\":\"success\"},",
+        "{\"id\":\"release_readiness_intake\",\"status\":\"expected_blocked\",\"exit_code\":1}",
+        "],",
+        "\"redacted_outputs\":[",
+        "{\"file\":\"dataset-manifest.stdout.txt\",\"sha256\":\"1010101010101010101010101010101010101010101010101010101010101010\"},",
+        "{\"file\":\"ocr-preflight.json\",\"sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"},",
+        "{\"file\":\"model-preflight.json\",\"sha256\":\"1212121212121212121212121212121212121212121212121212121212121212\"},",
+        "{\"file\":\"benchmark-corpus-summary.local.json\",\"sha256\":\"1313131313131313131313131313131313131313131313131313131313131313\"},",
+        "{\"file\":\"private-query-set.local.jsonl\",\"sha256\":\"1414141414141414141414141414141414141414141414141414141414141414\"},",
+        "{\"file\":\"query-set-draft.stdout.txt\",\"sha256\":\"1515151515151515151515151515151515151515151515151515151515151515\"},",
+        "{\"file\":\"private-benchmark-local.json\",\"sha256\":\"1616161616161616161616161616161616161616161616161616161616161616\"},",
+        "{\"file\":\"private-benchmark-gate.stdout.txt\",\"sha256\":\"1717171717171717171717171717171717171717171717171717171717171717\"},",
+        "{\"file\":\"redacted-diagnostics.json\",\"sha256\":\"1818181818181818181818181818181818181818181818181818181818181818\"},",
+        "{\"file\":\"release-readiness.json\",\"sha256\":\"1919191919191919191919191919191919191919191919191919191919191919\"},",
+        "{\"file\":\"release-readiness.stderr.txt\",\"sha256\":\"2020202020202020202020202020202020202020202020202020202020202020\"}",
         "],",
         "\"privacy_sentinels\":{",
         "\"local_paths_included\":false,",
