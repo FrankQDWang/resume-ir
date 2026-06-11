@@ -840,9 +840,13 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         require_release_evidence_sha256_value(input_digests, "dataset_manifest_sha256", CONTEXT)?;
     let query_set_sha256 =
         require_release_evidence_sha256_value(input_digests, "query_set_sha256", CONTEXT)?;
-    for key in ["model_manifest_sha256", "ocr_runtime_manifest_sha256"] {
-        require_release_evidence_sha256(input_digests, key, CONTEXT)?;
-    }
+    let model_manifest_sha256 =
+        require_release_evidence_sha256_value(input_digests, "model_manifest_sha256", CONTEXT)?;
+    let ocr_runtime_manifest_sha256 = require_release_evidence_sha256_value(
+        input_digests,
+        "ocr_runtime_manifest_sha256",
+        CONTEXT,
+    )?;
 
     let parameters = require_release_evidence_object(object, "parameters", CONTEXT)?;
     require_release_evidence_min_u64(parameters, "max_files", 8000, CONTEXT)?;
@@ -906,9 +910,11 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
     for required_file in [
         "dataset-manifest.local.json",
         "dataset-manifest.stdout.txt",
+        "ocr-runtime-manifest.local.json",
         "ocr-preflight.json",
         "ocr-draft-manifest.stdout.txt",
         "ocr-validate-manifest.stdout.txt",
+        "model-manifest.local.json",
         "model-draft-manifest.stdout.txt",
         "model-validate-manifest.stdout.txt",
         "model-preflight.json",
@@ -938,6 +944,18 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         &output_digests,
         "private-query-set.local.jsonl",
         query_set_sha256,
+        CONTEXT,
+    )?;
+    require_release_evidence_output_digest(
+        &output_digests,
+        "model-manifest.local.json",
+        model_manifest_sha256,
+        CONTEXT,
+    )?;
+    require_release_evidence_output_digest(
+        &output_digests,
+        "ocr-runtime-manifest.local.json",
+        ocr_runtime_manifest_sha256,
         CONTEXT,
     )?;
 

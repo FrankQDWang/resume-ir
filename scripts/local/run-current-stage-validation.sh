@@ -526,9 +526,11 @@ if ! "$resume_cli" --data-dir "$data_dir" model preflight --json \
   fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
 fi
 
-if [ -z "$model_manifest_sha256" ]; then
-  model_manifest_sha256=$(sha256_file "$model_manifest")
+model_manifest_sha256_output=$(sha256_file "$model_manifest")
+if [ -n "$model_manifest_sha256" ] && [ "$model_manifest_sha256" != "$model_manifest_sha256_output" ]; then
+  fail "model manifest digest mismatch"
 fi
+model_manifest_sha256="$model_manifest_sha256_output"
 
 printf '%s\n' "current-stage validation: dataset manifest"
 "$resume_cli" --data-dir "$data_dir" privacy dataset-manifest \
@@ -659,9 +661,11 @@ if [ "$release_status" -ne 0 ]; then
     exit 1
   fi
 fi
-if [ -z "$ocr_runtime_manifest_sha256" ]; then
-  ocr_runtime_manifest_sha256=$(sha256_file "$ocr_runtime_manifest")
+ocr_runtime_manifest_sha256_output=$(sha256_file "$ocr_runtime_manifest")
+if [ -n "$ocr_runtime_manifest_sha256" ] && [ "$ocr_runtime_manifest_sha256" != "$ocr_runtime_manifest_sha256_output" ]; then
+  fail "OCR runtime manifest digest mismatch"
 fi
+ocr_runtime_manifest_sha256="$ocr_runtime_manifest_sha256_output"
 if [ "$release_status" -eq 0 ]; then
   stable_release_expected_blocked="false"
   release_readiness_step_status="success"
@@ -733,9 +737,11 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
   "redacted_outputs": [
     {"file": "dataset-manifest.local.json", "sha256": "$dataset_manifest_sha256_output"},
     {"file": "dataset-manifest.stdout.txt", "sha256": "$dataset_manifest_stdout_sha256"},
+    {"file": "ocr-runtime-manifest.local.json", "sha256": "$ocr_runtime_manifest_sha256_output"},
     {"file": "ocr-preflight.json", "sha256": "$ocr_preflight_sha256"},
     {"file": "ocr-draft-manifest.stdout.txt", "sha256": "$ocr_draft_stdout_sha256"},
     {"file": "ocr-validate-manifest.stdout.txt", "sha256": "$ocr_validate_stdout_sha256"},
+    {"file": "model-manifest.local.json", "sha256": "$model_manifest_sha256_output"},
     {"file": "model-draft-manifest.stdout.txt", "sha256": "$model_draft_stdout_sha256"},
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},

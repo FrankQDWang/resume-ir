@@ -240,9 +240,11 @@ cat > "$current_stage_evidence" <<'JSON'
   "redacted_outputs": [
     {"file": "dataset-manifest.local.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
     {"file": "dataset-manifest.stdout.txt", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
+    {"file": "ocr-runtime-manifest.local.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
     {"file": "ocr-preflight.json", "sha256": "1212121212121212121212121212121212121212121212121212121212121212"},
     {"file": "ocr-draft-manifest.stdout.txt", "sha256": "1313131313131313131313131313131313131313131313131313131313131313"},
     {"file": "ocr-validate-manifest.stdout.txt", "sha256": "1414141414141414141414141414141414141414141414141414141414141414"},
+    {"file": "model-manifest.local.json", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
     {"file": "model-draft-manifest.stdout.txt", "sha256": "1515151515151515151515151515151515151515151515151515151515151515"},
     {"file": "model-validate-manifest.stdout.txt", "sha256": "1616161616161616161616161616161616161616161616161616161616161616"},
     {"file": "model-preflight.json", "sha256": "1717171717171717171717171717171717171717171717171717171717171717"},

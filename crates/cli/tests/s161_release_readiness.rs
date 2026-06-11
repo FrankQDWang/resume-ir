@@ -918,6 +918,98 @@ fn release_readiness_rejects_current_stage_evidence_with_mismatched_dataset_dige
 }
 
 #[test]
+fn release_readiness_rejects_current_stage_evidence_missing_runtime_manifest_outputs_without_path_leaks(
+) {
+    let data_dir =
+        temp_path("release-readiness-current-stage-runtime-manifest-missing-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-current-stage-runtime-manifest-missing-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    fs::write(
+        &current_stage_evidence,
+        current_stage_evidence_manifest_missing_runtime_manifest_outputs(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence missing runtime manifest outputs");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence manifest"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_current_stage_evidence_with_mismatched_runtime_manifest_digests_without_path_leaks(
+) {
+    let data_dir =
+        temp_path("release-readiness-current-stage-runtime-manifest-digest-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-current-stage-runtime-manifest-digest-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    fs::write(
+        &current_stage_evidence,
+        current_stage_evidence_manifest()
+            .replace(
+                "\"file\":\"model-manifest.local.json\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"",
+                "\"file\":\"model-manifest.local.json\",\"sha256\":\"9999999999999999999999999999999999999999999999999999999999999999\"",
+            )
+            .replace(
+                "\"file\":\"ocr-runtime-manifest.local.json\",\"sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"",
+                "\"file\":\"ocr-runtime-manifest.local.json\",\"sha256\":\"8888888888888888888888888888888888888888888888888888888888888888\"",
+            ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject digest-mismatched runtime manifest evidence");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence manifest"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_current_stage_evidence_with_private_marker_without_path_leaks() {
     let data_dir = temp_path("release-readiness-current-stage-marker-private-data");
     let evidence_dir = temp_path("release-readiness-current-stage-marker-private-reports");
@@ -1305,9 +1397,11 @@ fn current_stage_evidence_manifest() -> String {
         "\"redacted_outputs\":[",
         "{\"file\":\"dataset-manifest.local.json\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},",
         "{\"file\":\"dataset-manifest.stdout.txt\",\"sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"},",
+        "{\"file\":\"ocr-runtime-manifest.local.json\",\"sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"},",
         "{\"file\":\"ocr-preflight.json\",\"sha256\":\"1212121212121212121212121212121212121212121212121212121212121212\"},",
         "{\"file\":\"ocr-draft-manifest.stdout.txt\",\"sha256\":\"1313131313131313131313131313131313131313131313131313131313131313\"},",
         "{\"file\":\"ocr-validate-manifest.stdout.txt\",\"sha256\":\"1414141414141414141414141414141414141414141414141414141414141414\"},",
+        "{\"file\":\"model-manifest.local.json\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},",
         "{\"file\":\"model-draft-manifest.stdout.txt\",\"sha256\":\"1515151515151515151515151515151515151515151515151515151515151515\"},",
         "{\"file\":\"model-validate-manifest.stdout.txt\",\"sha256\":\"1616161616161616161616161616161616161616161616161616161616161616\"},",
         "{\"file\":\"model-preflight.json\",\"sha256\":\"1717171717171717171717171717171717171717171717171717171717171717\"},",
@@ -1345,6 +1439,18 @@ fn current_stage_evidence_manifest() -> String {
         "}"
     )
     .to_string()
+}
+
+fn current_stage_evidence_manifest_missing_runtime_manifest_outputs() -> String {
+    current_stage_evidence_manifest()
+        .replace(
+            "{\"file\":\"ocr-runtime-manifest.local.json\",\"sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"},",
+            "",
+        )
+        .replace(
+            "{\"file\":\"model-manifest.local.json\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},",
+            "",
+        )
 }
 
 fn current_stage_evidence_manifest_missing_dataset_output() -> String {

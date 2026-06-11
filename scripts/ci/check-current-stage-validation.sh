@@ -346,7 +346,6 @@ run_execute_smoke() {
     --engine-license Apache-2.0 \
     --renderer-license GPL-2.0-or-later \
     --language-license Apache-2.0 \
-    --model-manifest-sha256 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
     --max-files 10000 \
     --max-queries 500 \
     --top-k 10 \
@@ -378,9 +377,14 @@ expected_dataset_sha256=$(sha256_file "$execute_out_dir/dataset-manifest.local.j
 require_text "$evidence_manifest" "\"dataset_manifest_sha256\": \"$expected_dataset_sha256\""
 expected_query_set_sha256=$(sha256_file "$execute_out_dir/private-query-set.local.jsonl")
 require_text "$evidence_manifest" "\"query_set_sha256\": \"$expected_query_set_sha256\""
-require_text "$evidence_manifest" '"model_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"'
+expected_model_manifest_sha256=$(sha256_file "$execute_model_manifest")
+require_text "$evidence_manifest" "\"model_manifest_sha256\": \"$expected_model_manifest_sha256\""
+expected_ocr_manifest_sha256=$(sha256_file "$execute_ocr_manifest")
+require_text "$evidence_manifest" "\"ocr_runtime_manifest_sha256\": \"$expected_ocr_manifest_sha256\""
 require_text "$evidence_manifest" '"dataset-manifest.local.json"'
 require_text "$evidence_manifest" '"dataset-manifest.stdout.txt"'
+require_text "$evidence_manifest" '"model-manifest.local.json"'
+require_text "$evidence_manifest" '"ocr-runtime-manifest.local.json"'
 require_text "$evidence_manifest" '"private-query-set.local.jsonl"'
 require_text "$evidence_manifest" '"query-set-draft.stdout.txt"'
 require_text "$evidence_manifest" '"benchmark-corpus-summary.local.json"'
