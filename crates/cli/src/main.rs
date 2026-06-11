@@ -861,26 +861,28 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
     }
 
     let steps = require_release_evidence_array(object, "steps", CONTEXT)?;
-    for (id, status) in [
-        ("ocr_preflight", "success"),
-        ("ocr_manifest_draft", "success"),
-        ("ocr_manifest_validate", "success"),
-        ("model_manifest_draft", "success"),
-        ("model_manifest_validate", "success"),
-        ("model_preflight", "success"),
-        ("dataset_manifest", "success"),
-        ("import_private_corpus", "success"),
-        ("ocr_worker_bounded_loop", "success"),
-        ("embedding_worker_bounded_loop", "success"),
-        ("corpus_summary", "success"),
-        ("query_set_draft", "success"),
-        ("private_query_baseline", "success"),
-        ("baseline_shape_gate", "success"),
-        ("redacted_diagnostics", "success"),
-        ("release_readiness_intake", "expected_blocked"),
-    ] {
-        require_release_evidence_step(steps, id, status, CONTEXT)?;
-    }
+    require_release_evidence_exact_steps(
+        steps,
+        &[
+            ("ocr_preflight", "success"),
+            ("ocr_manifest_draft", "success"),
+            ("ocr_manifest_validate", "success"),
+            ("model_manifest_draft", "success"),
+            ("model_manifest_validate", "success"),
+            ("model_preflight", "success"),
+            ("dataset_manifest", "success"),
+            ("import_private_corpus", "success"),
+            ("ocr_worker_bounded_loop", "success"),
+            ("embedding_worker_bounded_loop", "success"),
+            ("corpus_summary", "success"),
+            ("query_set_draft", "success"),
+            ("private_query_baseline", "success"),
+            ("baseline_shape_gate", "success"),
+            ("redacted_diagnostics", "success"),
+            ("release_readiness_intake", "expected_blocked"),
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_step_exit_code(
         steps,
         "release_readiness_intake",
@@ -1330,24 +1332,32 @@ fn require_release_evidence_array_contains_string(
     }
 }
 
-fn require_release_evidence_step(
+fn require_release_evidence_exact_steps(
     steps: &[serde_json::Value],
-    expected_id: &str,
-    expected_status: &str,
+    expected_steps: &[(&str, &str)],
     context: &'static str,
 ) -> Result<()> {
-    let has_step = steps.iter().any(|step| {
-        let Some(step) = step.as_object() else {
-            return false;
-        };
-        step.get("id").and_then(serde_json::Value::as_str) == Some(expected_id)
-            && step.get("status").and_then(serde_json::Value::as_str) == Some(expected_status)
-    });
-    if has_step {
-        Ok(())
-    } else {
-        Err(release_evidence_invalid(context, "steps"))
+    if steps.len() != expected_steps.len() {
+        return Err(release_evidence_invalid(context, "steps"));
     }
+    let mut seen_ids = BTreeSet::new();
+    for (step, (expected_id, expected_status)) in steps.iter().zip(expected_steps.iter()) {
+        let step = step
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "steps"))?;
+        let id = step
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| release_evidence_invalid(context, "steps"))?;
+        let status = step
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| release_evidence_invalid(context, "steps"))?;
+        if id != *expected_id || status != *expected_status || !seen_ids.insert(id.to_string()) {
+            return Err(release_evidence_invalid(context, "steps"));
+        }
+    }
+    Ok(())
 }
 
 fn require_release_evidence_step_exit_code(

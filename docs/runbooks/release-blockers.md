@@ -123,6 +123,8 @@ exposing the local evidence directory or report bodies. The required output
 inventory includes the dataset manifest, query set, OCR/model preflight logs,
 bounded worker stdout, corpus summary, private benchmark report, benchmark gate
 stdout, redacted diagnostics, and release-readiness stdout/stderr digests.
+The `steps` array must exactly match the ordered local validation flow; duplicate
+step IDs or unknown extra steps are rejected.
 The manifest is accepted only when `max_files >= 8000`, `max_queries >= 500`,
 `release_readiness_exit == 1`, and the dataset, query-set, model-manifest, and
 OCR-runtime-manifest input digests match the corresponding basename-only output
