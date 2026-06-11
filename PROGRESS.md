@@ -1200,8 +1200,53 @@ obsolete preliminary files and checklists are not product scope.
 | S317 | Current-stage smoke gate confidence and real local smoke witness complete locally | Focused RED first failed because `resume-benchmark gate --require-private-real-corpus` rejected a one-query private-real smoke report with `percentile_confidence: "smoke"`, and the current-stage smoke script had no explicit way to distinguish smoke confidence from full/release baseline confidence. After implementation, benchmark gate supports `--allow-smoke-confidence` / `BenchmarkGateConfig::allow_smoke_confidence()`, defaults still reject smoke confidence, and `run-current-stage-validation.sh --validation-profile smoke` is the only current-stage profile that passes the flag. A private local-only one-document smoke witness against the user-authorized local resume root used local Tesseract/Poppler plus a temporary local `sentence-transformers/all-MiniLM-L6-v2` Apache-2.0 embedding runtime: OCR preflight passed, embedding protocol passed, one OCR-required document imported/OCRed/embedded, hot-index coverage reached 1/1, private-query benchmark produced one query, zero zero-result queries, one hit, redacted aggregate privacy boundary, and the smoke summary was written without release evidence. | This slice is production complete for bounded current-stage smoke chain verification only. It does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR completion, auto query-set coverage for tiny samples, OCR failure triage across the corpus, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 | S318 | Current-stage smoke query-set keyword fallback complete locally | Focused RED first failed because `resume-cli benchmark-query-set draft --allow-keyword-fallback` was rejected as an unknown flag, leaving the current-stage smoke flow unable to draft any local query when a tiny OCR-heavy sample had searchable text but too few high-confidence non-contact field mentions. After implementation, query-set drafting remains field-backed and strict by default, but an explicit `--allow-keyword-fallback` can fill a local private smoke query set from sanitized searchable-text tokens when field queries are insufficient; stdout reports only redacted counts, digest, and `query fallback: keyword|none`. `run-current-stage-validation.sh --validation-profile smoke` is the only current-stage profile that passes the fallback flag; full profile continues to require the full field-backed 500-query baseline. | This slice is production complete for current-stage smoke query-set resilience only. It does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR completion, OCR/import/parser failure triage across the corpus, field extraction quality targets, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 | S319 | Current-stage smoke partial hot-index benchmark policy complete locally | Focused RED first failed because `PrivateQueryCorpusSummary` had no explicit smoke-only API for partial hot-index coverage and `resume-benchmark private-query --allow-partial-hot-index-for-smoke` was rejected as an unknown flag. After implementation, the private-query runner still rejects partial hot-index coverage by default, but the explicit smoke flag accepts redacted aggregate corpus summaries where a nonzero subset of imported documents is searchable and vector-indexed; the generated private benchmark report carries `document_count`, `searchable_document_count`, `vector_indexed_document_count`, and the corpus summary digest without paths or queries. `run-current-stage-validation.sh --validation-profile smoke` passes the flag; full profile does not and still requires the full hot-index coverage floor. | This slice is production complete for bounded current-stage smoke partial-coverage benchmarking only. It does not clear the full local 10k/8000-document hot-index baseline, 500-query private baseline, full OCR/import/parser failure triage, field/vector quality targets, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
+| S320 | Current-stage six-file real local smoke witness complete locally | A private local-only smoke witness against the user-authorized local resume root used local Tesseract/Poppler and a temporary real `sentence-transformers/all-MiniLM-L6-v2` Apache-2.0 embedding runtime, with no provided query set. The run used `--validation-profile smoke`, `--max-files 6`, `--max-queries 3`, bounded OCR/embedding worker ticks, smoke keyword query fallback, and smoke partial hot-index allowance. It exited 0: OCR runtime probe passed, embedding protocol passed, the redacted corpus summary reported 6 documents with 1 searchable/vector-indexed document and `hot_index_fully_covered: false`, the generated private query set reported `query fallback: keyword`, the private query benchmark reported 3 queries, 0 zero-result queries, 3 total hits, and `percentile_confidence: smoke`, and a redacted aggregate privacy scan found no local resume root, path, contact marker, query body, or private raw text in the committed-safe aggregate outputs. | This is production complete as a bounded current-stage real local smoke witness only. It proves the smoke chain can tolerate tiny-sample query-field scarcity and partial hot-index coverage, but it does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR/import/parser failure triage, field/vector quality targets, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 
 ## Command Log
+
+### S320
+
+Private local smoke witness:
+
+```bash
+scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile smoke \
+  --resume-root <user-authorized-local-resume-root> \
+  --data-dir <local-temp-data-dir> \
+  --out-dir <local-temp-evidence-dir> \
+  --model-artifact <local-temp-all-MiniLM-L6-v2-artifact> \
+  --embedding-command <local-temp-sentence-transformers-command> \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language-pack <local-tessdata-file> \
+  --max-files 6 --max-queries 3 --top-k 5 \
+  --ocr-worker-ticks 3 --embedding-worker-ticks 3 \
+  --ocr-max-pages-per-document 1
+```
+
+Output summary:
+
+- The script exited 0 and wrote only local temporary evidence files. No real
+  resumes, query sets, indexes, diagnostics, model caches, or local evidence
+  files were staged or uploaded.
+- Redacted aggregate outputs reported OCR runtime probe `passed` and embedding
+  protocol `passed`.
+- Corpus summary: 6 documents, 1 searchable document, 1 vector-indexed
+  document, `hot_index_fully_covered: false`.
+- Query-set stdout: `queries: 3`, `query fallback: keyword`, query body and
+  sample IDs redacted.
+- Private benchmark aggregate: 3 queries, 0 zero-result queries, 3 total hits,
+  `percentile_confidence: smoke`.
+- A redacted aggregate privacy scan over the smoke summary, corpus summary,
+  private benchmark report, benchmark gate stdout, query-set stdout, and
+  redacted diagnostics found no local resume root, local resume path, contact
+  marker, query body, or private raw text markers.
+
+Scope note:
+
+- S320 is evidence that the current-stage smoke chain is now usable on a
+  bounded real local corpus without hand-supplying a query set. It remains
+  non-release evidence and does not satisfy full baseline or product completion.
 
 ### S319
 
