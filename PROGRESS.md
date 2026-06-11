@@ -223,6 +223,11 @@ production-ready scope source.
   generated diagnostics, local manifests, model files, runtime binaries,
   indexes, SQLite databases, signing material, notarization credentials, or
   model caches were committed or uploaded.
+  S309 used fake local current-stage execute fixtures only; no real resume data,
+  private query sets, local paths, generated private benchmark reports,
+  generated diagnostics, local manifests, model files, runtime binaries,
+  indexes, SQLite databases, signing material, notarization credentials, or
+  model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1133,8 +1138,61 @@ obsolete preliminary files and checklists are not product scope.
 | S306 | Current-stage evidence manifest completeness gate complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted a manifest that omitted the dataset-manifest redacted output while still marking current-stage evidence as provided. After implementation, the current-stage evidence validator requires the full local-flow step set, including `dataset_manifest` and `query_set_draft`, and requires basename-only SHA-256 entries for dataset/query-set outputs, OCR/model preflight and manifest stdout, worker stdout, corpus summary, benchmark report, benchmark gate stdout, redacted diagnostics, and release-readiness stdout/stderr. The runbook documents that current-stage evidence intake validates the complete local-flow output inventory. | This slice is production complete for current-stage evidence-manifest completeness validation only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S307 | Current-stage evidence parameter and digest binding gate complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted manifests with `max_files: 7999`, `max_queries: 499`, and a dataset-manifest input digest that did not match the dataset-manifest output digest. After implementation, current-stage evidence intake requires `max_files >= 8000`, `max_queries >= 500`, `release_readiness_exit == 1`, `release_readiness_intake.exit_code == 1`, and dataset/query-set input digests that match the corresponding basename-only redacted output digests. The release-readiness CI fixture and runbook now document the same floor and digest-binding semantics. | This slice is production complete for current-stage evidence semantic validation only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S308 | Current-stage runtime manifest digest binding gate complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted manifests that omitted `model-manifest.local.json` and `ocr-runtime-manifest.local.json` from the basename-only output digest inventory, and accepted manifests where those output digests did not match `model_manifest_sha256` / `ocr_runtime_manifest_sha256`. After implementation, current-stage evidence intake requires both runtime manifest output digests and binds them to the input digests. `run-current-stage-validation.sh --execute` computes the actual model/OCR manifest digests, rejects caller-provided digest mismatches before private corpus access continues, and writes only basename/digest evidence; CI and runbook guards now verify the same semantics. | This slice is production complete for current-stage runtime/model manifest digest binding only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
+| S309 | Current-stage execute digest mismatch fail-fast complete locally | Focused RED first failed because `run-current-stage-validation.sh --execute` read the private corpus before rejecting an OCR runtime manifest digest mismatch, and had no fail-fast check for a caller-provided private query-set digest mismatch before private query benchmarking. After implementation, execute mode checks OCR runtime manifest digests immediately after OCR manifest validation, checks model manifest digests before dataset manifest generation, checks generated/copied query-set digests before private query benchmark execution, and the CI guard verifies that digest mismatch failures do not leak temp paths or private markers and do not proceed to the next private-data stage. | This slice is production complete for current-stage execute digest mismatch fail-fast behavior only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 
 ## Command Log
+
+### S309
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Failed as expected with `current-stage execute read private corpus before OCR
+  runtime digest mismatch was rejected`, proving execute mode did not fail fast
+  on caller-provided OCR runtime digest mismatch.
+
+Focused verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Exited 0 after implementation. The guard now covers OCR runtime manifest
+  digest mismatch before dataset manifest generation and query-set digest
+  mismatch before private query benchmark generation.
+
+Final local gates:
+
+```bash
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+tmp_log="${TMPDIR:-/tmp}/resume-ir-verify-local-s309.log"; PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh > "$tmp_log" 2>&1; rc=$?; tail -n 120 "$tmp_log"; exit "$rc"
+```
+
+Output summary:
+
+- Shell syntax, runbook check, diff whitespace, public repo guard, and
+  formatting exited 0.
+- `verify-local.sh` exited 0; tail evidence included current-stage validation,
+  release readiness, release artifact, signing evidence, notarization evidence,
+  SBOM, installer evidence, workflow, benchmark, OCR throughput, vector quality,
+  and public repo guards passing.
+
+Scope note:
+
+- S309 strengthens current-stage execute fail-fast integrity only. It does not
+  claim a private 10k validation run or any generated private benchmark evidence
+  exists.
 
 ### S308
 

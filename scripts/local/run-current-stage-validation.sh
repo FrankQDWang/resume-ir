@@ -494,6 +494,12 @@ if ! "$resume_cli" --data-dir "$data_dir" ocr validate-manifest \
   fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
 fi
 
+ocr_runtime_manifest_sha256_output=$(sha256_file "$ocr_runtime_manifest")
+if [ -n "$ocr_runtime_manifest_sha256" ] && [ "$ocr_runtime_manifest_sha256" != "$ocr_runtime_manifest_sha256_output" ]; then
+  fail "OCR runtime manifest digest mismatch"
+fi
+ocr_runtime_manifest_sha256="$ocr_runtime_manifest_sha256_output"
+
 printf '%s\n' "current-stage validation: model manifest draft"
 if ! "$resume_cli" --data-dir "$data_dir" model draft-manifest \
   --out "$model_manifest" \
@@ -602,9 +608,11 @@ else
     printf '%s\n' "paths: <redacted>"
   } > "$out_dir/query-set-draft.stdout.txt"
 fi
-if [ -z "$query_set_sha256" ]; then
-  query_set_sha256=$(sha256_file "$query_set")
+query_set_output_sha256=$(sha256_file "$query_set")
+if [ -n "$query_set_sha256" ] && [ "$query_set_sha256" != "$query_set_output_sha256" ]; then
+  fail "query set digest mismatch"
 fi
+query_set_sha256="$query_set_output_sha256"
 
 printf '%s\n' "current-stage validation: private query baseline"
 "$resume_benchmark" private-query \
@@ -661,11 +669,6 @@ if [ "$release_status" -ne 0 ]; then
     exit 1
   fi
 fi
-ocr_runtime_manifest_sha256_output=$(sha256_file "$ocr_runtime_manifest")
-if [ -n "$ocr_runtime_manifest_sha256" ] && [ "$ocr_runtime_manifest_sha256" != "$ocr_runtime_manifest_sha256_output" ]; then
-  fail "OCR runtime manifest digest mismatch"
-fi
-ocr_runtime_manifest_sha256="$ocr_runtime_manifest_sha256_output"
 if [ "$release_status" -eq 0 ]; then
   stable_release_expected_blocked="false"
   release_readiness_step_status="success"
@@ -684,7 +687,6 @@ import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
 ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
 embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
 corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
-query_set_output_sha256=$(sha256_file "$query_set")
 query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
 private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
 private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")

@@ -46,6 +46,10 @@ The execute flow first performs OCR and embedding runtime preflight, drafts
 local OCR/model manifests, and validates those manifests before reading the
 private resume root. If runtime preflight or manifest validation fails, execute
 mode stops before scanning the private corpus or copying a private query set.
+Caller-supplied OCR/model manifest digests are checked against the generated
+local manifests before private corpus scanning continues. Caller-supplied query
+set digests are checked against the generated or locally copied query set before
+private query benchmarking starts.
 After runtime preflight succeeds, execute mode generates a local redacted
 dataset manifest with `resume-cli privacy dataset-manifest`. The manifest schema
 is `resume-ir.dataset-manifest.v1` and its privacy boundary is

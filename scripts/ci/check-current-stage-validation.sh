@@ -317,6 +317,7 @@ chmod 700 "$fake_resume_benchmark"
 
 run_execute_smoke() {
   mode="$1"
+  shift
   stdout_file="$tmpdir/execute-$mode-stdout.txt"
   stderr_file="$tmpdir/execute-$mode-stderr.txt"
   rm -rf "$execute_data_dir" "$execute_out_dir"
@@ -349,6 +350,7 @@ run_execute_smoke() {
     --max-files 10000 \
     --max-queries 500 \
     --top-k 10 \
+    "$@" \
     > "$stdout_file" 2> "$stderr_file"
   status=$?
   set -e
@@ -406,6 +408,21 @@ reject_text "$tmpdir/execute-blocked-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-blocked-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-blocked-stderr.txt" "PRIVATE-current-stage"
 
+run_execute_smoke ocr-digest-mismatch \
+  --ocr-runtime-manifest-sha256 0000000000000000000000000000000000000000000000000000000000000000
+ocr_digest_mismatch_status=$(cat "$tmpdir/execute-ocr-digest-mismatch-status.txt")
+if [ "$ocr_digest_mismatch_status" -eq 0 ]; then
+  fail "current-stage execute accepted mismatched OCR runtime manifest digest"
+fi
+if [ -e "$execute_out_dir/dataset-manifest.local.json" ]; then
+  fail "current-stage execute read private corpus before OCR runtime digest mismatch was rejected"
+fi
+require_text "$tmpdir/execute-ocr-digest-mismatch-stderr.txt" "OCR runtime manifest digest mismatch"
+reject_text "$tmpdir/execute-ocr-digest-mismatch-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-ocr-digest-mismatch-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-ocr-digest-mismatch-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-ocr-digest-mismatch-stderr.txt" "PRIVATE-current-stage"
+
 run_execute_smoke model-failed
 model_failed_status=$(cat "$tmpdir/execute-model-failed-status.txt")
 if [ "$model_failed_status" -eq 0 ]; then
@@ -422,6 +439,21 @@ reject_text "$tmpdir/execute-model-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-model-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-model-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-model-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke query-digest-mismatch \
+  --query-set-sha256 0000000000000000000000000000000000000000000000000000000000000000
+query_digest_mismatch_status=$(cat "$tmpdir/execute-query-digest-mismatch-status.txt")
+if [ "$query_digest_mismatch_status" -eq 0 ]; then
+  fail "current-stage execute accepted mismatched private query-set digest"
+fi
+if [ -e "$execute_out_dir/private-benchmark-local.json" ]; then
+  fail "current-stage execute benchmarked private queries before query-set digest mismatch was rejected"
+fi
+require_text "$tmpdir/execute-query-digest-mismatch-stderr.txt" "query set digest mismatch"
+reject_text "$tmpdir/execute-query-digest-mismatch-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-query-digest-mismatch-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-query-digest-mismatch-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-query-digest-mismatch-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke evidence-failed
 failed_status=$(cat "$tmpdir/execute-evidence-failed-status.txt")
