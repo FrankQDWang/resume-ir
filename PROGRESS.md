@@ -248,6 +248,12 @@ production-ready scope source.
   payloads, generated diagnostics, local manifests, runtime binaries, model
   files, indexes, SQLite databases, signing material, notarization credentials,
   or model caches were committed or uploaded.
+  S314 used synthetic/private-shaped current-stage evidence manifest fixtures
+  and fake local current-stage execute fixtures only; no real resume data,
+  private query sets, local paths, generated private benchmark reports,
+  generated diagnostics, local manifests, model files, runtime binaries,
+  indexes, SQLite databases, signing material, notarization credentials, or
+  model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -782,7 +788,12 @@ obsolete preliminary files and checklists are not product scope.
   `--command-arg`, so local private query benchmark runs can invoke
   `resume-cli --data-dir <local-data-dir> benchmark-query-protocol ...`
   directly instead of relying on an ad hoc wrapper that might leak raw queries
-  or result details.
+  or result details. Current-stage validation evidence now also records
+  structured `preflight_probes` requiring `ocr_runtime_probe: "passed"` and
+  `embedding_protocol: "passed"`; execute mode checks the OCR/model preflight
+  JSON for those pass markers before reading the private corpus, and
+  release-readiness rejects current-stage manifests that omit or downgrade
+  those probe results.
   Hosted Windows daemon scheduler tests now avoid rerunning metadata migrations
   from the test process after foreground daemon readiness has already proved the
   store is migrated, reducing live worker-loop SQLCipher/SQLite DDL contention
@@ -1167,8 +1178,61 @@ obsolete preliminary files and checklists are not product scope.
 | S311 | Current-stage evidence exact output inventory gate complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted manifests with an unknown extra `redacted_outputs` entry when the filename was basename-only and had a valid SHA-256. After implementation, current-stage evidence intake requires the `redacted_outputs` inventory to contain exactly the expected local-flow basenames, rejecting unknown extras while preserving duplicate detection and digest binding for dataset, query set, model manifest, and OCR runtime manifest. The runbook documents that unknown output files are rejected. | This slice is production complete for current-stage redacted output inventory integrity only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S312 | Embedding runtime preflight protocol probe complete locally | Focused RED first failed because `model preflight --json` marked an executable embedding command as ready even when the command returned the wrong model id and malformed protocol output. After implementation, model preflight validates the reviewed manifest, confirms the requested model id/dimension, executes one synthetic local `resume-ir-embedding-v1` probe through the configured command, reports `embedding_protocol` as `passed`, `failed`, or `not_run`, and fails closed without printing paths, model bytes, vectors, stderr payloads, or synthetic probe text. Runbooks and guards now document that current-stage execution requires the protocol probe before private corpus access. | This slice is production complete for embedding runtime protocol preflight only. It does not select, approve, download, bundle, or distribute a production embedding model, prove semantic quality, run private 10k/500-query benchmark evidence, clear model license/distribution blockers, validate platforms, or make stable release ready. |
 | S313 | OCR runtime preflight render/OCR probe complete locally | Focused RED first failed because `ocr preflight --json` marked an executable `pdftoppm` as ready even when it produced no rendered page. After implementation, OCR preflight resolves the local `pdftoppm` and Tesseract commands, keeps the existing dependency and language-pack checks, renders one synthetic local PDF page, requires Tesseract TSV OCR on that rendered page, reports `runtime_probe` as `passed`, `failed`, or `not_run`, and fails closed without printing local paths, OCR text, page images, probe payloads, command paths, or subprocess stderr. Runbooks and guards now document that current-stage execution requires this OCR runtime probe before private corpus access. | This slice is production complete for OCR runtime preflight smoke only. It does not install, bundle, approve, or distribute OCR runtimes; run private 10k OCR, prove OCR quality or throughput, clear Poppler/Tesseract/tessdata license and checksum evidence, validate platforms, sign/notarize artifacts, or make stable release ready. |
+| S314 | Current-stage preflight probe evidence binding complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted a current-stage manifest that omitted structured OCR/embedding preflight probe statuses while still listing successful preflight steps and stdout digests. After implementation, execute mode checks OCR preflight JSON for `runtime_probe: "passed"` and model preflight JSON for `embedding_protocol: "passed"` before private corpus access continues, writes those facts under `preflight_probes`, and release-readiness rejects manifests that omit the structure or downgrade either probe. Runbooks and guards document the same manifest gate. | This slice is production complete for current-stage preflight probe evidence binding only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute OCR/model runtimes, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 
 ## Command Log
+
+### S314
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_current_stage_evidence_missing_preflight_probe_status_without_path_leaks --locked -- --exact
+```
+
+Output summary:
+
+- Failed as expected because release-readiness accepted a current-stage evidence
+  manifest without structured `preflight_probes` and returned JSON output
+  instead of failing evidence validation.
+
+Focused verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_current_stage_evidence_missing_preflight_probe_status_without_path_leaks --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_current_stage_evidence_with_failed_preflight_probe_without_path_leaks --locked -- --exact
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+```
+
+Output summary:
+
+- The two focused current-stage preflight probe evidence tests exited 0.
+- The full release-readiness test file exited 0 with 22/22 tests passing.
+- Current-stage validation, runbook, and release-readiness guards exited 0.
+
+Final local gates:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+./scripts/ci/guard-public-repo.sh
+tmp_log="${TMPDIR:-/tmp}/resume-ir-verify-local-s314.log"; PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh > "$tmp_log" 2>&1; rc=$?; tail -n 160 "$tmp_log"; exit "$rc"
+```
+
+Output summary:
+
+- Formatting, diff whitespace, focused clippy, public repo guard, and
+  `verify-local.sh` exited 0.
+
+Scope note:
+
+- S314 strengthens current-stage evidence binding only. It does not claim the
+  private 10k corpus has been benchmarked, OCR/model runtime licenses are
+  approved, or stable release readiness is achieved.
 
 ### S313
 

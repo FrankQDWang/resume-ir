@@ -78,6 +78,15 @@ sha256_file() {
   fi
 }
 
+require_text_in_file() {
+  path="$1"
+  text="$2"
+  message="$3"
+  if ! grep -Fq -- "$text" "$path"; then
+    fail "$message"
+  fi
+}
+
 mode="dry-run"
 resume_cli="${RESUME_CLI:-resume-cli}"
 resume_daemon="${RESUME_DAEMON:-resume-daemon}"
@@ -470,6 +479,10 @@ if ! "$resume_cli" --data-dir "$data_dir" ocr preflight --json \
   > "$out_dir/ocr-preflight.json"; then
   fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
 fi
+require_text_in_file \
+  "$out_dir/ocr-preflight.json" \
+  '"runtime_probe": "passed"' \
+  "current-stage validation blocked: runtime preflight failed before reading private corpus"
 
 printf '%s\n' "current-stage validation: ocr manifest draft"
 if ! "$resume_cli" --data-dir "$data_dir" ocr draft-manifest \
@@ -531,6 +544,10 @@ if ! "$resume_cli" --data-dir "$data_dir" model preflight --json \
   > "$out_dir/model-preflight.json"; then
   fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
 fi
+require_text_in_file \
+  "$out_dir/model-preflight.json" \
+  '"embedding_protocol": "passed"' \
+  "current-stage validation blocked: runtime preflight failed before reading private corpus"
 
 model_manifest_sha256_output=$(sha256_file "$model_manifest")
 if [ -n "$model_manifest_sha256" ] && [ "$model_manifest_sha256" != "$model_manifest_sha256_output" ]; then
@@ -717,6 +734,10 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     "embedding_dimension": $dimension,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks
+  },
+  "preflight_probes": {
+    "ocr_runtime_probe": "passed",
+    "embedding_protocol": "passed"
   },
   "steps": [
     {"id": "ocr_preflight", "status": "success"},

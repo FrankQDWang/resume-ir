@@ -241,7 +241,7 @@ case "$cmd:$sub" in
     printf 'privacy boundary: local_only_private_query_set\n'
     ;;
   ocr:preflight)
-    printf '{"schema_version":"ocr-runtime-preflight.v1","ready":true}\n'
+    printf '{"schema_version":"ocr-runtime-preflight.v1","runtime_probe": "passed","ready":true}\n'
     ;;
   ocr:draft-manifest)
     write_out_arg "$@"
@@ -262,7 +262,7 @@ case "$cmd:$sub" in
       printf 'fake model preflight failed\n' >&2
       exit 1
     fi
-    printf '{"schema_version":"embedding-runtime-preflight.v1","ready":true}\n'
+    printf '{"schema_version":"embedding-runtime-preflight.v1","embedding_protocol": "passed","ready":true}\n'
     ;;
   import:*)
     printf 'import task submitted\nstatus: completed\n'
@@ -383,6 +383,9 @@ expected_model_manifest_sha256=$(sha256_file "$execute_model_manifest")
 require_text "$evidence_manifest" "\"model_manifest_sha256\": \"$expected_model_manifest_sha256\""
 expected_ocr_manifest_sha256=$(sha256_file "$execute_ocr_manifest")
 require_text "$evidence_manifest" "\"ocr_runtime_manifest_sha256\": \"$expected_ocr_manifest_sha256\""
+require_text "$evidence_manifest" '"preflight_probes": {'
+require_text "$evidence_manifest" '"ocr_runtime_probe": "passed"'
+require_text "$evidence_manifest" '"embedding_protocol": "passed"'
 require_text "$evidence_manifest" '"dataset-manifest.local.json"'
 require_text "$evidence_manifest" '"dataset-manifest.stdout.txt"'
 require_text "$evidence_manifest" '"model-manifest.local.json"'
@@ -476,6 +479,9 @@ require_text "$script" "local_only_redacted_evidence_manifest"
 require_text "$script" "local_only_redacted_dataset_manifest"
 require_text "$script" "local_only_private_query_set"
 require_text "$script" "runtime preflight failed before reading private corpus"
+require_text "$script" "preflight_probes"
+require_text "$script" '"runtime_probe": "passed"'
+require_text "$script" '"embedding_protocol": "passed"'
 require_text "$script" "performance_optimization_deferred"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"

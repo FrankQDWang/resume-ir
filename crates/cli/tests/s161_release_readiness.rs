@@ -1010,6 +1010,92 @@ fn release_readiness_rejects_current_stage_evidence_with_mismatched_runtime_mani
 }
 
 #[test]
+fn release_readiness_rejects_current_stage_evidence_missing_preflight_probe_status_without_path_leaks(
+) {
+    let data_dir =
+        temp_path("release-readiness-current-stage-preflight-probe-missing-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-current-stage-preflight-probe-missing-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    fs::write(
+        &current_stage_evidence,
+        current_stage_evidence_manifest_missing_preflight_probes(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence missing preflight probe status");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence manifest"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_current_stage_evidence_with_failed_preflight_probe_without_path_leaks()
+{
+    let data_dir = temp_path("release-readiness-current-stage-preflight-probe-failed-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-current-stage-preflight-probe-failed-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    fs::write(
+        &current_stage_evidence,
+        current_stage_evidence_manifest().replace(
+            "\"ocr_runtime_probe\":\"passed\"",
+            "\"ocr_runtime_probe\":\"failed\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence with failed preflight probe");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence manifest"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_current_stage_evidence_with_duplicate_step_without_path_leaks() {
     let data_dir = temp_path("release-readiness-current-stage-duplicate-step-private-data");
     let evidence_dir = temp_path("release-readiness-current-stage-duplicate-step-private-reports");
@@ -1503,6 +1589,10 @@ fn current_stage_evidence_manifest() -> String {
         "\"ocr_worker_ticks\":10000,",
         "\"embedding_worker_ticks\":10000",
         "},",
+        "\"preflight_probes\":{",
+        "\"ocr_runtime_probe\":\"passed\",",
+        "\"embedding_protocol\":\"passed\"",
+        "},",
         "\"steps\":[",
         "{\"id\":\"ocr_preflight\",\"status\":\"success\"},",
         "{\"id\":\"ocr_manifest_draft\",\"status\":\"success\"},",
@@ -1566,6 +1656,14 @@ fn current_stage_evidence_manifest() -> String {
         "}"
     )
     .to_string()
+}
+
+fn current_stage_evidence_manifest_missing_preflight_probes() -> String {
+    current_stage_evidence_manifest()
+        .replace(
+            "\"preflight_probes\":{\"ocr_runtime_probe\":\"passed\",\"embedding_protocol\":\"passed\"},",
+            "",
+        )
 }
 
 fn current_stage_evidence_manifest_missing_runtime_manifest_outputs() -> String {

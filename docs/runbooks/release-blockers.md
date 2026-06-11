@@ -115,10 +115,11 @@ At the end it also writes
 `current-stage-validation-evidence.json` with schema
 `resume-ir.current-stage-validation-evidence.v1` and privacy boundary
 `local_only_redacted_evidence_manifest`. That manifest contains step statuses,
-input digests, output file digests, the `release-readiness` exit code, and
-privacy sentinels only. It must not contain local paths, raw resume text, raw
-query text, report bodies, model bytes, runtime binaries, indexes, or SQLite
-data.
+input digests, `preflight_probes` with `ocr_runtime_probe: "passed"` and
+`embedding_protocol: "passed"`, output file digests, the `release-readiness`
+exit code, and privacy sentinels only. It must not contain local paths, raw
+resume text, raw query text, report bodies, model bytes, runtime binaries,
+indexes, or SQLite data.
 After the execute run writes the manifest, operators may pass it back to
 `release-readiness` with
 `--current-stage-evidence current-stage-validation-evidence.json` to validate
@@ -133,9 +134,10 @@ unknown extra files are rejected even when their names are basename-only.
 The `steps` array must exactly match the ordered local validation flow; duplicate
 step IDs or unknown extra steps are rejected.
 The manifest is accepted only when `max_files >= 8000`, `max_queries >= 500`,
-`release_readiness_exit == 1`, and the dataset, query-set, model-manifest, and
-OCR-runtime-manifest input digests match the corresponding basename-only output
-digests.
+`release_readiness_exit == 1`, `preflight_probes.ocr_runtime_probe == "passed"`,
+`preflight_probes.embedding_protocol == "passed"`, and the dataset, query-set,
+model-manifest, and OCR-runtime-manifest input digests match the corresponding
+basename-only output digests.
 Add `--reviewed-model` and `--reviewed-ocr-runtime` only after the selected
 model weights, OCR engine, renderer, and language pack have actually been
 reviewed; otherwise validation must fail closed.

@@ -219,6 +219,10 @@ cat > "$current_stage_evidence" <<'JSON'
     "ocr_worker_ticks": 10000,
     "embedding_worker_ticks": 10000
   },
+  "preflight_probes": {
+    "ocr_runtime_probe": "passed",
+    "embedding_protocol": "passed"
+  },
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
     {"id": "ocr_manifest_draft", "status": "success"},

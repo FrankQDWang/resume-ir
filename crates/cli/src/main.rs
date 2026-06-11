@@ -860,6 +860,10 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         require_release_evidence_positive_u64(parameters, key, CONTEXT)?;
     }
 
+    let preflight_probes = require_release_evidence_object(object, "preflight_probes", CONTEXT)?;
+    require_release_evidence_string(preflight_probes, "ocr_runtime_probe", "passed", CONTEXT)?;
+    require_release_evidence_string(preflight_probes, "embedding_protocol", "passed", CONTEXT)?;
+
     let steps = require_release_evidence_array(object, "steps", CONTEXT)?;
     require_release_evidence_exact_steps(
         steps,

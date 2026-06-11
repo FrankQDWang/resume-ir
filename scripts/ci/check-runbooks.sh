@@ -107,6 +107,8 @@ require_text "$release_runbook" 'target_claim: "benchmark_baseline_observed"'
 require_text "$release_runbook" "follow-up performance"
 require_text "$release_runbook" "resume-cli --data-dir <local-data-dir> ocr validate-manifest"
 require_text "$release_runbook" "resume-cli --data-dir <local-data-dir> model validate-manifest"
+require_text "$release_runbook" "preflight_probes"
+require_text "$release_runbook" 'ocr_runtime_probe: "passed"'
 require_text "$release_runbook" 'runtime_probe: "passed"'
 require_text "$release_runbook" 'embedding_protocol: "passed"'
 require_text "$release_runbook" "Tesseract plus tessdata"
