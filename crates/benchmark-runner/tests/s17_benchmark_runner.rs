@@ -446,6 +446,42 @@ fn benchmark_gate_accepts_million_release_gate_with_release_confidence() {
 }
 
 #[test]
+fn benchmark_gate_accepts_private_real_smoke_confidence_when_explicitly_allowed() {
+    let report = minimal_private_real_benchmark_json(1, 1, 150.0, false)
+        .replace(
+            "\"percentile_confidence\":\"sampled\"",
+            "\"percentile_confidence\":\"smoke\"",
+        )
+        .replace("\"total_hits\":100", "\"total_hits\":1");
+    let config = BenchmarkGateConfig::new(1, 1, 200.0)
+        .require_private_real_corpus()
+        .allow_smoke_confidence();
+
+    let evaluation = evaluate_benchmark_gate_json(&report, config).unwrap();
+
+    assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
+    assert_eq!(evaluation.document_count(), 1);
+    assert_eq!(evaluation.query_count(), 1);
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_smoke_confidence_without_explicit_allowance() {
+    let report = minimal_private_real_benchmark_json(1, 1, 150.0, false)
+        .replace(
+            "\"percentile_confidence\":\"sampled\"",
+            "\"percentile_confidence\":\"smoke\"",
+        )
+        .replace("\"total_hits\":100", "\"total_hits\":1");
+    let config = BenchmarkGateConfig::new(1, 1, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires redacted local boundary"));
+}
+
+#[test]
 fn field_quality_report_scores_labeled_samples_without_raw_value_leakage() {
     let dataset = concat!(
         "{\"sample_id\":\"case-a\",\"text\":\"Name: Synthetic Candidate\\nEmail: candidate@example.test\\nPhone: +1 (415) 555-0132\\nEducation\\nBachelor of Science\\nMajor: Computer Science\\nSkills: Rust, Java\",",

@@ -240,6 +240,10 @@ scripts/local/run-current-stage-validation.sh --execute \
   --top-k 10
 ```
 
+Smoke mode passes `--allow-smoke-confidence` to the benchmark gate because a
+bounded local wiring run may have `percentile_confidence: "smoke"`. Full
+current-stage and release gates must not use that flag.
+
 The current-stage baseline shape gate intentionally uses
 `--max-p95-ms 86400000` so a slow 10k private-corpus benchmark records an
 observed baseline instead of turning this goal into an endless latency tuning

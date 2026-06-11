@@ -338,6 +338,8 @@ case "$validation_profile" in
     query_set_min_queries="$max_queries"
     baseline_min_documents="8000"
     baseline_min_queries="500"
+    benchmark_gate_smoke_arg=""
+    benchmark_gate_smoke_plan=""
     full_baseline_satisfied="false"
     release_readiness_evidence="true"
     terminal_plan_steps='    {
@@ -354,6 +356,8 @@ case "$validation_profile" in
     query_set_min_queries="1"
     baseline_min_documents="1"
     baseline_min_queries="1"
+    benchmark_gate_smoke_arg="--allow-smoke-confidence"
+    benchmark_gate_smoke_plan=" --allow-smoke-confidence"
     full_baseline_satisfied="false"
     release_readiness_evidence="false"
     terminal_plan_steps='    {
@@ -455,7 +459,7 @@ if [ "$mode" = "dry-run" ]; then
     },
     {
       "id": "baseline_shape_gate",
-      "command": "resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --min-documents $baseline_min_documents --min-queries $baseline_min_queries --max-p95-ms 86400000 --max-zero-result-queries 500"
+      "command": "resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus$benchmark_gate_smoke_plan --min-documents $baseline_min_documents --min-queries $baseline_min_queries --max-p95-ms 86400000 --max-zero-result-queries 500"
     },
     {
       "id": "redacted_diagnostics",
@@ -694,6 +698,7 @@ set +e
 "$resume_benchmark" gate \
   --report "$out_dir/private-benchmark-local.json" \
   --require-private-real-corpus \
+  $benchmark_gate_smoke_arg \
   --min-documents "$baseline_min_documents" \
   --min-queries "$baseline_min_queries" \
   --max-p95-ms 86400000 \

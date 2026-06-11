@@ -476,6 +476,93 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
 }
 
 #[test]
+fn resume_benchmark_gate_accepts_private_real_smoke_report_with_explicit_allowance() {
+    let report_dir = temp_dir("private-real-benchmark-cli-smoke-gate");
+    let report_path = report_dir.join("benchmark-report.json");
+    fs::write(
+        &report_path,
+        concat!(
+            "{\"schema_version\":\"benchmark.v1\",",
+            "\"run_id\":\"bench_private_smoke\",",
+            "\"platform\":\"test/test\",",
+            "\"dataset_kind\":\"private-real-corpus\",",
+            "\"document_count\":1,",
+            "\"searchable_document_count\":1,",
+            "\"vector_indexed_document_count\":1,",
+            "\"query_count\":1,",
+            "\"top_k\":10,",
+            "\"build_ms\":1.0,",
+            "\"query_total_ms\":10.0,",
+            "\"qps\":100.0,",
+            "\"index_size_bytes\":1000,",
+            "\"query_latency_ms\":{",
+            "\"samples\":1,",
+            "\"min\":1.0,",
+            "\"mean\":2.0,",
+            "\"p50\":2.0,",
+            "\"p95\":150.0,",
+            "\"p99\":180.0,",
+            "\"max\":190.0",
+            "},",
+            "\"zero_result_queries\":0,",
+            "\"total_hits\":1,",
+            "\"million_scale_verified\":false,",
+            "\"percentile_confidence\":\"smoke\",",
+            "\"target_claim\":\"benchmark_baseline_observed\",",
+            "\"corpus_origin\":\"private_local\",",
+            "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"query_mode\":\"hybrid\",",
+            "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+            "\"hot_index\":true,",
+            "\"hot_path_ocr\":false,",
+            "\"hot_path_parsing\":false,",
+            "\"hot_path_heavy_model_inference\":false,",
+            "\"contains_raw_resume_text\":false,",
+            "\"contains_resume_paths\":false,",
+            "\"contains_queries\":false,",
+            "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+            "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+            "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+            "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
+            "}"
+        ),
+    )
+    .unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-real-corpus",
+            "--allow-smoke-confidence",
+            "--min-documents",
+            "1",
+            "--min-queries",
+            "1",
+            "--max-p95-ms",
+            "10000",
+        ])
+        .output()
+        .expect("run resume-benchmark smoke gate");
+
+    assert!(
+        gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&gate.stdout),
+        String::from_utf8_lossy(&gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&gate.stdout).trim(),
+        "benchmark gate passed"
+    );
+    assert!(gate.stderr.is_empty());
+
+    remove_dir(&report_dir);
+}
+
+#[test]
 fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
     let report_dir = temp_dir("private-real-benchmark-cli-inconsistent-qps");
     let report_path = report_dir.join("benchmark-report.json");

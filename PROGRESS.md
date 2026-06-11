@@ -264,6 +264,12 @@ production-ready scope source.
   generated diagnostics, local manifests, model files, runtime binaries,
   indexes, SQLite databases, signing material, notarization credentials, or
   model caches were committed or uploaded.
+  S317 used a private local-only smoke witness against the user-authorized
+  local resume directory and temporary local OCR/model runtimes;
+  no real resume data, filenames, paths, raw OCR text, raw query text, vectors,
+  generated private reports, local manifests, runtime binaries, model
+  artifacts, indexes, SQLite databases, diagnostics, or model caches were
+  committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1191,8 +1197,97 @@ obsolete preliminary files and checklists are not product scope.
 | S314 | Current-stage preflight probe evidence binding complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted a current-stage manifest that omitted structured OCR/embedding preflight probe statuses while still listing successful preflight steps and stdout digests. After implementation, execute mode checks OCR preflight JSON for `runtime_probe: "passed"` and model preflight JSON for `embedding_protocol: "passed"` before private corpus access continues, writes those facts under `preflight_probes`, and release-readiness rejects manifests that omit the structure or downgrade either probe. Runbooks and guards document the same manifest gate. | This slice is production complete for current-stage preflight probe evidence binding only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute OCR/model runtimes, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S315 | Current-stage smoke validation profile complete locally | Focused RED first failed because `run-current-stage-validation.sh` rejected `--validation-profile smoke`, so the only scripted execute profile was the full 10k/8000-document current-stage baseline that can block for a long OCR-dominated private corpus. After implementation, the script has explicit `full` and `smoke` validation profiles: `full` keeps the release-readiness evidence path and 8000-document/500-query gates, while `smoke` runs runtime preflight, manifests, import, bounded OCR/embedding, query-set generation, private-query protocol, a low-floor smoke gate, and redacted diagnostics, then writes `current-stage-smoke-summary.json` without generating `current-stage-validation-evidence.json` or running release-readiness. The guard proves the smoke plan and fake execute output are redacted and cannot be confused with full release evidence. | This slice is production complete for current-stage smoke-profile wiring only. It does not clear the full 10k/8000-document current-stage baseline, 500-query private benchmark, full OCR completion, OCR/model/license/platform/signing/notarization/quality/performance blockers, P95/P99 optimization, 100k/1M real-corpus validation, or stable release readiness. |
 | S316 | Current-stage full-profile benchmark blocked summary complete locally | Focused RED first failed because a full-profile current-stage execute that reached `resume-benchmark gate` and then failed exited without writing any structured redacted failure summary, leaving the next operator to inspect private local reports. After implementation, full profile benchmark-gate failure writes `current-stage-blocked-summary.json` with schema `resume-ir.current-stage-blocked-summary.v1`, privacy boundary `local_only_redacted_blocked_summary`, blocked step/category/reason, input digests, passed runtime probes, completed step statuses, and basename-only output digests, then exits non-zero before release-readiness and without writing full current-stage evidence. The guard proves the summary is redacted and not confusable with release evidence. | This slice is production complete for current-stage benchmark blocked failure classification only. It does not clear the full 10k/8000-document current-stage baseline, 500-query private benchmark, full OCR completion, OCR/model/license/platform/signing/notarization/quality/performance blockers, P95/P99 optimization, 100k/1M real-corpus validation, or stable release readiness. |
+| S317 | Current-stage smoke gate confidence and real local smoke witness complete locally | Focused RED first failed because `resume-benchmark gate --require-private-real-corpus` rejected a one-query private-real smoke report with `percentile_confidence: "smoke"`, and the current-stage smoke script had no explicit way to distinguish smoke confidence from full/release baseline confidence. After implementation, benchmark gate supports `--allow-smoke-confidence` / `BenchmarkGateConfig::allow_smoke_confidence()`, defaults still reject smoke confidence, and `run-current-stage-validation.sh --validation-profile smoke` is the only current-stage profile that passes the flag. A private local-only one-document smoke witness against the user-authorized local resume root used local Tesseract/Poppler plus a temporary local `sentence-transformers/all-MiniLM-L6-v2` Apache-2.0 embedding runtime: OCR preflight passed, embedding protocol passed, one OCR-required document imported/OCRed/embedded, hot-index coverage reached 1/1, private-query benchmark produced one query, zero zero-result queries, one hit, redacted aggregate privacy boundary, and the smoke summary was written without release evidence. | This slice is production complete for bounded current-stage smoke chain verification only. It does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR completion, auto query-set coverage for tiny samples, OCR failure triage across the corpus, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 
 ## Command Log
+
+### S317
+
+TDD red checks:
+
+```bash
+PATH=<local-cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_accepts_private_real_smoke_confidence_when_explicitly_allowed --locked -- --exact
+PATH=<local-cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_gate_accepts_private_real_smoke_report_with_explicit_allowance --locked -- --exact
+```
+
+Output summary:
+
+- The runner test failed to compile because `BenchmarkGateConfig` had no
+  `allow_smoke_confidence` method.
+- The CLI test failed because `resume-benchmark gate` rejected the unknown
+  `--allow-smoke-confidence` flag.
+
+Focused verification:
+
+```bash
+PATH=<local-cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_ --locked
+PATH=<local-cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_gate_ --locked
+./scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-runbooks.sh
+./scripts/ci/check-release-readiness.sh
+PATH=<local-cargo-bin>:$PATH cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+PATH=<local-cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- 22 benchmark gate runner tests passed, including the new explicit smoke
+  allowance and default rejection coverage.
+- 7 benchmark gate CLI tests passed, including
+  `--allow-smoke-confidence`.
+- Current-stage validation, runbook, and release-readiness guards exited 0.
+- Focused benchmark-runner clippy exited 0 after simplifying the boolean
+  confidence check.
+- Full `verify-local.sh` exited 0. Its output included workspace tests and
+  doc-tests, CLI/daemon closed-loop checks, benchmark/OCR/vector smoke gates,
+  license/runbook/current-stage/workflow/release-readiness checks, package/
+  signing/notarization/SBOM checks, installer evidence checks, Windows package
+  skip on non-Windows, Windows installer/service evidence checks, and public
+  repo guard.
+
+Private local smoke witness:
+
+```bash
+scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile smoke \
+  --resume-root <user-authorized-local-resume-root> \
+  --query-set <local-temp-query-set> \
+  --model-artifact <local-temp-all-MiniLM-L6-v2-artifact> \
+  --embedding-command <local-temp-sentence-transformer-command> \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --max-files 1 --max-queries 1 --top-k 3 \
+  --ocr-worker-ticks 2 --embedding-worker-ticks 2 \
+  --ocr-max-pages-per-document 1
+```
+
+Output summary:
+
+- The first bounded attempt with 6 files proved OCR/model preflight and
+  import/OCR/embedding execution, but failed before benchmark because automatic
+  query-set drafting had insufficient local field queries.
+- The second 6-file attempt with a provided local query set reached private
+  query benchmarking but failed because only 3/6 documents were hot-indexed,
+  so `benchmark-corpus-summary` rejected incomplete hot-index coverage.
+- The final 1-file smoke run exited 0. Redacted aggregates reported
+  `ocr_runtime_probe: passed`, `embedding_protocol: passed`, `document_count:
+  1`, `searchable_document_count: 1`, `vector_indexed_document_count: 1`,
+  `hot_index_fully_covered: true`, `query_count: 1`,
+  `zero_result_queries: 0`, `total_hits: 1`, `percentile_confidence: smoke`,
+  and `privacy_boundary: redacted_local_aggregate`.
+- A redacted-output privacy scan found no private root, local resume path,
+  contact-marker, or sentinel strings in the smoke summary, redacted
+  diagnostics, corpus summary, benchmark report, gate stdout, or query-set
+  draft stdout. Generated local data, manifests, model artifact, query set,
+  diagnostics, and benchmark reports stayed in an untracked local temporary
+  directory and were not staged.
+
+Scope note:
+
+- S317 proves the current-stage command chain can run end-to-end on a bounded
+  real local resume witness. It is not a full local 10k baseline, not 500-query
+  evidence, not model distribution/legal signoff, not performance optimization,
+  and not stable release readiness.
 
 ### S316
 

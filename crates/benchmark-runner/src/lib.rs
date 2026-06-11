@@ -2010,6 +2010,7 @@ pub struct BenchmarkGateConfig {
     max_p95_ms: f64,
     max_zero_result_queries: usize,
     allow_synthetic: bool,
+    allow_smoke_confidence: bool,
     require_private_real_corpus: bool,
     require_million_scale: bool,
 }
@@ -2022,6 +2023,7 @@ impl BenchmarkGateConfig {
             max_p95_ms,
             max_zero_result_queries: 0,
             allow_synthetic: false,
+            allow_smoke_confidence: false,
             require_private_real_corpus: false,
             require_million_scale: false,
         }
@@ -2029,6 +2031,11 @@ impl BenchmarkGateConfig {
 
     pub fn allow_synthetic(mut self) -> Self {
         self.allow_synthetic = true;
+        self
+    }
+
+    pub fn allow_smoke_confidence(mut self) -> Self {
+        self.allow_smoke_confidence = true;
         self
     }
 
@@ -4038,7 +4045,11 @@ pub fn evaluate_benchmark_gate_json(
         ));
     }
     if dataset_kind == "private-real-corpus" {
-        validate_private_real_benchmark_boundary(&report, target_claim)?;
+        validate_private_real_benchmark_boundary(
+            &report,
+            target_claim,
+            config.allow_smoke_confidence,
+        )?;
     }
     if document_count < config.min_documents {
         return Err(BenchmarkGateError::failed(
@@ -4080,6 +4091,7 @@ pub fn evaluate_benchmark_gate_json(
         ));
     }
     if config.require_private_real_corpus
+        && !config.allow_smoke_confidence
         && (query_count < PRIVATE_REAL_RELEASE_QUERY_SAMPLE_MIN
             || samples < PRIVATE_REAL_RELEASE_QUERY_SAMPLE_MIN)
     {
@@ -4102,6 +4114,7 @@ pub fn evaluate_benchmark_gate_json(
 fn validate_private_real_benchmark_boundary(
     report: &serde_json::Value,
     target_claim: &str,
+    allow_smoke_confidence: bool,
 ) -> std::result::Result<(), BenchmarkGateError> {
     validate_private_real_report_shape(report)?;
     validate_private_real_benchmark_consistency(report)?;
@@ -4135,10 +4148,10 @@ fn validate_private_real_benchmark_boundary(
     if !is_safe_platform_label(private_real_str(report, "platform")?) {
         return Err(private_real_boundary_error());
     }
-    if !matches!(
-        private_real_str(report, "percentile_confidence")?,
-        "sampled" | "release"
-    ) {
+    let percentile_confidence = private_real_str(report, "percentile_confidence")?;
+    let confidence_allowed = matches!(percentile_confidence, "sampled" | "release")
+        || (allow_smoke_confidence && percentile_confidence == "smoke");
+    if !confidence_allowed {
         return Err(private_real_boundary_error());
     }
 
