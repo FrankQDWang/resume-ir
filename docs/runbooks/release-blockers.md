@@ -44,8 +44,11 @@ embed, benchmark, or read the private corpus:
 
 The execute flow first performs OCR and embedding runtime preflight, drafts
 local OCR/model manifests, and validates those manifests before reading the
-private resume root. If runtime preflight or manifest validation fails, execute
-mode stops before scanning the private corpus or copying a private query set.
+private resume root. Embedding preflight must run a synthetic local
+`resume-ir-embedding-v1` protocol probe and record `embedding_protocol: "passed"`
+before private corpus access continues. If runtime preflight or manifest
+validation fails, execute mode stops before scanning the private corpus or
+copying a private query set.
 Caller-supplied OCR/model manifest digests are checked against the generated
 local manifests before private corpus scanning continues. Caller-supplied query
 set digests are checked against the generated or locally copied query set before

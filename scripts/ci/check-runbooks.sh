@@ -67,6 +67,8 @@ require_text "$worker_runbook" "Omit \`--reviewed\` when legal review is not com
 require_text "$worker_runbook" "resume-cli ocr validate-manifest --manifest"
 require_text "$worker_runbook" "resume-cli model preflight --json"
 require_text "$worker_runbook" "embedding-runtime-preflight.v1"
+require_text "$worker_runbook" "embedding_protocol"
+require_text "$worker_runbook" "resume-ir-embedding-v1"
 require_text "$worker_runbook" "--embedding-command <local-embedding-command>"
 require_text "$worker_runbook" "--model-id <reviewed-model-id>"
 require_text "$worker_runbook" "resume-cli model draft-manifest --out"
@@ -103,6 +105,7 @@ require_text "$release_runbook" 'target_claim: "benchmark_baseline_observed"'
 require_text "$release_runbook" "follow-up performance"
 require_text "$release_runbook" "resume-cli --data-dir <local-data-dir> ocr validate-manifest"
 require_text "$release_runbook" "resume-cli --data-dir <local-data-dir> model validate-manifest"
+require_text "$release_runbook" 'embedding_protocol: "passed"'
 require_text "$release_runbook" "Tesseract plus tessdata"
 require_text "$release_runbook" "Apache-2.0 external OCR runtime"
 require_text "$release_runbook" 'Poppler `pdftoppm`'

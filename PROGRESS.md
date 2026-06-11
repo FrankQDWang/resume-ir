@@ -238,6 +238,11 @@ production-ready scope source.
   benchmark reports, generated diagnostics, local manifests, model files,
   runtime binaries, indexes, SQLite databases, signing material, notarization
   credentials, or model caches were committed or uploaded.
+  S312 used synthetic/private-shaped embedding runtime preflight fixtures only;
+  no real resume data, private query sets, local paths, model bytes, embedding
+  vectors, generated diagnostics, local manifests, model files, runtime
+  binaries, indexes, SQLite databases, signing material, notarization
+  credentials, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1151,8 +1156,59 @@ obsolete preliminary files and checklists are not product scope.
 | S309 | Current-stage execute digest mismatch fail-fast complete locally | Focused RED first failed because `run-current-stage-validation.sh --execute` read the private corpus before rejecting an OCR runtime manifest digest mismatch, and had no fail-fast check for a caller-provided private query-set digest mismatch before private query benchmarking. After implementation, execute mode checks OCR runtime manifest digests immediately after OCR manifest validation, checks model manifest digests before dataset manifest generation, checks generated/copied query-set digests before private query benchmark execution, and the CI guard verifies that digest mismatch failures do not leak temp paths or private markers and do not proceed to the next private-data stage. | This slice is production complete for current-stage execute digest mismatch fail-fast behavior only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S310 | Current-stage evidence exact step-list gate complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted manifests with duplicate conflicting step IDs and manifests with unknown extra steps, as long as a success entry for each required step existed somewhere in the array. After implementation, current-stage evidence intake requires the `steps` array to exactly match the ordered local validation flow with no duplicates or unknown entries, while still requiring the `release_readiness_intake` exit code. The runbook documents that duplicate or extra steps are rejected. | This slice is production complete for current-stage evidence step-list integrity only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S311 | Current-stage evidence exact output inventory gate complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted manifests with an unknown extra `redacted_outputs` entry when the filename was basename-only and had a valid SHA-256. After implementation, current-stage evidence intake requires the `redacted_outputs` inventory to contain exactly the expected local-flow basenames, rejecting unknown extras while preserving duplicate detection and digest binding for dataset, query set, model manifest, and OCR runtime manifest. The runbook documents that unknown output files are rejected. | This slice is production complete for current-stage redacted output inventory integrity only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
+| S312 | Embedding runtime preflight protocol probe complete locally | Focused RED first failed because `model preflight --json` marked an executable embedding command as ready even when the command returned the wrong model id and malformed protocol output. After implementation, model preflight validates the reviewed manifest, confirms the requested model id/dimension, executes one synthetic local `resume-ir-embedding-v1` probe through the configured command, reports `embedding_protocol` as `passed`, `failed`, or `not_run`, and fails closed without printing paths, model bytes, vectors, stderr payloads, or synthetic probe text. Runbooks and guards now document that current-stage execution requires the protocol probe before private corpus access. | This slice is production complete for embedding runtime protocol preflight only. It does not select, approve, download, bundle, or distribute a production embedding model, prove semantic quality, run private 10k/500-query benchmark evidence, clear model license/distribution blockers, validate platforms, or make stable release ready. |
 
 ## Command Log
+
+### S312
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s39_embedding_worker model_preflight_json_blocks_malformed_embedding_protocol_without_path_or_payload_leak --locked -- --exact
+```
+
+Output summary:
+
+- Failed as expected because an executable embedding command with the wrong
+  model id was still accepted as ready.
+
+Focused verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s39_embedding_worker model_preflight --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s39_embedding_worker --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- The filtered model-preflight suite exited 0 with 3/3 tests passing.
+- The full embedding worker/preflight/search test file exited 0 with 16/16
+  tests passing.
+- Runbook and current-stage validation guards exited 0.
+
+Final local gates:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+./scripts/ci/guard-public-repo.sh
+tmp_log="${TMPDIR:-/tmp}/resume-ir-verify-local-s312.log"; PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh > "$tmp_log" 2>&1; rc=$?; tail -n 120 "$tmp_log"; exit "$rc"
+```
+
+Output summary:
+
+- Formatting, diff whitespace, focused clippy, public repo guard, and
+  `verify-local.sh` exited 0.
+
+Scope note:
+
+- S312 strengthens embedding runtime preflight only. It does not claim a
+  production embedding model has been selected or licensed, and it does not
+  claim private benchmark evidence exists.
 
 ### S311
 

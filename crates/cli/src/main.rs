@@ -2746,13 +2746,63 @@ fn model_preflight_command(args: &[String]) -> Result<()> {
             )
         })?;
     let command_available = is_executable_file(&preflight_args.embedding_command);
-    print_model_preflight_json(model, command_available);
-    if command_available {
+    let protocol_status = if command_available {
+        model_preflight_protocol_status(&preflight_args)
+    } else {
+        EmbeddingPreflightProtocolStatus::NotRun
+    };
+    print_model_preflight_json(model, command_available, protocol_status);
+    if command_available && protocol_status == EmbeddingPreflightProtocolStatus::Passed {
         Ok(())
     } else {
         Err(CliError::user(
             "embedding runtime preflight blocked: dependencies are not ready",
         ))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EmbeddingPreflightProtocolStatus {
+    Passed,
+    Failed,
+    NotRun,
+}
+
+impl EmbeddingPreflightProtocolStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::NotRun => "not_run",
+        }
+    }
+}
+
+fn model_preflight_protocol_status(args: &ModelPreflightArgs) -> EmbeddingPreflightProtocolStatus {
+    let spec = match LocalEmbeddingCommandSpec::new(
+        args.embedding_command.clone(),
+        Vec::<String>::new(),
+        args.model_id.clone(),
+        args.dimension,
+    ) {
+        Ok(spec) => spec,
+        Err(_) => return EmbeddingPreflightProtocolStatus::Failed,
+    };
+    let embedder = LocalEmbeddingCommandEmbedder::new(spec);
+    let input = EmbeddingInput::new(
+        "preflight",
+        "resume-ir synthetic embedding runtime preflight",
+    );
+    match embedder.embed_batch(&[input], EmbeddingBudget::new(1, 4096)) {
+        Ok(vectors)
+            if vectors.len() == 1
+                && vectors[0].id() == "preflight"
+                && vectors[0].model_id() == args.model_id
+                && vectors[0].values().len() == args.dimension =>
+        {
+            EmbeddingPreflightProtocolStatus::Passed
+        }
+        _ => EmbeddingPreflightProtocolStatus::Failed,
     }
 }
 
@@ -2843,12 +2893,16 @@ fn parse_model_preflight_args(args: &[String]) -> Result<ModelPreflightArgs> {
     })
 }
 
-fn print_model_preflight_json(model: &ModelManifestModelValidation, command_available: bool) {
+fn print_model_preflight_json(
+    model: &ModelManifestModelValidation,
+    command_available: bool,
+    protocol_status: EmbeddingPreflightProtocolStatus,
+) {
     println!("{{");
     println!("  \"schema_version\": \"embedding-runtime-preflight.v1\",");
     println!(
         "  \"runtime_status\": \"{}\",",
-        if command_available {
+        if command_available && protocol_status == EmbeddingPreflightProtocolStatus::Passed {
             "ready"
         } else {
             "blocked"
@@ -2865,15 +2919,33 @@ fn print_model_preflight_json(model: &ModelManifestModelValidation, command_avai
             "missing"
         }
     );
+    println!("  \"embedding_protocol\": \"{}\",", protocol_status.label());
     println!("  \"model_id\": \"{}\",", model.model_id);
     println!("  \"dimension\": {},", model.dimension.unwrap_or(0));
     println!("  \"license_reviewed\": true,");
     print!("  \"remediation\": [");
-    if !command_available {
-        print!("\"configure --embedding-command with a local executable\"");
+    let remediation = model_preflight_remediation(command_available, protocol_status);
+    for (index, item) in remediation.iter().enumerate() {
+        if index > 0 {
+            print!(", ");
+        }
+        print!("\"{item}\"");
     }
     println!("]");
     println!("}}");
+}
+
+fn model_preflight_remediation(
+    command_available: bool,
+    protocol_status: EmbeddingPreflightProtocolStatus,
+) -> Vec<&'static str> {
+    let mut remediation = Vec::new();
+    if !command_available {
+        remediation.push("configure --embedding-command with a local executable");
+    } else if protocol_status == EmbeddingPreflightProtocolStatus::Failed {
+        remediation.push("verify the local embedding command speaks resume-ir-embedding-v1");
+    }
+    remediation
 }
 
 fn parse_model_validate_manifest_args(args: &[String]) -> Result<PathBuf> {

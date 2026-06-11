@@ -151,10 +151,14 @@ resume-cli --data-dir <local-data-dir> model preflight --json \
 
 The JSON schema is `embedding-runtime-preflight.v1`. The command validates the
 model manifest checksum/license evidence, confirms that the requested embedding
-model id and dimension are present, and exits nonzero when the embedding command
-is missing or not executable. It must not execute a network API, download model
-weights, print command paths, print model bytes, print embedding vectors, or
-include model caches, indexes, or local data directories.
+model id and dimension are present, then runs one synthetic local protocol probe
+through the configured command. The JSON includes `embedding_protocol` with
+`passed`, `failed`, or `not_run`. It exits nonzero when the embedding command is
+missing, not executable, or does not speak `resume-ir-embedding-v1` for the
+requested model and dimension. It must not execute a network API, download model
+weights, print command paths, print model bytes, print embedding vectors, print
+synthetic probe text, or include model caches, indexes, or local data
+directories.
 
 ## Model Manifest Validation
 
