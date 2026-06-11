@@ -292,6 +292,59 @@ fn resume_benchmark_private_query_rejects_partial_corpus_summary_without_path_le
 }
 
 #[test]
+fn resume_benchmark_private_query_accepts_partial_corpus_summary_for_explicit_smoke() {
+    let query_set = private_query_set_file("private-query-cli-partial-smoke-set", 1);
+    let command = query_fixture_script("private-query-cli-partial-smoke-command");
+    let corpus_summary =
+        private_query_corpus_summary_file("private-query-cli-partial-smoke-summary", 6, false);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "private-query",
+            "--query-set",
+            path_str(&query_set),
+            "--command",
+            path_str(&command),
+            "--corpus-summary",
+            path_str(&corpus_summary),
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--query-set-sha256",
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--model-manifest-sha256",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "--max-queries",
+            "1",
+            "--allow-partial-hot-index-for-smoke",
+            "--json",
+        ])
+        .output()
+        .expect("run resume-benchmark private-query with explicit partial smoke policy");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"document_count\":6"));
+    assert!(stdout.contains("\"searchable_document_count\":5"));
+    assert!(stdout.contains("\"vector_indexed_document_count\":4"));
+    assert!(stdout.contains("\"percentile_confidence\":\"smoke\""));
+    assert!(stdout.contains("\"privacy_boundary\":\"redacted_local_aggregate\""));
+    assert!(!stdout.contains(path_str(&corpus_summary)));
+    assert!(!stdout.contains(path_str(&query_set)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+    remove_dir(corpus_summary.parent().unwrap());
+}
+
+#[test]
 fn resume_benchmark_private_query_passes_command_args_without_leaking_them() {
     let query_set = private_query_set_file("private-query-cli-command-args-set", 3);
     let command = query_fixture_script_requiring_args("private-query-cli-command-args-command");

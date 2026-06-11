@@ -342,6 +342,8 @@ case "$validation_profile" in
     benchmark_gate_smoke_plan=""
     query_set_keyword_fallback_arg=""
     query_set_keyword_fallback_plan=""
+    private_query_partial_hot_index_arg=""
+    private_query_partial_hot_index_plan=""
     full_baseline_satisfied="false"
     release_readiness_evidence="true"
     terminal_plan_steps='    {
@@ -362,6 +364,8 @@ case "$validation_profile" in
     benchmark_gate_smoke_plan=" --allow-smoke-confidence"
     query_set_keyword_fallback_arg="--allow-keyword-fallback"
     query_set_keyword_fallback_plan=" --allow-keyword-fallback"
+    private_query_partial_hot_index_arg="--allow-partial-hot-index-for-smoke"
+    private_query_partial_hot_index_plan=" --allow-partial-hot-index-for-smoke"
     full_baseline_satisfied="false"
     release_readiness_evidence="false"
     terminal_plan_steps='    {
@@ -459,7 +463,7 @@ if [ "$mode" = "dry-run" ]; then
     },
     {
       "id": "private_query_baseline",
-      "command": "resume-benchmark private-query --query-set <local-query-set> --command resume-cli --command-arg --data-dir --command-arg <local-data-dir> --command-arg benchmark-query-protocol --command-arg --embedding-command --command-arg <local-embedding-command> --command-arg --model-id --command-arg <reviewed-local-model-id> --command-arg --dimension --command-arg <dimension> --corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json --max-queries $max_queries --top-k $top_k --dataset-manifest-sha256 <dataset-manifest-sha256> --query-set-sha256 <query-set-sha256> --model-manifest-sha256 <model-manifest-sha256> --json > <local-evidence-dir>/private-benchmark-local.json"
+      "command": "resume-benchmark private-query --query-set <local-query-set> --command resume-cli --command-arg --data-dir --command-arg <local-data-dir> --command-arg benchmark-query-protocol --command-arg --embedding-command --command-arg <local-embedding-command> --command-arg --model-id --command-arg <reviewed-local-model-id> --command-arg --dimension --command-arg <dimension> --corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json$private_query_partial_hot_index_plan --max-queries $max_queries --top-k $top_k --dataset-manifest-sha256 <dataset-manifest-sha256> --query-set-sha256 <query-set-sha256> --model-manifest-sha256 <model-manifest-sha256> --json > <local-evidence-dir>/private-benchmark-local.json"
     },
     {
       "id": "baseline_shape_gate",
@@ -690,6 +694,7 @@ printf '%s\n' "current-stage validation: private query baseline"
   --command-arg --model-id --command-arg "$model_id" \
   --command-arg --dimension --command-arg "$dimension" \
   --corpus-summary "$out_dir/benchmark-corpus-summary.local.json" \
+  $private_query_partial_hot_index_arg \
   --max-queries "$max_queries" \
   --top-k "$top_k" \
   --dataset-manifest-sha256 "$dataset_manifest_sha256" \

@@ -181,6 +181,8 @@ reject_text "$plan" "$tesseract_command"
 reject_text "$plan" "$pdftoppm_command"
 reject_text "$plan" "$language_pack"
 reject_text "$plan" "/Users/"
+reject_text "$plan" "--allow-keyword-fallback"
+reject_text "$plan" "--allow-partial-hot-index-for-smoke"
 
 smoke_plan="$tmpdir/current-stage-validation-smoke-plan.json"
 "$script" --dry-run \
@@ -218,6 +220,7 @@ require_text "$smoke_plan" '"current_stage_target": "local_real_corpus_smoke_cha
 require_text "$smoke_plan" '"full_baseline_satisfied": false'
 require_text "$smoke_plan" '"release_readiness_evidence": false'
 require_text "$smoke_plan" 'benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries 3 --min-queries 1 --allow-keyword-fallback'
+require_text "$smoke_plan" '--corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json --allow-partial-hot-index-for-smoke --max-queries 3 --top-k 5'
 require_text "$smoke_plan" 'resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --allow-smoke-confidence --min-documents 1 --min-queries 1'
 require_text "$smoke_plan" 'write <local-evidence-dir>/current-stage-smoke-summary.json'
 reject_text "$smoke_plan" "release-readiness --json"

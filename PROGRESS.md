@@ -1199,8 +1199,60 @@ obsolete preliminary files and checklists are not product scope.
 | S316 | Current-stage full-profile benchmark blocked summary complete locally | Focused RED first failed because a full-profile current-stage execute that reached `resume-benchmark gate` and then failed exited without writing any structured redacted failure summary, leaving the next operator to inspect private local reports. After implementation, full profile benchmark-gate failure writes `current-stage-blocked-summary.json` with schema `resume-ir.current-stage-blocked-summary.v1`, privacy boundary `local_only_redacted_blocked_summary`, blocked step/category/reason, input digests, passed runtime probes, completed step statuses, and basename-only output digests, then exits non-zero before release-readiness and without writing full current-stage evidence. The guard proves the summary is redacted and not confusable with release evidence. | This slice is production complete for current-stage benchmark blocked failure classification only. It does not clear the full 10k/8000-document current-stage baseline, 500-query private benchmark, full OCR completion, OCR/model/license/platform/signing/notarization/quality/performance blockers, P95/P99 optimization, 100k/1M real-corpus validation, or stable release readiness. |
 | S317 | Current-stage smoke gate confidence and real local smoke witness complete locally | Focused RED first failed because `resume-benchmark gate --require-private-real-corpus` rejected a one-query private-real smoke report with `percentile_confidence: "smoke"`, and the current-stage smoke script had no explicit way to distinguish smoke confidence from full/release baseline confidence. After implementation, benchmark gate supports `--allow-smoke-confidence` / `BenchmarkGateConfig::allow_smoke_confidence()`, defaults still reject smoke confidence, and `run-current-stage-validation.sh --validation-profile smoke` is the only current-stage profile that passes the flag. A private local-only one-document smoke witness against the user-authorized local resume root used local Tesseract/Poppler plus a temporary local `sentence-transformers/all-MiniLM-L6-v2` Apache-2.0 embedding runtime: OCR preflight passed, embedding protocol passed, one OCR-required document imported/OCRed/embedded, hot-index coverage reached 1/1, private-query benchmark produced one query, zero zero-result queries, one hit, redacted aggregate privacy boundary, and the smoke summary was written without release evidence. | This slice is production complete for bounded current-stage smoke chain verification only. It does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR completion, auto query-set coverage for tiny samples, OCR failure triage across the corpus, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 | S318 | Current-stage smoke query-set keyword fallback complete locally | Focused RED first failed because `resume-cli benchmark-query-set draft --allow-keyword-fallback` was rejected as an unknown flag, leaving the current-stage smoke flow unable to draft any local query when a tiny OCR-heavy sample had searchable text but too few high-confidence non-contact field mentions. After implementation, query-set drafting remains field-backed and strict by default, but an explicit `--allow-keyword-fallback` can fill a local private smoke query set from sanitized searchable-text tokens when field queries are insufficient; stdout reports only redacted counts, digest, and `query fallback: keyword|none`. `run-current-stage-validation.sh --validation-profile smoke` is the only current-stage profile that passes the fallback flag; full profile continues to require the full field-backed 500-query baseline. | This slice is production complete for current-stage smoke query-set resilience only. It does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR completion, OCR/import/parser failure triage across the corpus, field extraction quality targets, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
+| S319 | Current-stage smoke partial hot-index benchmark policy complete locally | Focused RED first failed because `PrivateQueryCorpusSummary` had no explicit smoke-only API for partial hot-index coverage and `resume-benchmark private-query --allow-partial-hot-index-for-smoke` was rejected as an unknown flag. After implementation, the private-query runner still rejects partial hot-index coverage by default, but the explicit smoke flag accepts redacted aggregate corpus summaries where a nonzero subset of imported documents is searchable and vector-indexed; the generated private benchmark report carries `document_count`, `searchable_document_count`, `vector_indexed_document_count`, and the corpus summary digest without paths or queries. `run-current-stage-validation.sh --validation-profile smoke` passes the flag; full profile does not and still requires the full hot-index coverage floor. | This slice is production complete for bounded current-stage smoke partial-coverage benchmarking only. It does not clear the full local 10k/8000-document hot-index baseline, 500-query private baseline, full OCR/import/parser failure triage, field/vector quality targets, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 
 ## Command Log
+
+### S319
+
+TDD red checks:
+
+```bash
+PATH=<local-cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner private_query_corpus_summary_accepts_partial_hot_index_when_explicitly_allowed_for_smoke --locked -- --exact
+PATH=<local-cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_accepts_partial_corpus_summary_for_explicit_smoke --locked -- --exact
+```
+
+Output summary:
+
+- The runner test failed to compile because
+  `PrivateQueryCorpusSummary` had no
+  `from_redacted_json_bytes_allowing_partial_hot_index_for_smoke` API.
+- The CLI test failed because `resume-benchmark private-query` rejected
+  `--allow-partial-hot-index-for-smoke` as an unknown flag.
+
+Focused verification:
+
+```bash
+PATH=<local-cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_runner private_query_corpus_summary_ --locked
+PATH=<local-cargo-bin>:$PATH cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_ --locked
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-runbooks.sh
+PATH=<local-cargo-bin>:$PATH cargo fmt --check
+PATH=<local-cargo-bin>:$PATH cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings
+git diff --check
+PATH=<local-cargo-bin>:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The runner partial-hot-index tests exited 0 with 2 tests passed, covering
+  default rejection and explicit smoke acceptance.
+- The private-query CLI tests exited 0 with 5 tests passed, including default
+  partial rejection without path leaks and explicit smoke partial acceptance.
+- Shell syntax, current-stage validation guard, runbook guard, formatter,
+  benchmark-runner clippy, and diff whitespace checks exited 0.
+- Full `verify-local.sh` exited 0 after workspace clippy/test/doc-test checks,
+  CLI/daemon closed-loop checks, benchmark/OCR/vector gates, license/runbook/
+  current-stage/workflow/release-readiness checks, package/signing/notarization/
+  SBOM checks, installer evidence checks, Windows package skip on non-Windows,
+  Windows installer/service evidence checks, and public repo guard.
+
+Scope note:
+
+- S319 lets bounded smoke evidence proceed when only part of a tiny local
+  corpus becomes hot-indexed within the smoke worker budget. It is not a
+  release baseline and does not weaken full current-stage evidence gates.
 
 ### S318
 

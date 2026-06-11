@@ -100,6 +100,15 @@ set and redacted stdout. The full profile does not use the fallback: the full
 500-query baseline remains blocked until the local corpus can produce the
 required field-backed query set.
 
+The smoke profile also passes
+`--allow-partial-hot-index-for-smoke` to `resume-benchmark private-query`.
+This lets a bounded wiring witness continue when only a subset of the imported
+documents became searchable and vector-indexed within the smoke worker budget.
+The benchmark report still carries redacted aggregate `document_count`,
+`searchable_document_count`, and `vector_indexed_document_count`; the full
+profile does not use the flag and remains blocked until the required hot-index
+coverage floor is met.
+
 ```bash
 scripts/local/run-current-stage-validation.sh --dry-run \
   --validation-profile full \

@@ -262,7 +262,27 @@ impl PrivateQueryCorpusSummary {
         Self::from_redacted_json_bytes(bytes)
     }
 
+    pub fn from_redacted_json_file_allowing_partial_hot_index_for_smoke(
+        path: impl AsRef<Path>,
+    ) -> Result<Self> {
+        let bytes = fs::read(path).map_err(BenchmarkError::io)?;
+        Self::from_redacted_json_bytes_with_policy(bytes, true)
+    }
+
     pub fn from_redacted_json_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        Self::from_redacted_json_bytes_with_policy(bytes, false)
+    }
+
+    pub fn from_redacted_json_bytes_allowing_partial_hot_index_for_smoke(
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        Self::from_redacted_json_bytes_with_policy(bytes, true)
+    }
+
+    fn from_redacted_json_bytes_with_policy(
+        bytes: impl AsRef<[u8]>,
+        allow_partial_hot_index_for_smoke: bool,
+    ) -> Result<Self> {
         let bytes = bytes.as_ref();
         let report = serde_json::from_slice::<serde_json::Value>(bytes)
             .map_err(|_| BenchmarkError::invalid_config("private_query_corpus_summary_json"))?;
@@ -288,10 +308,16 @@ impl PrivateQueryCorpusSummary {
             private_query_corpus_summary_usize(&report, "vector_indexed_document_count")?;
         let hot_index_fully_covered =
             private_query_corpus_summary_bool(&report, "hot_index_fully_covered")?;
-        if document_count == 0
-            || !hot_index_fully_covered
-            || searchable_document_count != document_count
-            || vector_indexed_document_count != document_count
+        let coverage_counts_are_valid = document_count > 0
+            && searchable_document_count > 0
+            && vector_indexed_document_count > 0
+            && searchable_document_count <= document_count
+            && vector_indexed_document_count <= document_count;
+        let coverage_counts_are_complete = searchable_document_count == document_count
+            && vector_indexed_document_count == document_count;
+        if !coverage_counts_are_valid
+            || hot_index_fully_covered != coverage_counts_are_complete
+            || (!allow_partial_hot_index_for_smoke && !coverage_counts_are_complete)
         {
             return Err(BenchmarkError::invalid_config(
                 "private_query_corpus_summary_hot_index",

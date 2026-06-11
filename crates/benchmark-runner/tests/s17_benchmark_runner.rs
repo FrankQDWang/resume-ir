@@ -151,6 +151,19 @@ fn private_query_corpus_summary_rejects_partial_hot_index_coverage() {
 }
 
 #[test]
+fn private_query_corpus_summary_accepts_partial_hot_index_when_explicitly_allowed_for_smoke() {
+    let summary =
+        PrivateQueryCorpusSummary::from_redacted_json_bytes_allowing_partial_hot_index_for_smoke(
+            private_query_corpus_summary_json(6, false),
+        )
+        .unwrap();
+
+    assert_eq!(summary.document_count(), 6);
+    assert_eq!(summary.searchable_document_count(), 5);
+    assert_eq!(summary.vector_indexed_document_count(), 4);
+}
+
+#[test]
 fn benchmark_gate_rejects_private_real_corpus_without_model_manifest_digest() {
     let report = minimal_private_real_benchmark_json(8_720, 500, 25.0, false).replace(
         ",\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
