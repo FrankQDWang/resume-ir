@@ -33,6 +33,93 @@ manifest, checksum, license record, and failure guidance. If a model weight
 license is not reviewed, mark the model as external/legal blocked; do not use a
 placeholder model claim to clear release evidence.
 
+## Current-Stage Local Validation Flow
+
+Use the current-stage validation script to generate a redacted operator plan
+before touching private resumes. The dry-run emits
+`resume-ir.current-stage-validation-plan.v1` with privacy boundary
+`local_only_redacted_plan`, placeholder paths, the ordered local commands, and
+`performance_optimization_deferred: true`. It does not scan, import, OCR,
+embed, benchmark, or read the private corpus:
+
+```bash
+scripts/local/run-current-stage-validation.sh --dry-run \
+  --resume-root <private-local-root> \
+  --data-dir <local-data-dir> \
+  --out-dir <local-evidence-dir> \
+  --query-set <local-query-set.jsonl> \
+  --model-manifest <local-model-manifest.json> \
+  --ocr-runtime-manifest <local-ocr-runtime-manifest.json> \
+  --model-artifact <local-model-artifact> \
+  --embedding-command <local-embedding-command> \
+  --model-pack-id <reviewed-model-pack-id> \
+  --model-id <reviewed-local-model-id> \
+  --model-format <model-format> \
+  --dimension <dimension> \
+  --model-license <model-license-id> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language eng \
+  --language-pack <local-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --dataset-manifest-sha256 <sha256> \
+  --max-files 10000 \
+  --max-queries 500 \
+  --top-k 10
+```
+
+Run execute mode only on the operator's machine and keep every generated file
+local. The script performs OCR/model preflight, drafts local manifests, validates
+reviewed manifests, imports the selected root, runs bounded OCR and embedding
+worker loops, writes `benchmark-corpus-summary.local.json`, writes the private
+query baseline report, runs the current-stage baseline shape gate, exports
+redacted diagnostics, and feeds the local evidence into `release-readiness`.
+Add `--reviewed-model` and `--reviewed-ocr-runtime` only after the selected
+model weights, OCR engine, renderer, and language pack have actually been
+reviewed; otherwise validation must fail closed.
+
+```bash
+scripts/local/run-current-stage-validation.sh --execute \
+  --resume-root <private-local-root> \
+  --data-dir <local-data-dir> \
+  --out-dir <local-evidence-dir> \
+  --query-set <local-query-set.jsonl> \
+  --model-manifest <local-model-manifest.json> \
+  --ocr-runtime-manifest <local-ocr-runtime-manifest.json> \
+  --model-artifact <local-model-artifact> \
+  --embedding-command <local-embedding-command> \
+  --model-pack-id <reviewed-model-pack-id> \
+  --model-id <reviewed-local-model-id> \
+  --model-format <model-format> \
+  --dimension <dimension> \
+  --model-license <model-license-id> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language eng \
+  --language-pack <local-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --dataset-manifest-sha256 <sha256> \
+  --reviewed-model \
+  --reviewed-ocr-runtime \
+  --max-files 10000 \
+  --max-queries 500 \
+  --top-k 10
+```
+
+The current-stage baseline shape gate intentionally uses
+`--max-p95-ms 86400000` so a slow 10k private-corpus benchmark records an
+observed baseline instead of turning this goal into an endless latency tuning
+loop. P95/P99 reduction, strict `--max-p95-ms 200`, and 100k/1M validation are
+deferred to the follow-up performance-optimization goal. Do not commit or
+upload the query set, local manifests, benchmark reports, diagnostics, indexes,
+SQLite databases, model caches, runtime binaries, or raw resumes.
+
 ## Current BLOCKED Items
 
 - signing certificates are not available for production installers

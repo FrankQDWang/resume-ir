@@ -19,6 +19,12 @@ evidence, not as an opaque bundled dependency. Poppler/pdftoppm is an accepted
 user-installed external PDF renderer and may be configured by command path, but
 it is not bundled by default.
 
+For the current-stage private 10k validation flow, use
+`scripts/local/run-current-stage-validation.sh` as the orchestration entrypoint.
+Its dry-run prints a redacted local-only plan; execute mode runs the same
+preflight, manifest, OCR worker, embedding worker, benchmark, diagnostics, and
+release-readiness steps locally without uploading evidence.
+
 ## PDF Renderer License Boundary
 
 The MIT project may call a user-installed Poppler command such as `pdftoppm`
