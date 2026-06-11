@@ -202,6 +202,11 @@ production-ready scope source.
   reports, generated diagnostics, local manifests, model files, runtime
   binaries, indexes, SQLite databases, signing material, notarization
   credentials, or model caches were committed or uploaded.
+  S305 used fake current-stage execute fixtures only; no real resume data,
+  private query sets, local paths, generated private benchmark reports,
+  generated diagnostics, local manifests, model files, runtime binaries,
+  indexes, SQLite databases, signing material, notarization credentials, or
+  model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1108,8 +1113,55 @@ obsolete preliminary files and checklists are not product scope.
 | S302 | Current-stage evidence release-readiness intake complete locally | Focused RED first failed because `resume-cli release-readiness --json --current-stage-evidence <path>` produced no JSON report and rejected the new flag. After implementation, release-readiness accepts `resume-ir.current-stage-validation-evidence.v1` manifests, validates the `local_only_redacted_evidence_manifest` boundary, current-stage target, deferred-performance marker, blocked release-readiness exit, input digests, required step statuses, basename-only redacted output digests, false privacy sentinels, and must-not-upload list. Invalid manifests with private markers fail closed without printing paths or manifest bodies. CI and runbook guards now document and verify the intake. | This slice is production complete for the redacted current-stage evidence manifest intake only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S303 | Current-stage redacted dataset manifest generation complete locally | Focused RED first failed because `resume-cli privacy dataset-manifest ...` was rejected as an unknown privacy command, and the current-stage script still required a manually supplied dataset digest. After implementation, `privacy dataset-manifest --root <path> --out <path> [--profile explicit|discovery] [--max-files N]` scans the selected local root through the crawler and writes `resume-ir.dataset-manifest.v1` with privacy boundary `local_only_redacted_dataset_manifest`, aggregate file/extension/budget counts, a corpus fingerprint, and explicit false sentinels for paths, file names, raw resume text, and per-file hashes. `run-current-stage-validation.sh --execute` now generates that local manifest under the evidence directory, computes its SHA-256, optionally checks a caller-provided digest, and records only digests/basenames in current-stage evidence; dry-run/runbook/CI guards document and verify the flow. | This slice is production complete for redacted local dataset manifest generation and current-stage wiring only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S304 | Current-stage private query-set draft complete locally | Focused RED first failed because `resume-cli benchmark-query-set draft ...` was rejected as an unknown command, and the current-stage validation guard still required a manually supplied `--query-set`. After implementation, `benchmark-query-set draft --out <path> [--max-queries N] [--min-queries N]` reads already-imported local metadata, drafts `resume-ir.query-set.jsonl.v1` private query samples from high-confidence non-contact fields only, excludes names/emails/phones/source-derived sample IDs/paths/file names/raw resume text/document IDs, writes deterministic `local-query-000001` sample IDs, prints only counts/schema/privacy boundary/SHA-256 with redacted query/path markers, and fails closed when insufficient field coverage exists. `run-current-stage-validation.sh --execute` now generates or locally copies `private-query-set.local.jsonl`, computes its SHA-256, records only digests/basenames in current-stage evidence, and documents the `local_only_private_query_set` boundary in dry-run/runbook/CI guards. | This slice is production complete for local private query-set draft generation and current-stage wiring only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
+| S305 | Current-stage runtime preflight before private corpus access complete locally | Focused RED first failed because the current-stage dry-run ordered `dataset_manifest` before OCR/model runtime preflight, so execute mode could scan the private resume root before proving local OCR/model dependencies and manifests were usable. After implementation, dry-run now orders OCR preflight, OCR manifest draft/validate, model manifest draft/validate, and model preflight before `dataset_manifest`; execute wraps those runtime checks with a redacted fail-closed message and stops before scanning the private corpus or copying a private query set if any runtime preflight step fails. The CI guard simulates a model preflight failure and verifies that no dataset manifest or dataset-manifest stdout is written. The runbook now documents that execute mode first validates runtime dependencies and manifests before reading the private resume root. | This slice is production complete for the current-stage pre-private-corpus runtime gate only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 
 ## Command Log
+
+### S305
+
+TDD red check:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Failed as expected with `runtime preflight steps must precede dataset
+  manifest`, proving the guard caught the previous private-corpus access order.
+
+Focused verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `check-current-stage-validation.sh` exited 0 after implementation. Its
+  dry-run order check now requires runtime preflight steps before
+  `dataset_manifest`, and its fake execute model-preflight failure confirms no
+  dataset manifest or dataset-manifest stdout is written before runtime
+  preflight succeeds.
+- Shell syntax check exited 0.
+- `check-runbooks.sh` exited 0; release blockers runbook now documents the
+  pre-private-corpus runtime preflight boundary.
+- `cargo fmt --check`, `git diff --check`, and `guard-public-repo.sh` exited 0.
+- `verify-local.sh` exited 0; the full local gate completed workspace clippy,
+  workspace tests, runbook/current-stage/workflow/release checks, package
+  dry-run checks, and public repository guard.
+
+Scope note:
+
+- S305 does not claim the private 10k validation run has happened. It only
+  hardens current-stage execute ordering so local runtime failures stop before
+  private corpus scanning or private query-set copying.
 
 ### S304
 

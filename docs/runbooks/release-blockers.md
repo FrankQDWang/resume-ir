@@ -42,9 +42,13 @@ before touching private resumes. The dry-run emits
 `performance_optimization_deferred: true`. It does not scan, import, OCR,
 embed, benchmark, or read the private corpus:
 
-The execute flow first generates a local redacted dataset manifest with
-`resume-cli privacy dataset-manifest`. The manifest schema is
-`resume-ir.dataset-manifest.v1` and its privacy boundary is
+The execute flow first performs OCR and embedding runtime preflight, drafts
+local OCR/model manifests, and validates those manifests before reading the
+private resume root. If runtime preflight or manifest validation fails, execute
+mode stops before scanning the private corpus or copying a private query set.
+After runtime preflight succeeds, execute mode generates a local redacted
+dataset manifest with `resume-cli privacy dataset-manifest`. The manifest schema
+is `resume-ir.dataset-manifest.v1` and its privacy boundary is
 `local_only_redacted_dataset_manifest`. It records only aggregate counts,
 supported-extension counts, budget state, and a corpus fingerprint; it must not
 contain local paths, file names, raw resume text, per-file hashes, indexes,

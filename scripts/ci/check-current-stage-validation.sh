@@ -103,6 +103,31 @@ if [ ! -s "$plan" ]; then
 fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$plan" >/dev/null
+  python3 - "$plan" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    plan = json.load(handle)
+ids = [step.get("id") for step in plan.get("ordered_steps", [])]
+required = [
+    "ocr_preflight",
+    "ocr_manifest_draft",
+    "ocr_manifest_validate",
+    "model_manifest_draft",
+    "model_manifest_validate",
+    "model_preflight",
+    "dataset_manifest",
+    "import_private_corpus",
+]
+missing = [step for step in required if step not in ids]
+if missing:
+    raise SystemExit(f"missing current-stage ordered steps: {missing}")
+if not all(ids.index(step) < ids.index("dataset_manifest") for step in required[:6]):
+    raise SystemExit("runtime preflight steps must precede dataset manifest")
+if ids.index("dataset_manifest") > ids.index("import_private_corpus"):
+    raise SystemExit("dataset manifest must precede private import")
+PY
 fi
 
 require_text "$plan" '"schema_version": "resume-ir.current-stage-validation-plan.v1"'
@@ -233,6 +258,10 @@ case "$cmd:$sub" in
     printf 'model manifest valid\n'
     ;;
   model:preflight)
+    if [ "${FAKE_RUNTIME_PREFLIGHT_MODE:-ready}" = "model-failed" ]; then
+      printf 'fake model preflight failed\n' >&2
+      exit 1
+    fi
     printf '{"schema_version":"embedding-runtime-preflight.v1","ready":true}\n'
     ;;
   import:*)
@@ -293,7 +322,7 @@ run_execute_smoke() {
   rm -rf "$execute_data_dir" "$execute_out_dir"
   mkdir -p "$execute_data_dir" "$execute_out_dir"
   set +e
-  FAKE_RELEASE_READINESS_MODE="$mode" "$script" --execute \
+  FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
     --resume-daemon "$fake_resume_daemon" \
     --resume-benchmark "$fake_resume_benchmark" \
@@ -373,6 +402,23 @@ reject_text "$tmpdir/execute-blocked-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-blocked-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-blocked-stderr.txt" "PRIVATE-current-stage"
 
+run_execute_smoke model-failed
+model_failed_status=$(cat "$tmpdir/execute-model-failed-status.txt")
+if [ "$model_failed_status" -eq 0 ]; then
+  fail "current-stage execute accepted failed model preflight"
+fi
+if [ -e "$execute_out_dir/dataset-manifest.local.json" ]; then
+  fail "current-stage execute read private corpus before runtime preflight passed"
+fi
+if [ -e "$execute_out_dir/dataset-manifest.stdout.txt" ]; then
+  fail "current-stage execute wrote dataset manifest stdout before runtime preflight passed"
+fi
+require_text "$tmpdir/execute-model-failed-stderr.txt" "current-stage validation blocked: runtime preflight failed before reading private corpus"
+reject_text "$tmpdir/execute-model-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-model-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-model-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-model-failed-stderr.txt" "PRIVATE-current-stage"
+
 run_execute_smoke evidence-failed
 failed_status=$(cat "$tmpdir/execute-evidence-failed-status.txt")
 if [ "$failed_status" -eq 0 ]; then
@@ -393,6 +439,7 @@ require_text "$script" "local_only_redacted_plan"
 require_text "$script" "local_only_redacted_evidence_manifest"
 require_text "$script" "local_only_redacted_dataset_manifest"
 require_text "$script" "local_only_private_query_set"
+require_text "$script" "runtime preflight failed before reading private corpus"
 require_text "$script" "performance_optimization_deferred"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"
@@ -404,6 +451,9 @@ require_text "$runbook" "local_only_redacted_plan"
 require_text "$runbook" "local_only_redacted_evidence_manifest"
 require_text "$runbook" "local_only_redacted_dataset_manifest"
 require_text "$runbook" "local_only_private_query_set"
+require_text "$runbook" "before reading the"
+require_text "$runbook" "private resume root"
+require_text "$runbook" "stops before scanning the private corpus"
 require_text "$runbook" "privacy dataset-manifest"
 require_text "$runbook" "benchmark-query-set draft"
 require_text "$runbook" "--current-stage-evidence current-stage-validation-evidence.json"

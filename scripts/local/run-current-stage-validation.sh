@@ -339,10 +339,6 @@ if [ "$mode" = "dry-run" ]; then
   },
   "ordered_steps": [
     {
-      "id": "dataset_manifest",
-      "command": "resume-cli --data-dir <local-data-dir> privacy dataset-manifest --root <local-resume-root> --out <local-evidence-dir>/dataset-manifest.local.json --profile explicit --max-files $max_files"
-    },
-    {
       "id": "ocr_preflight",
       "command": "resume-cli --data-dir <local-data-dir> ocr preflight --json --ocr-lang <ocr-language> --tesseract-command <local-tesseract-command> --pdftoppm-command <local-pdftoppm-command>"
     },
@@ -365,6 +361,10 @@ if [ "$mode" = "dry-run" ]; then
     {
       "id": "model_preflight",
       "command": "resume-cli --data-dir <local-data-dir> model preflight --json --manifest <local-model-manifest> --embedding-command <local-embedding-command> --model-id <reviewed-local-model-id> --dimension <dimension>"
+    },
+    {
+      "id": "dataset_manifest",
+      "command": "resume-cli --data-dir <local-data-dir> privacy dataset-manifest --root <local-resume-root> --out <local-evidence-dir>/dataset-manifest.local.json --profile explicit --max-files $max_files"
     },
     {
       "id": "import_private_corpus",
@@ -427,7 +427,8 @@ if [ "$mode" = "dry-run" ]; then
   ],
   "notes": [
     "Dry-run does not read the private resume root.",
-    "Execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
+    "Execute mode validates OCR and embedding runtime manifests/preflight before reading the private resume root.",
+    "After runtime preflight succeeds, execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
     "If --query-set is omitted, execute mode writes resume-ir.query-set.jsonl.v1 under <local-evidence-dir> with privacy boundary local_only_private_query_set, then uses its sha256 as the query-set digest.",
     "Execute mode keeps all evidence local under <local-evidence-dir>.",
     "The baseline shape gate deliberately uses --max-p95-ms 86400000; P95/P99 reduction is deferred.",
@@ -443,16 +444,13 @@ fi
 mkdir -p "$data_dir" "$out_dir"
 dataset_manifest="$out_dir/dataset-manifest.local.json"
 query_set_generated="false"
+provided_query_set=""
 if [ -z "$query_set" ]; then
   query_set="$out_dir/private-query-set.local.jsonl"
   query_set_generated="true"
 else
-  [ -f "$query_set" ] || fail "query set must exist and stay local"
   provided_query_set="$query_set"
   query_set="$out_dir/private-query-set.local.jsonl"
-  if [ "$provided_query_set" != "$query_set" ]; then
-    cp "$provided_query_set" "$query_set" || fail "query set must stay local and readable"
-  fi
 fi
 
 ocr_reviewed_arg=""
@@ -462,6 +460,74 @@ fi
 model_reviewed_arg=""
 if [ "$reviewed_model" = "true" ]; then
   model_reviewed_arg="--reviewed"
+fi
+
+printf '%s\n' "current-stage validation: ocr preflight"
+if ! "$resume_cli" --data-dir "$data_dir" ocr preflight --json \
+  --ocr-lang "$language" \
+  --tesseract-command "$tesseract_command" \
+  --pdftoppm-command "$pdftoppm_command" \
+  > "$out_dir/ocr-preflight.json"; then
+  fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
+fi
+
+printf '%s\n' "current-stage validation: ocr manifest draft"
+if ! "$resume_cli" --data-dir "$data_dir" ocr draft-manifest \
+  --out "$ocr_runtime_manifest" \
+  --runtime-pack-id "$runtime_pack_id" \
+  --tesseract-command "$tesseract_command" \
+  --pdftoppm-command "$pdftoppm_command" \
+  --language "$language" \
+  --language-pack "$language_pack" \
+  --engine-license "$engine_license" \
+  --renderer-license "$renderer_license" \
+  --language-license "$language_license" \
+  $ocr_reviewed_arg \
+  > "$out_dir/ocr-draft-manifest.stdout.txt"; then
+  fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
+fi
+
+printf '%s\n' "current-stage validation: ocr manifest validate"
+if ! "$resume_cli" --data-dir "$data_dir" ocr validate-manifest \
+  --manifest "$ocr_runtime_manifest" \
+  > "$out_dir/ocr-validate-manifest.stdout.txt"; then
+  fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
+fi
+
+printf '%s\n' "current-stage validation: model manifest draft"
+if ! "$resume_cli" --data-dir "$data_dir" model draft-manifest \
+  --out "$model_manifest" \
+  --model-pack-id "$model_pack_id" \
+  --model-id "$model_id" \
+  --model-type embedding \
+  --dimension "$dimension" \
+  --format "$model_format" \
+  --artifact "$model_artifact" \
+  --license "$model_license" \
+  $model_reviewed_arg \
+  > "$out_dir/model-draft-manifest.stdout.txt"; then
+  fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
+fi
+
+printf '%s\n' "current-stage validation: model manifest validate"
+if ! "$resume_cli" --data-dir "$data_dir" model validate-manifest \
+  --manifest "$model_manifest" \
+  > "$out_dir/model-validate-manifest.stdout.txt"; then
+  fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
+fi
+
+printf '%s\n' "current-stage validation: model preflight"
+if ! "$resume_cli" --data-dir "$data_dir" model preflight --json \
+  --manifest "$model_manifest" \
+  --embedding-command "$embedding_command" \
+  --model-id "$model_id" \
+  --dimension "$dimension" \
+  > "$out_dir/model-preflight.json"; then
+  fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
+fi
+
+if [ -z "$model_manifest_sha256" ]; then
+  model_manifest_sha256=$(sha256_file "$model_manifest")
 fi
 
 printf '%s\n' "current-stage validation: dataset manifest"
@@ -476,62 +542,6 @@ if [ -n "$dataset_manifest_sha256" ] && [ "$dataset_manifest_sha256" != "$genera
   fail "dataset manifest digest mismatch"
 fi
 dataset_manifest_sha256="$generated_dataset_manifest_sha256"
-
-printf '%s\n' "current-stage validation: ocr preflight"
-"$resume_cli" --data-dir "$data_dir" ocr preflight --json \
-  --ocr-lang "$language" \
-  --tesseract-command "$tesseract_command" \
-  --pdftoppm-command "$pdftoppm_command" \
-  > "$out_dir/ocr-preflight.json"
-
-printf '%s\n' "current-stage validation: ocr manifest draft"
-"$resume_cli" --data-dir "$data_dir" ocr draft-manifest \
-  --out "$ocr_runtime_manifest" \
-  --runtime-pack-id "$runtime_pack_id" \
-  --tesseract-command "$tesseract_command" \
-  --pdftoppm-command "$pdftoppm_command" \
-  --language "$language" \
-  --language-pack "$language_pack" \
-  --engine-license "$engine_license" \
-  --renderer-license "$renderer_license" \
-  --language-license "$language_license" \
-  $ocr_reviewed_arg \
-  > "$out_dir/ocr-draft-manifest.stdout.txt"
-
-printf '%s\n' "current-stage validation: ocr manifest validate"
-"$resume_cli" --data-dir "$data_dir" ocr validate-manifest \
-  --manifest "$ocr_runtime_manifest" \
-  > "$out_dir/ocr-validate-manifest.stdout.txt"
-
-printf '%s\n' "current-stage validation: model manifest draft"
-"$resume_cli" --data-dir "$data_dir" model draft-manifest \
-  --out "$model_manifest" \
-  --model-pack-id "$model_pack_id" \
-  --model-id "$model_id" \
-  --model-type embedding \
-  --dimension "$dimension" \
-  --format "$model_format" \
-  --artifact "$model_artifact" \
-  --license "$model_license" \
-  $model_reviewed_arg \
-  > "$out_dir/model-draft-manifest.stdout.txt"
-
-printf '%s\n' "current-stage validation: model manifest validate"
-"$resume_cli" --data-dir "$data_dir" model validate-manifest \
-  --manifest "$model_manifest" \
-  > "$out_dir/model-validate-manifest.stdout.txt"
-
-printf '%s\n' "current-stage validation: model preflight"
-"$resume_cli" --data-dir "$data_dir" model preflight --json \
-  --manifest "$model_manifest" \
-  --embedding-command "$embedding_command" \
-  --model-id "$model_id" \
-  --dimension "$dimension" \
-  > "$out_dir/model-preflight.json"
-
-if [ -z "$model_manifest_sha256" ]; then
-  model_manifest_sha256=$(sha256_file "$model_manifest")
-fi
 
 printf '%s\n' "current-stage validation: import private corpus"
 "$resume_cli" --data-dir "$data_dir" import \
@@ -578,6 +588,10 @@ if [ "$query_set_generated" = "true" ]; then
     --min-queries "$max_queries" \
     > "$out_dir/query-set-draft.stdout.txt"
 else
+  [ -f "$provided_query_set" ] || fail "query set must exist and stay local"
+  if [ "$provided_query_set" != "$query_set" ]; then
+    cp "$provided_query_set" "$query_set" || fail "query set must stay local and readable"
+  fi
   {
     printf '%s\n' "query set: provided"
     printf '%s\n' "schema: resume-ir.query-set.jsonl.v1"
@@ -699,13 +713,13 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     "embedding_worker_ticks": $embedding_worker_ticks
   },
   "steps": [
-    {"id": "dataset_manifest", "status": "success"},
     {"id": "ocr_preflight", "status": "success"},
     {"id": "ocr_manifest_draft", "status": "success"},
     {"id": "ocr_manifest_validate", "status": "success"},
     {"id": "model_manifest_draft", "status": "success"},
     {"id": "model_manifest_validate", "status": "success"},
     {"id": "model_preflight", "status": "success"},
+    {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
