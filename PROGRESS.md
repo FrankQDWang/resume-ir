@@ -212,6 +212,11 @@ production-ready scope source.
   benchmark reports, generated diagnostics, local manifests, model files,
   runtime binaries, indexes, SQLite databases, signing material, notarization
   credentials, or model caches were committed or uploaded.
+  S307 used synthetic/private-shaped current-stage evidence manifest fixtures
+  only; no real resume data, private query sets, local paths, generated private
+  benchmark reports, generated diagnostics, local manifests, model files,
+  runtime binaries, indexes, SQLite databases, signing material, notarization
+  credentials, or model caches were committed or uploaded.
 - Current local real-corpus boundary: the user clarified that the available
   local private validation corpus is approximately ten thousand real resumes on
   this machine. This corpus may be used only for local redacted aggregate
@@ -1120,8 +1125,65 @@ obsolete preliminary files and checklists are not product scope.
 | S304 | Current-stage private query-set draft complete locally | Focused RED first failed because `resume-cli benchmark-query-set draft ...` was rejected as an unknown command, and the current-stage validation guard still required a manually supplied `--query-set`. After implementation, `benchmark-query-set draft --out <path> [--max-queries N] [--min-queries N]` reads already-imported local metadata, drafts `resume-ir.query-set.jsonl.v1` private query samples from high-confidence non-contact fields only, excludes names/emails/phones/source-derived sample IDs/paths/file names/raw resume text/document IDs, writes deterministic `local-query-000001` sample IDs, prints only counts/schema/privacy boundary/SHA-256 with redacted query/path markers, and fails closed when insufficient field coverage exists. `run-current-stage-validation.sh --execute` now generates or locally copies `private-query-set.local.jsonl`, computes its SHA-256, records only digests/basenames in current-stage evidence, and documents the `local_only_private_query_set` boundary in dry-run/runbook/CI guards. | This slice is production complete for local private query-set draft generation and current-stage wiring only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S305 | Current-stage runtime preflight before private corpus access complete locally | Focused RED first failed because the current-stage dry-run ordered `dataset_manifest` before OCR/model runtime preflight, so execute mode could scan the private resume root before proving local OCR/model dependencies and manifests were usable. After implementation, dry-run now orders OCR preflight, OCR manifest draft/validate, model manifest draft/validate, and model preflight before `dataset_manifest`; execute wraps those runtime checks with a redacted fail-closed message and stops before scanning the private corpus or copying a private query set if any runtime preflight step fails. The CI guard simulates a model preflight failure and verifies that no dataset manifest or dataset-manifest stdout is written. The runbook now documents that execute mode first validates runtime dependencies and manifests before reading the private resume root. | This slice is production complete for the current-stage pre-private-corpus runtime gate only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 | S306 | Current-stage evidence manifest completeness gate complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted a manifest that omitted the dataset-manifest redacted output while still marking current-stage evidence as provided. After implementation, the current-stage evidence validator requires the full local-flow step set, including `dataset_manifest` and `query_set_draft`, and requires basename-only SHA-256 entries for dataset/query-set outputs, OCR/model preflight and manifest stdout, worker stdout, corpus summary, benchmark report, benchmark gate stdout, redacted diagnostics, and release-readiness stdout/stderr. The runbook documents that current-stage evidence intake validates the complete local-flow output inventory. | This slice is production complete for current-stage evidence-manifest completeness validation only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
+| S307 | Current-stage evidence parameter and digest binding gate complete locally | Focused RED first failed because `release-readiness --current-stage-evidence` accepted manifests with `max_files: 7999`, `max_queries: 499`, and a dataset-manifest input digest that did not match the dataset-manifest output digest. After implementation, current-stage evidence intake requires `max_files >= 8000`, `max_queries >= 500`, `release_readiness_exit == 1`, `release_readiness_intake.exit_code == 1`, and dataset/query-set input digests that match the corresponding basename-only redacted output digests. The release-readiness CI fixture and runbook now document the same floor and digest-binding semantics. | This slice is production complete for current-stage evidence semantic validation only. It does not run the actual private 10k corpus, generate real private benchmark evidence, approve or distribute a production embedding model, clear OCR/model/license/platform/signing/notarization/quality/performance blockers, optimize P95/P99, prove 100k/1M real-corpus scale, or make stable release ready. |
 
 ## Command Log
+
+### S307
+
+TDD red checks:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_current_stage_evidence_below_local_baseline_floor_without_path_leaks --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_current_stage_evidence_with_mismatched_dataset_digest_without_path_leaks --locked
+```
+
+Output summary:
+
+- Both tests failed as expected because the weak manifests were accepted and
+  stdout was nonempty, proving the validator did not enforce the local baseline
+  floor or dataset digest binding.
+
+Focused verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_current_stage_evidence_below_local_baseline_floor_without_path_leaks --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_current_stage_evidence_with_mismatched_dataset_digest_without_path_leaks --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness --locked
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- The two new regressions exited 0 after implementation.
+- The full release-readiness test file exited 0 with 15/15 tests passing.
+- `check-release-readiness.sh` and `check-current-stage-validation.sh` exited 0.
+
+Final local gates:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo clippy -p resume-cli --tests --locked -- -D warnings
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-runbooks.sh
+./scripts/ci/guard-public-repo.sh
+tmp_log="${TMPDIR:-/tmp}/resume-ir-verify-local-s307.log"; PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh > "$tmp_log" 2>&1; rc=$?; tail -n 100 "$tmp_log"; exit "$rc"
+```
+
+Output summary:
+
+- Formatting, diff whitespace, focused clippy, runbook check, and public repo
+  guard exited 0.
+- `verify-local.sh` exited 0; tail evidence included current-stage validation,
+  release readiness, release artifact, signing evidence, notarization evidence,
+  SBOM, installer evidence, workflow, benchmark, OCR throughput, vector quality,
+  and public repo guards passing.
+
+Scope note:
+
+- S307 strengthens current-stage evidence semantics only. It does not claim a
+  private 10k validation run or any generated private benchmark evidence exists.
 
 ### S306
 

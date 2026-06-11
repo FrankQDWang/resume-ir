@@ -832,23 +832,22 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         CONTEXT,
     )?;
     require_release_evidence_bool(object, "performance_optimization_deferred", true, CONTEXT)?;
-    require_release_evidence_positive_u64(object, "release_readiness_exit", CONTEXT)?;
+    require_release_evidence_u64(object, "release_readiness_exit", 1, CONTEXT)?;
     require_release_evidence_bool(object, "stable_release_expected_blocked", true, CONTEXT)?;
 
     let input_digests = require_release_evidence_object(object, "input_digests", CONTEXT)?;
-    for key in [
-        "dataset_manifest_sha256",
-        "query_set_sha256",
-        "model_manifest_sha256",
-        "ocr_runtime_manifest_sha256",
-    ] {
+    let dataset_manifest_sha256 =
+        require_release_evidence_sha256_value(input_digests, "dataset_manifest_sha256", CONTEXT)?;
+    let query_set_sha256 =
+        require_release_evidence_sha256_value(input_digests, "query_set_sha256", CONTEXT)?;
+    for key in ["model_manifest_sha256", "ocr_runtime_manifest_sha256"] {
         require_release_evidence_sha256(input_digests, key, CONTEXT)?;
     }
 
     let parameters = require_release_evidence_object(object, "parameters", CONTEXT)?;
+    require_release_evidence_min_u64(parameters, "max_files", 8000, CONTEXT)?;
+    require_release_evidence_min_u64(parameters, "max_queries", 500, CONTEXT)?;
     for key in [
-        "max_files",
-        "max_queries",
         "top_k",
         "embedding_dimension",
         "ocr_worker_ticks",
@@ -878,9 +877,16 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
     ] {
         require_release_evidence_step(steps, id, status, CONTEXT)?;
     }
+    require_release_evidence_step_exit_code(
+        steps,
+        "release_readiness_intake",
+        "expected_blocked",
+        1,
+        CONTEXT,
+    )?;
 
     let redacted_outputs = require_release_evidence_array(object, "redacted_outputs", CONTEXT)?;
-    let mut output_files = BTreeSet::new();
+    let mut output_digests = BTreeMap::new();
     for output in redacted_outputs {
         let output = output
             .as_object()
@@ -889,8 +895,13 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         if !is_release_evidence_basename(file) {
             return Err(release_evidence_invalid(CONTEXT, "file"));
         }
-        require_release_evidence_sha256(output, "sha256", CONTEXT)?;
-        output_files.insert(file.to_string());
+        let sha256 = require_release_evidence_sha256_value(output, "sha256", CONTEXT)?;
+        if output_digests
+            .insert(file.to_string(), sha256.to_string())
+            .is_some()
+        {
+            return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+        }
     }
     for required_file in [
         "dataset-manifest.local.json",
@@ -913,10 +924,22 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         "release-readiness.json",
         "release-readiness.stderr.txt",
     ] {
-        if !output_files.contains(required_file) {
+        if !output_digests.contains_key(required_file) {
             return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
         }
     }
+    require_release_evidence_output_digest(
+        &output_digests,
+        "dataset-manifest.local.json",
+        dataset_manifest_sha256,
+        CONTEXT,
+    )?;
+    require_release_evidence_output_digest(
+        &output_digests,
+        "private-query-set.local.jsonl",
+        query_set_sha256,
+        CONTEXT,
+    )?;
 
     let privacy_sentinels = require_release_evidence_object(object, "privacy_sentinels", CONTEXT)?;
     for key in [
@@ -1309,24 +1332,64 @@ fn require_release_evidence_step(
     }
 }
 
+fn require_release_evidence_step_exit_code(
+    steps: &[serde_json::Value],
+    expected_id: &str,
+    expected_status: &str,
+    expected_exit_code: u64,
+    context: &'static str,
+) -> Result<()> {
+    let has_step = steps.iter().any(|step| {
+        let Some(step) = step.as_object() else {
+            return false;
+        };
+        step.get("id").and_then(serde_json::Value::as_str) == Some(expected_id)
+            && step.get("status").and_then(serde_json::Value::as_str) == Some(expected_status)
+            && step.get("exit_code").and_then(serde_json::Value::as_u64) == Some(expected_exit_code)
+    });
+    if has_step {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, "steps"))
+    }
+}
+
 fn require_release_evidence_sha256(
     object: &serde_json::Map<String, serde_json::Value>,
     key: &str,
     context: &'static str,
 ) -> Result<()> {
-    let is_sha256 = object
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|value| {
-            value.len() == 64
-                && value
-                    .bytes()
-                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-        });
+    require_release_evidence_sha256_value(object, key, context).map(|_| ())
+}
+
+fn require_release_evidence_sha256_value<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<&'a str> {
+    let Some(value) = object.get(key).and_then(serde_json::Value::as_str) else {
+        return Err(release_evidence_invalid(context, key));
+    };
+    let is_sha256 = value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
     if is_sha256 {
-        Ok(())
+        Ok(value)
     } else {
         Err(release_evidence_invalid(context, key))
+    }
+}
+
+fn require_release_evidence_output_digest(
+    output_digests: &BTreeMap<String, String>,
+    file: &str,
+    expected_sha256: &str,
+    context: &'static str,
+) -> Result<()> {
+    match output_digests.get(file) {
+        Some(value) if value == expected_sha256 => Ok(()),
+        _ => Err(release_evidence_invalid(context, "redacted_outputs")),
     }
 }
 
@@ -1338,6 +1401,30 @@ fn require_release_evidence_bool(
 ) -> Result<()> {
     match object.get(key).and_then(serde_json::Value::as_bool) {
         Some(value) if value == expected => Ok(()),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn require_release_evidence_u64(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: u64,
+    context: &'static str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_u64) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn require_release_evidence_min_u64(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    min: u64,
+    context: &'static str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_u64) {
+        Some(value) if value >= min => Ok(()),
         _ => Err(release_evidence_invalid(context, key)),
     }
 }

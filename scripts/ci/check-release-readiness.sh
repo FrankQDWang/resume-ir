@@ -238,7 +238,7 @@ cat > "$current_stage_evidence" <<'JSON'
     {"id": "release_readiness_intake", "status": "expected_blocked", "exit_code": 1}
   ],
   "redacted_outputs": [
-    {"file": "dataset-manifest.local.json", "sha256": "1010101010101010101010101010101010101010101010101010101010101010"},
+    {"file": "dataset-manifest.local.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
     {"file": "dataset-manifest.stdout.txt", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
     {"file": "ocr-preflight.json", "sha256": "1212121212121212121212121212121212121212121212121212121212121212"},
     {"file": "ocr-draft-manifest.stdout.txt", "sha256": "1313131313131313131313131313131313131313131313131313131313131313"},
@@ -250,7 +250,7 @@ cat > "$current_stage_evidence" <<'JSON'
     {"file": "ocr-worker.stdout.txt", "sha256": "1919191919191919191919191919191919191919191919191919191919191919"},
     {"file": "embedding-worker.stdout.txt", "sha256": "2020202020202020202020202020202020202020202020202020202020202020"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "2121212121212121212121212121212121212121212121212121212121212121"},
-    {"file": "private-query-set.local.jsonl", "sha256": "2222222222222222222222222222222222222222222222222222222222222222"},
+    {"file": "private-query-set.local.jsonl", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
     {"file": "query-set-draft.stdout.txt", "sha256": "2323232323232323232323232323232323232323232323232323232323232323"},
     {"file": "private-benchmark-local.json", "sha256": "2424242424242424242424242424242424242424242424242424242424242424"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "2525252525252525252525252525252525252525252525252525252525252525"},

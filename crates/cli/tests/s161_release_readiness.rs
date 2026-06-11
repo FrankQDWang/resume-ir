@@ -833,6 +833,91 @@ fn release_readiness_rejects_current_stage_evidence_missing_local_flow_output_wi
 }
 
 #[test]
+fn release_readiness_rejects_current_stage_evidence_below_local_baseline_floor_without_path_leaks()
+{
+    let data_dir = temp_path("release-readiness-current-stage-floor-private-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-floor-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    fs::write(
+        &current_stage_evidence,
+        current_stage_evidence_manifest()
+            .replace("\"max_files\":10000", "\"max_files\":7999")
+            .replace("\"max_queries\":500", "\"max_queries\":499"),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject undersized current-stage evidence");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence manifest"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_current_stage_evidence_with_mismatched_dataset_digest_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-digest-private-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-digest-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    fs::write(
+        &current_stage_evidence,
+        current_stage_evidence_manifest().replace(
+            "\"file\":\"dataset-manifest.local.json\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+            "\"file\":\"dataset-manifest.local.json\",\"sha256\":\"9999999999999999999999999999999999999999999999999999999999999999\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject digest-mismatched current-stage evidence");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence manifest"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_current_stage_evidence_with_private_marker_without_path_leaks() {
     let data_dir = temp_path("release-readiness-current-stage-marker-private-data");
     let evidence_dir = temp_path("release-readiness-current-stage-marker-private-reports");
@@ -1218,7 +1303,7 @@ fn current_stage_evidence_manifest() -> String {
         "{\"id\":\"release_readiness_intake\",\"status\":\"expected_blocked\",\"exit_code\":1}",
         "],",
         "\"redacted_outputs\":[",
-        "{\"file\":\"dataset-manifest.local.json\",\"sha256\":\"1010101010101010101010101010101010101010101010101010101010101010\"},",
+        "{\"file\":\"dataset-manifest.local.json\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},",
         "{\"file\":\"dataset-manifest.stdout.txt\",\"sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"},",
         "{\"file\":\"ocr-preflight.json\",\"sha256\":\"1212121212121212121212121212121212121212121212121212121212121212\"},",
         "{\"file\":\"ocr-draft-manifest.stdout.txt\",\"sha256\":\"1313131313131313131313131313131313131313131313131313131313131313\"},",
@@ -1230,7 +1315,7 @@ fn current_stage_evidence_manifest() -> String {
         "{\"file\":\"ocr-worker.stdout.txt\",\"sha256\":\"1919191919191919191919191919191919191919191919191919191919191919\"},",
         "{\"file\":\"embedding-worker.stdout.txt\",\"sha256\":\"2020202020202020202020202020202020202020202020202020202020202020\"},",
         "{\"file\":\"benchmark-corpus-summary.local.json\",\"sha256\":\"2121212121212121212121212121212121212121212121212121212121212121\"},",
-        "{\"file\":\"private-query-set.local.jsonl\",\"sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\"},",
+        "{\"file\":\"private-query-set.local.jsonl\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},",
         "{\"file\":\"query-set-draft.stdout.txt\",\"sha256\":\"2323232323232323232323232323232323232323232323232323232323232323\"},",
         "{\"file\":\"private-benchmark-local.json\",\"sha256\":\"2424242424242424242424242424242424242424242424242424242424242424\"},",
         "{\"file\":\"private-benchmark-gate.stdout.txt\",\"sha256\":\"2525252525252525252525252525252525252525252525252525252525252525\"},",

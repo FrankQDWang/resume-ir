@@ -119,6 +119,9 @@ exposing the local evidence directory or report bodies. The required output
 inventory includes the dataset manifest, query set, OCR/model preflight logs,
 bounded worker stdout, corpus summary, private benchmark report, benchmark gate
 stdout, redacted diagnostics, and release-readiness stdout/stderr digests.
+The manifest is accepted only when `max_files >= 8000`, `max_queries >= 500`,
+`release_readiness_exit == 1`, and the dataset/query-set input digests match the
+corresponding basename-only output digests.
 Add `--reviewed-model` and `--reviewed-ocr-runtime` only after the selected
 model weights, OCR engine, renderer, and language pack have actually been
 reviewed; otherwise validation must fail closed.
