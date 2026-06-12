@@ -552,19 +552,20 @@ private corpus; it does not require looping on P95/P99 latency reduction in this
 goal. The report must use `dataset_kind: "private-real-corpus"`,
 `target_claim: "benchmark_baseline_observed"`, `corpus_origin:
 "private_local"`, `privacy_boundary: "redacted_local_aggregate"`,
-`query_mode: "hybrid"`, `retrieval_layers: "fulltext+field+vector+rrf"`,
-`hot_index: true`, explicit aggregate `searchable_document_count` and
-`vector_indexed_document_count` hot-index coverage fields, false hot-path OCR/
-parsing/heavy-model-inference booleans, false raw-data/path/query booleans, and
-sha256 digests for the local dataset manifest, query set, reviewed embedding
-model manifest, and redacted `benchmark-corpus-summary` preflight. It must also
-have internally consistent aggregate metrics: hot-index coverage counts are
-non-zero and no larger than `document_count`, latency samples equal query count,
-zero-result queries do not exceed query count, total hits do not exceed
-`query_count * top_k`, latency percentiles P50/P95/P99 are present and ordered,
-`query_total_ms` is positive, and reported QPS matches `query_count /
-(query_total_ms / 1000)` within rounding tolerance. Do not upload reports if
-they contain raw resume text, local paths, queries, sample IDs, or filenames.
+`query_protocol: "resume-ir-query-v1"`, `query_mode: "hybrid"`,
+`retrieval_layers: "fulltext+field+vector+rrf"`, `hot_index: true`, explicit
+aggregate `searchable_document_count` and `vector_indexed_document_count`
+hot-index coverage fields, false hot-path OCR/parsing/heavy-model-inference
+booleans, false raw-data/path/query booleans, and sha256 digests for the local
+dataset manifest, query set, reviewed embedding model manifest, and redacted
+`benchmark-corpus-summary` preflight. It must also have internally consistent
+aggregate metrics: hot-index coverage counts are non-zero and no larger than
+`document_count`, latency samples equal query count, zero-result queries do not
+exceed query count, total hits do not exceed `query_count * top_k`, latency
+percentiles P50/P95/P99 are present and ordered, `query_total_ms` is positive,
+and reported QPS matches `query_count / (query_total_ms / 1000)` within
+rounding tolerance. Do not upload reports if they contain raw resume text, local
+paths, queries, sample IDs, or filenames.
 
 The current local private corpus is approximately ten thousand resumes, not a
 100k or 1M corpus. Local release-readiness therefore requires a redacted
@@ -585,9 +586,10 @@ product hybrid search path. The query-set JSONL stays local and may contain raw
 private queries; the benchmark runner passes each query through an owner-only
 temporary file path in `RESUME_IR_QUERY_INPUT_PATH` plus
 `RESUME_IR_QUERY_TOP_K` and `RESUME_IR_QUERY_MODE=hybrid`, and must return only
-`resume-ir-query-v1` plus `hits=<n>` on stdout. Do not upload the query-set, the
-report, or command wrappers unless they have been separately reviewed to contain
-no raw queries, filenames, local paths, tokens, or resume data.
+`resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`,
+`top_k=<n>`, and `hits=<n>` on stdout. Do not upload the query-set, the report,
+or command wrappers unless they have been separately reviewed to contain no raw
+queries, filenames, local paths, tokens, or resume data.
 If a wrapper is still needed, it must delegate through
 `resume-cli benchmark-query-protocol` or pass the query file through
 `resume-cli search --query-file "$RESUME_IR_QUERY_INPUT_PATH" --mode hybrid`

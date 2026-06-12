@@ -106,7 +106,12 @@ require_text "$release_runbook" "ocr_runtime_manifest_sha256"
 require_text "$release_runbook" "renderer_manifest_sha256"
 require_text "$release_runbook" "language_pack_manifest_sha256"
 require_text "$release_runbook" 'query_mode: "hybrid"'
+require_text "$release_runbook" 'query_protocol: "resume-ir-query-v1"'
 require_text "$release_runbook" 'retrieval_layers:'
+require_text "$release_runbook" 'mode=hybrid'
+require_text "$release_runbook" 'layers=fulltext+field+vector+rrf'
+require_text "$release_runbook" 'top_k=<n>'
+require_text "$release_runbook" 'hits=<n>'
 require_text "$release_runbook" "hot_index: true"
 require_text "$release_runbook" "heavy-model-inference"
 require_text "$release_runbook" 'target_claim: "benchmark_baseline_observed"'

@@ -210,6 +210,7 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
         "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
     ));
     assert!(stdout.contains("\"target_claim\":\"benchmark_baseline_observed\""));
+    assert!(stdout.contains("\"query_protocol\":\"resume-ir-query-v1\""));
     assert!(stdout.contains("\"query_mode\":\"hybrid\""));
     assert!(stdout.contains("\"retrieval_layers\":\"fulltext+field+vector+rrf\""));
     assert!(stdout.contains("\"hot_index\":true"));
@@ -477,6 +478,7 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
             "\"target_claim\":\"query_latency_target_met\",",
             "\"corpus_origin\":\"private_local\",",
             "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"query_protocol\":\"resume-ir-query-v1\",",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
             "\"hot_index\":true,",
@@ -564,6 +566,7 @@ fn resume_benchmark_gate_accepts_private_real_smoke_report_with_explicit_allowan
             "\"target_claim\":\"benchmark_baseline_observed\",",
             "\"corpus_origin\":\"private_local\",",
             "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"query_protocol\":\"resume-ir-query-v1\",",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
             "\"hot_index\":true,",
@@ -651,6 +654,7 @@ fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
             "\"target_claim\":\"query_latency_target_met\",",
             "\"corpus_origin\":\"private_local\",",
             "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"query_protocol\":\"resume-ir-query-v1\",",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
             "\"hot_index\":true,",
@@ -730,6 +734,7 @@ fn resume_benchmark_gate_rejects_million_release_sampled_confidence() {
             "\"target_claim\":\"query_latency_target_met\",",
             "\"corpus_origin\":\"private_local\",",
             "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"query_protocol\":\"resume-ir-query-v1\",",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
             "\"hot_index\":true,",
@@ -809,6 +814,7 @@ fn resume_benchmark_gate_rejects_private_real_too_few_query_samples() {
             "\"target_claim\":\"query_latency_target_met\",",
             "\"corpus_origin\":\"private_local\",",
             "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"query_protocol\":\"resume-ir-query-v1\",",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
             "\"hot_index\":true,",

@@ -1048,6 +1048,7 @@ impl PrivateQueryBenchmarkReport {
                 "\"target_claim\":\"benchmark_baseline_observed\",",
                 "\"corpus_origin\":\"private_local\",",
                 "\"privacy_boundary\":\"redacted_local_aggregate\",",
+                "\"query_protocol\":\"resume-ir-query-v1\",",
                 "\"query_mode\":\"hybrid\",",
                 "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
                 "\"hot_index\":true,",
@@ -4297,6 +4298,14 @@ fn validate_private_real_hot_hybrid_evidence(
         .get("query_mode")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(error)?;
+    let query_protocol = report
+        .get("query_protocol")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            BenchmarkGateError::failed(
+                "private real-corpus benchmark requires query protocol attestation",
+            )
+        })?;
     let retrieval_layers = report
         .get("retrieval_layers")
         .and_then(serde_json::Value::as_str)
@@ -4317,6 +4326,12 @@ fn validate_private_real_hot_hybrid_evidence(
         .get("hot_path_heavy_model_inference")
         .and_then(serde_json::Value::as_bool)
         .ok_or_else(error)?;
+
+    if query_protocol != "resume-ir-query-v1" {
+        return Err(BenchmarkGateError::failed(
+            "private real-corpus benchmark requires query protocol attestation",
+        ));
+    }
 
     if query_mode != "hybrid"
         || retrieval_layers != "fulltext+field+vector+rrf"
@@ -5048,6 +5063,7 @@ fn is_allowed_private_real_report_key(key: &str) -> bool {
             | "million_scale_verified"
             | "percentile_confidence"
             | "target_claim"
+            | "query_protocol"
             | "query_mode"
             | "retrieval_layers"
             | "hot_index"

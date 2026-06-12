@@ -1955,6 +1955,7 @@ fn private_real_benchmark_report() -> String {
         "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\",",
         "\"corpus_origin\":\"private_local\",",
         "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"query_protocol\":\"resume-ir-query-v1\",",
         "\"query_mode\":\"hybrid\",",
         "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
         "\"hot_index\":true,",

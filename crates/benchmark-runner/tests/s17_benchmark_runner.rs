@@ -111,6 +111,7 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
         "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
     ));
     assert!(json.contains("\"target_claim\":\"benchmark_baseline_observed\""));
+    assert!(json.contains("\"query_protocol\":\"resume-ir-query-v1\""));
     assert!(json.contains("\"query_mode\":\"hybrid\""));
     assert!(json.contains("\"retrieval_layers\":\"fulltext+field+vector+rrf\""));
     assert!(json.contains("\"hot_index\":true"));
@@ -402,6 +403,19 @@ fn benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence() {
     assert_eq!(evaluation.document_count(), 100_000);
     assert_eq!(evaluation.query_count(), 500);
     assert_eq!(evaluation.p95_ms(), 150.0);
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_report_without_query_protocol_attestation() {
+    let report = minimal_private_real_benchmark_json(100_000, 500, 150.0, false)
+        .replace(",\"query_protocol\":\"resume-ir-query-v1\"", "");
+    let config = BenchmarkGateConfig::new(100_000, 500, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires query protocol attestation"));
 }
 
 #[test]
@@ -1958,6 +1972,7 @@ fn minimal_private_real_benchmark_json_without_hot_coverage(
     report.push_str(concat!(
         ",\"corpus_origin\":\"private_local\"",
         ",\"privacy_boundary\":\"redacted_local_aggregate\"",
+        ",\"query_protocol\":\"resume-ir-query-v1\"",
         ",\"query_mode\":\"hybrid\"",
         ",\"retrieval_layers\":\"fulltext+field+vector+rrf\"",
         ",\"hot_index\":true",

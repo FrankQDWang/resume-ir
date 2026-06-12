@@ -1286,8 +1286,66 @@ obsolete preliminary files and checklists are not product scope.
 | S337 | WeChat contact field entity support complete locally | Focused RED first failed because `FieldType::WeChat` and `EntityType::WeChat` did not exist, and a search snippet containing `WeChat: Candidate_2026` did not emit `<redacted-wechat>`. After implementation, rule extraction recognizes labeled `wechat`/`weixin`/`wx`/`微信`/`微信号` contact values with spans and normalized lowercase values; import maps them into a first-class `wechat` entity mention; metadata schema migration V20 accepts the new entity type while storing raw and normalized values as `<redacted:wechat>`/`NULL`; CLI/daemon/detail/witness labels and benchmark field-quality taxonomy include `wechat`; full-text snippet/stored-field redaction removes labeled WeChat contacts. | This slice is production complete for WeChat as a privacy-redacted field/entity and benchmark taxonomy member only. It does not add `wechat_hash` to candidate strong dedupe, contact-hash search filters, cross-device account matching, or full private 10k field-quality evidence. Complete product readiness remains not complete. |
 | S338 | Private query benchmark protocol attestation complete locally | Focused RED first failed because `run_private_query_benchmark` accepted a legacy `resume-ir-query-v1` command response containing only `hits=...`, while the emitted private report still claimed `query_mode: hybrid` and `retrieval_layers: fulltext+field+vector+rrf`. After implementation, `resume-cli benchmark-query-protocol` emits `mode=<mode>` plus a layer label, and `benchmark-runner` rejects private query command output unless it explicitly attests `mode=hybrid` and `layers=fulltext+field+vector+rrf` before producing a private real-corpus benchmark report. | This slice is production complete for benchmark query protocol attestation only. It does not run the real private 10k/8000-document baseline, prove P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 | S339 | Private query benchmark top-k protocol attestation complete locally | Focused RED first failed because `run_private_query_benchmark` accepted a hybrid/layer-attested `resume-ir-query-v1` command response that omitted `top_k`, while the emitted private report still claimed the runner-configured `top_k`. After implementation, `resume-cli benchmark-query-protocol` emits `top_k=<n>`, and `benchmark-runner` rejects private query command output unless the attested `top_k` exists exactly once and matches the runner-provided `RESUME_IR_QUERY_TOP_K`; mismatched values fail closed before report generation. | This slice is production complete for private query benchmark budget attestation only. It does not add field rules, hand-tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
+| S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S340
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_without_query_protocol_attestation --locked -- --exact
+```
+
+Output summary:
+
+- Failed as expected because the strict private real-corpus gate accepted a
+  report that contained hot-index hybrid evidence but omitted
+  `query_protocol: "resume-ir-query-v1"`.
+
+Focused verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_rejects_private_real_report_without_query_protocol_attestation --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner private_query_benchmark_outputs_redacted_gateable_report --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers --locked -- --exact
+./scripts/ci/check-runbooks.sh
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo check -p benchmark-runner -p resume-cli --tests --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner -p resume-cli --tests --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The missing-`query_protocol` gate regression test passed after implementation.
+- Generated private query benchmark reports now include
+  `query_protocol: "resume-ir-query-v1"` while preserving the redacted aggregate
+  privacy boundary.
+- Full `s17_benchmark_runner`, full `s17_benchmark_cli`, and full
+  `s161_release_readiness` passed.
+- `check-runbooks.sh` passed with the documented protocol fields.
+- `cargo fmt --check`, affected-package check, and affected-package clippy
+  passed.
+- `git diff --check`, `guard-public-repo.sh`, and full `verify-local.sh`
+  passed, including closed-loop, benchmark, release-readiness, package,
+  signing/notarization evidence, and public repository guards.
+
+Scope note:
+
+- S340 used synthetic/private-shaped benchmark fixtures only; no real query
+  set, real resume data, local private paths, raw query text, generated
+  benchmark report, diagnostics, runtime artifacts, indexes, or model caches
+  were committed or uploaded.
+- This strengthens release evidence for reproducible private query benchmarks;
+  it does not run or optimize the private corpus benchmark itself.
 
 ### S339
 
