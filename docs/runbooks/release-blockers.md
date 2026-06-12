@@ -116,6 +116,10 @@ counts to classify current-stage blockers such as OCR backlog, retryable OCR
 failures, queued index work, or parser/import gaps without reading local paths,
 document IDs, query text, raw resume text, report bodies, indexes, SQLite data,
 or diagnostics.
+The smoke and benchmark-blocked summaries copy those safe counts under
+`corpus_summary_observability`, so a handoff can classify blockers from the
+summary itself. The full release-readiness evidence manifest still records only
+the corpus-summary basename and digest, not the report body.
 
 ```bash
 scripts/local/run-current-stage-validation.sh --dry-run \
@@ -188,8 +192,9 @@ gate fails, execute mode writes `current-stage-blocked-summary.json` with schema
 `resume-ir.current-stage-blocked-summary.v1` and privacy boundary
 `local_only_redacted_blocked_summary`, then exits non-zero before
 `release-readiness`. That file records the blocked step/category/reason, input
-digests, preflight probe statuses, completed step statuses, and basename-only
-output digests. It is not release-readiness evidence and must not be passed to
+digests, preflight probe statuses, completed step statuses,
+`corpus_summary_observability` aggregate counts, and basename-only output
+digests. It is not release-readiness evidence and must not be passed to
 `--current-stage-evidence`; it exists so the next operator can see whether the
 failure was benchmark coverage/query/gate related without exposing local paths,
 private query text, report bodies, indexes, or diagnostics.

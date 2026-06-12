@@ -314,7 +314,7 @@ case "$cmd:$sub" in
     printf 'import task submitted\nstatus: completed\n'
     ;;
   benchmark-corpus-summary:*)
-    printf '{"schema_version":"benchmark-corpus-summary.v1","document_count":8720,"searchable_document_count":8720,"vector_indexed_document_count":8720,"hot_index_fully_covered":true}\n'
+    printf '{"schema_version":"benchmark-corpus-summary.v1","privacy_boundary":"redacted_local_aggregate","document_count":8720,"searchable_document_count":8720,"vector_indexed_document_count":8720,"hot_index_fully_covered":true,"document_status_counts":{"searchable":8720},"ingest_job_status_counts":{"completed":8720},"ingest_job_kind_status_counts":{"update_index":{"completed":8720}},"ingest_job_failure_counts":{},"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"contains_sample_ids":false}\n'
     ;;
   export-diagnostics:*)
     printf '{"schema_version":"diagnostics.v1","redacted":true,"evidence_level":"local_aggregate_only"}\n'
@@ -494,6 +494,9 @@ require_text "$smoke_summary" '"full_baseline_satisfied": false'
 require_text "$smoke_summary" '"release_readiness_evidence": false'
 require_text "$smoke_summary" '"ocr_runtime_probe": "passed"'
 require_text "$smoke_summary" '"embedding_protocol": "passed"'
+require_text "$smoke_summary" '"corpus_summary_observability": {'
+require_text "$smoke_summary" '"document_status_counts": {'
+require_text "$smoke_summary" '"ingest_job_kind_status_counts": {'
 require_text "$smoke_summary" '"private_query_baseline"'
 require_text "$smoke_summary" '"redacted_diagnostics"'
 require_text "$smoke_summary" '"full 10k/8000-document current-stage baseline"'
@@ -535,6 +538,9 @@ require_text "$blocked_summary" '"blocked_category": "benchmark"'
 require_text "$blocked_summary" '"blocked_reason": "baseline_shape_gate_failed"'
 require_text "$blocked_summary" '"ocr_runtime_probe": "passed"'
 require_text "$blocked_summary" '"embedding_protocol": "passed"'
+require_text "$blocked_summary" '"corpus_summary_observability": {'
+require_text "$blocked_summary" '"document_status_counts": {'
+require_text "$blocked_summary" '"ingest_job_kind_status_counts": {'
 require_text "$blocked_summary" '"private-benchmark-local.json"'
 require_text "$blocked_summary" '"private-benchmark-gate.stdout.txt"'
 require_text "$blocked_summary" '"full 10k/8000-document current-stage baseline"'

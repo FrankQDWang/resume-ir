@@ -80,6 +80,68 @@ sha256_file() {
   fi
 }
 
+corpus_summary_observability_json() {
+  path="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for redacted corpus summary observability"
+  python3 - "$path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+if report.get("privacy_boundary") != "redacted_local_aggregate":
+    raise SystemExit("corpus summary privacy boundary failed")
+
+for sentinel in (
+    "contains_raw_resume_text",
+    "contains_resume_paths",
+    "contains_queries",
+    "contains_sample_ids",
+):
+    if report.get(sentinel) is not False:
+        raise SystemExit("corpus summary privacy sentinel failed")
+
+
+def integer_field(name):
+    value = report.get(name)
+    if not isinstance(value, int) or value < 0:
+        raise SystemExit(f"corpus summary field failed: {name}")
+    return value
+
+
+def boolean_field(name):
+    value = report.get(name)
+    if not isinstance(value, bool):
+        raise SystemExit(f"corpus summary field failed: {name}")
+    return value
+
+
+def object_field(name):
+    value = report.get(name, {})
+    if not isinstance(value, dict):
+        raise SystemExit(f"corpus summary field failed: {name}")
+    return value
+
+
+observability = {
+    "privacy_boundary": "redacted_local_aggregate",
+    "document_count": integer_field("document_count"),
+    "searchable_document_count": integer_field("searchable_document_count"),
+    "vector_indexed_document_count": integer_field("vector_indexed_document_count"),
+    "hot_index_fully_covered": boolean_field("hot_index_fully_covered"),
+    "document_status_counts": object_field("document_status_counts"),
+    "ingest_job_status_counts": object_field("ingest_job_status_counts"),
+    "ingest_job_kind_status_counts": object_field("ingest_job_kind_status_counts"),
+    "ingest_job_failure_counts": object_field("ingest_job_failure_counts"),
+}
+
+json.dump(observability, sys.stdout, ensure_ascii=True, sort_keys=True, indent=2)
+sys.stdout.write("\n")
+PY
+}
+
 require_text_in_file() {
   path="$1"
   text="$2"
@@ -727,6 +789,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
   ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
   embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
+  corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
@@ -767,6 +830,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
     "ocr_runtime_probe": "passed",
     "embedding_protocol": "passed"
   },
+  "corpus_summary_observability": $corpus_summary_observability,
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
     {"id": "ocr_manifest_draft", "status": "success"},
@@ -855,6 +919,7 @@ if [ "$validation_profile" = "smoke" ]; then
   ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
   embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
+  corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
@@ -891,6 +956,7 @@ if [ "$validation_profile" = "smoke" ]; then
     "ocr_runtime_probe": "passed",
     "embedding_protocol": "passed"
   },
+  "corpus_summary_observability": $corpus_summary_observability,
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
     {"id": "ocr_manifest_draft", "status": "success"},

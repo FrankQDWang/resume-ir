@@ -270,12 +270,12 @@ production-ready scope source.
   generated private reports, local manifests, runtime binaries, model
   artifacts, indexes, SQLite databases, diagnostics, or model caches were
   committed or uploaded.
-  S318, S319, and S321 used synthetic/private-shaped corpus summary, query-set,
-  benchmark-runner, and ingest-job fixtures only; no real resume data, private
-  query sets, local paths, raw query text, generated private benchmark reports,
-  generated diagnostics, local manifests, runtime binaries, indexes, SQLite
-  databases, signing material, notarization credentials, or model caches were
-  committed or uploaded.
+  S318, S319, S321, and S322 used synthetic/private-shaped corpus summary,
+  query-set, benchmark-runner, current-stage execute, and ingest-job fixtures
+  only; no real resume data, private query sets, local paths, raw query text,
+  generated private benchmark reports, generated diagnostics, local manifests,
+  runtime binaries, indexes, SQLite databases, signing material, notarization
+  credentials, or model caches were committed or uploaded.
   S320 used a private local-only six-file smoke witness against the
   user-authorized local resume directory and temporary local OCR/model runtimes;
   no real resume data, filenames, paths, raw OCR text, raw query text, vectors,
@@ -1214,8 +1214,44 @@ obsolete preliminary files and checklists are not product scope.
 | S319 | Current-stage smoke partial hot-index benchmark policy complete locally | Focused RED first failed because `PrivateQueryCorpusSummary` had no explicit smoke-only API for partial hot-index coverage and `resume-benchmark private-query --allow-partial-hot-index-for-smoke` was rejected as an unknown flag. After implementation, the private-query runner still rejects partial hot-index coverage by default, but the explicit smoke flag accepts redacted aggregate corpus summaries where a nonzero subset of imported documents is searchable and vector-indexed; the generated private benchmark report carries `document_count`, `searchable_document_count`, `vector_indexed_document_count`, and the corpus summary digest without paths or queries. `run-current-stage-validation.sh --validation-profile smoke` passes the flag; full profile does not and still requires the full hot-index coverage floor. | This slice is production complete for bounded current-stage smoke partial-coverage benchmarking only. It does not clear the full local 10k/8000-document hot-index baseline, 500-query private baseline, full OCR/import/parser failure triage, field/vector quality targets, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 | S320 | Current-stage six-file real local smoke witness complete locally | A private local-only smoke witness against the user-authorized local resume root used local Tesseract/Poppler and a temporary real `sentence-transformers/all-MiniLM-L6-v2` Apache-2.0 embedding runtime, with no provided query set. The run used `--validation-profile smoke`, `--max-files 6`, `--max-queries 3`, bounded OCR/embedding worker ticks, smoke keyword query fallback, and smoke partial hot-index allowance. It exited 0: OCR runtime probe passed, embedding protocol passed, the redacted corpus summary reported 6 documents with 1 searchable/vector-indexed document and `hot_index_fully_covered: false`, the generated private query set reported `query fallback: keyword`, the private query benchmark reported 3 queries, 0 zero-result queries, 3 total hits, and `percentile_confidence: smoke`, and a redacted aggregate privacy scan found no local resume root, path, contact marker, query body, or private raw text in the committed-safe aggregate outputs. | This is production complete as a bounded current-stage real local smoke witness only. It proves the smoke chain can tolerate tiny-sample query-field scarcity and partial hot-index coverage, but it does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR/import/parser failure triage, field/vector quality targets, P95/P99 optimization, model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 | S321 | Current-stage corpus summary blocker classification complete locally | Focused RED first failed because `resume-cli benchmark-corpus-summary --json` did not include `document_status_counts`, and `benchmark-runner` rejected the new redacted aggregate status fields as unknown. After implementation, corpus summary emits `document_status_counts`, `ingest_job_status_counts`, `ingest_job_kind_status_counts`, and `ingest_job_failure_counts` as label/count-only aggregates, and private-query corpus summary validation allows exactly those additional fields while preserving the existing privacy-boundary allowlist. The runbook now tells operators to use those counts to classify OCR backlog, retryable OCR failures, queued index work, or parser/import gaps without reading private reports. | This slice is production complete for current-stage blocker observability only. It does not run the full local 10k/8000-document baseline, complete OCR/import/parser triage for the corpus, clear the 500-query private baseline, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
+| S322 | Current-stage summary handoff observability complete locally | Focused RED first failed because `current-stage-smoke-summary.json` lacked `corpus_summary_observability` even when the fake corpus summary included redacted aggregate status fields. After implementation, `run-current-stage-validation.sh` validates the corpus summary privacy boundary and false privacy sentinels, extracts only document/searchable/vector counts, hot-index coverage, document status counts, ingest job status/type-status counts, and ingest job failure counts, then embeds that object into smoke and benchmark-blocked summaries. The guard proves both summaries include the aggregate blocker classification without temp paths or private markers, and the runbook documents the handoff field. | This slice is production complete for current-stage handoff observability only. It does not expose release evidence bodies, run the full local 10k/8000-document baseline, resolve OCR/import/parser blockers, clear the 500-query private baseline, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
 
 ## Command Log
+
+### S322
+
+TDD red check:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Failed before implementation because `current-stage-smoke-summary.json` was
+  missing `"corpus_summary_observability": {` even though the fake corpus
+  summary exposed redacted aggregate status fields.
+
+Implementation checks:
+
+```bash
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-validation.sh
+git diff --check
+```
+
+Output summary:
+
+- `sh -n`: exit 0.
+- `check-current-stage-validation.sh`: exit 0; current-stage validation check
+  passed.
+- `git diff --check`: exit 0.
+
+Scope note:
+
+- S322 copies only redacted aggregate blocker counts into smoke/blocked
+  summaries. It does not include private report bodies and does not make smoke
+  or blocked summaries valid release-readiness evidence.
 
 ### S321
 
