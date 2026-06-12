@@ -518,6 +518,7 @@ pub enum EntityType {
     Name,
     Email,
     Phone,
+    WeChat,
     School,
     SchoolTier,
     Degree,

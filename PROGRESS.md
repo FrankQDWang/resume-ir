@@ -314,6 +314,10 @@ production-ready scope source.
   text, vectors, generated private reports, local manifests, runtime binaries,
   model artifacts, indexes, SQLite databases, diagnostics, or model caches were
   committed or uploaded.
+  S337 used synthetic contact-field fixtures only; no real resume data,
+  filenames, paths, raw resume text, contact values from real resumes,
+  generated diagnostics, indexes, SQLite databases, runtime artifacts, or model
+  caches were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1275,8 +1279,69 @@ obsolete preliminary files and checklists are not product scope.
 | S334 | Current-stage automatic handoff binding complete locally | Focused RED first failed because `check-current-stage-validation.sh` required dry-run plans and execute outputs to include `current-stage-handoff.json`, but `run-current-stage-validation.sh` only wrote smoke/full/blocked summaries and required manual summarization. After implementation, execute mode writes `current-stage-handoff.json` automatically after full evidence, smoke summary, or blocked summary generation; dry-run plans show the handoff step; full current-stage evidence now carries explicit `full_baseline_satisfied: true` and `release_readiness_evidence: true` fields for safe handoff generation; all post-corpus blocked summaries carry `private_corpus_read: true`. The validation guard now checks full, smoke, and major blocked paths for redacted handoff output, and the handoff guard covers the full evidence schema directly. | This slice is production complete for automatic current-stage handoff generation only. It does not run the full local 10k/8000-document baseline, clear 500-query private evidence, optimize P95/P99, approve model/runtime distribution, clear release blockers, prove real installer lifecycle, or make stable release ready. |
 | S335 | Current-stage private smoke witness completed locally | A fresh local-only smoke run used the user-authorized private resume directory with `--validation-profile smoke`, `--max-files 5`, `--max-queries 1`, OCR/embedding worker ticks capped at 2, local Tesseract/Poppler, and the local sentence-transformers adapter. The run completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, import, bounded OCR worker, bounded embedding worker, corpus summary, query-set draft, private-query baseline, smoke gate, redacted diagnostics, smoke summary, and automatic handoff. Redacted aggregate observability reported 5 documents, 1 searchable document, 1 vector-indexed document, 4 OCR-required documents, 3 queued OCR jobs, 1 completed OCR job, 1 retryable OCR page-budget failure, and `hot_index_fully_covered: false`. | This is current-stage smoke evidence only. Full 10k/8000-document baseline, 500-query private baseline, P95/P99 reduction, external 100k/1M validation, stable release readiness, and platform signing/notarization remain not complete or externally blocked. No private evidence files are committed. |
 | S336 | Multi-language OCR runtime manifest support complete locally | Focused RED first failed because `ocr draft-manifest --language eng+chi_sim` rejected repeated `--language-pack` arguments and could not record per-language tessdata checksum/license evidence. After implementation, the CLI keeps the single-language `--language-pack <path>` form, accepts repeated `--language-pack <lang>=<path>` entries for combined Tesseract languages, requires the entries to exactly cover the requested language set, writes one manifest language entry per tessdata file, and keeps stdout/validation output path-redacted. The current-stage validation script now forwards repeated language-pack arguments, dry-run plans show the multi-language syntax, and runbook guards cover the operator guidance. A local runtime preflight for `eng+chi_sim` reported `runtime_status: ready`, `runtime_probe: passed`, and requested language available without reading resumes. | This slice is production complete for multi-language OCR manifest evidence and current-stage command wiring only. It does not improve OCR accuracy, run the full private corpus, clear OCR backlog/page-budget limits, clear the full 10k/8000-document baseline, clear 500-query private evidence, or make release readiness complete. |
+| S337 | WeChat contact field entity support complete locally | Focused RED first failed because `FieldType::WeChat` and `EntityType::WeChat` did not exist, and a search snippet containing `WeChat: Candidate_2026` did not emit `<redacted-wechat>`. After implementation, rule extraction recognizes labeled `wechat`/`weixin`/`wx`/`微信`/`微信号` contact values with spans and normalized lowercase values; import maps them into a first-class `wechat` entity mention; metadata schema migration V20 accepts the new entity type while storing raw and normalized values as `<redacted:wechat>`/`NULL`; CLI/daemon/detail/witness labels and benchmark field-quality taxonomy include `wechat`; full-text snippet/stored-field redaction removes labeled WeChat contacts. | This slice is production complete for WeChat as a privacy-redacted field/entity and benchmark taxonomy member only. It does not add `wechat_hash` to candidate strong dedupe, contact-hash search filters, cross-device account matching, or full private 10k field-quality evidence. Complete product readiness remains not complete. |
 
 ## Command Log
+
+### S337
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --test s7_extractor_rules extracts_wechat_contacts_with_offsets_and_redacted_debug --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite contact_entity_mentions_do_not_persist_contact_values --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --test s8_fulltext snippets_redact_contact_values_near_query_matches --locked -- --exact
+```
+
+Output summary:
+
+- `extractor-rules` failed as expected because `FieldType::WeChat` did not exist.
+- `meta-store` failed as expected because `EntityType::WeChat` did not exist.
+- `index-fulltext` failed as expected because snippets did not contain `<redacted-wechat>`.
+
+Focused verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p extractor-rules --test s7_extractor_rules extracts_wechat_contacts_with_offsets_and_redacted_debug --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite contact_entity_mentions_do_not_persist_contact_values --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --test s8_fulltext snippets_redact_contact_values_near_query_matches --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo check -p import-pipeline -p benchmark-runner -p resume-cli -p resume-daemon --tests --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s16_persisted_fields import_persists_chinese_mobile_mentions_without_output_leaks --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p meta-store --test s3_sqlite --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p index-fulltext --test s8_fulltext --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo clippy -p extractor-rules -p meta-store -p index-fulltext -p import-pipeline -p benchmark-runner -p resume-cli -p resume-daemon --tests --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The focused extractor/meta-store/index-fulltext tests passed after implementation.
+- `cargo check` for import-pipeline, benchmark-runner, resume-cli, and resume-daemon with tests passed.
+- The CLI persisted-field import test passed and verified WeChat values are redacted at rest.
+- `meta-store --test s3_sqlite`: 56 passed.
+- `index-fulltext --test s8_fulltext`: 15 passed.
+- `benchmark-runner`: 113 tests plus doc-tests passed.
+- `resume-cli --test s161_release_readiness`: 22 passed.
+- `cargo fmt --check`: exit 0.
+- `cargo clippy` for affected crates/tests: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- `verify-local.sh`: exit 0; workspace tests, CLI/daemon closed-loop checks,
+  benchmark/OCR/vector smoke gates, release readiness, package/evidence
+  checks, and public repo guard passed.
+
+Scope note:
+
+- S337 used synthetic fixtures only; no real resume data, local private paths,
+  raw resume text, generated diagnostics, indexes, or model caches were
+  committed or uploaded.
+- Candidate-level `wechat_hash` dedupe/search is intentionally not claimed
+  complete in this slice.
 
 ### S336
 

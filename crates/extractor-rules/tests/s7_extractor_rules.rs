@@ -69,6 +69,36 @@ fn extracts_chinese_mobile_numbers_without_country_prefix_or_separators() {
 }
 
 #[test]
+fn extracts_wechat_contacts_with_offsets_and_redacted_debug() {
+    use extractor_rules::{extract_strong_fields, FieldType};
+
+    let text = "微信: Candidate_2026\nWeChat: search.lead-88\nSkills: Rust";
+    let matches = extract_strong_fields(text);
+
+    let wechats = matches
+        .iter()
+        .filter(|field| field.field_type == FieldType::WeChat)
+        .collect::<Vec<_>>();
+    let normalized = wechats
+        .iter()
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+
+    assert_eq!(normalized, vec!["candidate_2026", "search.lead-88"]);
+    assert_eq!(
+        &text[wechats[0].span_start..wechats[0].span_end],
+        "Candidate_2026"
+    );
+    assert_eq!(
+        &text[wechats[1].span_start..wechats[1].span_end],
+        "search.lead-88"
+    );
+    assert!(wechats.iter().all(|field| field.confidence >= 0.96));
+    assert!(!format!("{:?}", wechats[0]).contains("Candidate_2026"));
+    assert!(!format!("{:?}", wechats[1]).contains("search.lead-88"));
+}
+
+#[test]
 fn does_not_emit_low_confidence_field_candidates() {
     use extractor_rules::extract_strong_fields;
 

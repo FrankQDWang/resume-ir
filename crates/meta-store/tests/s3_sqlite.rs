@@ -24,9 +24,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,]
     );
-    assert_eq!(store.schema_version().unwrap(), 19);
+    assert_eq!(store.schema_version().unwrap(), 20);
 
     for table_name in [
         "candidate",
@@ -50,7 +50,7 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 19);
+    assert_eq!(store.schema_version().unwrap(), 20);
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 19);
+        assert_eq!(store.schema_version().unwrap(), 20);
     }
 
     let encrypted_bytes = fs::read(&db_path).unwrap();
@@ -131,7 +131,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         plaintext.run_migrations().unwrap();
         plaintext.upsert_document(&document).unwrap();
         plaintext.upsert_resume_version(&version).unwrap();
-        assert_eq!(plaintext.schema_version().unwrap(), 19);
+        assert_eq!(plaintext.schema_version().unwrap(), 20);
         assert_eq!(
             plaintext.metadata_encryption_state(),
             MetadataEncryptionState::Plaintext
@@ -146,7 +146,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         migrated.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(migrated.schema_version().unwrap(), 19);
+    assert_eq!(migrated.schema_version().unwrap(), 20);
     assert_eq!(
         migrated.document_by_id(&document.id).unwrap().unwrap().id,
         document.id
@@ -1916,6 +1916,15 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
         42..56,
         0.98,
     );
+    let wechat = entity_mention(
+        "private-wechat",
+        &version.id,
+        EntityType::WeChat,
+        "Candidate_2026",
+        Some("candidate_2026"),
+        57..71,
+        0.97,
+    );
     let skill = entity_mention(
         "private-skill",
         &version.id,
@@ -1927,7 +1936,7 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     );
 
     store
-        .replace_entity_mentions(&version.id, &[email, phone, skill.clone()])
+        .replace_entity_mentions(&version.id, &[email, phone, wechat, skill.clone()])
         .unwrap();
 
     let mentions = store.entity_mentions_for_version(&version.id).unwrap();
@@ -1953,6 +1962,17 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     assert_eq!(phone.confidence, 0.98);
     assert_eq!(phone.extractor, "rules-v1");
 
+    let wechat = mentions
+        .iter()
+        .find(|mention| mention.entity_type == EntityType::WeChat)
+        .expect("wechat mention");
+    assert_eq!(wechat.raw_value, "<redacted:wechat>");
+    assert_eq!(wechat.normalized_value, None);
+    assert_eq!(wechat.span_start, Some(57));
+    assert_eq!(wechat.span_end, Some(71));
+    assert_eq!(wechat.confidence, 0.97);
+    assert_eq!(wechat.extractor, "rules-v1");
+
     assert!(mentions.iter().any(|mention| mention == &skill));
     let joined = mentions
         .iter()
@@ -1963,15 +1983,20 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     assert!(!joined.contains("sensitive.candidate@example.test"));
     assert!(!joined.contains("415"));
     assert!(!joined.contains("+14155550132"));
+    assert!(!joined.contains("Candidate_2026"));
+    assert!(!joined.contains("candidate_2026"));
 
     let raw_connection = open_raw_connection(&db_path);
     let raw_dump = raw_entity_mention_value_dump(&raw_connection);
     assert!(raw_dump.contains("<redacted:email>"));
     assert!(raw_dump.contains("<redacted:phone>"));
+    assert!(raw_dump.contains("<redacted:wechat>"));
     assert!(!raw_dump.contains("Sensitive.Candidate"));
     assert!(!raw_dump.contains("sensitive.candidate@example.test"));
     assert!(!raw_dump.contains("415"));
     assert!(!raw_dump.contains("+14155550132"));
+    assert!(!raw_dump.contains("Candidate_2026"));
+    assert!(!raw_dump.contains("candidate_2026"));
 
     remove_temp_db(&db_path);
 }
@@ -2071,7 +2096,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7, 15]);
-        assert_eq!(reopened.schema_version().unwrap(), 19);
+        assert_eq!(reopened.schema_version().unwrap(), 20);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -2475,7 +2500,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 19);
+        assert_eq!(reopened.schema_version().unwrap(), 20);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -3005,7 +3030,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             report.applied_versions(),
             &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 19);
+        assert_eq!(reopened.schema_version().unwrap(), 20);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -3037,7 +3062,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 19);
+        assert_eq!(reopened.schema_version().unwrap(), 20);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

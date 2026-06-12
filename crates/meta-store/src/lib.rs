@@ -39,6 +39,7 @@ const SCHEMA_VERSION_V16: u32 = 16;
 const SCHEMA_VERSION_V17: u32 = 17;
 const SCHEMA_VERSION_V18: u32 = 18;
 const SCHEMA_VERSION_V19: u32 = 19;
+const SCHEMA_VERSION_V20: u32 = 20;
 const QUERY_OBSERVATION_RETENTION_ROWS: i64 = 10_000;
 const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
@@ -779,6 +780,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V17, SCHEMA_V17),
             (SCHEMA_VERSION_V18, SCHEMA_V18),
             (SCHEMA_VERSION_V19, SCHEMA_V19),
+            (SCHEMA_VERSION_V20, SCHEMA_V20),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -5307,6 +5309,67 @@ CREATE INDEX entity_mention_type_value_idx
     ON entity_mention(entity_type, normalized_value, confidence);
 "#;
 
+const SCHEMA_V20: &str = r#"
+ALTER TABLE entity_mention RENAME TO entity_mention_v19;
+
+CREATE TABLE entity_mention (
+    id TEXT PRIMARY KEY,
+    resume_version_id TEXT NOT NULL,
+    section_id TEXT,
+    entity_type TEXT NOT NULL CHECK (
+        entity_type IN (
+            'name',
+            'email',
+            'phone',
+            'wechat',
+            'school',
+            'school_tier',
+            'degree',
+            'major',
+            'company',
+            'title',
+            'education',
+            'skills',
+            'skill',
+            'certificate',
+            'date',
+            'date_range',
+            'years_experience',
+            'location'
+        )
+        OR entity_type LIKE 'other:%'
+    ),
+    raw_value TEXT NOT NULL,
+    normalized_value TEXT,
+    span_start INTEGER CHECK (span_start IS NULL OR span_start >= 0),
+    span_end INTEGER CHECK (span_end IS NULL OR span_end >= 0),
+    confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    extractor TEXT NOT NULL,
+    CHECK (
+        span_start IS NULL
+        OR span_end IS NULL
+        OR span_start <= span_end
+    ),
+    FOREIGN KEY (resume_version_id) REFERENCES resume_version(id) ON DELETE CASCADE
+);
+
+INSERT INTO entity_mention (
+    id, resume_version_id, section_id, entity_type, raw_value,
+    normalized_value, span_start, span_end, confidence, extractor
+)
+SELECT
+    id, resume_version_id, section_id, entity_type, raw_value,
+    normalized_value, span_start, span_end, confidence, extractor
+FROM entity_mention_v19;
+
+DROP TABLE entity_mention_v19;
+
+CREATE INDEX entity_mention_version_idx
+    ON entity_mention(resume_version_id, entity_type);
+CREATE INDEX entity_mention_type_value_idx
+    ON entity_mention(entity_type, normalized_value, confidence);
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -6422,13 +6485,14 @@ fn entity_mention_raw_value_for_storage(mention: &EntityMention) -> &str {
     match mention.entity_type {
         EntityType::Email => "<redacted:email>",
         EntityType::Phone => "<redacted:phone>",
+        EntityType::WeChat => "<redacted:wechat>",
         _ => mention.raw_value.as_str(),
     }
 }
 
 fn entity_mention_normalized_value_for_storage(mention: &EntityMention) -> Option<&str> {
     match mention.entity_type {
-        EntityType::Email | EntityType::Phone => None,
+        EntityType::Email | EntityType::Phone | EntityType::WeChat => None,
         _ => mention.normalized_value.as_deref(),
     }
 }
@@ -6601,6 +6665,7 @@ fn entity_type_to_storage(entity_type: &EntityType) -> String {
         EntityType::Name => "name".to_string(),
         EntityType::Email => "email".to_string(),
         EntityType::Phone => "phone".to_string(),
+        EntityType::WeChat => "wechat".to_string(),
         EntityType::School => "school".to_string(),
         EntityType::SchoolTier => "school_tier".to_string(),
         EntityType::Degree => "degree".to_string(),
@@ -6624,6 +6689,7 @@ fn entity_type_from_storage(value: &str) -> Result<EntityType> {
         "name" => Ok(EntityType::Name),
         "email" => Ok(EntityType::Email),
         "phone" => Ok(EntityType::Phone),
+        "wechat" => Ok(EntityType::WeChat),
         "school" => Ok(EntityType::School),
         "school_tier" => Ok(EntityType::SchoolTier),
         "degree" => Ok(EntityType::Degree),

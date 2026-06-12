@@ -2438,6 +2438,7 @@ Synthetic Mobile Candidate
 Email: mobile-candidate@example.test
 手机: 13800138000
 备用电话: 139 0013 8001
+微信: Candidate_2026
 Skills: Java
 ",
     )
@@ -2465,6 +2466,7 @@ Skills: Java
     assert!(!stdout.contains(path_str(&resume_root)));
     assert!(!stdout.contains("13800138000"));
     assert!(!stdout.contains("139 0013 8001"));
+    assert!(!stdout.contains("Candidate_2026"));
     assert!(!stdout.contains("mobile-candidate@example.test"));
 
     let store = MetaStore::open_data_dir(&data_dir).unwrap();
@@ -2481,22 +2483,31 @@ Skills: Java
         .into_iter()
         .next()
         .unwrap();
-    let phones = store
-        .entity_mentions_for_version(&version.id)
-        .unwrap()
-        .into_iter()
+    let mentions = store.entity_mentions_for_version(&version.id).unwrap();
+    let phones = mentions
+        .iter()
         .filter(|mention| mention.entity_type == EntityType::Phone)
         .collect::<Vec<_>>();
 
     assert_eq!(phones.len(), 2);
     for phone in phones {
-        assert_eq!(phone.raw_value, "<redacted:phone>");
-        assert_eq!(phone.normalized_value, None);
+        assert_eq!(phone.raw_value.as_str(), "<redacted:phone>");
+        assert_eq!(phone.normalized_value.as_deref(), None);
         assert!(phone.span_start.is_some());
         assert!(phone.span_end.is_some());
         assert!(!format!("{phone:?}").contains("13800138000"));
         assert!(!format!("{phone:?}").contains("139 0013 8001"));
     }
+    let wechat = mentions
+        .iter()
+        .find(|mention| mention.entity_type == EntityType::WeChat)
+        .expect("wechat mention");
+    assert_eq!(wechat.raw_value, "<redacted:wechat>");
+    assert_eq!(wechat.normalized_value.as_deref(), None);
+    assert!(wechat.span_start.is_some());
+    assert!(wechat.span_end.is_some());
+    assert!(!format!("{wechat:?}").contains("Candidate_2026"));
+    assert!(!format!("{wechat:?}").contains("candidate_2026"));
 
     remove_dir(&data_dir);
     remove_dir(&resume_root);

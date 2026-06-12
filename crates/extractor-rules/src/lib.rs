@@ -13,6 +13,7 @@ pub enum FieldType {
     Name,
     Email,
     Phone,
+    WeChat,
     DateRange,
     School,
     SchoolTier,
@@ -58,6 +59,7 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     extract_names(text, &mut matches);
     extract_emails(text, &mut matches);
     extract_phones(text, &mut matches);
+    extract_wechats(text, &mut matches);
     extract_numeric_date_ranges(text, &mut matches);
     extract_numeric_present_date_ranges(text, &mut matches);
     extract_chinese_year_month_date_ranges(text, &mut matches);
@@ -256,9 +258,13 @@ fn looks_like_contact_line(value: &str) -> bool {
         || lower.starts_with("phone")
         || lower.starts_with("mobile")
         || lower.starts_with("tel")
+        || lower.starts_with("wechat")
+        || lower.starts_with("weixin")
+        || lower.starts_with("wx")
         || lower.starts_with("邮箱")
         || lower.starts_with("电话")
         || lower.starts_with("手机")
+        || lower.starts_with("微信")
 }
 
 fn extract_emails(text: &str, matches: &mut Vec<RuleMatch>) {
@@ -376,6 +382,37 @@ fn normalize_international_phone(digits: &str) -> Option<String> {
         Some(format!("+{digits}"))
     } else {
         None
+    }
+}
+
+fn extract_wechats(text: &str, matches: &mut Vec<RuleMatch>) {
+    let regex = Regex::new(
+        r"(?ix)
+        ^\s*
+        (?:wechat|weixin|wx|微信|微信号)
+        \s*[:：]\s*
+        (?P<wechat>[A-Za-z][A-Za-z0-9_.-]{5,31})
+        \s*$
+        ",
+    )
+    .unwrap();
+
+    for (line_start, line) in indexed_lines(text) {
+        let Some(captures) = regex.captures(line) else {
+            continue;
+        };
+        let Some(found) = captures.name("wechat") else {
+            continue;
+        };
+        let raw = found.as_str();
+        matches.push(RuleMatch {
+            field_type: FieldType::WeChat,
+            raw_value: raw.to_string(),
+            normalized_value: Some(raw.to_ascii_lowercase()),
+            span_start: line_start + found.start(),
+            span_end: line_start + found.end(),
+            confidence: 0.97,
+        });
     }
 }
 

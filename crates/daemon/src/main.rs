@@ -4952,6 +4952,7 @@ fn entity_type_label(entity_type: &EntityType) -> String {
         EntityType::Name => "name".to_string(),
         EntityType::Email => "email".to_string(),
         EntityType::Phone => "phone".to_string(),
+        EntityType::WeChat => "wechat".to_string(),
         EntityType::School => "school".to_string(),
         EntityType::SchoolTier => "school_tier".to_string(),
         EntityType::Degree => "degree".to_string(),

@@ -218,9 +218,8 @@ fn snippets_redact_contact_values_near_query_matches() {
             doc_id: "doc_contact".to_string(),
             version_id: "ver_contact".to_string(),
             file_name: "synthetic-contact.pdf".to_string(),
-            clean_text:
-                "Built Java. Phone: +14155550132 Alt: 4155550132 Email: Shared.Candidate@Example.Test"
-                    .to_string(),
+            clean_text: "Java WeChat: Candidate_2026 Email: a@b.test Phone: +14155550132"
+                .to_string(),
             sections: vec![IndexSection {
                 section_type: "experience".to_string(),
                 text: "Built Java ranking services".to_string(),
@@ -239,7 +238,9 @@ fn snippets_redact_contact_values_near_query_matches() {
     assert!(hits[0].snippet.contains("Java"));
     assert!(hits[0].snippet.contains("<redacted-email>"));
     assert!(hits[0].snippet.contains("<redacted-phone>"));
-    assert!(!hits[0].snippet.contains("Shared.Candidate"));
+    assert!(hits[0].snippet.contains("<redacted-wechat>"));
+    assert!(!hits[0].snippet.contains("a@b.test"));
+    assert!(!hits[0].snippet.contains("Candidate_2026"));
     assert!(!hits[0].snippet.contains("415"));
     remove_dir(&index_dir);
 }

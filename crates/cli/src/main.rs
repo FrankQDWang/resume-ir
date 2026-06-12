@@ -101,6 +101,7 @@ const WITNESS_FIELD_LABELS: &[&str] = &[
     "name",
     "email",
     "phone",
+    "wechat",
     "school",
     "major",
     "degree",
@@ -7616,6 +7617,7 @@ fn witness_field_label(entity_type: &EntityType) -> Option<&'static str> {
         EntityType::Name => Some("name"),
         EntityType::Email => Some("email"),
         EntityType::Phone => Some("phone"),
+        EntityType::WeChat => Some("wechat"),
         EntityType::School => Some("school"),
         EntityType::SchoolTier => Some("school_tier"),
         EntityType::Degree => Some("degree"),
@@ -10099,6 +10101,7 @@ fn is_valid_detail_field_type_label(value: &str) -> bool {
         "name"
             | "email"
             | "phone"
+            | "wechat"
             | "school"
             | "degree"
             | "major"
@@ -13909,6 +13912,7 @@ fn entity_type_label(entity_type: &EntityType) -> String {
         EntityType::Name => "name".to_string(),
         EntityType::Email => "email".to_string(),
         EntityType::Phone => "phone".to_string(),
+        EntityType::WeChat => "wechat".to_string(),
         EntityType::School => "school".to_string(),
         EntityType::SchoolTier => "school_tier".to_string(),
         EntityType::Degree => "degree".to_string(),

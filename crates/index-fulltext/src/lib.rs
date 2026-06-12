@@ -1742,6 +1742,7 @@ pub fn redact_contact_values(text: &str) -> String {
     static EMAIL_REGEX: OnceLock<Regex> = OnceLock::new();
     static PHONE_REGEX: OnceLock<Regex> = OnceLock::new();
     static COMPACT_PHONE_REGEX: OnceLock<Regex> = OnceLock::new();
+    static WECHAT_REGEX: OnceLock<Regex> = OnceLock::new();
     static LOCAL_PATH_REGEX: OnceLock<Regex> = OnceLock::new();
 
     let email_redacted = EMAIL_REGEX
@@ -1766,6 +1767,14 @@ pub fn redact_contact_values(text: &str) -> String {
     let compact_phone_redacted = COMPACT_PHONE_REGEX
         .get_or_init(|| Regex::new(r"\+?(?:1)?\d{10}\b").unwrap())
         .replace_all(&phone_redacted, "<redacted-phone>");
+    let wechat_redacted = WECHAT_REGEX
+        .get_or_init(|| {
+            Regex::new(
+                r"(?ix)\b(?:wechat|weixin|wx|微信|微信号)\s*[:：]\s*[A-Za-z][A-Za-z0-9_.-]{5,31}\b",
+            )
+            .unwrap()
+        })
+        .replace_all(&compact_phone_redacted, "<redacted-wechat>");
     LOCAL_PATH_REGEX
         .get_or_init(|| {
             Regex::new(
@@ -1783,7 +1792,7 @@ pub fn redact_contact_values(text: &str) -> String {
             )
             .unwrap()
         })
-        .replace_all(&compact_phone_redacted, "<redacted-path>")
+        .replace_all(&wechat_redacted, "<redacted-path>")
         .into_owned()
 }
 

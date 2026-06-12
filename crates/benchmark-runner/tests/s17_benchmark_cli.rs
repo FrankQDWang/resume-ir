@@ -976,6 +976,8 @@ fn resume_benchmark_private_business_field_quality_outputs_redacted_gateable_rep
     assert!(!stdout.contains("REDACTION_SENTINEL_FIELD_VALUE"));
     assert!(!stdout.contains("Synthetic Field Candidate"));
     assert!(!stdout.contains("field-candidate@example.test"));
+    assert!(!stdout.contains("Candidate_2026"));
+    assert!(!stdout.contains("candidate_2026"));
     assert!(!stdout.contains("Synthetic Commerce"));
     fs::write(&report_path, &output.stdout).unwrap();
 
@@ -2655,6 +2657,7 @@ fn private_business_field_quality_dataset() -> String {
         "Summary: REDACTION_SENTINEL_FIELD_VALUE\\n",
         "Email: field-candidate@example.test\\n",
         "Phone: +1 (415) 555-0132\\n",
+        "WeChat: Candidate_2026\\n",
         "Education\\n",
         "School: Synthetic 985 University (985/211/双一流)\\n",
         "Degree: Bachelor of Engineering\\n",
@@ -2671,6 +2674,7 @@ fn private_business_field_quality_dataset() -> String {
         "{\"type\":\"name\",\"normalized\":\"synthetic field candidate\"},",
         "{\"type\":\"email\",\"normalized\":\"field-candidate@example.test\"},",
         "{\"type\":\"phone\",\"normalized\":\"+14155550132\"},",
+        "{\"type\":\"wechat\",\"normalized\":\"candidate_2026\"},",
         "{\"type\":\"school\",\"normalized\":\"synthetic 985 university (985/211/双一流)\"},",
         "{\"type\":\"school_tier\",\"normalized\":\"985\"},",
         "{\"type\":\"school_tier\",\"normalized\":\"211\"},",
@@ -2933,6 +2937,7 @@ fn minimal_private_business_field_quality_json() -> String {
         "\"name\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"email\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"phone\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"wechat\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"school\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"school_tier\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"degree\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
