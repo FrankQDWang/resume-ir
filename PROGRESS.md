@@ -281,6 +281,12 @@ production-ready scope source.
   benchmark reports, diagnostics, local manifests, runtime binaries, indexes,
   SQLite databases, signing material, or notarization credentials were
   committed or uploaded.
+  S331 used a private local-only twelve-file smoke witness against the
+  user-authorized local resume directory with local Tesseract/Poppler and a
+  local sentence-transformers model cache; no real resume data, filenames,
+  paths, raw OCR text, raw query text, vectors, generated private reports,
+  local manifests, runtime binaries, model artifacts, indexes, SQLite
+  databases, diagnostics, or model caches were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1236,8 +1242,98 @@ obsolete preliminary files and checklists are not product scope.
 | S328 | Current-stage import/parser blocker summary complete locally | Focused RED first failed because full-profile current-stage execute with a failing private corpus import exited before writing `current-stage-blocked-summary.json`. After implementation, dataset manifest and import failures after runtime preflight write the redacted blocked summary with `blocked_step: "dataset_manifest"` or `"import_private_corpus"`, `blocked_category: "import/parser"`, `private_corpus_read: true`, runtime/dataset/import output digests, and explicit not-completed worker/query/benchmark/diagnostics/release-readiness steps. The guard proves OCR worker and query-set generation do not run after import failure and rejects temp paths/private markers/query text. | This slice is production complete for current-stage import/parser failure classification only. It does not make the real 10k corpus import succeed, resolve parser/OCR backlogs, clear query-set/private-query/release-readiness evidence, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
 | S329 | Windows status IPC CI reliability complete locally | Remote Windows CI first failed in `resume-cli --test s20_status_ipc status_can_read_redacted_daemon_status_over_loopback_ipc` because the fake daemon accepted a nonblocking socket and immediately called `read`, which can return `WouldBlock` on Windows. After implementation, that test reuses the existing `accept_with_timeout` and `read_http_request` helpers so the accepted stream is switched back to blocking mode before request parsing, matching the rest of the IPC test file. Focused and full `s20_status_ipc` tests, fmt, diff check, and public repo guard passed locally. | This slice is a CI/test reliability fix only. It does not change product IPC behavior, clear release blockers, run the real 10k validation, improve P95/P99, prove 100k/1M validation, or make stable release ready. |
 | S330 | Local sentence-transformers embedding runtime adapter complete locally | Focused RED first failed because `scripts/ci/check-local-embedding-runtime.sh` could not find a repository adapter that speaks `resume-ir-embedding-v1`. After implementation, `scripts/local/embedding-runtime-sentence-transformers.py` reads the private embedding input file, validates the configured model id/dimension, defaults to local-files-only sentence-transformers loading, emits protocol vectors without raw text/path leakage, and has a CI stub guard wired into `verify-local.sh`. The runbook now documents offline default behavior, the explicit `RESUME_IR_SENTENCE_TRANSFORMERS_ALLOW_DOWNLOAD=1` cache-preparation escape hatch, `sentence-transformers/all-MiniLM-L6-v2` current-stage smoke usage, and the local model manifest boundary. | This slice is production complete for the reusable external-command adapter and guard only. It does not commit or bundle model weights, prove vector quality, approve final model legal/distribution status, run the real 10k baseline, clear embedding release blockers, improve P95/P99, prove 100k/1M validation, or make stable release ready. |
+| S331 | Current-stage twelve-file real local smoke witness complete locally | A private local-only smoke witness against the user-authorized local resume root used local Tesseract/Poppler and the committed sentence-transformers adapter backed by a local `sentence-transformers/all-MiniLM-L6-v2` Apache-2.0 model cache. The run used `--validation-profile smoke`, `--max-files 12`, `--max-queries 5`, bounded OCR/embedding worker ticks, smoke keyword query fallback, and smoke partial hot-index allowance. It exited 0: OCR runtime probe passed, embedding protocol passed, the redacted corpus summary reported 12 documents with 1 searchable/vector-indexed document and `hot_index_fully_covered: false`, the generated private query set reported keyword fallback, the private query benchmark reported 5 queries, 0 zero-result queries, 5 total hits, and `percentile_confidence: smoke`, and a redacted aggregate privacy scan found no local resume root, local cache path, contact marker, query body, or private raw text in committed-safe aggregate outputs. | This is production complete as a bounded current-stage real local smoke witness only. It proves the local OCR/model preflight plus import/OCR/embedding/query/benchmark/diagnostics chain remains usable with the reusable adapter, but it does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR/import/parser failure triage, field/vector quality targets, P95/P99 optimization, final model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 
 ## Command Log
+
+### S331
+
+Local runtime preparation:
+
+```bash
+uv venv <local-private-runtime-venv>
+uv pip install --python <local-private-runtime-venv>/bin/python sentence-transformers
+RESUME_IR_SENTENCE_TRANSFORMERS_ALLOW_DOWNLOAD=1 \
+  RESUME_IR_SENTENCE_TRANSFORMERS_MODEL=sentence-transformers/all-MiniLM-L6-v2 \
+  RESUME_IR_SENTENCE_TRANSFORMERS_CACHE=<local-private-model-cache> \
+  <local-private-runtime-venv>/bin/python scripts/local/embedding-runtime-sentence-transformers.py
+```
+
+Output summary:
+
+- Installed sentence-transformers and dependencies into a local private cache
+  outside the repository.
+- Downloaded and cached `sentence-transformers/all-MiniLM-L6-v2` locally.
+- Synthetic adapter probe emitted `resume-ir-embedding-v1`, model id
+  `sentence-transformers/all-MiniLM-L6-v2`, dimension `384`, and one synthetic
+  vector.
+
+Runtime preflight checks:
+
+```bash
+resume-cli model draft-manifest --model-id sentence-transformers/all-MiniLM-L6-v2 --dimension 384 --format safetensors --license Apache-2.0 --reviewed
+resume-cli model validate-manifest --manifest <local-model-manifest>
+resume-cli model preflight --json --manifest <local-model-manifest> --embedding-command <local-wrapper> --model-id sentence-transformers/all-MiniLM-L6-v2 --dimension 384
+resume-cli ocr preflight --json --ocr-lang eng --tesseract-command <local-tesseract> --pdftoppm-command <local-pdftoppm>
+resume-cli ocr draft-manifest --runtime-pack-id homebrew-tesseract-poppler-eng-local --engine-license Apache-2.0 --renderer-license GPL-2.0-or-later --language-license Apache-2.0 --reviewed
+resume-cli ocr validate-manifest --manifest <local-ocr-runtime-manifest>
+```
+
+Output summary:
+
+- Embedding preflight reported `runtime_status=ready`,
+  `embedding_protocol=passed`, `paths=<redacted>`, and `dimension=384`.
+- OCR preflight reported `runtime_status=ready`, `runtime_probe=passed`, and
+  `paths=<redacted>`.
+
+Private local smoke witness:
+
+```bash
+scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile smoke \
+  --resume-cli target/debug/resume-cli \
+  --resume-daemon target/debug/resume-daemon \
+  --resume-benchmark target/debug/resume-benchmark \
+  --resume-root <user-authorized-local-resume-root> \
+  --data-dir <local-private-data-dir> \
+  --out-dir <local-private-evidence-dir> \
+  --model-artifact <local-private-all-MiniLM-L6-v2-safetensors> \
+  --embedding-command <local-private-sentence-transformers-wrapper> \
+  --tesseract-command <local-tesseract> \
+  --pdftoppm-command <local-pdftoppm> \
+  --language-pack <local-tessdata-eng> \
+  --reviewed-model --reviewed-ocr-runtime \
+  --max-files 12 --max-queries 5 --top-k 5 \
+  --ocr-worker-ticks 4 --embedding-worker-ticks 4 \
+  --ocr-max-pages-per-document 1
+```
+
+Output summary:
+
+- The command exited 0 and wrote only local temporary evidence files. No real
+  resumes, query sets, indexes, diagnostics, model caches, or local evidence
+  files were staged or uploaded.
+- Redacted aggregate outputs reported OCR runtime probe `passed` and embedding
+  protocol `passed`.
+- Corpus summary: 12 documents, 1 searchable document, 1 vector-indexed
+  document, `hot_index_fully_covered: false`, document statuses
+  `{"ocr_required": 11, "searchable": 1}`, and ingest failure counts
+  `{"ocr_page_budget_exceeded": 1}`.
+- Query-set stdout used explicit smoke keyword fallback.
+- Private benchmark aggregate: 5 queries, 0 zero-result queries, 5 total hits,
+  `percentile_confidence: smoke`, and `privacy_boundary:
+  redacted_local_aggregate`.
+- A redacted aggregate privacy scan over the smoke summary, corpus summary,
+  private benchmark report, benchmark gate stdout, query-set stdout, redacted
+  diagnostics, OCR preflight, and model preflight found no local resume root,
+  local runtime/cache path, contact marker, query body, or private raw text.
+
+Scope note:
+
+- S331 is local smoke evidence only. It keeps P95/P99, full 10k baseline,
+  500-query private benchmark, complete OCR backlog triage, model
+  distribution/legal signoff, 100k/1M validation, platform release, signing,
+  and notarization outside the completed scope.
 
 ### S330
 
