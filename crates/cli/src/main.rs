@@ -8761,6 +8761,7 @@ fn benchmark_query_protocol_command(data_dir: &Path, args: &[String]) -> Result<
     println!("resume-ir-query-v1");
     println!("mode={}", search_args.mode.label());
     println!("layers={}", search_args.mode.benchmark_layers_label());
+    println!("top_k={}", search_args.top_k);
     println!("hits={}", hits.len());
     Ok(())
 }

@@ -177,6 +177,88 @@ fn private_query_benchmark_rejects_missing_hybrid_protocol_attestation() {
 }
 
 #[test]
+fn private_query_benchmark_rejects_missing_top_k_protocol_attestation() {
+    let query_set = private_query_set_file("private-query-missing-top-k-set", 1);
+    let command = query_fixture_script_with_body(
+        "private-query-missing-top-k-command",
+        missing_top_k_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(1)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private_query_top_k_attestation"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_mismatched_top_k_protocol_attestation() {
+    let query_set = private_query_set_file("private-query-mismatched-top-k-set", 1);
+    let command = query_fixture_script_with_body(
+        "private-query-mismatched-top-k-command",
+        mismatched_top_k_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(1)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private_query_top_k_attestation"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
 fn private_query_corpus_summary_rejects_partial_hot_index_coverage() {
     let error = PrivateQueryCorpusSummary::from_redacted_json_bytes(
         private_query_corpus_summary_json(8_720, false),
@@ -2374,9 +2456,33 @@ fn query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
         "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "else\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "fi\n",
+    )
+}
+
+#[cfg(unix)]
+fn missing_top_k_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
         "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
         "else\n",
         "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\nhits=0\\n'\n",
+        "fi\n",
+    )
+}
+
+#[cfg(unix)]
+fn mismatched_top_k_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=5\\nhits=5\\n'\n",
+        "else\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=5\\nhits=0\\n'\n",
         "fi\n",
     )
 }
@@ -2447,12 +2553,56 @@ fn query_fixture_script_body() -> &'static str {
         "  echo resume-ir-query-v1\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo hits=0\r\n",
+        ") else (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn missing_top_k_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
+        "if errorlevel 1 (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo hits=0\r\n",
         ") else (\r\n",
         "  echo resume-ir-query-v1\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn mismatched_top_k_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
+        "if errorlevel 1 (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=5\r\n",
+        "  echo hits=0\r\n",
+        ") else (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=5\r\n",
+        "  echo hits=5\r\n",
         ")\r\n",
         "exit /b 0\r\n",
     )

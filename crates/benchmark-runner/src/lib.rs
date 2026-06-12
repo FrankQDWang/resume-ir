@@ -5431,6 +5431,7 @@ fn parse_private_query_command_stdout(stdout: &[u8], top_k: usize) -> Result<usi
     let mut saw_header = false;
     let mut saw_hybrid_mode = false;
     let mut saw_hybrid_layers = false;
+    let mut attested_top_k = None;
     let mut hits = None;
     for line in stdout
         .lines()
@@ -5464,6 +5465,23 @@ fn parse_private_query_command_stdout(stdout: &[u8], top_k: usize) -> Result<usi
             saw_hybrid_layers = true;
             continue;
         }
+        if let Some(value) = line.strip_prefix("top_k=") {
+            if attested_top_k.is_some() {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_top_k_attestation",
+                ));
+            }
+            let parsed = value
+                .parse::<usize>()
+                .map_err(|_| BenchmarkError::invalid_config("private_query_top_k_attestation"))?;
+            if parsed != top_k {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_top_k_attestation",
+                ));
+            }
+            attested_top_k = Some(parsed);
+            continue;
+        }
         if let Some(value) = line.strip_prefix("hits=") {
             if hits.is_some() {
                 return Err(BenchmarkError::invalid_config(
@@ -5491,6 +5509,11 @@ fn parse_private_query_command_stdout(stdout: &[u8], top_k: usize) -> Result<usi
     if !saw_hybrid_mode || !saw_hybrid_layers {
         return Err(BenchmarkError::invalid_config(
             "private_query_protocol_attestation",
+        ));
+    }
+    if attested_top_k != Some(top_k) {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_top_k_attestation",
         ));
     }
     hits.ok_or_else(|| BenchmarkError::invalid_config("private_query_hits"))

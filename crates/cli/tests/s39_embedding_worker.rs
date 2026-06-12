@@ -890,7 +890,7 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
     let stdout = String::from_utf8_lossy(&protocol.stdout);
     assert_eq!(
         stdout,
-        "resume-ir-query-v1\nmode=hybrid\nlayers=fulltext+field+vector+rrf\nhits=2\n"
+        "resume-ir-query-v1\nmode=hybrid\nlayers=fulltext+field+vector+rrf\ntop_k=20\nhits=2\n"
     );
     assert!(!stdout.contains("SemanticOnlyToken"));
     assert!(!stdout.contains("synthetic-java-platform.pdf"));

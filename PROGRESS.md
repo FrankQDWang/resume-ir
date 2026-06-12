@@ -1285,8 +1285,69 @@ obsolete preliminary files and checklists are not product scope.
 | S336 | Multi-language OCR runtime manifest support complete locally | Focused RED first failed because `ocr draft-manifest --language eng+chi_sim` rejected repeated `--language-pack` arguments and could not record per-language tessdata checksum/license evidence. After implementation, the CLI keeps the single-language `--language-pack <path>` form, accepts repeated `--language-pack <lang>=<path>` entries for combined Tesseract languages, requires the entries to exactly cover the requested language set, writes one manifest language entry per tessdata file, and keeps stdout/validation output path-redacted. The current-stage validation script now forwards repeated language-pack arguments, dry-run plans show the multi-language syntax, and runbook guards cover the operator guidance. A local runtime preflight for `eng+chi_sim` reported `runtime_status: ready`, `runtime_probe: passed`, and requested language available without reading resumes. | This slice is production complete for multi-language OCR manifest evidence and current-stage command wiring only. It does not improve OCR accuracy, run the full private corpus, clear OCR backlog/page-budget limits, clear the full 10k/8000-document baseline, clear 500-query private evidence, or make release readiness complete. |
 | S337 | WeChat contact field entity support complete locally | Focused RED first failed because `FieldType::WeChat` and `EntityType::WeChat` did not exist, and a search snippet containing `WeChat: Candidate_2026` did not emit `<redacted-wechat>`. After implementation, rule extraction recognizes labeled `wechat`/`weixin`/`wx`/`微信`/`微信号` contact values with spans and normalized lowercase values; import maps them into a first-class `wechat` entity mention; metadata schema migration V20 accepts the new entity type while storing raw and normalized values as `<redacted:wechat>`/`NULL`; CLI/daemon/detail/witness labels and benchmark field-quality taxonomy include `wechat`; full-text snippet/stored-field redaction removes labeled WeChat contacts. | This slice is production complete for WeChat as a privacy-redacted field/entity and benchmark taxonomy member only. It does not add `wechat_hash` to candidate strong dedupe, contact-hash search filters, cross-device account matching, or full private 10k field-quality evidence. Complete product readiness remains not complete. |
 | S338 | Private query benchmark protocol attestation complete locally | Focused RED first failed because `run_private_query_benchmark` accepted a legacy `resume-ir-query-v1` command response containing only `hits=...`, while the emitted private report still claimed `query_mode: hybrid` and `retrieval_layers: fulltext+field+vector+rrf`. After implementation, `resume-cli benchmark-query-protocol` emits `mode=<mode>` plus a layer label, and `benchmark-runner` rejects private query command output unless it explicitly attests `mode=hybrid` and `layers=fulltext+field+vector+rrf` before producing a private real-corpus benchmark report. | This slice is production complete for benchmark query protocol attestation only. It does not run the real private 10k/8000-document baseline, prove P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
+| S339 | Private query benchmark top-k protocol attestation complete locally | Focused RED first failed because `run_private_query_benchmark` accepted a hybrid/layer-attested `resume-ir-query-v1` command response that omitted `top_k`, while the emitted private report still claimed the runner-configured `top_k`. After implementation, `resume-cli benchmark-query-protocol` emits `top_k=<n>`, and `benchmark-runner` rejects private query command output unless the attested `top_k` exists exactly once and matches the runner-provided `RESUME_IR_QUERY_TOP_K`; mismatched values fail closed before report generation. | This slice is production complete for private query benchmark budget attestation only. It does not add field rules, hand-tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S339
+
+TDD red check:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner private_query_benchmark_rejects_missing_top_k_protocol_attestation --locked -- --exact
+```
+
+Output summary:
+
+- Failed as expected because the hybrid/layer-attested query protocol response
+  omitted `top_k` and was still accepted, producing a
+  `PrivateQueryBenchmarkReport`.
+
+Focused verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner private_query_benchmark_rejects_missing_top_k_protocol_attestation --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner private_query_benchmark_rejects_mismatched_top_k_protocol_attestation --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner private_query_benchmark_outputs_redacted_gateable_report --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker benchmark_query_protocol_runs_hybrid_search_without_result_or_query_leaks --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_passes_command_args_without_leaking_them --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo check -p benchmark-runner -p resume-cli --tests --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s39_embedding_worker --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner -p resume-cli --tests --locked -- -D warnings
+git diff --check
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- The missing-`top_k` and mismatched-`top_k` attestation regression tests
+  passed after implementation.
+- The existing private query benchmark report path still passed with a command
+  response attesting `mode=hybrid`, `layers=fulltext+field+vector+rrf`, and the
+  configured `top_k`.
+- `resume-cli benchmark-query-protocol` still executed hybrid search without
+  printing raw query text, result filenames, local paths, or private input
+  paths, and now includes `top_k=<n>` in the protocol response.
+- `cargo fmt --check`, affected-package check, full `benchmark-runner` tests,
+  full `resume-cli --test s39_embedding_worker`, affected-package clippy,
+  `git diff --check`, and `guard-public-repo.sh` passed.
+- `verify-local.sh` passed: workspace tests, CLI/daemon closed-loop checks,
+  benchmark/OCR/vector gates, license/runbook/current-stage/workflow checks,
+  release-readiness, release artifact/SBOM/signing/notarization/package
+  evidence checks, and public repo guard all completed successfully.
+
+Scope note:
+
+- S339 used synthetic/private-shaped benchmark fixtures only; no real query
+  set, real resume data, local private paths, raw query text, generated
+  benchmark report, diagnostics, runtime artifacts, indexes, or model caches
+  were committed or uploaded.
+- This does not add or tune extraction rules. It strengthens the reproducible
+  private benchmark protocol by binding the configured query budget to the
+  command's redacted response.
 
 ### S338
 
