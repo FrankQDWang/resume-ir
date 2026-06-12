@@ -5429,6 +5429,8 @@ fn parse_private_query_command_stdout(stdout: &[u8], top_k: usize) -> Result<usi
     let stdout = std::str::from_utf8(stdout)
         .map_err(|_| BenchmarkError::invalid_config("private_query_command_stdout"))?;
     let mut saw_header = false;
+    let mut saw_hybrid_mode = false;
+    let mut saw_hybrid_layers = false;
     let mut hits = None;
     for line in stdout
         .lines()
@@ -5442,6 +5444,24 @@ fn parse_private_query_command_stdout(stdout: &[u8], top_k: usize) -> Result<usi
                 ));
             }
             saw_header = true;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("mode=") {
+            if saw_hybrid_mode || value != "hybrid" {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_protocol_attestation",
+                ));
+            }
+            saw_hybrid_mode = true;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("layers=") {
+            if saw_hybrid_layers || value != "fulltext+field+vector+rrf" {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_protocol_attestation",
+                ));
+            }
+            saw_hybrid_layers = true;
             continue;
         }
         if let Some(value) = line.strip_prefix("hits=") {
@@ -5466,6 +5486,11 @@ fn parse_private_query_command_stdout(stdout: &[u8], top_k: usize) -> Result<usi
     if !saw_header {
         return Err(BenchmarkError::invalid_config(
             "private_query_command_stdout",
+        ));
+    }
+    if !saw_hybrid_mode || !saw_hybrid_layers {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_protocol_attestation",
         ));
     }
     hits.ok_or_else(|| BenchmarkError::invalid_config("private_query_hits"))

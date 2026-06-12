@@ -888,7 +888,10 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
     );
     assert!(protocol.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&protocol.stdout);
-    assert_eq!(stdout, "resume-ir-query-v1\nhits=2\n");
+    assert_eq!(
+        stdout,
+        "resume-ir-query-v1\nmode=hybrid\nlayers=fulltext+field+vector+rrf\nhits=2\n"
+    );
     assert!(!stdout.contains("SemanticOnlyToken"));
     assert!(!stdout.contains("synthetic-java-platform.pdf"));
     assert!(!stdout.contains("synthetic-java-engineer.docx"));

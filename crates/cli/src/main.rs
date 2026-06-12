@@ -8759,6 +8759,8 @@ fn benchmark_query_protocol_command(data_dir: &Path, args: &[String]) -> Result<
         hits.len(),
     );
     println!("resume-ir-query-v1");
+    println!("mode={}", search_args.mode.label());
+    println!("layers={}", search_args.mode.benchmark_layers_label());
     println!("hits={}", hits.len());
     Ok(())
 }
@@ -13511,6 +13513,14 @@ impl SearchMode {
             Self::FullText => "fulltext",
             Self::Semantic => "semantic",
             Self::Hybrid => "hybrid",
+        }
+    }
+
+    fn benchmark_layers_label(self) -> &'static str {
+        match self {
+            Self::FullText => "fulltext",
+            Self::Semantic => "vector",
+            Self::Hybrid => "fulltext+field+vector+rrf",
         }
     }
 }
