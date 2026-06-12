@@ -164,6 +164,55 @@ weights, print command paths, print model bytes, print embedding vectors, print
 synthetic probe text, or include model caches, indexes, or local data
 directories.
 
+### Local sentence-transformers adapter
+
+The repository includes
+`scripts/local/embedding-runtime-sentence-transformers.py` as a reproducible
+external command adapter for local sentence-transformers models. It reads the
+private input file path from `RESUME_IR_EMBEDDING_INPUT_PATH`, verifies
+`RESUME_IR_EMBEDDING_MODEL_ID` and `RESUME_IR_EMBEDDING_DIMENSION`, loads a
+locally cached sentence-transformers model, and writes only the
+`resume-ir-embedding-v1` stdout protocol. It must not print local paths, raw
+resume text, model bytes, cache locations, or embedding input payloads.
+
+Current-stage smoke validation may use
+`sentence-transformers/all-MiniLM-L6-v2` with dimension `384` after the
+operator has reviewed the current model card/license and recorded a local model
+manifest. The model remains an external local runtime artifact; do not commit or
+upload model weights, model caches, generated manifests with local paths, vector
+snapshots, SQLite databases, query sets, or diagnostics.
+
+By default, the adapter loads with local-files-only behavior so preflight and
+worker execution do not implicitly download model weights. To intentionally
+prepare a local cache, run the download in a private local environment first,
+then switch back to offline execution:
+
+```bash
+python3 -m pip install --user sentence-transformers
+RESUME_IR_SENTENCE_TRANSFORMERS_ALLOW_DOWNLOAD=1 \
+RESUME_IR_SENTENCE_TRANSFORMERS_MODEL=sentence-transformers/all-MiniLM-L6-v2 \
+RESUME_IR_EMBEDDING_INPUT_PATH=<synthetic-local-input> \
+RESUME_IR_EMBEDDING_MODEL_ID=sentence-transformers/all-MiniLM-L6-v2 \
+RESUME_IR_EMBEDDING_DIMENSION=384 \
+scripts/local/embedding-runtime-sentence-transformers.py
+```
+
+Use the adapter as the embedding command after the model is locally available:
+
+```bash
+resume-cli --data-dir <local-data-dir> model preflight --json \
+  --manifest <local-model-manifest.json> \
+  --embedding-command scripts/local/embedding-runtime-sentence-transformers.py \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --dimension 384
+```
+
+For `model draft-manifest`, use a local reviewed descriptor or actual model
+artifact file that represents the selected local model cache and records the
+reviewed license/checksum evidence. The product has not bundled that model; if
+the model card, artifact checksum, or license review is not confirmed, leave the
+manifest unreviewed and treat embedding runtime as BLOCKED.
+
 ## Model Manifest Validation
 
 Canonical local draft command form:

@@ -275,6 +275,12 @@ production-ready scope source.
   reports, generated diagnostics, local manifests, runtime binaries, indexes,
   SQLite databases, signing material, notarization credentials, or model caches
   were committed or uploaded.
+  S330 added a local sentence-transformers embedding command adapter and CI
+  stub protocol guard only; no real resume data, private query sets, local
+  paths, raw query text, model weights, model caches, generated private
+  benchmark reports, diagnostics, local manifests, runtime binaries, indexes,
+  SQLite databases, signing material, or notarization credentials were
+  committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1229,8 +1235,60 @@ obsolete preliminary files and checklists are not product scope.
 | S327 | Current-stage runtime preflight blocker summary complete locally | Focused RED first failed because full-profile current-stage execute with failing OCR or embedding runtime preflight exited before writing `current-stage-blocked-summary.json`. After implementation, OCR/runtime manifest and embedding/model manifest failures before private corpus access write the redacted blocked summary with `private_corpus_read: false`, `blocked_category: "ocr"` or `"embedding"`, blocked step/reason, runtime preflight statuses, and basename-only digests for produced local preflight/manifest outputs. The guard proves dataset manifest/import do not run after runtime preflight failure and rejects temp paths/private markers. | This slice is production complete for current-stage runtime preflight failure classification only. It does not install OCR/model runtimes, approve embedding model weights, make the real 10k corpus pass preflight/import/query/benchmark/release-readiness, improve P95/P99, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
 | S328 | Current-stage import/parser blocker summary complete locally | Focused RED first failed because full-profile current-stage execute with a failing private corpus import exited before writing `current-stage-blocked-summary.json`. After implementation, dataset manifest and import failures after runtime preflight write the redacted blocked summary with `blocked_step: "dataset_manifest"` or `"import_private_corpus"`, `blocked_category: "import/parser"`, `private_corpus_read: true`, runtime/dataset/import output digests, and explicit not-completed worker/query/benchmark/diagnostics/release-readiness steps. The guard proves OCR worker and query-set generation do not run after import failure and rejects temp paths/private markers/query text. | This slice is production complete for current-stage import/parser failure classification only. It does not make the real 10k corpus import succeed, resolve parser/OCR backlogs, clear query-set/private-query/release-readiness evidence, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
 | S329 | Windows status IPC CI reliability complete locally | Remote Windows CI first failed in `resume-cli --test s20_status_ipc status_can_read_redacted_daemon_status_over_loopback_ipc` because the fake daemon accepted a nonblocking socket and immediately called `read`, which can return `WouldBlock` on Windows. After implementation, that test reuses the existing `accept_with_timeout` and `read_http_request` helpers so the accepted stream is switched back to blocking mode before request parsing, matching the rest of the IPC test file. Focused and full `s20_status_ipc` tests, fmt, diff check, and public repo guard passed locally. | This slice is a CI/test reliability fix only. It does not change product IPC behavior, clear release blockers, run the real 10k validation, improve P95/P99, prove 100k/1M validation, or make stable release ready. |
+| S330 | Local sentence-transformers embedding runtime adapter complete locally | Focused RED first failed because `scripts/ci/check-local-embedding-runtime.sh` could not find a repository adapter that speaks `resume-ir-embedding-v1`. After implementation, `scripts/local/embedding-runtime-sentence-transformers.py` reads the private embedding input file, validates the configured model id/dimension, defaults to local-files-only sentence-transformers loading, emits protocol vectors without raw text/path leakage, and has a CI stub guard wired into `verify-local.sh`. The runbook now documents offline default behavior, the explicit `RESUME_IR_SENTENCE_TRANSFORMERS_ALLOW_DOWNLOAD=1` cache-preparation escape hatch, `sentence-transformers/all-MiniLM-L6-v2` current-stage smoke usage, and the local model manifest boundary. | This slice is production complete for the reusable external-command adapter and guard only. It does not commit or bundle model weights, prove vector quality, approve final model legal/distribution status, run the real 10k baseline, clear embedding release blockers, improve P95/P99, prove 100k/1M validation, or make stable release ready. |
 
 ## Command Log
+
+### S330
+
+TDD red check:
+
+```bash
+sh scripts/ci/check-local-embedding-runtime.sh
+```
+
+Output summary:
+
+- Failed before implementation with `missing local embedding runtime adapter`.
+
+Implementation checks:
+
+```bash
+sh scripts/ci/check-local-embedding-runtime.sh
+./scripts/ci/check-runbooks.sh
+sh -n scripts/ci/check-local-embedding-runtime.sh scripts/ci/check-runbooks.sh scripts/ci/verify-local.sh
+python3 -m py_compile scripts/local/embedding-runtime-sentence-transformers.py
+./scripts/ci/check-current-stage-validation.sh
+git diff --check
+PATH="$HOME/.cargo/bin:$PATH" ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `check-local-embedding-runtime.sh`: exit 0; local embedding runtime check
+  passed with a stub sentence-transformers module and no raw input/path leak.
+- `check-runbooks.sh`: exit 0; runbook check passed after documenting the
+  adapter, offline default, explicit download escape hatch, and model manifest
+  boundary.
+- `sh -n`: exit 0 for the new guard, runbook guard, and aggregate local verify
+  script.
+- `py_compile`: exit 0 for the adapter.
+- `check-current-stage-validation.sh`: exit 0; current-stage validation check
+  passed.
+- `git diff --check`: exit 0.
+- Full `verify-local.sh`: exit 0 after workspace clippy/test/doc-test checks,
+  CLI/daemon closed-loop checks, benchmark/OCR/vector smoke gates, license/
+  runbook/current-stage/workflow/release-readiness checks, release artifact/
+  signing/notarization/SBOM/package/installer evidence checks, Windows package
+  skip on non-Windows, Windows installer/service evidence checks, the new local
+  embedding runtime check, and public repo guard.
+
+Scope note:
+
+- S330 adds a reusable local adapter entrypoint for the already-proven smoke
+  chain. It does not download, commit, or distribute model weights, does not
+  mark model legal review complete, and does not satisfy the full current-stage
+  10k/500-query baseline or complete product goal.
 
 ### S329
 

@@ -15,6 +15,7 @@ fi
 ./scripts/ci/check-benchmark-smoke.sh
 ./scripts/ci/check-licenses.sh
 ./scripts/ci/check-runbooks.sh
+./scripts/ci/check-local-embedding-runtime.sh
 ./scripts/ci/check-current-stage-validation.sh
 ./scripts/ci/check-workflows.sh
 ./scripts/ci/check-release-readiness.sh

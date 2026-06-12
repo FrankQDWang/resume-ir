@@ -12,6 +12,10 @@ Thumbs.db
 *.swo
 *~
 
+# Python local caches
+__pycache__/
+*.pyc
+
 # Local secrets and sensitive runtime artifacts
 .env
 .env.*
