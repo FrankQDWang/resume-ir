@@ -224,6 +224,16 @@ mode writes `current-stage-blocked-summary.json` with
 release-readiness. That summary records aggregate corpus observability and file
 digests up to the failed diagnostics output, not diagnostic bodies, local
 paths, query text, indexes, or SQLite data.
+If `release-readiness` rejects the local evidence inputs themselves after the
+baseline gate and redacted diagnostics pass, execute mode writes the same
+blocked summary schema with `blocked_step: "release_readiness_intake"`,
+`blocked_category: "release-readiness"`, and
+`blocked_reason: "release_readiness_evidence_failed_validation"`, then stops
+before writing `current-stage-validation-evidence.json`. That summary records
+only aggregate corpus observability and basename-only digests through
+`release-readiness.json` and `release-readiness.stderr.txt`; it is not stable
+release evidence and must not be uploaded with private reports, diagnostics,
+indexes, SQLite data, or local paths.
 
 ```bash
 scripts/local/run-current-stage-validation.sh --execute \

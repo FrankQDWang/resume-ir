@@ -725,6 +725,27 @@ failed_status=$(cat "$tmpdir/execute-evidence-failed-status.txt")
 if [ "$failed_status" -eq 0 ]; then
   fail "current-stage execute accepted invalid release-readiness evidence"
 fi
+release_readiness_blocked_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$release_readiness_blocked_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on release-readiness evidence failure"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage execute wrote full evidence after release-readiness evidence failure"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$release_readiness_blocked_summary" >/dev/null
+fi
+require_text "$release_readiness_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$release_readiness_blocked_summary" '"blocked_step": "release_readiness_intake"'
+require_text "$release_readiness_blocked_summary" '"blocked_category": "release-readiness"'
+require_text "$release_readiness_blocked_summary" '"blocked_reason": "release_readiness_evidence_failed_validation"'
+require_text "$release_readiness_blocked_summary" '"release-readiness.json"'
+require_text "$release_readiness_blocked_summary" '"release-readiness.stderr.txt"'
+require_text "$release_readiness_blocked_summary" '"redacted-diagnostics.json"'
+require_text "$release_readiness_blocked_summary" '"corpus_summary_observability": {'
+reject_text "$release_readiness_blocked_summary" "$tmpdir"
+reject_text "$release_readiness_blocked_summary" "PRIVATE-current-stage"
+reject_text "$release_readiness_blocked_summary" "private fake query"
 require_text "$tmpdir/execute-evidence-failed-stderr.txt" "current-stage validation blocked: release-readiness evidence failed validation"
 reject_text "$tmpdir/execute-evidence-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-evidence-failed-stderr.txt" "$tmpdir"
