@@ -138,8 +138,9 @@ The smoke and benchmark-blocked summaries copy those safe counts under
 summary itself. The full release-readiness evidence manifest still records only
 the corpus-summary basename and digest, not the report body.
 
-To prepare a committed-safe operator handoff from a local smoke summary,
-blocked summary, or full current-stage evidence manifest, run:
+Execute mode automatically writes `current-stage-handoff.json` after it writes a
+local smoke summary, blocked summary, or full current-stage evidence manifest.
+To rebuild or inspect that committed-safe operator handoff manually, run:
 
 ```bash
 scripts/local/summarize-current-stage-validation.py \
@@ -196,8 +197,10 @@ At the end it also writes
 `resume-ir.current-stage-validation-evidence.v1` and privacy boundary
 `local_only_redacted_evidence_manifest`. That manifest contains step statuses,
 input digests, `preflight_probes` with `ocr_runtime_probe: "passed"` and
-`embedding_protocol: "passed"`, output file digests, the `release-readiness`
-exit code, and privacy sentinels only. It must not contain local paths, raw
+`embedding_protocol: "passed"`, explicit `full_baseline_satisfied: true` and
+`release_readiness_evidence: true` flags for handoff generation, output file
+digests, the `release-readiness` exit code, and privacy sentinels only. It must
+not contain local paths, raw
 resume text, raw query text, report bodies, model bytes, runtime binaries,
 indexes, or SQLite data.
 After the execute run writes the manifest, operators may pass it back to

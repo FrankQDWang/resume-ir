@@ -298,6 +298,11 @@ production-ready scope source.
   text, vectors, generated private reports, local manifests, runtime binaries,
   model artifacts, indexes, SQLite databases, diagnostics, or model caches were
   committed or uploaded.
+  S334 used synthetic/private-shaped current-stage execute fixtures only; no
+  real resume data, filenames, paths, raw OCR text, raw query text, vectors,
+  generated private reports, local manifests, runtime binaries, model
+  artifacts, indexes, SQLite databases, diagnostics, or model caches were
+  committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1256,8 +1261,50 @@ obsolete preliminary files and checklists are not product scope.
 | S331 | Current-stage twelve-file real local smoke witness complete locally | A private local-only smoke witness against the user-authorized local resume root used local Tesseract/Poppler and the committed sentence-transformers adapter backed by a local `sentence-transformers/all-MiniLM-L6-v2` Apache-2.0 model cache. The run used `--validation-profile smoke`, `--max-files 12`, `--max-queries 5`, bounded OCR/embedding worker ticks, smoke keyword query fallback, and smoke partial hot-index allowance. It exited 0: OCR runtime probe passed, embedding protocol passed, the redacted corpus summary reported 12 documents with 1 searchable/vector-indexed document and `hot_index_fully_covered: false`, the generated private query set reported keyword fallback, the private query benchmark reported 5 queries, 0 zero-result queries, 5 total hits, and `percentile_confidence: smoke`, and a redacted aggregate privacy scan found no local resume root, local cache path, contact marker, query body, or private raw text in committed-safe aggregate outputs. | This is production complete as a bounded current-stage real local smoke witness only. It proves the local OCR/model preflight plus import/OCR/embedding/query/benchmark/diagnostics chain remains usable with the reusable adapter, but it does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR/import/parser failure triage, field/vector quality targets, P95/P99 optimization, final model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
 | S332 | Current-stage smoke summary status fields complete locally | Focused RED first failed because `check-current-stage-validation.sh` required `current-stage-smoke-summary.json` to include `"validation_profile": "smoke"` and `"smoke_satisfied": true`, but the script only emitted the target and `full_baseline_satisfied: false`. After implementation, smoke summaries explicitly identify the smoke profile and positive smoke outcome while still marking full baseline and release evidence false. The current-stage guard verifies these fields and keeps smoke output separate from full current-stage release evidence. | This slice is production complete for smoke-summary handoff clarity only. It does not rerun the real local corpus, clear the full local 10k/8000-document baseline, clear 500-query private evidence, optimize P95/P99, approve model/runtime distribution, clear release blockers, or make stable release ready. |
 | S333 | Current-stage redacted handoff summarizer complete locally | Focused RED first failed because `scripts/ci/check-current-stage-handoff.sh` required `scripts/local/summarize-current-stage-validation.py`, but no handoff summarizer existed. After implementation, the summarizer consumes redacted smoke summaries, blocked summaries, or full evidence manifests and emits `resume-ir.current-stage-handoff.v1` with privacy boundary `local_only_redacted_handoff`, explicit `complete_product: false`, full-baseline/release evidence status, preflight probe status, redacted aggregate observability, completed step names, not-complete/BLOCKED items, and must-not-upload categories. It fails closed on local path/private markers. The handoff guard covers smoke, blocked, and rejected-private-marker fixtures, `verify-local.sh` and PR workflow now run it, and the release blocker runbook documents operator use. A fresh private local 12-file smoke generated a handoff with privacy scan passed, `smoke_satisfied`, 12 documents, 1 searchable/vector-indexed document, and 5 not-complete items. | This slice is production complete for redacted current-stage operator handoff only. It does not expose private evidence bodies, clear the full local 10k/8000-document baseline, clear 500-query private evidence, optimize P95/P99, approve model/runtime distribution, clear release blockers, or make stable release ready. |
+| S334 | Current-stage automatic handoff binding complete locally | Focused RED first failed because `check-current-stage-validation.sh` required dry-run plans and execute outputs to include `current-stage-handoff.json`, but `run-current-stage-validation.sh` only wrote smoke/full/blocked summaries and required manual summarization. After implementation, execute mode writes `current-stage-handoff.json` automatically after full evidence, smoke summary, or blocked summary generation; dry-run plans show the handoff step; full current-stage evidence now carries explicit `full_baseline_satisfied: true` and `release_readiness_evidence: true` fields for safe handoff generation; all post-corpus blocked summaries carry `private_corpus_read: true`. The validation guard now checks full, smoke, and major blocked paths for redacted handoff output, and the handoff guard covers the full evidence schema directly. | This slice is production complete for automatic current-stage handoff generation only. It does not run the full local 10k/8000-document baseline, clear 500-query private evidence, optimize P95/P99, approve model/runtime distribution, clear release blockers, prove real installer lifecycle, or make stable release ready. |
 
 ## Command Log
+
+### S334
+
+TDD red check:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Failed before implementation because the dry-run plan did not include
+  `current-stage-handoff.json`.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-handoff.sh
+./scripts/ci/check-runbooks.sh
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh scripts/ci/check-current-stage-handoff.sh
+git diff --check
+```
+
+Output summary:
+
+- `check-current-stage-validation.sh`: exit 0; full evidence, smoke summary,
+  OCR/model/import/query/benchmark/diagnostics/release-readiness blocked paths,
+  dry-run plans, and privacy sentinels all produced or validated redacted
+  `current-stage-handoff.json`.
+- `check-current-stage-handoff.sh`: exit 0; smoke, blocked, full evidence, and
+  rejected-private-marker fixtures passed.
+- `check-runbooks.sh`: exit 0 after documenting automatic handoff generation.
+- `sh -n`: exit 0 for updated shell scripts.
+- `git diff --check`: exit 0.
+
+Scope note:
+
+- S334 binds handoff generation into the current-stage validation workflow only.
+  It is not full current-stage evidence, release-readiness acceptance, or
+  product completion.
 
 ### S333
 

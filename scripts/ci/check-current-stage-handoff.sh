@@ -49,8 +49,10 @@ trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
 
 smoke_summary="$tmpdir/PRIVATE-current-stage-smoke-summary.json"
 blocked_summary="$tmpdir/PRIVATE-current-stage-blocked-summary.json"
+full_evidence="$tmpdir/PRIVATE-current-stage-validation-evidence.json"
 smoke_out="$tmpdir/smoke-handoff.json"
 blocked_out="$tmpdir/blocked-handoff.json"
+full_out="$tmpdir/full-handoff.json"
 bad_summary="$tmpdir/PRIVATE-bad-summary.json"
 bad_out="$tmpdir/bad-handoff.json"
 
@@ -165,6 +167,44 @@ require_text "$blocked_out" '"private_corpus_read": true'
 reject_text "$blocked_out" "$tmpdir"
 reject_text "$blocked_out" "PRIVATE-current-stage"
 reject_regex "$blocked_out" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"
+
+cat > "$full_evidence" <<'JSON'
+{
+  "schema_version": "resume-ir.current-stage-validation-evidence.v1",
+  "privacy_boundary": "local_only_redacted_evidence_manifest",
+  "current_stage_target": "reproducible_local_10k_baseline",
+  "full_baseline_satisfied": true,
+  "release_readiness_evidence": true,
+  "performance_optimization_deferred": true,
+  "preflight_probes": {
+    "ocr_runtime_probe": "passed",
+    "embedding_protocol": "passed"
+  },
+  "steps": [
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "model_preflight", "status": "success"},
+    {"id": "release_readiness_intake", "status": "expected_blocked"}
+  ],
+  "must_not_upload": [
+    "raw resumes",
+    "diagnostics",
+    "indexes"
+  ]
+}
+JSON
+
+python3 "$script" --input "$full_evidence" --out "$full_out"
+python3 -m json.tool "$full_out" >/dev/null
+require_text "$full_out" '"source_schema": "resume-ir.current-stage-validation-evidence.v1"'
+require_text "$full_out" '"current_stage_status": "full_evidence_ready"'
+require_text "$full_out" '"validation_profile": "full"'
+require_text "$full_out" '"complete_product": false'
+require_text "$full_out" '"full_baseline_satisfied": true'
+require_text "$full_out" '"release_readiness_evidence": true'
+require_text "$full_out" '"release_readiness_intake"'
+reject_text "$full_out" "$tmpdir"
+reject_text "$full_out" "PRIVATE-current-stage"
+reject_regex "$full_out" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"
 
 cat > "$bad_summary" <<JSON
 {

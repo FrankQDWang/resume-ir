@@ -89,6 +89,19 @@ sha256_file_json_or_null() {
   fi
 }
 
+script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+handoff_summarizer="$script_dir/summarize-current-stage-validation.py"
+
+write_current_stage_handoff() {
+  source_json="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for current-stage handoff"
+  [ -f "$handoff_summarizer" ] || fail "current-stage handoff summarizer is unavailable"
+  python3 "$handoff_summarizer" \
+    --input "$source_json" \
+    --out "$out_dir/current-stage-handoff.json" \
+    >/dev/null || fail "current-stage handoff generation failed"
+}
+
 corpus_summary_observability_json() {
   path="$1"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required for redacted corpus summary observability"
@@ -319,6 +332,7 @@ $steps_json
   ]
 }
 EOF
+  write_current_stage_handoff "$out_dir/current-stage-blocked-summary.json"
 }
 
 write_import_parser_blocked_summary() {
@@ -449,6 +463,7 @@ $steps_json
   ]
 }
 EOF
+  write_current_stage_handoff "$out_dir/current-stage-blocked-summary.json"
 }
 
 write_query_set_blocked_summary() {
@@ -483,6 +498,7 @@ write_query_set_blocked_summary() {
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
   "performance_optimization_deferred": true,
@@ -575,6 +591,7 @@ write_query_set_blocked_summary() {
   ]
 }
 EOF
+  write_current_stage_handoff "$out_dir/current-stage-blocked-summary.json"
 }
 
 write_private_query_blocked_summary() {
@@ -604,6 +621,7 @@ write_private_query_blocked_summary() {
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
   "performance_optimization_deferred": true,
@@ -698,6 +716,7 @@ write_private_query_blocked_summary() {
   ]
 }
 EOF
+  write_current_stage_handoff "$out_dir/current-stage-blocked-summary.json"
 }
 
 write_redacted_diagnostics_blocked_summary() {
@@ -729,6 +748,7 @@ write_redacted_diagnostics_blocked_summary() {
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
   "performance_optimization_deferred": true,
@@ -825,6 +845,7 @@ write_redacted_diagnostics_blocked_summary() {
   ]
 }
 EOF
+  write_current_stage_handoff "$out_dir/current-stage-blocked-summary.json"
 }
 
 write_release_readiness_blocked_summary() {
@@ -859,6 +880,7 @@ write_release_readiness_blocked_summary() {
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "private_corpus_read": true,
   "full_baseline_satisfied": true,
   "release_readiness_evidence": false,
   "performance_optimization_deferred": true,
@@ -956,6 +978,7 @@ write_release_readiness_blocked_summary() {
   ]
 }
 EOF
+  write_current_stage_handoff "$out_dir/current-stage-blocked-summary.json"
 }
 
 require_text_in_file() {
@@ -1231,6 +1254,10 @@ case "$validation_profile" in
     {
       "id": "redacted_evidence_manifest",
       "command": "write <local-evidence-dir>/current-stage-validation-evidence.json with schema resume-ir.current-stage-validation-evidence.v1, file digests, step statuses, and privacy sentinels"
+    },
+    {
+      "id": "current_stage_handoff",
+      "command": "write <local-evidence-dir>/current-stage-handoff.json with schema resume-ir.current-stage-handoff.v1 from redacted current-stage evidence"
     }'
     ;;
   smoke)
@@ -1249,6 +1276,10 @@ case "$validation_profile" in
     terminal_plan_steps='    {
       "id": "redacted_smoke_summary",
       "command": "write <local-evidence-dir>/current-stage-smoke-summary.json with schema resume-ir.current-stage-smoke-summary.v1, file digests, step statuses, and explicit non-release-evidence blockers"
+    },
+    {
+      "id": "current_stage_handoff",
+      "command": "write <local-evidence-dir>/current-stage-handoff.json with schema resume-ir.current-stage-handoff.v1 from redacted smoke summary"
     }'
     ;;
   *)
@@ -1368,6 +1399,7 @@ $terminal_plan_steps
     "Execute mode validates OCR and embedding runtime manifests/preflight before reading the private resume root.",
     "After runtime preflight succeeds, execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
     "If --query-set is omitted, execute mode writes resume-ir.query-set.jsonl.v1 under <local-evidence-dir> with privacy boundary local_only_private_query_set, then uses its sha256 as the query-set digest.",
+    "Execute mode writes resume-ir.current-stage-handoff.v1 under <local-evidence-dir> after writing a smoke summary, blocked summary, or full current-stage evidence manifest.",
     "Execute mode keeps all evidence local under <local-evidence-dir>.",
     "The smoke validation profile proves local command wiring and never produces release-readiness evidence.",
     "The baseline shape gate deliberately uses --max-p95-ms 86400000; P95/P99 reduction is deferred.",
@@ -1694,6 +1726,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
   "performance_optimization_deferred": true,
@@ -1789,6 +1822,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
   ]
 }
 EOF
+  write_current_stage_handoff "$out_dir/current-stage-blocked-summary.json"
   printf '%s\n' "current-stage validation blocked: baseline shape gate failed" >&2
   exit "$baseline_gate_status"
 fi
@@ -1925,7 +1959,9 @@ if [ "$validation_profile" = "smoke" ]; then
   ]
 }
 EOF
+  write_current_stage_handoff "$out_dir/current-stage-smoke-summary.json"
   printf '%s\n' "current-stage validation: smoke summary written under <local-evidence-dir>"
+  printf '%s\n' "current-stage validation: handoff summary written under <local-evidence-dir>"
   printf '%s\n' "current-stage validation: local smoke evidence written under <local-evidence-dir>"
   exit 0
 fi
@@ -1989,6 +2025,8 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
   "schema_version": "resume-ir.current-stage-validation-evidence.v1",
   "privacy_boundary": "local_only_redacted_evidence_manifest",
   "current_stage_target": "reproducible_local_10k_baseline",
+  "full_baseline_satisfied": true,
+  "release_readiness_evidence": true,
   "performance_optimization_deferred": true,
   "release_readiness_exit": $release_status,
   "stable_release_expected_blocked": $stable_release_expected_blocked,
@@ -2072,6 +2110,8 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
   ]
 }
 EOF
+write_current_stage_handoff "$out_dir/current-stage-validation-evidence.json"
 printf 'current-stage validation: release-readiness exit %s\n' "$release_status"
 printf '%s\n' "current-stage validation: redacted evidence manifest written under <local-evidence-dir>"
+printf '%s\n' "current-stage validation: handoff summary written under <local-evidence-dir>"
 printf '%s\n' "current-stage validation: local evidence written under <local-evidence-dir>"

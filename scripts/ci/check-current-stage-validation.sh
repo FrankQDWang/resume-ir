@@ -28,6 +28,28 @@ reject_text() {
   fi
 }
 
+require_current_stage_handoff() {
+  expected_status="$1"
+  expected_source_schema="$2"
+  handoff="$execute_out_dir/current-stage-handoff.json"
+  if [ ! -s "$handoff" ]; then
+    fail "current-stage execute did not write redacted handoff summary"
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -m json.tool "$handoff" >/dev/null
+  fi
+  require_text "$handoff" '"schema_version": "resume-ir.current-stage-handoff.v1"'
+  require_text "$handoff" '"privacy_boundary": "local_only_redacted_handoff"'
+  require_text "$handoff" "\"source_schema\": \"$expected_source_schema\""
+  require_text "$handoff" "\"current_stage_status\": \"$expected_status\""
+  require_text "$handoff" '"complete_product": false'
+  require_text "$handoff" '"performance_optimization_deferred": true'
+  require_text "$handoff" '"must_not_upload"'
+  reject_text "$handoff" "$tmpdir"
+  reject_text "$handoff" "PRIVATE-current-stage"
+  reject_text "$handoff" "private fake query"
+}
+
 sha256_file() {
   path="$1"
   if command -v shasum >/dev/null 2>&1; then
@@ -160,6 +182,8 @@ require_text "$plan" '--benchmark-report <local-evidence-dir>/private-benchmark-
 require_text "$plan" '--model-manifest <local-model-manifest>'
 require_text "$plan" '--ocr-runtime-manifest <local-ocr-runtime-manifest>'
 require_text "$plan" '--diagnostics-report <local-evidence-dir>/redacted-diagnostics.json'
+require_text "$plan" 'current-stage-handoff.json'
+require_text "$plan" 'resume-ir.current-stage-handoff.v1'
 require_text "$plan" '"must_not_upload": ['
 require_text "$plan" '"raw resumes"'
 require_text "$plan" '"local paths"'
@@ -223,6 +247,8 @@ require_text "$smoke_plan" 'benchmark-query-set draft --out <local-evidence-dir>
 require_text "$smoke_plan" '--corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json --allow-partial-hot-index-for-smoke --max-queries 3 --top-k 5'
 require_text "$smoke_plan" 'resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --allow-smoke-confidence --min-documents 1 --min-queries 1'
 require_text "$smoke_plan" 'write <local-evidence-dir>/current-stage-smoke-summary.json'
+require_text "$smoke_plan" 'current-stage-handoff.json'
+require_text "$smoke_plan" 'resume-ir.current-stage-handoff.v1'
 reject_text "$smoke_plan" "release-readiness --json"
 reject_text "$smoke_plan" "$tmpdir"
 reject_text "$smoke_plan" "PRIVATE-current-stage"
@@ -490,6 +516,9 @@ require_text "$evidence_manifest" '"raw_resume_text_included": false'
 require_text "$evidence_manifest" '"raw_query_text_included": false'
 require_text "$evidence_manifest" '"model_bytes_included": false'
 require_text "$evidence_manifest" '"runtime_binaries_included": false'
+require_current_stage_handoff \
+  "full_evidence_ready" \
+  "resume-ir.current-stage-validation-evidence.v1"
 reject_text "$evidence_manifest" "$tmpdir"
 reject_text "$evidence_manifest" "PRIVATE-current-stage"
 reject_text "$evidence_manifest" "private fake query"
@@ -537,6 +566,9 @@ require_text "$smoke_summary" '"ingest_job_kind_status_counts": {'
 require_text "$smoke_summary" '"private_query_baseline"'
 require_text "$smoke_summary" '"redacted_diagnostics"'
 require_text "$smoke_summary" '"full 10k/8000-document current-stage baseline"'
+require_current_stage_handoff \
+  "smoke_satisfied" \
+  "resume-ir.current-stage-smoke-summary.v1"
 reject_text "$smoke_summary" "$tmpdir"
 reject_text "$smoke_summary" "PRIVATE-current-stage"
 reject_text "$smoke_summary" "private fake query"
@@ -581,6 +613,9 @@ require_text "$blocked_summary" '"ingest_job_kind_status_counts": {'
 require_text "$blocked_summary" '"private-benchmark-local.json"'
 require_text "$blocked_summary" '"private-benchmark-gate.stdout.txt"'
 require_text "$blocked_summary" '"full 10k/8000-document current-stage baseline"'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
 reject_text "$blocked_summary" "$tmpdir"
 reject_text "$blocked_summary" "PRIVATE-current-stage"
 reject_text "$blocked_summary" "private fake query"
@@ -611,6 +646,9 @@ require_text "$query_set_blocked_summary" '"blocked_category": "query-set"'
 require_text "$query_set_blocked_summary" '"blocked_reason": "query_set_draft_failed"'
 require_text "$query_set_blocked_summary" '"query-set-draft.stdout.txt"'
 require_text "$query_set_blocked_summary" '"corpus_summary_observability": {'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
 reject_text "$query_set_blocked_summary" "$tmpdir"
 reject_text "$query_set_blocked_summary" "PRIVATE-current-stage"
 reject_text "$query_set_blocked_summary" "private fake query"
@@ -644,6 +682,9 @@ require_text "$private_query_blocked_summary" '"blocked_category": "benchmark"'
 require_text "$private_query_blocked_summary" '"blocked_reason": "private_query_baseline_failed"'
 require_text "$private_query_blocked_summary" '"private-benchmark-local.json"'
 require_text "$private_query_blocked_summary" '"corpus_summary_observability": {'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
 reject_text "$private_query_blocked_summary" "$tmpdir"
 reject_text "$private_query_blocked_summary" "PRIVATE-current-stage"
 reject_text "$private_query_blocked_summary" "private fake query"
@@ -678,6 +719,9 @@ require_text "$diagnostics_blocked_summary" '"blocked_reason": "redacted_diagnos
 require_text "$diagnostics_blocked_summary" '"redacted-diagnostics.json"'
 require_text "$diagnostics_blocked_summary" '"private-benchmark-gate.stdout.txt"'
 require_text "$diagnostics_blocked_summary" '"corpus_summary_observability": {'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
 reject_text "$diagnostics_blocked_summary" "$tmpdir"
 reject_text "$diagnostics_blocked_summary" "PRIVATE-current-stage"
 reject_text "$diagnostics_blocked_summary" "private fake query"
@@ -697,6 +741,9 @@ if [ -e "$execute_out_dir/dataset-manifest.local.json" ]; then
   fail "current-stage execute read private corpus before OCR runtime digest mismatch was rejected"
 fi
 require_text "$tmpdir/execute-ocr-digest-mismatch-stderr.txt" "OCR runtime manifest digest mismatch"
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
 reject_text "$tmpdir/execute-ocr-digest-mismatch-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-ocr-digest-mismatch-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-ocr-digest-mismatch-stdout.txt" "PRIVATE-current-stage"
@@ -723,6 +770,9 @@ require_text "$ocr_failed_summary" '"blocked_category": "ocr"'
 require_text "$ocr_failed_summary" '"blocked_reason": "ocr_runtime_preflight_failed"'
 require_text "$ocr_failed_summary" '"private_corpus_read": false'
 require_text "$ocr_failed_summary" '"ocr-preflight.json"'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
 reject_text "$ocr_failed_summary" "$tmpdir"
 reject_text "$ocr_failed_summary" "PRIVATE-current-stage"
 require_text "$tmpdir/execute-ocr-failed-stderr.txt" "current-stage validation blocked: runtime preflight failed before reading private corpus"
@@ -756,6 +806,9 @@ require_text "$model_failed_summary" '"blocked_reason": "embedding_runtime_prefl
 require_text "$model_failed_summary" '"private_corpus_read": false'
 require_text "$model_failed_summary" '"model-preflight.json"'
 require_text "$model_failed_summary" '"ocr-runtime-manifest.local.json"'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
 reject_text "$model_failed_summary" "$tmpdir"
 reject_text "$model_failed_summary" "PRIVATE-current-stage"
 require_text "$tmpdir/execute-model-failed-stderr.txt" "current-stage validation blocked: runtime preflight failed before reading private corpus"
@@ -789,6 +842,9 @@ require_text "$import_failed_summary" '"blocked_reason": "import_private_corpus_
 require_text "$import_failed_summary" '"private_corpus_read": true'
 require_text "$import_failed_summary" '"dataset-manifest.local.json"'
 require_text "$import_failed_summary" '"import.stdout.txt"'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
 reject_text "$import_failed_summary" "$tmpdir"
 reject_text "$import_failed_summary" "PRIVATE-current-stage"
 reject_text "$import_failed_summary" "private fake query"
@@ -836,6 +892,9 @@ require_text "$release_readiness_blocked_summary" '"release-readiness.json"'
 require_text "$release_readiness_blocked_summary" '"release-readiness.stderr.txt"'
 require_text "$release_readiness_blocked_summary" '"redacted-diagnostics.json"'
 require_text "$release_readiness_blocked_summary" '"corpus_summary_observability": {'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
 reject_text "$release_readiness_blocked_summary" "$tmpdir"
 reject_text "$release_readiness_blocked_summary" "PRIVATE-current-stage"
 reject_text "$release_readiness_blocked_summary" "private fake query"
@@ -858,6 +917,8 @@ require_text "$script" "runtime preflight failed before reading private corpus"
 require_text "$script" "preflight_probes"
 require_text "$script" '"runtime_probe": "passed"'
 require_text "$script" '"embedding_protocol": "passed"'
+require_text "$script" "current-stage-handoff.json"
+require_text "$script" "resume-ir.current-stage-handoff.v1"
 require_text "$script" "performance_optimization_deferred"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"
