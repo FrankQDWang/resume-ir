@@ -12,32 +12,8 @@ fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
     listener.set_nonblocking(true).unwrap();
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let (mut stream, _) = loop {
-            match listener.accept() {
-                Ok(connection) => break connection,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    if Instant::now() >= deadline {
-                        panic!("resume-cli did not connect to fake daemon");
-                    }
-                    thread::sleep(Duration::from_millis(25));
-                }
-                Err(error) => panic!("accept status request: {error}"),
-            }
-        };
-        let mut request = Vec::new();
-        let mut buffer = [0_u8; 512];
-        loop {
-            let read = stream.read(&mut buffer).expect("read status request");
-            if read == 0 {
-                break;
-            }
-            request.extend_from_slice(&buffer[..read]);
-            if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                break;
-            }
-        }
-        let request = String::from_utf8_lossy(&request);
+        let (mut stream, _) = accept_with_timeout(&listener);
+        let request = read_http_request(&mut stream);
         assert!(request.starts_with("GET /status HTTP/1.1"));
 
         let body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":1,\"ocr_page_budget_blocked\":1,\"ocr_language_unavailable\":1,\"latest_import_scan\":{\"files_discovered\":9,\"ignored_entries\":2,\"scan_errors\":1,\"searchable_documents\":4,\"ocr_required_documents\":1,\"ocr_jobs_queued\":1,\"failed_documents\":1,\"deleted_documents\":0,\"scan_budget_observed\":9,\"scan_budget_limit\":10,\"scan_budget_exhausted\":false}}";

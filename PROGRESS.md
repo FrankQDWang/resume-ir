@@ -270,6 +270,11 @@ production-ready scope source.
   generated private reports, local manifests, runtime binaries, model
   artifacts, indexes, SQLite databases, diagnostics, or model caches were
   committed or uploaded.
+  S329 used synthetic loopback IPC test fixtures only; no real resume data,
+  private query sets, local paths, raw query text, generated private benchmark
+  reports, generated diagnostics, local manifests, runtime binaries, indexes,
+  SQLite databases, signing material, notarization credentials, or model caches
+  were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1223,8 +1228,46 @@ obsolete preliminary files and checklists are not product scope.
 | S326 | Current-stage release-readiness blocker summary complete locally | Focused RED first failed because a full-profile current-stage execute with `release-readiness` rejecting evidence inputs exited before writing `current-stage-blocked-summary.json`. After implementation, release-readiness evidence validation failures write the redacted blocked summary after baseline gate and diagnostics, with `blocked_step: "release_readiness_intake"`, `blocked_category: "release-readiness"`, `blocked_reason: "release_readiness_evidence_failed_validation"`, completed import/OCR/embedding/corpus-summary/query-set/private-query/gate/diagnostics steps, release-readiness stdout/stderr digests, and `corpus_summary_observability` aggregate counts. The guard proves full evidence generation does not run after evidence rejection and rejects temp paths/private markers/query text. | This slice is production complete for current-stage release-readiness failure classification only. It does not make release-readiness evidence pass on the real 10k corpus, clear stable-release blockers, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
 | S327 | Current-stage runtime preflight blocker summary complete locally | Focused RED first failed because full-profile current-stage execute with failing OCR or embedding runtime preflight exited before writing `current-stage-blocked-summary.json`. After implementation, OCR/runtime manifest and embedding/model manifest failures before private corpus access write the redacted blocked summary with `private_corpus_read: false`, `blocked_category: "ocr"` or `"embedding"`, blocked step/reason, runtime preflight statuses, and basename-only digests for produced local preflight/manifest outputs. The guard proves dataset manifest/import do not run after runtime preflight failure and rejects temp paths/private markers. | This slice is production complete for current-stage runtime preflight failure classification only. It does not install OCR/model runtimes, approve embedding model weights, make the real 10k corpus pass preflight/import/query/benchmark/release-readiness, improve P95/P99, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
 | S328 | Current-stage import/parser blocker summary complete locally | Focused RED first failed because full-profile current-stage execute with a failing private corpus import exited before writing `current-stage-blocked-summary.json`. After implementation, dataset manifest and import failures after runtime preflight write the redacted blocked summary with `blocked_step: "dataset_manifest"` or `"import_private_corpus"`, `blocked_category: "import/parser"`, `private_corpus_read: true`, runtime/dataset/import output digests, and explicit not-completed worker/query/benchmark/diagnostics/release-readiness steps. The guard proves OCR worker and query-set generation do not run after import failure and rejects temp paths/private markers/query text. | This slice is production complete for current-stage import/parser failure classification only. It does not make the real 10k corpus import succeed, resolve parser/OCR backlogs, clear query-set/private-query/release-readiness evidence, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
+| S329 | Windows status IPC CI reliability complete locally | Remote Windows CI first failed in `resume-cli --test s20_status_ipc status_can_read_redacted_daemon_status_over_loopback_ipc` because the fake daemon accepted a nonblocking socket and immediately called `read`, which can return `WouldBlock` on Windows. After implementation, that test reuses the existing `accept_with_timeout` and `read_http_request` helpers so the accepted stream is switched back to blocking mode before request parsing, matching the rest of the IPC test file. Focused and full `s20_status_ipc` tests, fmt, diff check, and public repo guard passed locally. | This slice is a CI/test reliability fix only. It does not change product IPC behavior, clear release blockers, run the real 10k validation, improve P95/P99, prove 100k/1M validation, or make stable release ready. |
 
 ## Command Log
+
+### S329
+
+Remote RED evidence:
+
+```bash
+gh run view 27396297278 --job 80964184615 --log
+```
+
+Output summary:
+
+- Windows CI failed in `status_can_read_redacted_daemon_status_over_loopback_ipc`
+  with `WouldBlock` while the fake daemon test thread read from a nonblocking
+  accepted socket.
+
+Implementation checks:
+
+```bash
+PATH="$HOME/.cargo/bin:$PATH" cargo fmt --check
+PATH="$HOME/.cargo/bin:$PATH" cargo test -p resume-cli --test s20_status_ipc status_can_read_redacted_daemon_status_over_loopback_ipc --locked -- --exact
+PATH="$HOME/.cargo/bin:$PATH" cargo test -p resume-cli --test s20_status_ipc --locked
+git diff --check
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- `cargo fmt --check`: exit 0.
+- Focused `s20_status_ipc` regression: exit 0; 1 passed.
+- Full `s20_status_ipc`: exit 0; 6 passed.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0; public repo guard passed.
+
+Scope note:
+
+- S329 changes only the test fake daemon socket handling for Windows CI
+  reliability. It does not change runtime IPC code or product behavior.
 
 ### S328
 
