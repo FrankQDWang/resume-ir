@@ -36,8 +36,9 @@ verify_script="scripts/ci/verify-local.sh"
 cli_closed_loop_script="scripts/ci/check-cli-closed-loop.sh"
 daemon_closed_loop_script="scripts/ci/check-daemon-closed-loop.sh"
 benchmark_smoke_script="scripts/ci/check-benchmark-smoke.sh"
+current_stage_handoff_script="scripts/ci/check-current-stage-handoff.sh"
 
-for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$benchmark_smoke_script"; do
+for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$benchmark_smoke_script" "$current_stage_handoff_script"; do
   require_file "$file"
 done
 
@@ -47,6 +48,8 @@ require_text "$pr_workflow" "Daemon closed-loop check"
 require_text "$pr_workflow" "./scripts/ci/check-daemon-closed-loop.sh"
 require_text "$pr_workflow" "Benchmark smoke"
 require_text "$pr_workflow" "./scripts/ci/check-benchmark-smoke.sh"
+require_text "$pr_workflow" "Current-stage handoff check"
+require_text "$pr_workflow" "./scripts/ci/check-current-stage-handoff.sh"
 require_text "$pr_workflow" "check-workflows.sh"
 require_text "$pr_workflow" "actions/checkout@v6"
 
@@ -77,6 +80,7 @@ require_text "$verify_script" "./scripts/ci/check-workflows.sh"
 require_text "$verify_script" "./scripts/ci/check-cli-closed-loop.sh"
 require_text "$verify_script" "./scripts/ci/check-daemon-closed-loop.sh"
 require_text "$verify_script" "./scripts/ci/check-benchmark-smoke.sh"
+require_text "$verify_script" "./scripts/ci/check-current-stage-handoff.sh"
 require_text "$verify_script" "./scripts/ci/check-release-readiness.sh"
 require_text "$verify_script" "./scripts/ci/check-release-artifacts.sh"
 require_text "$verify_script" "./scripts/ci/check-signing-evidence.sh"
@@ -125,6 +129,13 @@ require_text "$benchmark_smoke_script" "ocr-benchmark-smoke.json"
 require_text "$benchmark_smoke_script" "vector-benchmark-smoke.json"
 require_text "$benchmark_smoke_script" "--allow-synthetic"
 require_text "$benchmark_smoke_script" "benchmark smoke check passed"
+
+require_text "$current_stage_handoff_script" "scripts/local/summarize-current-stage-validation.py"
+require_text "$current_stage_handoff_script" "resume-ir.current-stage-smoke-summary.v1"
+require_text "$current_stage_handoff_script" "resume-ir.current-stage-blocked-summary.v1"
+require_text "$current_stage_handoff_script" "resume-ir.current-stage-handoff.v1"
+require_text "$current_stage_handoff_script" "current-stage handoff check passed"
+require_text "$current_stage_handoff_script" "PRIVATE-current-stage"
 
 require_text "$release_workflow" "scripts/release/create-artifact-manifest.sh"
 require_text "$release_workflow" "scripts/release/create-signing-evidence.sh"

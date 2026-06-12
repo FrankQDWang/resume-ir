@@ -61,6 +61,9 @@ jobs:
       - name: Runbook check
         run: ./scripts/ci/check-runbooks.sh
 
+      - name: Current-stage handoff check
+        run: ./scripts/ci/check-current-stage-handoff.sh
+
       - name: Workflow check
         run: ./scripts/ci/check-workflows.sh
 

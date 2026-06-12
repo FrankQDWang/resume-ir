@@ -138,6 +138,24 @@ The smoke and benchmark-blocked summaries copy those safe counts under
 summary itself. The full release-readiness evidence manifest still records only
 the corpus-summary basename and digest, not the report body.
 
+To prepare a committed-safe operator handoff from a local smoke summary,
+blocked summary, or full current-stage evidence manifest, run:
+
+```bash
+scripts/local/summarize-current-stage-validation.py \
+  --input <local-evidence-dir>/current-stage-smoke-summary.json \
+  --out <local-evidence-dir>/current-stage-handoff.json
+```
+
+The output schema is `resume-ir.current-stage-handoff.v1` with privacy boundary
+`local_only_redacted_handoff`. It copies only structured status, preflight
+probe statuses, redacted aggregate observability counts, completed step names,
+must-not-upload categories, and not-complete/BLOCKED items. It fails closed if
+the input contains private markers or local path shapes. The handoff report is
+for operator continuity only: it is not release-readiness evidence, not a
+substitute for the full current-stage validation evidence manifest, and not
+proof that the complete product is done.
+
 ```bash
 scripts/local/run-current-stage-validation.sh --dry-run \
   --validation-profile full \
