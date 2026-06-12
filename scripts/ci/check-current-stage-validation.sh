@@ -281,6 +281,10 @@ case "$cmd:$sub" in
     printf 'privacy boundary: local_only_redacted_dataset_manifest\n'
     ;;
   benchmark-query-set:draft)
+    if [ "${FAKE_QUERY_SET_MODE:-ready}" = "draft-failed" ]; then
+      printf 'query set blocked: insufficient field-backed queries\n'
+      exit 1
+    fi
     write_out_arg "$@"
     printf 'query set: written\n'
     printf 'schema: resume-ir.query-set.jsonl.v1\n'
@@ -377,7 +381,11 @@ run_execute_smoke() {
   if [ "$mode" = "benchmark-gate-failed" ]; then
     benchmark_mode="gate-failed"
   fi
-  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
+  query_set_mode="ready"
+  if [ "$mode" = "query-set-draft-failed" ]; then
+    query_set_mode="draft-failed"
+  fi
+  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
     --resume-daemon "$fake_resume_daemon" \
     --resume-benchmark "$fake_resume_benchmark" \
@@ -552,6 +560,36 @@ reject_text "$tmpdir/execute-benchmark-gate-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-benchmark-gate-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-benchmark-gate-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-benchmark-gate-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke query-set-draft-failed
+query_set_draft_failed_status=$(cat "$tmpdir/execute-query-set-draft-failed-status.txt")
+if [ "$query_set_draft_failed_status" -eq 0 ]; then
+  fail "current-stage full profile accepted failed query-set draft"
+fi
+query_set_blocked_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$query_set_blocked_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on query-set draft failure"
+fi
+if [ -e "$execute_out_dir/private-benchmark-local.json" ]; then
+  fail "current-stage execute benchmarked private queries after query-set draft failure"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$query_set_blocked_summary" >/dev/null
+fi
+require_text "$query_set_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$query_set_blocked_summary" '"blocked_step": "query_set_draft"'
+require_text "$query_set_blocked_summary" '"blocked_category": "query-set"'
+require_text "$query_set_blocked_summary" '"blocked_reason": "query_set_draft_failed"'
+require_text "$query_set_blocked_summary" '"query-set-draft.stdout.txt"'
+require_text "$query_set_blocked_summary" '"corpus_summary_observability": {'
+reject_text "$query_set_blocked_summary" "$tmpdir"
+reject_text "$query_set_blocked_summary" "PRIVATE-current-stage"
+reject_text "$query_set_blocked_summary" "private fake query"
+require_text "$tmpdir/execute-query-set-draft-failed-stderr.txt" "current-stage validation blocked: query-set draft failed"
+reject_text "$tmpdir/execute-query-set-draft-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-query-set-draft-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-query-set-draft-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-query-set-draft-failed-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke ocr-digest-mismatch \
   --ocr-runtime-manifest-sha256 0000000000000000000000000000000000000000000000000000000000000000

@@ -202,6 +202,14 @@ When the baseline shape gate fails, treat the full current-stage baseline as
 not complete and continue from the blocked summary rather than reading private
 reports directly.
 
+If local query-set generation fails before the private benchmark can run,
+execute mode also writes `current-stage-blocked-summary.json` with
+`blocked_step: "query_set_draft"`, `blocked_category: "query-set"`, and
+`blocked_reason: "query_set_draft_failed"`. That summary includes the same
+redacted corpus observability counts and the query-set draft stdout digest, but
+does not include the query-set file, query bodies, local paths, or benchmark
+reports.
+
 ```bash
 scripts/local/run-current-stage-validation.sh --execute \
   --validation-profile full \
