@@ -524,7 +524,9 @@ if command -v python3 >/dev/null 2>&1; then
 fi
 require_text "$smoke_summary" '"schema_version": "resume-ir.current-stage-smoke-summary.v1"'
 require_text "$smoke_summary" '"privacy_boundary": "local_only_redacted_aggregate_summary"'
+require_text "$smoke_summary" '"validation_profile": "smoke"'
 require_text "$smoke_summary" '"current_stage_target": "local_real_corpus_smoke_chain"'
+require_text "$smoke_summary" '"smoke_satisfied": true'
 require_text "$smoke_summary" '"full_baseline_satisfied": false'
 require_text "$smoke_summary" '"release_readiness_evidence": false'
 require_text "$smoke_summary" '"ocr_runtime_probe": "passed"'

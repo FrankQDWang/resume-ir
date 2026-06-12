@@ -287,6 +287,11 @@ production-ready scope source.
   paths, raw OCR text, raw query text, vectors, generated private reports,
   local manifests, runtime binaries, model artifacts, indexes, SQLite
   databases, diagnostics, or model caches were committed or uploaded.
+  S332 used fake local current-stage execute fixtures only; no real resume
+  data, private query sets, local paths, raw query text, generated private
+  benchmark reports, generated diagnostics, local manifests, runtime binaries,
+  indexes, SQLite databases, signing material, notarization credentials, or
+  model caches were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1243,8 +1248,46 @@ obsolete preliminary files and checklists are not product scope.
 | S329 | Windows status IPC CI reliability complete locally | Remote Windows CI first failed in `resume-cli --test s20_status_ipc status_can_read_redacted_daemon_status_over_loopback_ipc` because the fake daemon accepted a nonblocking socket and immediately called `read`, which can return `WouldBlock` on Windows. After implementation, that test reuses the existing `accept_with_timeout` and `read_http_request` helpers so the accepted stream is switched back to blocking mode before request parsing, matching the rest of the IPC test file. Focused and full `s20_status_ipc` tests, fmt, diff check, and public repo guard passed locally. | This slice is a CI/test reliability fix only. It does not change product IPC behavior, clear release blockers, run the real 10k validation, improve P95/P99, prove 100k/1M validation, or make stable release ready. |
 | S330 | Local sentence-transformers embedding runtime adapter complete locally | Focused RED first failed because `scripts/ci/check-local-embedding-runtime.sh` could not find a repository adapter that speaks `resume-ir-embedding-v1`. After implementation, `scripts/local/embedding-runtime-sentence-transformers.py` reads the private embedding input file, validates the configured model id/dimension, defaults to local-files-only sentence-transformers loading, emits protocol vectors without raw text/path leakage, and has a CI stub guard wired into `verify-local.sh`. The runbook now documents offline default behavior, the explicit `RESUME_IR_SENTENCE_TRANSFORMERS_ALLOW_DOWNLOAD=1` cache-preparation escape hatch, `sentence-transformers/all-MiniLM-L6-v2` current-stage smoke usage, and the local model manifest boundary. | This slice is production complete for the reusable external-command adapter and guard only. It does not commit or bundle model weights, prove vector quality, approve final model legal/distribution status, run the real 10k baseline, clear embedding release blockers, improve P95/P99, prove 100k/1M validation, or make stable release ready. |
 | S331 | Current-stage twelve-file real local smoke witness complete locally | A private local-only smoke witness against the user-authorized local resume root used local Tesseract/Poppler and the committed sentence-transformers adapter backed by a local `sentence-transformers/all-MiniLM-L6-v2` Apache-2.0 model cache. The run used `--validation-profile smoke`, `--max-files 12`, `--max-queries 5`, bounded OCR/embedding worker ticks, smoke keyword query fallback, and smoke partial hot-index allowance. It exited 0: OCR runtime probe passed, embedding protocol passed, the redacted corpus summary reported 12 documents with 1 searchable/vector-indexed document and `hot_index_fully_covered: false`, the generated private query set reported keyword fallback, the private query benchmark reported 5 queries, 0 zero-result queries, 5 total hits, and `percentile_confidence: smoke`, and a redacted aggregate privacy scan found no local resume root, local cache path, contact marker, query body, or private raw text in committed-safe aggregate outputs. | This is production complete as a bounded current-stage real local smoke witness only. It proves the local OCR/model preflight plus import/OCR/embedding/query/benchmark/diagnostics chain remains usable with the reusable adapter, but it does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR/import/parser failure triage, field/vector quality targets, P95/P99 optimization, final model distribution/legal signoff, installer/platform/signing/notarization blockers, 100k/1M validation, or stable release readiness. |
+| S332 | Current-stage smoke summary status fields complete locally | Focused RED first failed because `check-current-stage-validation.sh` required `current-stage-smoke-summary.json` to include `"validation_profile": "smoke"` and `"smoke_satisfied": true`, but the script only emitted the target and `full_baseline_satisfied: false`. After implementation, smoke summaries explicitly identify the smoke profile and positive smoke outcome while still marking full baseline and release evidence false. The current-stage guard verifies these fields and keeps smoke output separate from full current-stage release evidence. | This slice is production complete for smoke-summary handoff clarity only. It does not rerun the real local corpus, clear the full local 10k/8000-document baseline, clear 500-query private evidence, optimize P95/P99, approve model/runtime distribution, clear release blockers, or make stable release ready. |
 
 ## Command Log
+
+### S332
+
+TDD red check:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Failed before implementation because the fake smoke execute summary was
+  missing required text `"validation_profile": "smoke"`.
+
+Implementation checks:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- `check-current-stage-validation.sh`: exit 0; current-stage validation check
+  passed and now requires explicit smoke profile/satisfaction fields.
+- `sh -n`: exit 0 for the current-stage script and guard.
+- `check-runbooks.sh`: exit 0; runbook check passed.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0; public repo guard passed.
+
+Scope note:
+
+- S332 tightens redacted smoke handoff semantics only. It does not modify full
+  evidence semantics or claim the full baseline/product complete.
 
 ### S331
 

@@ -1831,7 +1831,9 @@ if [ "$validation_profile" = "smoke" ]; then
 {
   "schema_version": "resume-ir.current-stage-smoke-summary.v1",
   "privacy_boundary": "local_only_redacted_aggregate_summary",
+  "validation_profile": "smoke",
   "current_stage_target": "local_real_corpus_smoke_chain",
+  "smoke_satisfied": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
   "performance_optimization_deferred": true,
