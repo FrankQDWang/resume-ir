@@ -108,6 +108,24 @@ resume-cli --data-dir <local-data-dir> ocr draft-manifest \
   --reviewed
 ```
 
+For a Tesseract combined language such as `eng+chi_sim`, provide one
+`--language-pack <lang>=<local-tessdata-file>` argument for each language:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr draft-manifest \
+  --out <local-ocr-runtime-manifest.json> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language eng+chi_sim \
+  --language-pack eng=<local-eng-tessdata-file> \
+  --language-pack chi_sim=<local-chi-sim-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --reviewed
+```
+
 The draft command writes the manifest to the local `--out` file and keeps stdout
 redacted. The manifest file itself contains local artifact paths because the
 validator must read those files to verify checksums. Do not commit, upload, or

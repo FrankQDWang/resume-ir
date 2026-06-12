@@ -309,6 +309,11 @@ production-ready scope source.
   paths, raw OCR text, raw query text, vectors, generated private reports,
   local manifests, runtime binaries, model artifacts, indexes, SQLite
   databases, diagnostics, or model caches were committed or uploaded.
+  S336 used synthetic OCR runtime manifest fixtures and local runtime preflight
+  probes only; no real resume data, filenames, paths, raw OCR text, raw query
+  text, vectors, generated private reports, local manifests, runtime binaries,
+  model artifacts, indexes, SQLite databases, diagnostics, or model caches were
+  committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1269,8 +1274,92 @@ obsolete preliminary files and checklists are not product scope.
 | S333 | Current-stage redacted handoff summarizer complete locally | Focused RED first failed because `scripts/ci/check-current-stage-handoff.sh` required `scripts/local/summarize-current-stage-validation.py`, but no handoff summarizer existed. After implementation, the summarizer consumes redacted smoke summaries, blocked summaries, or full evidence manifests and emits `resume-ir.current-stage-handoff.v1` with privacy boundary `local_only_redacted_handoff`, explicit `complete_product: false`, full-baseline/release evidence status, preflight probe status, redacted aggregate observability, completed step names, not-complete/BLOCKED items, and must-not-upload categories. It fails closed on local path/private markers. The handoff guard covers smoke, blocked, and rejected-private-marker fixtures, `verify-local.sh` and PR workflow now run it, and the release blocker runbook documents operator use. A fresh private local 12-file smoke generated a handoff with privacy scan passed, `smoke_satisfied`, 12 documents, 1 searchable/vector-indexed document, and 5 not-complete items. | This slice is production complete for redacted current-stage operator handoff only. It does not expose private evidence bodies, clear the full local 10k/8000-document baseline, clear 500-query private evidence, optimize P95/P99, approve model/runtime distribution, clear release blockers, or make stable release ready. |
 | S334 | Current-stage automatic handoff binding complete locally | Focused RED first failed because `check-current-stage-validation.sh` required dry-run plans and execute outputs to include `current-stage-handoff.json`, but `run-current-stage-validation.sh` only wrote smoke/full/blocked summaries and required manual summarization. After implementation, execute mode writes `current-stage-handoff.json` automatically after full evidence, smoke summary, or blocked summary generation; dry-run plans show the handoff step; full current-stage evidence now carries explicit `full_baseline_satisfied: true` and `release_readiness_evidence: true` fields for safe handoff generation; all post-corpus blocked summaries carry `private_corpus_read: true`. The validation guard now checks full, smoke, and major blocked paths for redacted handoff output, and the handoff guard covers the full evidence schema directly. | This slice is production complete for automatic current-stage handoff generation only. It does not run the full local 10k/8000-document baseline, clear 500-query private evidence, optimize P95/P99, approve model/runtime distribution, clear release blockers, prove real installer lifecycle, or make stable release ready. |
 | S335 | Current-stage private smoke witness completed locally | A fresh local-only smoke run used the user-authorized private resume directory with `--validation-profile smoke`, `--max-files 5`, `--max-queries 1`, OCR/embedding worker ticks capped at 2, local Tesseract/Poppler, and the local sentence-transformers adapter. The run completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, import, bounded OCR worker, bounded embedding worker, corpus summary, query-set draft, private-query baseline, smoke gate, redacted diagnostics, smoke summary, and automatic handoff. Redacted aggregate observability reported 5 documents, 1 searchable document, 1 vector-indexed document, 4 OCR-required documents, 3 queued OCR jobs, 1 completed OCR job, 1 retryable OCR page-budget failure, and `hot_index_fully_covered: false`. | This is current-stage smoke evidence only. Full 10k/8000-document baseline, 500-query private baseline, P95/P99 reduction, external 100k/1M validation, stable release readiness, and platform signing/notarization remain not complete or externally blocked. No private evidence files are committed. |
+| S336 | Multi-language OCR runtime manifest support complete locally | Focused RED first failed because `ocr draft-manifest --language eng+chi_sim` rejected repeated `--language-pack` arguments and could not record per-language tessdata checksum/license evidence. After implementation, the CLI keeps the single-language `--language-pack <path>` form, accepts repeated `--language-pack <lang>=<path>` entries for combined Tesseract languages, requires the entries to exactly cover the requested language set, writes one manifest language entry per tessdata file, and keeps stdout/validation output path-redacted. The current-stage validation script now forwards repeated language-pack arguments, dry-run plans show the multi-language syntax, and runbook guards cover the operator guidance. A local runtime preflight for `eng+chi_sim` reported `runtime_status: ready`, `runtime_probe: passed`, and requested language available without reading resumes. | This slice is production complete for multi-language OCR manifest evidence and current-stage command wiring only. It does not improve OCR accuracy, run the full private corpus, clear OCR backlog/page-budget limits, clear the full 10k/8000-document baseline, clear 500-query private evidence, or make release readiness complete. |
 
 ## Command Log
+
+### S336
+
+TDD red check:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s174_ocr_manifest ocr_manifest_draft_records_each_combined_tesseract_language_pack --locked -- --exact
+```
+
+Output summary:
+
+- Failed as expected because `ocr draft-manifest` rejected repeated
+  `--language-pack` arguments with usage output and could not record
+  `eng+chi_sim` language packs separately.
+
+Focused verification:
+
+```bash
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s174_ocr_manifest ocr_manifest_draft_records_each_combined_tesseract_language_pack --locked -- --exact
+PATH=<cargo-bin>:$PATH cargo test -p resume-cli --test s174_ocr_manifest --locked
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-runbooks.sh
+PATH=<cargo-bin>:$PATH ./scripts/ci/check-runbooks.sh
+PATH=<cargo-bin>:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- The new multi-language OCR manifest test passed after implementation.
+- The full OCR manifest/preflight test suite passed: 8 tests, 0 failures.
+- Shell syntax, runbook guard, and current-stage validation guard exited 0.
+
+Local runtime smoke without private resume reads:
+
+```bash
+target/debug/resume-cli --data-dir <private-local-data-dir> ocr preflight \
+  --json \
+  --ocr-lang eng+chi_sim \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command>
+
+scripts/local/run-current-stage-validation.sh --dry-run \
+  --validation-profile smoke \
+  --resume-root <private-local-resume-root> \
+  --data-dir <private-local-data-dir> \
+  --out-dir <private-local-evidence-dir> \
+  --model-manifest <private-local-model-manifest> \
+  --ocr-runtime-manifest <private-local-ocr-runtime-manifest> \
+  --model-artifact <private-local-model-artifact> \
+  --embedding-command <private-local-embedding-command> \
+  --model-pack-id sentence-transformers-all-MiniLM-L6-v2-local \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-format safetensors \
+  --dimension 384 \
+  --model-license Apache-2.0 \
+  --runtime-pack-id local-tesseract-poppler-homebrew \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language eng+chi_sim \
+  --language-pack eng=<local-eng-tessdata-file> \
+  --language-pack chi_sim=<local-chi-sim-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license GPL-2.0-or-later \
+  --language-license Apache-2.0 \
+  --max-files 5 \
+  --max-queries 1 \
+  --top-k 3
+```
+
+Output summary:
+
+- OCR preflight JSON reported schema `ocr-runtime-preflight.v1`,
+  `runtime_status: ready`, `runtime_probe: passed`, requested language
+  `eng+chi_sim`, and requested language status `available`.
+- Current-stage dry-run emitted schema `resume-ir.current-stage-validation-plan.v1`,
+  `validation_profile: smoke`, `release_readiness_evidence: false`,
+  redacted root `<local-resume-root>`, and a plan command containing
+  `[--language-pack <lang=path> ...]`.
+
+Scope note:
+
+- S336 only records and validates multi-language OCR runtime dependency
+  evidence. It does not run real private resume OCR with `eng+chi_sim`, clear
+  OCR backlog, or satisfy the full current-stage baseline.
 
 ### S335
 

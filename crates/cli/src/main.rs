@@ -3199,12 +3199,17 @@ struct OcrDraftManifestArgs {
     runtime_pack_id: String,
     tesseract_command: PathBuf,
     pdftoppm_command: PathBuf,
-    language: String,
-    language_pack: PathBuf,
+    language_packs: Vec<OcrLanguagePackDraft>,
     engine_license: String,
     renderer_license: String,
     language_license: String,
     reviewed: bool,
+}
+
+#[derive(Debug, Clone)]
+struct OcrLanguagePackDraft {
+    id: String,
+    path: PathBuf,
 }
 
 fn ocr_draft_manifest_command(args: &[String]) -> Result<()> {
@@ -3219,10 +3224,12 @@ fn ocr_draft_manifest_command(args: &[String]) -> Result<()> {
             "ocr runtime manifest draft blocked: pdftoppm command is unavailable",
         ));
     }
-    if !draft_args.language_pack.is_file() {
-        return Err(CliError::user(
-            "ocr runtime manifest draft blocked: language pack is unavailable",
-        ));
+    for language_pack in &draft_args.language_packs {
+        if !language_pack.path.is_file() {
+            return Err(CliError::user(
+                "ocr runtime manifest draft blocked: language pack is unavailable",
+            ));
+        }
     }
 
     let tesseract_sha256 = file_sha256_hex(&draft_args.tesseract_command).map_err(|_| {
@@ -3231,9 +3238,28 @@ fn ocr_draft_manifest_command(args: &[String]) -> Result<()> {
     let pdftoppm_sha256 = file_sha256_hex(&draft_args.pdftoppm_command).map_err(|_| {
         CliError::user("ocr runtime manifest draft blocked: pdftoppm checksum unavailable")
     })?;
-    let language_sha256 = file_sha256_hex(&draft_args.language_pack).map_err(|_| {
-        CliError::user("ocr runtime manifest draft blocked: language pack checksum unavailable")
-    })?;
+    let language_entries = draft_args
+        .language_packs
+        .iter()
+        .map(|language_pack| {
+            let language_sha256 = file_sha256_hex(&language_pack.path).map_err(|_| {
+                CliError::user(
+                    "ocr runtime manifest draft blocked: language pack checksum unavailable",
+                )
+            })?;
+            Ok(serde_json::json!({
+                "id": language_pack.id,
+                "artifact": {
+                    "path": path_string_lossless(&language_pack.path)?,
+                    "sha256": language_sha256
+                },
+                "license": {
+                    "id": draft_args.language_license,
+                    "reviewed": draft_args.reviewed
+                }
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let tesseract_version =
         local_command_version_token(&draft_args.tesseract_command, &["--version"]);
     let pdftoppm_version = local_command_version_token(&draft_args.pdftoppm_command, &["-v"]);
@@ -3271,19 +3297,7 @@ fn ocr_draft_manifest_command(args: &[String]) -> Result<()> {
                 }
             }
         ],
-        "languages": [
-            {
-                "id": draft_args.language,
-                "artifact": {
-                    "path": path_string_lossless(&draft_args.language_pack)?,
-                    "sha256": language_sha256
-                },
-                "license": {
-                    "id": draft_args.language_license,
-                    "reviewed": draft_args.reviewed
-                }
-            }
-        ]
+        "languages": language_entries
     });
     let manifest_text = serde_json::to_string_pretty(&manifest)
         .map_err(|_| CliError::user("ocr runtime manifest draft blocked: invalid manifest"))?;
@@ -3304,7 +3318,7 @@ fn ocr_draft_manifest_command(args: &[String]) -> Result<()> {
         manifest["runtime_pack_id"].as_str().unwrap_or("unknown")
     );
     println!("components: 2");
-    println!("languages: 1");
+    println!("languages: {}", draft_args.language_packs.len());
     println!(
         "license reviewed: {}",
         if draft_args.reviewed { "yes" } else { "no" }
@@ -3319,7 +3333,7 @@ fn parse_ocr_draft_manifest_args(args: &[String]) -> Result<OcrDraftManifestArgs
     let mut tesseract_command = None;
     let mut pdftoppm_command = None;
     let mut language = None;
-    let mut language_pack = None;
+    let mut language_pack_args = Vec::new();
     let mut engine_license = None;
     let mut renderer_license = None;
     let mut language_license = None;
@@ -3359,11 +3373,7 @@ fn parse_ocr_draft_manifest_args(args: &[String]) -> Result<OcrDraftManifestArgs
                 )?);
             }
             "--language-pack" => {
-                language_pack = Some(take_ocr_path_arg(
-                    args,
-                    &mut index,
-                    language_pack.is_some(),
-                )?);
+                language_pack_args.push(take_ocr_language_pack_arg(args, &mut index)?);
             }
             "--engine-license" => {
                 engine_license = Some(take_ocr_identifier_arg(
@@ -3397,18 +3407,99 @@ fn parse_ocr_draft_manifest_args(args: &[String]) -> Result<OcrDraftManifestArgs
         }
     }
 
+    let language = language.ok_or_else(|| CliError::usage(ocr_usage()))?;
+    let language_packs = parse_ocr_language_pack_args(&language, &language_pack_args)?;
+
     Ok(OcrDraftManifestArgs {
         out: out.ok_or_else(|| CliError::usage(ocr_usage()))?,
         runtime_pack_id: runtime_pack_id.ok_or_else(|| CliError::usage(ocr_usage()))?,
         tesseract_command: tesseract_command.ok_or_else(|| CliError::usage(ocr_usage()))?,
         pdftoppm_command: pdftoppm_command.ok_or_else(|| CliError::usage(ocr_usage()))?,
-        language: language.ok_or_else(|| CliError::usage(ocr_usage()))?,
-        language_pack: language_pack.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        language_packs,
         engine_license: engine_license.ok_or_else(|| CliError::usage(ocr_usage()))?,
         renderer_license: renderer_license.ok_or_else(|| CliError::usage(ocr_usage()))?,
         language_license: language_license.ok_or_else(|| CliError::usage(ocr_usage()))?,
         reviewed,
     })
+}
+
+fn parse_ocr_language_pack_args(
+    requested_language: &str,
+    raw_args: &[String],
+) -> Result<Vec<OcrLanguagePackDraft>> {
+    if raw_args.is_empty() {
+        return Err(CliError::usage(ocr_usage()));
+    }
+
+    let requested_languages = split_ocr_language_set(requested_language)?;
+    if raw_args.len() == 1 && !raw_args[0].contains('=') {
+        return Ok(vec![OcrLanguagePackDraft {
+            id: requested_language.to_string(),
+            path: PathBuf::from(&raw_args[0]),
+        }]);
+    }
+
+    let mut language_packs = Vec::new();
+    for raw_arg in raw_args {
+        let Some((language_id, path)) = raw_arg.split_once('=') else {
+            return Err(CliError::usage(ocr_usage()));
+        };
+        if !valid_model_manifest_identifier(language_id) || path.trim().is_empty() {
+            return Err(CliError::usage(ocr_usage()));
+        }
+        if !requested_languages
+            .iter()
+            .any(|language| language == language_id)
+        {
+            return Err(CliError::usage(ocr_usage()));
+        }
+        if language_packs
+            .iter()
+            .any(|language_pack: &OcrLanguagePackDraft| language_pack.id == language_id)
+        {
+            return Err(CliError::usage(ocr_usage()));
+        }
+        language_packs.push(OcrLanguagePackDraft {
+            id: language_id.to_string(),
+            path: PathBuf::from(path),
+        });
+    }
+
+    if language_packs.len() != requested_languages.len() {
+        return Err(CliError::usage(ocr_usage()));
+    }
+
+    Ok(language_packs)
+}
+
+fn split_ocr_language_set(requested_language: &str) -> Result<Vec<String>> {
+    let languages = requested_language
+        .split('+')
+        .map(str::trim)
+        .filter(|language| !language.is_empty())
+        .map(|language| {
+            if valid_model_manifest_identifier(language) {
+                Ok(language.to_string())
+            } else {
+                Err(CliError::usage(ocr_usage()))
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if languages.is_empty() {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    Ok(languages)
+}
+
+fn take_ocr_language_pack_arg(args: &[String], index: &mut usize) -> Result<String> {
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(ocr_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    *index += 2;
+    Ok(value.clone())
 }
 
 fn take_ocr_path_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<PathBuf> {
@@ -4004,7 +4095,7 @@ fn ocr_manifest_sha256(value: &str) -> Result<String> {
 }
 
 fn ocr_usage() -> &'static str {
-    "usage: resume-cli ocr draft-manifest --out <path> --runtime-pack-id <id> --tesseract-command <path> --pdftoppm-command <path> --language <lang> --language-pack <path> --engine-license <id> --renderer-license <id> --language-license <id> [--reviewed] | resume-cli ocr preflight --json [--ocr-lang <lang>] [--tesseract-command <path>] [--pdftoppm-command <path>] | resume-cli ocr validate-manifest --manifest <path>"
+    "usage: resume-cli ocr draft-manifest --out <path> --runtime-pack-id <id> --tesseract-command <path> --pdftoppm-command <path> --language <lang> --language-pack <path|lang=path> [--language-pack <lang=path> ...] --engine-license <id> --renderer-license <id> --language-license <id> [--reviewed] | resume-cli ocr preflight --json [--ocr-lang <lang>] [--tesseract-command <path>] [--pdftoppm-command <path>] | resume-cli ocr validate-manifest --manifest <path>"
 }
 
 fn service_command(data_dir: &Path, args: &[String]) -> Result<()> {

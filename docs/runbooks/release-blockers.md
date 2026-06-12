@@ -186,6 +186,10 @@ scripts/local/run-current-stage-validation.sh --dry-run \
   --top-k 10
 ```
 
+For Tesseract combined languages such as `eng+chi_sim`, pass repeated
+`--language-pack <lang>=<local-tessdata-file>` entries so the local OCR runtime
+manifest records every tessdata checksum and reviewed license separately.
+
 Run execute mode only on the operator's machine and keep every generated file
 local. The script performs OCR/model preflight, drafts local manifests, validates
 reviewed manifests, imports the selected root, runs bounded OCR and embedding

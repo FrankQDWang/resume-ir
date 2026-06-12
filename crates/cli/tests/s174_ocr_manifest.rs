@@ -356,6 +356,126 @@ exit 0
 
 #[cfg(unix)]
 #[test]
+fn ocr_manifest_draft_records_each_combined_tesseract_language_pack() {
+    let data_dir = temp_dir("ocr-manifest-draft-multi-lang-private-data");
+    let manifest_file = temp_file("ocr-manifest-draft-multi-lang-private-manifest");
+    let bin_dir = temp_dir("ocr-manifest-draft-multi-lang-private-bin");
+    let eng_pack = temp_file("ocr-manifest-draft-multi-lang-private-eng-tessdata");
+    let chi_pack = temp_file("ocr-manifest-draft-multi-lang-private-chi-tessdata");
+    let tesseract = write_executable(
+        &bin_dir,
+        "tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'tesseract 5.5.1\n'
+  exit 0
+fi
+exit 0
+"#,
+    );
+    let pdftoppm = write_executable(
+        &bin_dir,
+        "pdftoppm",
+        r#"#!/bin/sh
+if [ "$1" = "-v" ]; then
+  printf 'pdftoppm version 25.12.0\n'
+  exit 0
+fi
+exit 0
+"#,
+    );
+    fs::write(&eng_pack, b"SYNTHETIC ENG OCR LANGUAGE PACK\n").unwrap();
+    fs::write(&chi_pack, b"SYNTHETIC CHI OCR LANGUAGE PACK\n").unwrap();
+
+    let eng_pack_arg = format!("eng={}", path_str(&eng_pack));
+    let chi_pack_arg = format!("chi_sim={}", path_str(&chi_pack));
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr",
+            "draft-manifest",
+            "--out",
+            path_str(&manifest_file),
+            "--runtime-pack-id",
+            "fixture-ocr-pack-multi-lang",
+            "--tesseract-command",
+            path_str(&tesseract),
+            "--pdftoppm-command",
+            path_str(&pdftoppm),
+            "--language",
+            "eng+chi_sim",
+            "--language-pack",
+            &eng_pack_arg,
+            "--language-pack",
+            &chi_pack_arg,
+            "--engine-license",
+            "Apache-2.0",
+            "--renderer-license",
+            "GPL-2.0-or-later",
+            "--language-license",
+            "Apache-2.0",
+            "--reviewed",
+        ])
+        .output()
+        .expect("draft multi-language OCR manifest");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr runtime manifest draft: written"));
+    assert!(stdout.contains("languages: 2"));
+    assert!(stdout.contains("paths: <redacted>"));
+    assert!(!stdout.contains(path_str(&eng_pack)));
+    assert!(!stdout.contains(path_str(&chi_pack)));
+    assert!(!stdout.contains("SYNTHETIC ENG OCR LANGUAGE PACK"));
+    assert!(!stdout.contains("SYNTHETIC CHI OCR LANGUAGE PACK"));
+
+    let manifest = fs::read_to_string(&manifest_file).unwrap();
+    assert!(manifest.contains("\"id\": \"eng\""));
+    assert!(manifest.contains("\"id\": \"chi_sim\""));
+    assert!(manifest.contains(path_str(&eng_pack)));
+    assert!(manifest.contains(path_str(&chi_pack)));
+
+    let validate = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr",
+            "validate-manifest",
+            "--manifest",
+            path_str(&manifest_file),
+        ])
+        .output()
+        .expect("validate multi-language OCR manifest");
+
+    assert!(
+        validate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&validate.stdout),
+        String::from_utf8_lossy(&validate.stderr)
+    );
+    let validate_stdout = String::from_utf8_lossy(&validate.stdout);
+    assert!(validate_stdout.contains("languages: 2"));
+    assert!(validate_stdout.contains("language id: eng"));
+    assert!(validate_stdout.contains("language id: chi_sim"));
+    assert!(!validate_stdout.contains(path_str(&eng_pack)));
+    assert!(!validate_stdout.contains(path_str(&chi_pack)));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+    remove_file(&eng_pack);
+    remove_file(&chi_pack);
+    remove_file(&manifest_file);
+}
+
+#[cfg(unix)]
+#[test]
 fn ocr_preflight_json_reports_ready_runtime_without_path_or_language_dump() {
     let data_dir = temp_dir("ocr-preflight-ready-private-data");
     let bin_dir = temp_dir("ocr-preflight-ready-private-bin");

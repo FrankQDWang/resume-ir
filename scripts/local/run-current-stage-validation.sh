@@ -10,7 +10,7 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   --model-artifact FILE --embedding-command FILE
   --model-pack-id ID --model-id ID --model-format ID --dimension N --model-license ID
   --runtime-pack-id ID --tesseract-command FILE --pdftoppm-command FILE
-  --language LANG --language-pack FILE
+  --language LANG --language-pack FILE|LANG=FILE [--language-pack LANG=FILE ...]
   --engine-license ID --renderer-license ID --language-license ID
   [--dataset-manifest-sha256 SHA256] [--query-set-sha256 SHA256]
   [--model-manifest-sha256 SHA256]
@@ -1012,7 +1012,8 @@ runtime_pack_id=""
 tesseract_command=""
 pdftoppm_command=""
 language=""
-language_pack=""
+language_pack_args=""
+language_pack_count=0
 engine_license=""
 renderer_license=""
 language_license=""
@@ -1111,7 +1112,15 @@ while [ "$#" -gt 0 ]; do
       need_value "$@"; language="$2"; shift 2
       ;;
     --language-pack)
-      need_value "$@"; language_pack="$2"; shift 2
+      need_value "$@"
+      if [ "$language_pack_count" -eq 0 ]; then
+        language_pack_args="$2"
+      else
+        language_pack_args="$language_pack_args
+$2"
+      fi
+      language_pack_count=$((language_pack_count + 1))
+      shift 2
       ;;
     --engine-license)
       need_value "$@"; engine_license="$2"; shift 2
@@ -1209,7 +1218,7 @@ require_arg "--runtime-pack-id" "$runtime_pack_id"
 require_arg "--tesseract-command" "$tesseract_command"
 require_arg "--pdftoppm-command" "$pdftoppm_command"
 require_arg "--language" "$language"
-require_arg "--language-pack" "$language_pack"
+[ "$language_pack_count" -gt 0 ] || fail "missing required argument: --language-pack"
 require_arg "--engine-license" "$engine_license"
 require_arg "--renderer-license" "$renderer_license"
 require_arg "--language-license" "$language_license"
@@ -1320,7 +1329,7 @@ if [ "$mode" = "dry-run" ]; then
     },
     {
       "id": "ocr_manifest_draft",
-      "command": "resume-cli --data-dir <local-data-dir> ocr draft-manifest --out <local-ocr-runtime-manifest> --runtime-pack-id <reviewed-runtime-pack-id> --tesseract-command <local-tesseract-command> --pdftoppm-command <local-pdftoppm-command> --language <ocr-language> --language-pack <local-language-pack> --engine-license <engine-license> --renderer-license <renderer-license> --language-license <language-license> [--reviewed]"
+      "command": "resume-cli --data-dir <local-data-dir> ocr draft-manifest --out <local-ocr-runtime-manifest> --runtime-pack-id <reviewed-runtime-pack-id> --tesseract-command <local-tesseract-command> --pdftoppm-command <local-pdftoppm-command> --language <ocr-language> --language-pack <local-language-pack-or-lang=path> [--language-pack <lang=path> ...] --engine-license <engine-license> --renderer-license <renderer-license> --language-license <language-license> [--reviewed]"
     },
     {
       "id": "ocr_manifest_validate",
@@ -1454,19 +1463,28 @@ if ! grep -Fq '"runtime_probe": "passed"' "$out_dir/ocr-preflight.json"; then
 fi
 
 printf '%s\n' "current-stage validation: ocr manifest draft"
-set +e
-"$resume_cli" --data-dir "$data_dir" ocr draft-manifest \
+set -- "$resume_cli" --data-dir "$data_dir" ocr draft-manifest \
   --out "$ocr_runtime_manifest" \
   --runtime-pack-id "$runtime_pack_id" \
   --tesseract-command "$tesseract_command" \
   --pdftoppm-command "$pdftoppm_command" \
-  --language "$language" \
-  --language-pack "$language_pack" \
+  --language "$language"
+old_ifs=$IFS
+IFS='
+'
+for language_pack_arg in $language_pack_args; do
+  set -- "$@" --language-pack "$language_pack_arg"
+done
+IFS=$old_ifs
+set -- "$@" \
   --engine-license "$engine_license" \
   --renderer-license "$renderer_license" \
-  --language-license "$language_license" \
-  $ocr_reviewed_arg \
-  > "$out_dir/ocr-draft-manifest.stdout.txt"
+  --language-license "$language_license"
+if [ -n "$ocr_reviewed_arg" ]; then
+  set -- "$@" "$ocr_reviewed_arg"
+fi
+set +e
+"$@" > "$out_dir/ocr-draft-manifest.stdout.txt"
 ocr_manifest_draft_status=$?
 set -e
 if [ "$ocr_manifest_draft_status" -ne 0 ]; then
