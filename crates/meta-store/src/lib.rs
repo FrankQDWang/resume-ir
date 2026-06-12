@@ -2749,6 +2749,10 @@ impl MetaStore {
         )
     }
 
+    pub fn ingest_jobs(&self) -> Result<Vec<IngestJob>> {
+        self.query_jobs("ORDER BY rowid", params![])
+    }
+
     pub fn upsert_index_state(&self, state: &IndexState) -> Result<()> {
         let connection = self.connection.borrow();
         connection

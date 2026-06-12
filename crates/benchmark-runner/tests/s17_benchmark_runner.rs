@@ -164,6 +164,52 @@ fn private_query_corpus_summary_accepts_partial_hot_index_when_explicitly_allowe
 }
 
 #[test]
+fn private_query_corpus_summary_accepts_redacted_status_breakdowns() {
+    let mut report: serde_json::Value =
+        serde_json::from_slice(&private_query_corpus_summary_json(8_720, true)).unwrap();
+    let object = report.as_object_mut().unwrap();
+    object.insert(
+        "document_status_counts".to_string(),
+        serde_json::json!({
+            "searchable": 8_719,
+            "ocr_required": 1
+        }),
+    );
+    object.insert(
+        "ingest_job_status_counts".to_string(),
+        serde_json::json!({
+            "failed_retryable": 1,
+            "queued": 2
+        }),
+    );
+    object.insert(
+        "ingest_job_kind_status_counts".to_string(),
+        serde_json::json!({
+            "ocr_document": {
+                "failed_retryable": 1
+            },
+            "update_index": {
+                "queued": 2
+            }
+        }),
+    );
+    object.insert(
+        "ingest_job_failure_counts".to_string(),
+        serde_json::json!({
+            "ocr_page_budget_exceeded": 1
+        }),
+    );
+
+    let summary =
+        PrivateQueryCorpusSummary::from_redacted_json_bytes(serde_json::to_vec(&report).unwrap())
+            .unwrap();
+
+    assert_eq!(summary.document_count(), 8_720);
+    assert_eq!(summary.searchable_document_count(), 8_720);
+    assert_eq!(summary.vector_indexed_document_count(), 8_720);
+}
+
+#[test]
 fn benchmark_gate_rejects_private_real_corpus_without_model_manifest_digest() {
     let report = minimal_private_real_benchmark_json(8_720, 500, 25.0, false).replace(
         ",\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",

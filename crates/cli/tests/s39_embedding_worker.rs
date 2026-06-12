@@ -6,7 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use index_fulltext::{FullTextIndex, IndexDocument, IndexSection};
 use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{
-    Document, DocumentId, DocumentStatus, FileExtension, MetaStore, ResumeVersion, ResumeVersionId,
+    Document, DocumentId, DocumentStatus, FileExtension, IngestJob, IngestJobFailureKind,
+    IngestJobId, IngestJobKind, IngestJobStatus, MetaStore, ResumeVersion, ResumeVersionId,
     ResumeVisibility, UnixTimestamp,
 };
 
@@ -932,6 +933,40 @@ fn benchmark_corpus_summary_json_reports_redacted_hot_index_coverage_without_pri
         "synthetic-summary-needs-ocr.pdf",
         DocumentStatus::OcrRequired,
     );
+    let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store
+        .insert_ingest_job(&IngestJob {
+            id: IngestJobId::from_non_secret_parts(&["s278", "summary-ocr-failed"]),
+            document_id: ocr_document_id.clone(),
+            resume_version_id: None,
+            kind: IngestJobKind::OcrDocument,
+            status: IngestJobStatus::FailedRetryable,
+            attempt_count: 1,
+            max_attempts: 3,
+            queued_at: now,
+            started_at: Some(now),
+            finished_at: Some(now),
+            updated_at: now,
+            failure_kind: Some(IngestJobFailureKind::OcrPageBudgetExceeded),
+        })
+        .unwrap();
+    store
+        .insert_ingest_job(&IngestJob {
+            id: IngestJobId::from_non_secret_parts(&["s278", "summary-index-queued"]),
+            document_id: document_a_id.clone(),
+            resume_version_id: Some(document_a_version_id.clone()),
+            kind: IngestJobKind::UpdateIndex,
+            status: IngestJobStatus::Queued,
+            attempt_count: 0,
+            max_attempts: 3,
+            queued_at: now,
+            started_at: None,
+            finished_at: None,
+            updated_at: now,
+            failure_kind: None,
+        })
+        .unwrap();
 
     let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
     vector_index
@@ -1009,6 +1044,22 @@ fn benchmark_corpus_summary_json_reports_redacted_hot_index_coverage_without_pri
     assert_eq!(report["vector_index_state"], "available");
     assert_eq!(report["vector_search_backend"], "hnsw_ann");
     assert_eq!(report["hot_index_fully_covered"], false);
+    assert_eq!(report["document_status_counts"]["searchable"], 2);
+    assert_eq!(report["document_status_counts"]["ocr_required"], 1);
+    assert_eq!(report["ingest_job_status_counts"]["failed_retryable"], 1);
+    assert_eq!(report["ingest_job_status_counts"]["queued"], 1);
+    assert_eq!(
+        report["ingest_job_kind_status_counts"]["ocr_document"]["failed_retryable"],
+        1
+    );
+    assert_eq!(
+        report["ingest_job_kind_status_counts"]["update_index"]["queued"],
+        1
+    );
+    assert_eq!(
+        report["ingest_job_failure_counts"]["ocr_page_budget_exceeded"],
+        1
+    );
     assert_eq!(report["contains_raw_resume_text"], false);
     assert_eq!(report["contains_resume_paths"], false);
     assert_eq!(report["contains_queries"], false);

@@ -9085,6 +9085,10 @@ fn benchmark_corpus_summary_command(data_dir: &Path, args: &[String]) -> Result<
             "vector_index_state": summary.vector_index_state,
             "vector_search_backend": summary.vector_search_backend,
             "hot_index_fully_covered": summary.hot_index_fully_covered,
+            "document_status_counts": summary.document_status_counts,
+            "ingest_job_status_counts": summary.ingest_job_status_counts,
+            "ingest_job_kind_status_counts": summary.ingest_job_kind_status_counts,
+            "ingest_job_failure_counts": summary.ingest_job_failure_counts,
             "contains_raw_resume_text": false,
             "contains_resume_paths": false,
             "contains_queries": false,
@@ -9119,6 +9123,18 @@ fn benchmark_corpus_summary_command(data_dir: &Path, args: &[String]) -> Result<
         "hot index fully covered: {}",
         summary.hot_index_fully_covered
     );
+    println!(
+        "document status counts: {}",
+        redacted_count_map_label(&summary.document_status_counts)
+    );
+    println!(
+        "ingest job status counts: {}",
+        redacted_count_map_label(&summary.ingest_job_status_counts)
+    );
+    println!(
+        "ingest job failure counts: {}",
+        redacted_count_map_label(&summary.ingest_job_failure_counts)
+    );
     println!("raw resume text: <redacted>");
     println!("resume paths: <redacted>");
     println!("queries: <redacted>");
@@ -9137,11 +9153,21 @@ struct BenchmarkCorpusSummary {
     vector_index_state: &'static str,
     vector_search_backend: &'static str,
     hot_index_fully_covered: bool,
+    document_status_counts: BTreeMap<String, u64>,
+    ingest_job_status_counts: BTreeMap<String, u64>,
+    ingest_job_kind_status_counts: BTreeMap<String, BTreeMap<String, u64>>,
+    ingest_job_failure_counts: BTreeMap<String, u64>,
 }
 
 fn benchmark_corpus_summary(data_dir: &Path, store: &MetaStore) -> Result<BenchmarkCorpusSummary> {
     let document_count = store.visible_document_count().map_err(CliError::store)?;
     let summary = store.status_summary().map_err(CliError::store)?;
+    let documents = store.visible_documents().map_err(CliError::store)?;
+    let ingest_jobs = store.ingest_jobs().map_err(CliError::store)?;
+    let document_status_counts = benchmark_document_status_counts(&documents);
+    let ingest_job_status_counts = benchmark_ingest_job_status_counts(&ingest_jobs);
+    let ingest_job_kind_status_counts = benchmark_ingest_job_kind_status_counts(&ingest_jobs);
+    let ingest_job_failure_counts = benchmark_ingest_job_failure_counts(&ingest_jobs);
     let searchable_document_ids = store
         .searchable_document_ids()
         .map_err(CliError::store)?
@@ -9175,7 +9201,66 @@ fn benchmark_corpus_summary(data_dir: &Path, store: &MetaStore) -> Result<Benchm
         vector_index_state: vector_diagnostic.state_label(),
         vector_search_backend: vector_diagnostic.backend_json_label(),
         hot_index_fully_covered,
+        document_status_counts,
+        ingest_job_status_counts,
+        ingest_job_kind_status_counts,
+        ingest_job_failure_counts,
     })
+}
+
+fn benchmark_document_status_counts(documents: &[Document]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for document in documents {
+        increment_count(&mut counts, document_status_label(document.status));
+    }
+    counts
+}
+
+fn benchmark_ingest_job_status_counts(jobs: &[meta_store::IngestJob]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for job in jobs {
+        increment_count(&mut counts, ingest_job_status_label(job.status));
+    }
+    counts
+}
+
+fn benchmark_ingest_job_kind_status_counts(
+    jobs: &[meta_store::IngestJob],
+) -> BTreeMap<String, BTreeMap<String, u64>> {
+    let mut counts = BTreeMap::new();
+    for job in jobs {
+        let kind_counts = counts
+            .entry(ingest_job_kind_label(job.kind).to_string())
+            .or_default();
+        increment_count(kind_counts, ingest_job_status_label(job.status));
+    }
+    counts
+}
+
+fn benchmark_ingest_job_failure_counts(jobs: &[meta_store::IngestJob]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for job in jobs {
+        if let Some(failure_kind) = job.failure_kind {
+            increment_count(&mut counts, ingest_job_failure_kind_label(failure_kind));
+        }
+    }
+    counts
+}
+
+fn increment_count(counts: &mut BTreeMap<String, u64>, label: &'static str) {
+    *counts.entry(label.to_string()).or_default() += 1;
+}
+
+fn redacted_count_map_label(counts: &BTreeMap<String, u64>) -> String {
+    if counts.is_empty() {
+        return "{}".to_string();
+    }
+
+    counts
+        .iter()
+        .map(|(label, count)| format!("{label}={count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13688,6 +13773,35 @@ fn document_status_label(status: DocumentStatus) -> &'static str {
         DocumentStatus::FailedRetryable => "failed_retryable",
         DocumentStatus::FailedPermanent => "failed_permanent",
         DocumentStatus::Deleted => "deleted",
+    }
+}
+
+fn ingest_job_kind_label(kind: IngestJobKind) -> &'static str {
+    match kind {
+        IngestJobKind::DiscoverDocument => "discover_document",
+        IngestJobKind::FingerprintDocument => "fingerprint_document",
+        IngestJobKind::ParseDocument => "parse_document",
+        IngestJobKind::OcrDocument => "ocr_document",
+        IngestJobKind::CleanText => "clean_text",
+        IngestJobKind::ExtractFields => "extract_fields",
+        IngestJobKind::UpdateIndex => "update_index",
+    }
+}
+
+fn ingest_job_status_label(status: IngestJobStatus) -> &'static str {
+    match status {
+        IngestJobStatus::Queued => "queued",
+        IngestJobStatus::Running => "running",
+        IngestJobStatus::Interrupted => "interrupted",
+        IngestJobStatus::Completed => "completed",
+        IngestJobStatus::FailedRetryable => "failed_retryable",
+        IngestJobStatus::FailedPermanent => "failed_permanent",
+    }
+}
+
+fn ingest_job_failure_kind_label(kind: IngestJobFailureKind) -> &'static str {
+    match kind {
+        IngestJobFailureKind::OcrPageBudgetExceeded => "ocr_page_budget_exceeded",
     }
 }
 

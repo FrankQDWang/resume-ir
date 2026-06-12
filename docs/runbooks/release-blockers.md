@@ -109,6 +109,14 @@ The benchmark report still carries redacted aggregate `document_count`,
 profile does not use the flag and remains blocked until the required hot-index
 coverage floor is met.
 
+`benchmark-corpus-summary.local.json` also carries redacted aggregate
+`document_status_counts`, `ingest_job_status_counts`,
+`ingest_job_kind_status_counts`, and `ingest_job_failure_counts`. Use those
+counts to classify current-stage blockers such as OCR backlog, retryable OCR
+failures, queued index work, or parser/import gaps without reading local paths,
+document IDs, query text, raw resume text, report bodies, indexes, SQLite data,
+or diagnostics.
+
 ```bash
 scripts/local/run-current-stage-validation.sh --dry-run \
   --validation-profile full \
