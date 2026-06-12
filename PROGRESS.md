@@ -270,12 +270,13 @@ production-ready scope source.
   generated private reports, local manifests, runtime binaries, model
   artifacts, indexes, SQLite databases, diagnostics, or model caches were
   committed or uploaded.
-  S318, S319, S321, S322, S323, and S324 used synthetic/private-shaped corpus
-  summary, query-set, benchmark-runner, current-stage execute, and ingest-job
-  fixtures only; no real resume data, private query sets, local paths, raw query
-  text, generated private benchmark reports, generated diagnostics, local
-  manifests, runtime binaries, indexes, SQLite databases, signing material,
-  notarization credentials, or model caches were committed or uploaded.
+  S318, S319, S321, S322, S323, S324, and S325 used synthetic/private-shaped
+  corpus summary, query-set, benchmark-runner, diagnostics, current-stage
+  execute, and ingest-job fixtures only; no real resume data, private query
+  sets, local paths, raw query text, generated private benchmark reports,
+  generated diagnostics, local manifests, runtime binaries, indexes, SQLite
+  databases, signing material, notarization credentials, or model caches were
+  committed or uploaded.
   S320 used a private local-only six-file smoke witness against the
   user-authorized local resume directory and temporary local OCR/model runtimes;
   no real resume data, filenames, paths, raw OCR text, raw query text, vectors,
@@ -1217,8 +1218,48 @@ obsolete preliminary files and checklists are not product scope.
 | S322 | Current-stage summary handoff observability complete locally | Focused RED first failed because `current-stage-smoke-summary.json` lacked `corpus_summary_observability` even when the fake corpus summary included redacted aggregate status fields. After implementation, `run-current-stage-validation.sh` validates the corpus summary privacy boundary and false privacy sentinels, extracts only document/searchable/vector counts, hot-index coverage, document status counts, ingest job status/type-status counts, and ingest job failure counts, then embeds that object into smoke and benchmark-blocked summaries. The guard proves both summaries include the aggregate blocker classification without temp paths or private markers, and the runbook documents the handoff field. | This slice is production complete for current-stage handoff observability only. It does not expose release evidence bodies, run the full local 10k/8000-document baseline, resolve OCR/import/parser blockers, clear the 500-query private baseline, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
 | S323 | Current-stage query-set blocker summary complete locally | Focused RED first failed because a full-profile current-stage execute with a failing query-set draft exited before writing `current-stage-blocked-summary.json`. After implementation, generated query-set draft failures write the redacted blocked summary before private benchmarking, with `blocked_step: "query_set_draft"`, `blocked_category: "query-set"`, `blocked_reason: "query_set_draft_failed"`, passed preflight probes, completed import/OCR/embedding/corpus-summary steps, query-set draft stdout digest, and `corpus_summary_observability` aggregate counts. The guard proves private benchmark execution does not start after the draft failure and rejects temp paths/private markers/query text. | This slice is production complete for current-stage query-set failure classification only. It does not make full-profile query-set generation succeed on the real 10k corpus, clear the 500-query private baseline, resolve OCR/import/parser blockers, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
 | S324 | Current-stage private-query baseline blocker summary complete locally | Focused RED first failed because a full-profile current-stage execute with a failing `resume-benchmark private-query` command exited before writing `current-stage-blocked-summary.json`. After implementation, private-query baseline failures write the redacted blocked summary before benchmark gate and release-readiness, with `blocked_step: "private_query_baseline"`, `blocked_category: "benchmark"`, `blocked_reason: "private_query_baseline_failed"`, passed preflight probes, completed import/OCR/embedding/corpus-summary/query-set steps, query-set and partial benchmark stdout digests, and `corpus_summary_observability` aggregate counts. The guard proves benchmark gate and release-readiness do not run after the failure and rejects temp paths/private markers/query text. | This slice is production complete for current-stage private-query baseline failure classification only. It does not make the full private baseline succeed on the real 10k corpus, clear the 500-query private baseline, resolve OCR/import/parser/query-protocol blockers, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
+| S325 | Current-stage diagnostics blocker summary complete locally | Focused RED first failed because a full-profile current-stage execute with a failing `export-diagnostics --redact` command exited before writing `current-stage-blocked-summary.json`. After implementation, redacted diagnostics export failures write the redacted blocked summary after the baseline gate and before release-readiness, with `blocked_step: "redacted_diagnostics"`, `blocked_category: "diagnostics"`, `blocked_reason: "redacted_diagnostics_failed"`, passed preflight probes, completed import/OCR/embedding/corpus-summary/query-set/private-query/gate steps, redacted diagnostics output digest, and `corpus_summary_observability` aggregate counts. The guard proves release-readiness and full evidence generation do not run after the failure and rejects temp paths/private markers/query text. | This slice is production complete for current-stage diagnostics failure classification only. It does not make diagnostics succeed on the real 10k corpus, clear release-readiness evidence, resolve OCR/import/parser/query-protocol blockers, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization blockers, prove 100k/1M validation, or make stable release ready. |
 
 ## Command Log
+
+### S325
+
+TDD red check:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Failed before implementation with `current-stage full profile did not write
+  redacted blocked summary on diagnostics failure`.
+
+Implementation checks:
+
+```bash
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-runbooks.sh
+git diff --check
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- `sh -n`: exit 0.
+- `check-current-stage-validation.sh`: exit 0; current-stage validation check
+  passed.
+- `check-runbooks.sh`: exit 0; runbook check passed.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0; public repo guard passed.
+
+Scope note:
+
+- S325 classifies redacted diagnostics export failure after private benchmark
+  gate and before release-readiness. It records only redacted aggregate counts
+  and digests, not diagnostics bodies, local paths, query bodies, indexes, or
+  SQLite data.
 
 ### S324
 

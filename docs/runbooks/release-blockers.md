@@ -217,6 +217,13 @@ benchmark gate and release-readiness intake. That summary records only digests
 for the query set and partial benchmark stdout file plus aggregate corpus
 observability; it does not include query bodies, benchmark report bodies, local
 paths, indexes, or diagnostics.
+If redacted diagnostics export fails after the baseline gate has run, execute
+mode writes `current-stage-blocked-summary.json` with
+`blocked_step: "redacted_diagnostics"`, `blocked_category: "diagnostics"`, and
+`blocked_reason: "redacted_diagnostics_failed"`, then stops before
+release-readiness. That summary records aggregate corpus observability and file
+digests up to the failed diagnostics output, not diagnostic bodies, local
+paths, query text, indexes, or SQLite data.
 
 ```bash
 scripts/local/run-current-stage-validation.sh --execute \

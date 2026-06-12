@@ -321,6 +321,10 @@ case "$cmd:$sub" in
     printf '{"schema_version":"benchmark-corpus-summary.v1","privacy_boundary":"redacted_local_aggregate","document_count":8720,"searchable_document_count":8720,"vector_indexed_document_count":8720,"hot_index_fully_covered":true,"document_status_counts":{"searchable":8720},"ingest_job_status_counts":{"completed":8720},"ingest_job_kind_status_counts":{"update_index":{"completed":8720}},"ingest_job_failure_counts":{},"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"contains_sample_ids":false}\n'
     ;;
   export-diagnostics:*)
+    if [ "${FAKE_DIAGNOSTICS_MODE:-ready}" = "failed" ]; then
+      printf 'redacted diagnostics blocked: fake diagnostics failure\n' >&2
+      exit 1
+    fi
     printf '{"schema_version":"diagnostics.v1","redacted":true,"evidence_level":"local_aggregate_only"}\n'
     ;;
   release-readiness:*)
@@ -388,11 +392,15 @@ run_execute_smoke() {
   if [ "$mode" = "private-query-failed" ]; then
     benchmark_mode="private-query-failed"
   fi
+  diagnostics_mode="ready"
+  if [ "$mode" = "diagnostics-failed" ]; then
+    diagnostics_mode="failed"
+  fi
   query_set_mode="ready"
   if [ "$mode" = "query-set-draft-failed" ]; then
     query_set_mode="draft-failed"
   fi
-  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
+  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
     --resume-daemon "$fake_resume_daemon" \
     --resume-benchmark "$fake_resume_benchmark" \
@@ -630,6 +638,40 @@ reject_text "$tmpdir/execute-private-query-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-private-query-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-private-query-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-private-query-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke diagnostics-failed
+diagnostics_failed_status=$(cat "$tmpdir/execute-diagnostics-failed-status.txt")
+if [ "$diagnostics_failed_status" -eq 0 ]; then
+  fail "current-stage full profile accepted failed redacted diagnostics"
+fi
+diagnostics_blocked_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$diagnostics_blocked_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on diagnostics failure"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage execute ran release-readiness after diagnostics failure"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage execute wrote full evidence after diagnostics failure"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$diagnostics_blocked_summary" >/dev/null
+fi
+require_text "$diagnostics_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$diagnostics_blocked_summary" '"blocked_step": "redacted_diagnostics"'
+require_text "$diagnostics_blocked_summary" '"blocked_category": "diagnostics"'
+require_text "$diagnostics_blocked_summary" '"blocked_reason": "redacted_diagnostics_failed"'
+require_text "$diagnostics_blocked_summary" '"redacted-diagnostics.json"'
+require_text "$diagnostics_blocked_summary" '"private-benchmark-gate.stdout.txt"'
+require_text "$diagnostics_blocked_summary" '"corpus_summary_observability": {'
+reject_text "$diagnostics_blocked_summary" "$tmpdir"
+reject_text "$diagnostics_blocked_summary" "PRIVATE-current-stage"
+reject_text "$diagnostics_blocked_summary" "private fake query"
+require_text "$tmpdir/execute-diagnostics-failed-stderr.txt" "current-stage validation blocked: redacted diagnostics failed"
+reject_text "$tmpdir/execute-diagnostics-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-diagnostics-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-diagnostics-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-diagnostics-failed-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke ocr-digest-mismatch \
   --ocr-runtime-manifest-sha256 0000000000000000000000000000000000000000000000000000000000000000
