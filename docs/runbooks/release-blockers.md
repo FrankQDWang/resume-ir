@@ -209,6 +209,14 @@ execute mode also writes `current-stage-blocked-summary.json` with
 redacted corpus observability counts and the query-set draft stdout digest, but
 does not include the query-set file, query bodies, local paths, or benchmark
 reports.
+If the private query baseline command itself fails, execute mode writes the same
+blocked summary schema with `blocked_step: "private_query_baseline"`,
+`blocked_category: "benchmark"`, and
+`blocked_reason: "private_query_baseline_failed"`, then stops before the
+benchmark gate and release-readiness intake. That summary records only digests
+for the query set and partial benchmark stdout file plus aggregate corpus
+observability; it does not include query bodies, benchmark report bodies, local
+paths, indexes, or diagnostics.
 
 ```bash
 scripts/local/run-current-stage-validation.sh --execute \

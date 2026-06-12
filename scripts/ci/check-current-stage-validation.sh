@@ -352,6 +352,10 @@ cat > "$fake_resume_benchmark" <<'SH'
 set -eu
 case "${1:-}" in
   private-query)
+    if [ "${FAKE_BENCHMARK_MODE:-pass}" = "private-query-failed" ]; then
+      printf 'private query baseline blocked: query protocol failed\n' >&2
+      exit 1
+    fi
     printf '{"schema_version":"benchmark.private-query.v1","dataset_kind":"private-real-corpus","target_claim":"benchmark_baseline_observed"}\n'
     ;;
   gate)
@@ -380,6 +384,9 @@ run_execute_smoke() {
   benchmark_mode="pass"
   if [ "$mode" = "benchmark-gate-failed" ]; then
     benchmark_mode="gate-failed"
+  fi
+  if [ "$mode" = "private-query-failed" ]; then
+    benchmark_mode="private-query-failed"
   fi
   query_set_mode="ready"
   if [ "$mode" = "query-set-draft-failed" ]; then
@@ -590,6 +597,39 @@ reject_text "$tmpdir/execute-query-set-draft-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-query-set-draft-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-query-set-draft-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-query-set-draft-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke private-query-failed
+private_query_failed_status=$(cat "$tmpdir/execute-private-query-failed-status.txt")
+if [ "$private_query_failed_status" -eq 0 ]; then
+  fail "current-stage full profile accepted failed private query baseline"
+fi
+private_query_blocked_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$private_query_blocked_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on private query baseline failure"
+fi
+if [ -e "$execute_out_dir/private-benchmark-gate.stdout.txt" ]; then
+  fail "current-stage execute ran benchmark gate after private query baseline failure"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage execute ran release-readiness after private query baseline failure"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$private_query_blocked_summary" >/dev/null
+fi
+require_text "$private_query_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$private_query_blocked_summary" '"blocked_step": "private_query_baseline"'
+require_text "$private_query_blocked_summary" '"blocked_category": "benchmark"'
+require_text "$private_query_blocked_summary" '"blocked_reason": "private_query_baseline_failed"'
+require_text "$private_query_blocked_summary" '"private-benchmark-local.json"'
+require_text "$private_query_blocked_summary" '"corpus_summary_observability": {'
+reject_text "$private_query_blocked_summary" "$tmpdir"
+reject_text "$private_query_blocked_summary" "PRIVATE-current-stage"
+reject_text "$private_query_blocked_summary" "private fake query"
+require_text "$tmpdir/execute-private-query-failed-stderr.txt" "current-stage validation blocked: private query baseline failed"
+reject_text "$tmpdir/execute-private-query-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-private-query-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-private-query-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-private-query-failed-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke ocr-digest-mismatch \
   --ocr-runtime-manifest-sha256 0000000000000000000000000000000000000000000000000000000000000000
