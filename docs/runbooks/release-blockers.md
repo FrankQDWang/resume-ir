@@ -51,6 +51,14 @@ access continues. Embedding preflight must run a synthetic local
 before private corpus access continues. If runtime preflight or manifest
 validation fails, execute mode stops before scanning the private corpus or
 copying a private query set.
+Those pre-corpus failures write `current-stage-blocked-summary.json` with
+`private_corpus_read: false`, `blocked_category: "ocr"` for OCR runtime
+failures or `blocked_category: "embedding"` for model/protocol failures, the
+blocked preflight or manifest step, and basename-only digests for local runtime
+probe outputs and manifests that were produced. The summary must not include
+the private resume root, query bodies, benchmark reports, diagnostics, indexes,
+or SQLite data because none of those steps may run before runtime preflight is
+accepted.
 Caller-supplied OCR/model manifest digests are checked against the generated
 local manifests before private corpus scanning continues. Caller-supplied query
 set digests are checked against the generated or locally copied query set before

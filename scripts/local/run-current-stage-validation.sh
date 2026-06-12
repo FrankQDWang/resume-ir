@@ -80,6 +80,15 @@ sha256_file() {
   fi
 }
 
+sha256_file_json_or_null() {
+  path="$1"
+  if [ -e "$path" ]; then
+    printf '"%s"' "$(sha256_file "$path")"
+  else
+    printf 'null'
+  fi
+}
+
 corpus_summary_observability_json() {
   path="$1"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required for redacted corpus summary observability"
@@ -140,6 +149,176 @@ observability = {
 json.dump(observability, sys.stdout, ensure_ascii=True, sort_keys=True, indent=2)
 sys.stdout.write("\n")
 PY
+}
+
+write_runtime_preflight_blocked_summary() {
+  blocked_step="$1"
+  blocked_category="$2"
+  blocked_reason="$3"
+  blocked_exit="$4"
+
+  [ -e "$out_dir/ocr-preflight.json" ] || : > "$out_dir/ocr-preflight.json"
+
+  ocr_preflight_sha256_json=$(sha256_file_json_or_null "$out_dir/ocr-preflight.json")
+  ocr_draft_stdout_sha256_json=$(sha256_file_json_or_null "$out_dir/ocr-draft-manifest.stdout.txt")
+  ocr_validate_stdout_sha256_json=$(sha256_file_json_or_null "$out_dir/ocr-validate-manifest.stdout.txt")
+  model_draft_stdout_sha256_json=$(sha256_file_json_or_null "$out_dir/model-draft-manifest.stdout.txt")
+  model_validate_stdout_sha256_json=$(sha256_file_json_or_null "$out_dir/model-validate-manifest.stdout.txt")
+  model_preflight_sha256_json=$(sha256_file_json_or_null "$out_dir/model-preflight.json")
+  ocr_runtime_manifest_sha256_json=$(sha256_file_json_or_null "$ocr_runtime_manifest")
+  model_manifest_sha256_json=$(sha256_file_json_or_null "$model_manifest")
+
+  case "$blocked_step" in
+    ocr_preflight)
+      ocr_probe_status="blocked"
+      embedding_protocol_status="not_run"
+      steps_json=$(cat <<EOF_STEPS
+    {"id": "ocr_preflight", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+      ;;
+    ocr_manifest_draft)
+      ocr_probe_status="passed"
+      embedding_protocol_status="not_run"
+      steps_json=$(cat <<EOF_STEPS
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+      ;;
+    ocr_manifest_validate)
+      ocr_probe_status="passed"
+      embedding_protocol_status="not_run"
+      steps_json=$(cat <<EOF_STEPS
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "success"},
+    {"id": "ocr_manifest_validate", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+      ;;
+    model_manifest_draft)
+      ocr_probe_status="passed"
+      embedding_protocol_status="not_run"
+      steps_json=$(cat <<EOF_STEPS
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "success"},
+    {"id": "ocr_manifest_validate", "status": "success"},
+    {"id": "model_manifest_draft", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+      ;;
+    model_manifest_validate)
+      ocr_probe_status="passed"
+      embedding_protocol_status="not_run"
+      steps_json=$(cat <<EOF_STEPS
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "success"},
+    {"id": "ocr_manifest_validate", "status": "success"},
+    {"id": "model_manifest_draft", "status": "success"},
+    {"id": "model_manifest_validate", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+      ;;
+    model_preflight)
+      ocr_probe_status="passed"
+      embedding_protocol_status="blocked"
+      steps_json=$(cat <<EOF_STEPS
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "success"},
+    {"id": "ocr_manifest_validate", "status": "success"},
+    {"id": "model_manifest_draft", "status": "success"},
+    {"id": "model_manifest_validate", "status": "success"},
+    {"id": "model_preflight", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+      ;;
+    *)
+      ocr_probe_status="blocked"
+      embedding_protocol_status="not_run"
+      steps_json=$(cat <<EOF_STEPS
+    {"id": "$blocked_step", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+      ;;
+  esac
+
+  cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
+{
+  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "privacy_boundary": "local_only_redacted_blocked_summary",
+  "validation_profile": "$validation_profile",
+  "current_stage_target": "$current_stage_target",
+  "private_corpus_read": false,
+  "full_baseline_satisfied": false,
+  "release_readiness_evidence": false,
+  "performance_optimization_deferred": true,
+  "blocked_step": "$blocked_step",
+  "blocked_category": "$blocked_category",
+  "blocked_reason": "$blocked_reason",
+  "blocked_exit": $blocked_exit,
+  "input_digests": {
+    "dataset_manifest_sha256": null,
+    "query_set_sha256": null,
+    "model_manifest_sha256": $model_manifest_sha256_json,
+    "ocr_runtime_manifest_sha256": $ocr_runtime_manifest_sha256_json
+  },
+  "parameters": {
+    "max_files": $max_files,
+    "max_queries": $max_queries,
+    "top_k": $top_k,
+    "embedding_dimension": $dimension,
+    "ocr_worker_ticks": $ocr_worker_ticks,
+    "embedding_worker_ticks": $embedding_worker_ticks,
+    "query_set_min_queries": $query_set_min_queries,
+    "baseline_min_documents": $baseline_min_documents,
+    "baseline_min_queries": $baseline_min_queries
+  },
+  "preflight_probes": {
+    "ocr_runtime_probe": "$ocr_probe_status",
+    "embedding_protocol": "$embedding_protocol_status"
+  },
+  "steps": [
+$steps_json
+  ],
+  "redacted_outputs": [
+    {"file": "ocr-preflight.json", "sha256": $ocr_preflight_sha256_json},
+    {"file": "ocr-draft-manifest.stdout.txt", "sha256": $ocr_draft_stdout_sha256_json},
+    {"file": "ocr-validate-manifest.stdout.txt", "sha256": $ocr_validate_stdout_sha256_json},
+    {"file": "ocr-runtime-manifest.local.json", "sha256": $ocr_runtime_manifest_sha256_json},
+    {"file": "model-draft-manifest.stdout.txt", "sha256": $model_draft_stdout_sha256_json},
+    {"file": "model-validate-manifest.stdout.txt", "sha256": $model_validate_stdout_sha256_json},
+    {"file": "model-manifest.local.json", "sha256": $model_manifest_sha256_json},
+    {"file": "model-preflight.json", "sha256": $model_preflight_sha256_json}
+  ],
+  "privacy_sentinels": {
+    "local_paths_included": false,
+    "raw_resume_text_included": false,
+    "raw_query_text_included": false,
+    "model_bytes_included": false,
+    "runtime_binaries_included": false,
+    "report_bodies_included": false
+  },
+  "not_completed": [
+    "private corpus read",
+    "runtime preflight",
+    "dataset manifest",
+    "import/OCR/embedding workers",
+    "current-stage validation evidence",
+    "stable release readiness"
+  ],
+  "must_not_upload": [
+    "raw resumes",
+    "query set",
+    "local manifests",
+    "benchmark reports",
+    "diagnostics",
+    "indexes",
+    "SQLite databases",
+    "model caches",
+    "runtime binaries"
+  ]
+}
+EOF
 }
 
 write_query_set_blocked_summary() {
@@ -1093,20 +1272,28 @@ if [ "$reviewed_model" = "true" ]; then
 fi
 
 printf '%s\n' "current-stage validation: ocr preflight"
-if ! "$resume_cli" --data-dir "$data_dir" ocr preflight --json \
+set +e
+"$resume_cli" --data-dir "$data_dir" ocr preflight --json \
   --ocr-lang "$language" \
   --tesseract-command "$tesseract_command" \
   --pdftoppm-command "$pdftoppm_command" \
-  > "$out_dir/ocr-preflight.json"; then
+  > "$out_dir/ocr-preflight.json"
+ocr_preflight_status=$?
+set -e
+if [ "$ocr_preflight_status" -ne 0 ]; then
+  write_runtime_preflight_blocked_summary \
+    "ocr_preflight" "ocr" "ocr_runtime_preflight_failed" "$ocr_preflight_status"
   fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
 fi
-require_text_in_file \
-  "$out_dir/ocr-preflight.json" \
-  '"runtime_probe": "passed"' \
-  "current-stage validation blocked: runtime preflight failed before reading private corpus"
+if ! grep -Fq '"runtime_probe": "passed"' "$out_dir/ocr-preflight.json"; then
+  write_runtime_preflight_blocked_summary \
+    "ocr_preflight" "ocr" "ocr_runtime_probe_not_passed" 1
+  fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
+fi
 
 printf '%s\n' "current-stage validation: ocr manifest draft"
-if ! "$resume_cli" --data-dir "$data_dir" ocr draft-manifest \
+set +e
+"$resume_cli" --data-dir "$data_dir" ocr draft-manifest \
   --out "$ocr_runtime_manifest" \
   --runtime-pack-id "$runtime_pack_id" \
   --tesseract-command "$tesseract_command" \
@@ -1117,25 +1304,39 @@ if ! "$resume_cli" --data-dir "$data_dir" ocr draft-manifest \
   --renderer-license "$renderer_license" \
   --language-license "$language_license" \
   $ocr_reviewed_arg \
-  > "$out_dir/ocr-draft-manifest.stdout.txt"; then
+  > "$out_dir/ocr-draft-manifest.stdout.txt"
+ocr_manifest_draft_status=$?
+set -e
+if [ "$ocr_manifest_draft_status" -ne 0 ]; then
+  write_runtime_preflight_blocked_summary \
+    "ocr_manifest_draft" "ocr" "ocr_runtime_manifest_draft_failed" "$ocr_manifest_draft_status"
   fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
 fi
 
 printf '%s\n' "current-stage validation: ocr manifest validate"
-if ! "$resume_cli" --data-dir "$data_dir" ocr validate-manifest \
+set +e
+"$resume_cli" --data-dir "$data_dir" ocr validate-manifest \
   --manifest "$ocr_runtime_manifest" \
-  > "$out_dir/ocr-validate-manifest.stdout.txt"; then
+  > "$out_dir/ocr-validate-manifest.stdout.txt"
+ocr_manifest_validate_status=$?
+set -e
+if [ "$ocr_manifest_validate_status" -ne 0 ]; then
+  write_runtime_preflight_blocked_summary \
+    "ocr_manifest_validate" "ocr" "ocr_runtime_manifest_validate_failed" "$ocr_manifest_validate_status"
   fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
 fi
 
 ocr_runtime_manifest_sha256_output=$(sha256_file "$ocr_runtime_manifest")
 if [ -n "$ocr_runtime_manifest_sha256" ] && [ "$ocr_runtime_manifest_sha256" != "$ocr_runtime_manifest_sha256_output" ]; then
+  write_runtime_preflight_blocked_summary \
+    "ocr_manifest_validate" "ocr" "ocr_runtime_manifest_digest_mismatch" 1
   fail "OCR runtime manifest digest mismatch"
 fi
 ocr_runtime_manifest_sha256="$ocr_runtime_manifest_sha256_output"
 
 printf '%s\n' "current-stage validation: model manifest draft"
-if ! "$resume_cli" --data-dir "$data_dir" model draft-manifest \
+set +e
+"$resume_cli" --data-dir "$data_dir" model draft-manifest \
   --out "$model_manifest" \
   --model-pack-id "$model_pack_id" \
   --model-id "$model_id" \
@@ -1145,33 +1346,53 @@ if ! "$resume_cli" --data-dir "$data_dir" model draft-manifest \
   --artifact "$model_artifact" \
   --license "$model_license" \
   $model_reviewed_arg \
-  > "$out_dir/model-draft-manifest.stdout.txt"; then
+  > "$out_dir/model-draft-manifest.stdout.txt"
+model_manifest_draft_status=$?
+set -e
+if [ "$model_manifest_draft_status" -ne 0 ]; then
+  write_runtime_preflight_blocked_summary \
+    "model_manifest_draft" "embedding" "embedding_model_manifest_draft_failed" "$model_manifest_draft_status"
   fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
 fi
 
 printf '%s\n' "current-stage validation: model manifest validate"
-if ! "$resume_cli" --data-dir "$data_dir" model validate-manifest \
+set +e
+"$resume_cli" --data-dir "$data_dir" model validate-manifest \
   --manifest "$model_manifest" \
-  > "$out_dir/model-validate-manifest.stdout.txt"; then
+  > "$out_dir/model-validate-manifest.stdout.txt"
+model_manifest_validate_status=$?
+set -e
+if [ "$model_manifest_validate_status" -ne 0 ]; then
+  write_runtime_preflight_blocked_summary \
+    "model_manifest_validate" "embedding" "embedding_model_manifest_validate_failed" "$model_manifest_validate_status"
   fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
 fi
 
 printf '%s\n' "current-stage validation: model preflight"
-if ! "$resume_cli" --data-dir "$data_dir" model preflight --json \
+set +e
+"$resume_cli" --data-dir "$data_dir" model preflight --json \
   --manifest "$model_manifest" \
   --embedding-command "$embedding_command" \
   --model-id "$model_id" \
   --dimension "$dimension" \
-  > "$out_dir/model-preflight.json"; then
+  > "$out_dir/model-preflight.json"
+model_preflight_status=$?
+set -e
+if [ "$model_preflight_status" -ne 0 ]; then
+  write_runtime_preflight_blocked_summary \
+    "model_preflight" "embedding" "embedding_runtime_preflight_failed" "$model_preflight_status"
   fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
 fi
-require_text_in_file \
-  "$out_dir/model-preflight.json" \
-  '"embedding_protocol": "passed"' \
-  "current-stage validation blocked: runtime preflight failed before reading private corpus"
+if ! grep -Fq '"embedding_protocol": "passed"' "$out_dir/model-preflight.json"; then
+  write_runtime_preflight_blocked_summary \
+    "model_preflight" "embedding" "embedding_protocol_not_passed" 1
+  fail "current-stage validation blocked: runtime preflight failed before reading private corpus"
+fi
 
 model_manifest_sha256_output=$(sha256_file "$model_manifest")
 if [ -n "$model_manifest_sha256" ] && [ "$model_manifest_sha256" != "$model_manifest_sha256_output" ]; then
+  write_runtime_preflight_blocked_summary \
+    "model_manifest_validate" "embedding" "embedding_model_manifest_digest_mismatch" 1
   fail "model manifest digest mismatch"
 fi
 model_manifest_sha256="$model_manifest_sha256_output"

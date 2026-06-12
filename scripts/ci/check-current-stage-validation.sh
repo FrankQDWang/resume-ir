@@ -291,6 +291,10 @@ case "$cmd:$sub" in
     printf 'privacy boundary: local_only_private_query_set\n'
     ;;
   ocr:preflight)
+    if [ "${FAKE_RUNTIME_PREFLIGHT_MODE:-ready}" = "ocr-failed" ]; then
+      printf 'fake OCR preflight failed\n' >&2
+      exit 1
+    fi
     printf '{"schema_version":"ocr-runtime-preflight.v1","runtime_probe": "passed","ready":true}\n'
     ;;
   ocr:draft-manifest)
@@ -688,10 +692,43 @@ reject_text "$tmpdir/execute-ocr-digest-mismatch-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-ocr-digest-mismatch-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-ocr-digest-mismatch-stderr.txt" "PRIVATE-current-stage"
 
+run_execute_smoke ocr-failed
+ocr_failed_status=$(cat "$tmpdir/execute-ocr-failed-status.txt")
+if [ "$ocr_failed_status" -eq 0 ]; then
+  fail "current-stage execute accepted failed OCR runtime preflight"
+fi
+ocr_failed_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$ocr_failed_summary" ]; then
+  fail "current-stage execute did not write pre-corpus blocked summary for OCR runtime preflight failure"
+fi
+if [ -e "$execute_out_dir/dataset-manifest.local.json" ]; then
+  fail "current-stage execute read private corpus after OCR runtime preflight failure"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$ocr_failed_summary" >/dev/null
+fi
+require_text "$ocr_failed_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$ocr_failed_summary" '"blocked_step": "ocr_preflight"'
+require_text "$ocr_failed_summary" '"blocked_category": "ocr"'
+require_text "$ocr_failed_summary" '"blocked_reason": "ocr_runtime_preflight_failed"'
+require_text "$ocr_failed_summary" '"private_corpus_read": false'
+require_text "$ocr_failed_summary" '"ocr-preflight.json"'
+reject_text "$ocr_failed_summary" "$tmpdir"
+reject_text "$ocr_failed_summary" "PRIVATE-current-stage"
+require_text "$tmpdir/execute-ocr-failed-stderr.txt" "current-stage validation blocked: runtime preflight failed before reading private corpus"
+reject_text "$tmpdir/execute-ocr-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-ocr-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-ocr-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-ocr-failed-stderr.txt" "PRIVATE-current-stage"
+
 run_execute_smoke model-failed
 model_failed_status=$(cat "$tmpdir/execute-model-failed-status.txt")
 if [ "$model_failed_status" -eq 0 ]; then
   fail "current-stage execute accepted failed model preflight"
+fi
+model_failed_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$model_failed_summary" ]; then
+  fail "current-stage execute did not write pre-corpus blocked summary for embedding runtime preflight failure"
 fi
 if [ -e "$execute_out_dir/dataset-manifest.local.json" ]; then
   fail "current-stage execute read private corpus before runtime preflight passed"
@@ -699,6 +736,18 @@ fi
 if [ -e "$execute_out_dir/dataset-manifest.stdout.txt" ]; then
   fail "current-stage execute wrote dataset manifest stdout before runtime preflight passed"
 fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$model_failed_summary" >/dev/null
+fi
+require_text "$model_failed_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$model_failed_summary" '"blocked_step": "model_preflight"'
+require_text "$model_failed_summary" '"blocked_category": "embedding"'
+require_text "$model_failed_summary" '"blocked_reason": "embedding_runtime_preflight_failed"'
+require_text "$model_failed_summary" '"private_corpus_read": false'
+require_text "$model_failed_summary" '"model-preflight.json"'
+require_text "$model_failed_summary" '"ocr-runtime-manifest.local.json"'
+reject_text "$model_failed_summary" "$tmpdir"
+reject_text "$model_failed_summary" "PRIVATE-current-stage"
 require_text "$tmpdir/execute-model-failed-stderr.txt" "current-stage validation blocked: runtime preflight failed before reading private corpus"
 reject_text "$tmpdir/execute-model-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-model-failed-stderr.txt" "$tmpdir"
