@@ -303,6 +303,12 @@ production-ready scope source.
   generated private reports, local manifests, runtime binaries, model
   artifacts, indexes, SQLite databases, diagnostics, or model caches were
   committed or uploaded.
+  S335 used a private local-only five-file current-stage smoke witness against
+  the user-authorized local resume directory with local Tesseract/Poppler and a
+  local sentence-transformers model cache; no real resume data, filenames,
+  paths, raw OCR text, raw query text, vectors, generated private reports,
+  local manifests, runtime binaries, model artifacts, indexes, SQLite
+  databases, diagnostics, or model caches were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1262,8 +1268,141 @@ obsolete preliminary files and checklists are not product scope.
 | S332 | Current-stage smoke summary status fields complete locally | Focused RED first failed because `check-current-stage-validation.sh` required `current-stage-smoke-summary.json` to include `"validation_profile": "smoke"` and `"smoke_satisfied": true`, but the script only emitted the target and `full_baseline_satisfied: false`. After implementation, smoke summaries explicitly identify the smoke profile and positive smoke outcome while still marking full baseline and release evidence false. The current-stage guard verifies these fields and keeps smoke output separate from full current-stage release evidence. | This slice is production complete for smoke-summary handoff clarity only. It does not rerun the real local corpus, clear the full local 10k/8000-document baseline, clear 500-query private evidence, optimize P95/P99, approve model/runtime distribution, clear release blockers, or make stable release ready. |
 | S333 | Current-stage redacted handoff summarizer complete locally | Focused RED first failed because `scripts/ci/check-current-stage-handoff.sh` required `scripts/local/summarize-current-stage-validation.py`, but no handoff summarizer existed. After implementation, the summarizer consumes redacted smoke summaries, blocked summaries, or full evidence manifests and emits `resume-ir.current-stage-handoff.v1` with privacy boundary `local_only_redacted_handoff`, explicit `complete_product: false`, full-baseline/release evidence status, preflight probe status, redacted aggregate observability, completed step names, not-complete/BLOCKED items, and must-not-upload categories. It fails closed on local path/private markers. The handoff guard covers smoke, blocked, and rejected-private-marker fixtures, `verify-local.sh` and PR workflow now run it, and the release blocker runbook documents operator use. A fresh private local 12-file smoke generated a handoff with privacy scan passed, `smoke_satisfied`, 12 documents, 1 searchable/vector-indexed document, and 5 not-complete items. | This slice is production complete for redacted current-stage operator handoff only. It does not expose private evidence bodies, clear the full local 10k/8000-document baseline, clear 500-query private evidence, optimize P95/P99, approve model/runtime distribution, clear release blockers, or make stable release ready. |
 | S334 | Current-stage automatic handoff binding complete locally | Focused RED first failed because `check-current-stage-validation.sh` required dry-run plans and execute outputs to include `current-stage-handoff.json`, but `run-current-stage-validation.sh` only wrote smoke/full/blocked summaries and required manual summarization. After implementation, execute mode writes `current-stage-handoff.json` automatically after full evidence, smoke summary, or blocked summary generation; dry-run plans show the handoff step; full current-stage evidence now carries explicit `full_baseline_satisfied: true` and `release_readiness_evidence: true` fields for safe handoff generation; all post-corpus blocked summaries carry `private_corpus_read: true`. The validation guard now checks full, smoke, and major blocked paths for redacted handoff output, and the handoff guard covers the full evidence schema directly. | This slice is production complete for automatic current-stage handoff generation only. It does not run the full local 10k/8000-document baseline, clear 500-query private evidence, optimize P95/P99, approve model/runtime distribution, clear release blockers, prove real installer lifecycle, or make stable release ready. |
+| S335 | Current-stage private smoke witness completed locally | A fresh local-only smoke run used the user-authorized private resume directory with `--validation-profile smoke`, `--max-files 5`, `--max-queries 1`, OCR/embedding worker ticks capped at 2, local Tesseract/Poppler, and the local sentence-transformers adapter. The run completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, import, bounded OCR worker, bounded embedding worker, corpus summary, query-set draft, private-query baseline, smoke gate, redacted diagnostics, smoke summary, and automatic handoff. Redacted aggregate observability reported 5 documents, 1 searchable document, 1 vector-indexed document, 4 OCR-required documents, 3 queued OCR jobs, 1 completed OCR job, 1 retryable OCR page-budget failure, and `hot_index_fully_covered: false`. | This is current-stage smoke evidence only. Full 10k/8000-document baseline, 500-query private baseline, P95/P99 reduction, external 100k/1M validation, stable release readiness, and platform signing/notarization remain not complete or externally blocked. No private evidence files are committed. |
 
 ## Command Log
+
+### S335
+
+Local-only runtime inspection:
+
+```bash
+command -v tesseract
+command -v pdftoppm
+<private-current-stage-venv>/python - <<'PY'
+for module in ["sentence_transformers", "torch", "transformers", "huggingface_hub"]:
+    __import__(module)
+PY
+```
+
+Output summary:
+
+- Local `tesseract`, `pdftoppm`, Python, and the private current-stage
+  sentence-transformers runtime were available.
+- The local model card records `sentence-transformers/all-MiniLM-L6-v2` as
+  Apache-2.0 and 384-dimensional; the model cache remains an external local
+  artifact and was not committed.
+
+Dry-run plan:
+
+```bash
+scripts/local/run-current-stage-validation.sh --dry-run \
+  --validation-profile smoke \
+  --resume-root <private-local-resume-root> \
+  --data-dir <private-local-data-dir> \
+  --out-dir <private-local-evidence-dir> \
+  --model-manifest <private-local-model-manifest> \
+  --ocr-runtime-manifest <private-local-ocr-runtime-manifest> \
+  --model-artifact <private-local-model-artifact> \
+  --embedding-command <private-local-embedding-command> \
+  --model-pack-id sentence-transformers-all-MiniLM-L6-v2-local \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-format safetensors \
+  --dimension 384 \
+  --model-license Apache-2.0 \
+  --runtime-pack-id local-tesseract-poppler-homebrew \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language eng \
+  --language-pack <local-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license GPL-2.0-or-later \
+  --language-license Apache-2.0 \
+  --max-files 5 \
+  --max-queries 1 \
+  --top-k 3 \
+  --worker-interval-ms 10 \
+  --ocr-worker-ticks 2 \
+  --embedding-worker-ticks 2 \
+  --ocr-max-pages-per-document 2 \
+  --embedding-max-docs 5
+```
+
+Output summary:
+
+- Dry-run emitted `resume-ir.current-stage-validation-plan.v1` with privacy
+  boundary `local_only_redacted_plan`.
+- It included OCR/model preflight before private corpus access, smoke-only
+  bounded worker and benchmark steps, automatic handoff generation, and
+  `release_readiness_evidence: false`.
+
+Private local smoke execute:
+
+```bash
+scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile smoke \
+  --resume-root <private-local-resume-root> \
+  --data-dir <private-local-data-dir> \
+  --out-dir <private-local-evidence-dir> \
+  --model-manifest <private-local-model-manifest> \
+  --ocr-runtime-manifest <private-local-ocr-runtime-manifest> \
+  --model-artifact <private-local-model-artifact> \
+  --embedding-command <private-local-embedding-command> \
+  --model-pack-id sentence-transformers-all-MiniLM-L6-v2-local \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-format safetensors \
+  --dimension 384 \
+  --model-license Apache-2.0 \
+  --runtime-pack-id local-tesseract-poppler-homebrew \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language eng \
+  --language-pack <local-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license GPL-2.0-or-later \
+  --language-license Apache-2.0 \
+  --reviewed-model \
+  --reviewed-ocr-runtime \
+  --max-files 5 \
+  --max-queries 1 \
+  --top-k 3 \
+  --worker-interval-ms 10 \
+  --ocr-worker-ticks 2 \
+  --embedding-worker-ticks 2 \
+  --ocr-max-pages-per-document 2 \
+  --ocr-page-timeout-ms 10000 \
+  --embedding-max-docs 5 \
+  --resume-cli target/debug/resume-cli \
+  --resume-daemon target/debug/resume-daemon \
+  --resume-benchmark target/debug/resume-benchmark
+```
+
+Output summary:
+
+- Exit 0.
+- Completed OCR preflight, OCR manifest draft/validate, model manifest
+  draft/validate, model preflight, dataset manifest, import, bounded OCR
+  worker, bounded embedding worker, corpus summary, query-set draft,
+  private-query baseline, baseline shape gate, redacted diagnostics, smoke
+  summary, and automatic handoff.
+- `current-stage-smoke-summary.json` had schema
+  `resume-ir.current-stage-smoke-summary.v1`, `validation_profile: smoke`,
+  `smoke_satisfied: true`, `full_baseline_satisfied: false`, and
+  `release_readiness_evidence: false`.
+- `current-stage-handoff.json` had schema
+  `resume-ir.current-stage-handoff.v1` and status `smoke_satisfied`.
+- Redacted aggregate corpus observability reported 5 documents, 1 searchable
+  document, 1 vector-indexed document, 4 OCR-required documents, 3 queued OCR
+  jobs, 1 completed OCR job, 1 retryable OCR page-budget failure, and
+  `hot_index_fully_covered: false`.
+
+Scope note:
+
+- S335 proves the local current-stage smoke chain can run against a small
+  private corpus sample on this machine. It is not the full local 10k/8000
+  current-stage baseline, not the 500-query baseline, not release-readiness
+  evidence, not P95/P99 optimization, and not proof of complete product
+  readiness.
 
 ### S334
 
