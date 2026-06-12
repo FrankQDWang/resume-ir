@@ -73,6 +73,15 @@ SQLite data, diagnostics, or model/runtime caches. Operators may pass
 `--dataset-manifest-sha256 <sha256>` only as an optional consistency check; if
 omitted, execute mode computes the digest from
 `<local-evidence-dir>/dataset-manifest.local.json`.
+If dataset manifest generation or private corpus import fails, execute mode
+writes `current-stage-blocked-summary.json` with
+`blocked_category: "import/parser"`, the blocked dataset/import step, and
+`private_corpus_read: true`, then stops before OCR workers, embedding workers,
+query-set generation, benchmarks, diagnostics, or release-readiness. The
+summary records only basename-only digests for runtime preflight outputs, the
+redacted dataset manifest when present, and import stdout; it must not include
+resume paths, filenames, raw parsed text, query bodies, benchmark reports,
+indexes, SQLite data, or diagnostics.
 
 The default `--validation-profile full` is the only profile intended to produce
 `resume-ir.current-stage-validation-evidence.v1` for `release-readiness

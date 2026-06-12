@@ -319,6 +319,10 @@ case "$cmd:$sub" in
     printf '{"schema_version":"embedding-runtime-preflight.v1","embedding_protocol": "passed","ready":true}\n'
     ;;
   import:*)
+    if [ "${FAKE_IMPORT_MODE:-ready}" = "failed" ]; then
+      printf 'import blocked: fake parser failure\n' >&2
+      exit 1
+    fi
     printf 'import task submitted\nstatus: completed\n'
     ;;
   benchmark-corpus-summary:*)
@@ -400,11 +404,15 @@ run_execute_smoke() {
   if [ "$mode" = "diagnostics-failed" ]; then
     diagnostics_mode="failed"
   fi
+  import_mode="ready"
+  if [ "$mode" = "import-failed" ]; then
+    import_mode="failed"
+  fi
   query_set_mode="ready"
   if [ "$mode" = "query-set-draft-failed" ]; then
     query_set_mode="draft-failed"
   fi
-  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
+  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
     --resume-daemon "$fake_resume_daemon" \
     --resume-benchmark "$fake_resume_benchmark" \
@@ -753,6 +761,40 @@ reject_text "$tmpdir/execute-model-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-model-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-model-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-model-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke import-failed
+import_failed_status=$(cat "$tmpdir/execute-import-failed-status.txt")
+if [ "$import_failed_status" -eq 0 ]; then
+  fail "current-stage execute accepted failed private corpus import"
+fi
+import_failed_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$import_failed_summary" ]; then
+  fail "current-stage execute did not write redacted blocked summary on private corpus import failure"
+fi
+if [ -e "$execute_out_dir/ocr-worker.stdout.txt" ]; then
+  fail "current-stage execute ran OCR worker after private corpus import failure"
+fi
+if [ -e "$execute_out_dir/private-query-set.local.jsonl" ]; then
+  fail "current-stage execute drafted private query set after private corpus import failure"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$import_failed_summary" >/dev/null
+fi
+require_text "$import_failed_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$import_failed_summary" '"blocked_step": "import_private_corpus"'
+require_text "$import_failed_summary" '"blocked_category": "import/parser"'
+require_text "$import_failed_summary" '"blocked_reason": "import_private_corpus_failed"'
+require_text "$import_failed_summary" '"private_corpus_read": true'
+require_text "$import_failed_summary" '"dataset-manifest.local.json"'
+require_text "$import_failed_summary" '"import.stdout.txt"'
+reject_text "$import_failed_summary" "$tmpdir"
+reject_text "$import_failed_summary" "PRIVATE-current-stage"
+reject_text "$import_failed_summary" "private fake query"
+require_text "$tmpdir/execute-import-failed-stderr.txt" "current-stage validation blocked: import/parser failed"
+reject_text "$tmpdir/execute-import-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-import-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-import-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-import-failed-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke query-digest-mismatch \
   --query-set-sha256 0000000000000000000000000000000000000000000000000000000000000000
