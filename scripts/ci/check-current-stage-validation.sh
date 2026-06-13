@@ -177,9 +177,12 @@ require_text "$plan" 'resume-benchmark private-query'
 require_text "$plan" '--command-arg benchmark-query-protocol'
 require_text "$plan" '--max-queries 500 --top-k 10'
 require_text "$plan" 'resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --min-documents 8000 --min-queries 500 --max-p95-ms 86400000'
+require_text "$plan" 'resume-benchmark private-ocr-throughput'
+require_text "$plan" 'resume-benchmark ocr-gate --report <local-evidence-dir>/private-ocr-throughput.json --current-stage-baseline --require-private-real-corpus --min-pages 500'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> export-diagnostics --redact > <local-evidence-dir>/redacted-diagnostics.json'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> release-readiness --json'
 require_text "$plan" '--benchmark-report <local-evidence-dir>/private-benchmark-local.json'
+require_text "$plan" '--ocr-throughput-report <local-evidence-dir>/private-ocr-throughput.json'
 require_text "$plan" '--model-manifest <local-model-manifest>'
 require_text "$plan" '--ocr-runtime-manifest <local-ocr-runtime-manifest>'
 require_text "$plan" '--diagnostics-report <local-evidence-dir>/redacted-diagnostics.json'
@@ -404,6 +407,20 @@ case "${1:-}" in
     fi
     printf 'benchmark gate passed\n'
     ;;
+  private-ocr-throughput)
+    if [ "${FAKE_BENCHMARK_MODE:-pass}" = "private-ocr-throughput-failed" ]; then
+      printf 'private OCR throughput baseline blocked: fake OCR runtime failure\n' >&2
+      exit 1
+    fi
+    printf '{"schema_version":"ocr-throughput.v1","dataset_kind":"private-real-corpus","target_claim":"ocr_throughput_baseline_observed","corpus_origin":"private_local","privacy_boundary":"redacted_local_aggregate","contains_raw_ocr_text":false,"contains_page_images":false,"contains_resume_paths":false,"contains_document_ids":false,"contains_page_ids":false,"contains_command_paths":false,"document_count":8720,"scanned_document_count":500,"page_count":500,"failed_document_count":0,"render_failure_count":0,"ocr_failure_count":0,"total_ms":1000,"pages_per_second":500.0,"run_budget_exhausted":false,"page_latency_ms":{"samples":500}}\n'
+    ;;
+  ocr-gate)
+    if [ "${FAKE_BENCHMARK_MODE:-pass}" = "ocr-gate-failed" ]; then
+      printf 'OCR throughput gate blocked: private real-corpus page floor not met\n' >&2
+      exit 1
+    fi
+    printf 'ocr throughput gate passed\n'
+    ;;
   *)
     printf 'unexpected fake resume-benchmark command\n' >&2
     exit 64
@@ -426,6 +443,12 @@ run_execute_smoke() {
   fi
   if [ "$mode" = "private-query-failed" ]; then
     benchmark_mode="private-query-failed"
+  fi
+  if [ "$mode" = "private-ocr-throughput-failed" ]; then
+    benchmark_mode="private-ocr-throughput-failed"
+  fi
+  if [ "$mode" = "ocr-gate-failed" ]; then
+    benchmark_mode="ocr-gate-failed"
   fi
   diagnostics_mode="ready"
   if [ "$mode" = "diagnostics-failed" ]; then
@@ -510,6 +533,8 @@ require_text "$evidence_manifest" '"private-query-set.local.jsonl"'
 require_text "$evidence_manifest" '"query-set-draft.stdout.txt"'
 require_text "$evidence_manifest" '"benchmark-corpus-summary.local.json"'
 require_text "$evidence_manifest" '"private-benchmark-local.json"'
+require_text "$evidence_manifest" '"private-ocr-throughput.json"'
+require_text "$evidence_manifest" '"ocr-throughput-gate.stdout.txt"'
 require_text "$evidence_manifest" '"redacted-diagnostics.json"'
 require_text "$evidence_manifest" '"release-readiness.json"'
 require_text "$evidence_manifest" '"local_paths_included": false'
@@ -625,6 +650,87 @@ reject_text "$tmpdir/execute-benchmark-gate-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-benchmark-gate-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-benchmark-gate-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-benchmark-gate-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke private-ocr-throughput-failed
+private_ocr_throughput_failed_status=$(cat "$tmpdir/execute-private-ocr-throughput-failed-status.txt")
+if [ "$private_ocr_throughput_failed_status" -eq 0 ]; then
+  fail "current-stage full profile accepted failed private OCR throughput baseline"
+fi
+private_ocr_blocked_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$private_ocr_blocked_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on private OCR throughput failure"
+fi
+if [ -e "$execute_out_dir/redacted-diagnostics.json" ]; then
+  fail "current-stage execute ran diagnostics after private OCR throughput failure"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage execute ran release-readiness after private OCR throughput failure"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage execute wrote full evidence after private OCR throughput failure"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$private_ocr_blocked_summary" >/dev/null
+fi
+require_text "$private_ocr_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$private_ocr_blocked_summary" '"blocked_step": "private_ocr_throughput_baseline"'
+require_text "$private_ocr_blocked_summary" '"blocked_category": "ocr"'
+require_text "$private_ocr_blocked_summary" '"blocked_reason": "private_ocr_throughput_failed"'
+require_text "$private_ocr_blocked_summary" '"ocr_throughput_min_pages": 500'
+require_text "$private_ocr_blocked_summary" '"private-ocr-throughput.json"'
+require_text "$private_ocr_blocked_summary" '"ocr-throughput-gate.stdout.txt"'
+require_text "$private_ocr_blocked_summary" '"corpus_summary_observability": {'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
+reject_text "$private_ocr_blocked_summary" "$tmpdir"
+reject_text "$private_ocr_blocked_summary" "PRIVATE-current-stage"
+reject_text "$private_ocr_blocked_summary" "private fake query"
+require_text "$tmpdir/execute-private-ocr-throughput-failed-stderr.txt" "current-stage validation blocked: private OCR throughput baseline failed"
+reject_text "$tmpdir/execute-private-ocr-throughput-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-private-ocr-throughput-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-private-ocr-throughput-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-private-ocr-throughput-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke ocr-gate-failed
+ocr_gate_failed_status=$(cat "$tmpdir/execute-ocr-gate-failed-status.txt")
+if [ "$ocr_gate_failed_status" -eq 0 ]; then
+  fail "current-stage full profile accepted failed OCR throughput baseline gate"
+fi
+ocr_gate_blocked_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$ocr_gate_blocked_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on OCR throughput gate failure"
+fi
+if [ -e "$execute_out_dir/redacted-diagnostics.json" ]; then
+  fail "current-stage execute ran diagnostics after OCR throughput gate failure"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage execute ran release-readiness after OCR throughput gate failure"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage execute wrote full evidence after OCR throughput gate failure"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$ocr_gate_blocked_summary" >/dev/null
+fi
+require_text "$ocr_gate_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$ocr_gate_blocked_summary" '"blocked_step": "ocr_throughput_baseline_gate"'
+require_text "$ocr_gate_blocked_summary" '"blocked_category": "ocr"'
+require_text "$ocr_gate_blocked_summary" '"blocked_reason": "ocr_throughput_baseline_gate_failed"'
+require_text "$ocr_gate_blocked_summary" '"private-ocr-throughput.json"'
+require_text "$ocr_gate_blocked_summary" '"ocr-throughput-gate.stdout.txt"'
+require_text "$ocr_gate_blocked_summary" '"corpus_summary_observability": {'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
+reject_text "$ocr_gate_blocked_summary" "$tmpdir"
+reject_text "$ocr_gate_blocked_summary" "PRIVATE-current-stage"
+reject_text "$ocr_gate_blocked_summary" "private fake query"
+require_text "$tmpdir/execute-ocr-gate-failed-stderr.txt" "current-stage validation blocked: OCR throughput baseline gate failed"
+reject_text "$tmpdir/execute-ocr-gate-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-ocr-gate-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-ocr-gate-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-ocr-gate-failed-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke query-set-draft-failed
 query_set_draft_failed_status=$(cat "$tmpdir/execute-query-set-draft-failed-status.txt")

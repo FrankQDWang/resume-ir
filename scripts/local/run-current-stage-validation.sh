@@ -21,6 +21,9 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   [--reviewed-model] [--reviewed-ocr-runtime]
   [--max-files N] [--max-queries N] [--top-k N]
   [--worker-interval-ms N] [--ocr-worker-ticks N] [--embedding-worker-ticks N]
+  [--ocr-throughput-max-documents N] [--ocr-throughput-max-pages N]
+  [--ocr-throughput-pages-per-document N] [--ocr-throughput-max-run-ms N]
+  [--ocr-throughput-min-pages N]
 
 Default mode is --dry-run and default validation profile is full. Dry-run prints
 a redacted JSON plan and never reads the private resume root. Execute mode runs
@@ -719,6 +722,153 @@ EOF
   write_current_stage_handoff "$out_dir/current-stage-blocked-summary.json"
 }
 
+write_ocr_throughput_blocked_summary() {
+  blocked_step="$1"
+  blocked_reason="$2"
+  blocked_exit="$3"
+  [ -e "$out_dir/private-ocr-throughput.json" ] || : > "$out_dir/private-ocr-throughput.json"
+  [ -e "$out_dir/ocr-throughput-gate.stdout.txt" ] || : > "$out_dir/ocr-throughput-gate.stdout.txt"
+
+  ocr_preflight_sha256=$(sha256_file "$out_dir/ocr-preflight.json")
+  ocr_draft_stdout_sha256=$(sha256_file "$out_dir/ocr-draft-manifest.stdout.txt")
+  ocr_validate_stdout_sha256=$(sha256_file "$out_dir/ocr-validate-manifest.stdout.txt")
+  model_draft_stdout_sha256=$(sha256_file "$out_dir/model-draft-manifest.stdout.txt")
+  model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
+  model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
+  import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
+  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
+  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
+  corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
+  query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+  private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
+  private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
+  private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.json")
+  ocr_throughput_gate_sha256=$(sha256_file "$out_dir/ocr-throughput-gate.stdout.txt")
+  dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
+  dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
+
+  if [ "$blocked_step" = "private_ocr_throughput_baseline" ]; then
+    ocr_throughput_steps=$(cat <<EOF_STEPS
+    {"id": "private_ocr_throughput_baseline", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+  else
+    ocr_throughput_steps=$(cat <<EOF_STEPS
+    {"id": "private_ocr_throughput_baseline", "status": "success"},
+    {"id": "ocr_throughput_baseline_gate", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+  fi
+
+  cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
+{
+  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "privacy_boundary": "local_only_redacted_blocked_summary",
+  "validation_profile": "$validation_profile",
+  "current_stage_target": "$current_stage_target",
+  "private_corpus_read": true,
+  "full_baseline_satisfied": false,
+  "release_readiness_evidence": false,
+  "performance_optimization_deferred": true,
+  "blocked_step": "$blocked_step",
+  "blocked_category": "ocr",
+  "blocked_reason": "$blocked_reason",
+  "blocked_exit": $blocked_exit,
+  "input_digests": {
+    "dataset_manifest_sha256": "$dataset_manifest_sha256",
+    "query_set_sha256": "$query_set_sha256",
+    "model_manifest_sha256": "$model_manifest_sha256",
+    "ocr_runtime_manifest_sha256": "$ocr_runtime_manifest_sha256"
+  },
+  "parameters": {
+    "max_files": $max_files,
+    "max_queries": $max_queries,
+    "top_k": $top_k,
+    "embedding_dimension": $dimension,
+    "ocr_worker_ticks": $ocr_worker_ticks,
+    "embedding_worker_ticks": $embedding_worker_ticks,
+    "query_set_min_queries": $query_set_min_queries,
+    "baseline_min_documents": $baseline_min_documents,
+    "baseline_min_queries": $baseline_min_queries,
+    "ocr_throughput_min_pages": $ocr_throughput_min_pages
+  },
+  "preflight_probes": {
+    "ocr_runtime_probe": "passed",
+    "embedding_protocol": "passed"
+  },
+  "corpus_summary_observability": $corpus_summary_observability,
+  "steps": [
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "success"},
+    {"id": "ocr_manifest_validate", "status": "success"},
+    {"id": "model_manifest_draft", "status": "success"},
+    {"id": "model_manifest_validate", "status": "success"},
+    {"id": "model_preflight", "status": "success"},
+    {"id": "dataset_manifest", "status": "success"},
+    {"id": "import_private_corpus", "status": "success"},
+    {"id": "ocr_worker_bounded_loop", "status": "success"},
+    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "corpus_summary", "status": "success"},
+    {"id": "query_set_draft", "status": "success"},
+    {"id": "private_query_baseline", "status": "success"},
+    {"id": "baseline_shape_gate", "status": "success"},
+$ocr_throughput_steps
+  ],
+  "redacted_outputs": [
+    {"file": "dataset-manifest.local.json", "sha256": "$dataset_manifest_sha256_output"},
+    {"file": "dataset-manifest.stdout.txt", "sha256": "$dataset_manifest_stdout_sha256"},
+    {"file": "ocr-runtime-manifest.local.json", "sha256": "$ocr_runtime_manifest_sha256_output"},
+    {"file": "ocr-preflight.json", "sha256": "$ocr_preflight_sha256"},
+    {"file": "ocr-draft-manifest.stdout.txt", "sha256": "$ocr_draft_stdout_sha256"},
+    {"file": "ocr-validate-manifest.stdout.txt", "sha256": "$ocr_validate_stdout_sha256"},
+    {"file": "model-manifest.local.json", "sha256": "$model_manifest_sha256_output"},
+    {"file": "model-draft-manifest.stdout.txt", "sha256": "$model_draft_stdout_sha256"},
+    {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
+    {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
+    {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
+    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
+    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
+    {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
+    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
+    {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
+    {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
+    {"file": "private-ocr-throughput.json", "sha256": "$private_ocr_throughput_sha256"},
+    {"file": "ocr-throughput-gate.stdout.txt", "sha256": "$ocr_throughput_gate_sha256"}
+  ],
+  "privacy_sentinels": {
+    "local_paths_included": false,
+    "raw_resume_text_included": false,
+    "raw_query_text_included": false,
+    "model_bytes_included": false,
+    "runtime_binaries_included": false,
+    "report_bodies_included": false
+  },
+  "not_completed": [
+    "private real-corpus OCR throughput baseline",
+    "redacted diagnostics for this blocked run",
+    "release-readiness current-stage evidence",
+    "P95/P99 latency reduction",
+    "external 100k/1M validation",
+    "stable release readiness"
+  ],
+  "must_not_upload": [
+    "raw resumes",
+    "query set",
+    "local manifests",
+    "benchmark reports",
+    "diagnostics",
+    "indexes",
+    "SQLite databases",
+    "model caches",
+    "runtime binaries"
+  ]
+}
+EOF
+  write_current_stage_handoff "$out_dir/current-stage-blocked-summary.json"
+}
+
 write_redacted_diagnostics_blocked_summary() {
   blocked_exit="$1"
   blocked_reason="$2"
@@ -738,6 +888,8 @@ write_redacted_diagnostics_blocked_summary() {
   query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
+  private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.json")
+  ocr_throughput_gate_sha256=$(sha256_file "$out_dir/ocr-throughput-gate.stdout.txt")
   redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
   dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
@@ -793,6 +945,8 @@ write_redacted_diagnostics_blocked_summary() {
     {"id": "query_set_draft", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "success"},
+    {"id": "private_ocr_throughput_baseline", "status": "success"},
+    {"id": "ocr_throughput_baseline_gate", "status": "success"},
     {"id": "redacted_diagnostics", "status": "blocked", "exit_code": $blocked_exit}
   ],
   "redacted_outputs": [
@@ -814,6 +968,8 @@ write_redacted_diagnostics_blocked_summary() {
     {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
+    {"file": "private-ocr-throughput.json", "sha256": "$private_ocr_throughput_sha256"},
+    {"file": "ocr-throughput-gate.stdout.txt", "sha256": "$ocr_throughput_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"}
   ],
   "privacy_sentinels": {
@@ -868,6 +1024,8 @@ write_release_readiness_blocked_summary() {
   query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
+  private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.json")
+  ocr_throughput_gate_sha256=$(sha256_file "$out_dir/ocr-throughput-gate.stdout.txt")
   redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
   release_readiness_sha256=$(sha256_file "$out_dir/release-readiness.json")
   release_readiness_stderr_sha256=$(sha256_file "$out_dir/release-readiness.stderr.txt")
@@ -925,6 +1083,8 @@ write_release_readiness_blocked_summary() {
     {"id": "query_set_draft", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "success"},
+    {"id": "private_ocr_throughput_baseline", "status": "success"},
+    {"id": "ocr_throughput_baseline_gate", "status": "success"},
     {"id": "redacted_diagnostics", "status": "success"},
     {"id": "release_readiness_intake", "status": "blocked", "exit_code": $blocked_exit}
   ],
@@ -947,6 +1107,8 @@ write_release_readiness_blocked_summary() {
     {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
+    {"file": "private-ocr-throughput.json", "sha256": "$private_ocr_throughput_sha256"},
+    {"file": "ocr-throughput-gate.stdout.txt", "sha256": "$ocr_throughput_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
     {"file": "release-readiness.json", "sha256": "$release_readiness_sha256"},
     {"file": "release-readiness.stderr.txt", "sha256": "$release_readiness_stderr_sha256"}
@@ -1037,6 +1199,11 @@ ocr_render_dpi="150"
 embedding_max_docs="128"
 embedding_max_text_bytes="1000000"
 embedding_timeout_ms="30000"
+ocr_throughput_max_documents="900"
+ocr_throughput_max_pages="500"
+ocr_throughput_pages_per_document="1"
+ocr_throughput_max_run_ms="3600000"
+ocr_throughput_min_pages="500"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -1193,6 +1360,21 @@ $2"
     --embedding-timeout-ms)
       need_value "$@"; embedding_timeout_ms="$2"; shift 2
       ;;
+    --ocr-throughput-max-documents)
+      need_value "$@"; ocr_throughput_max_documents="$2"; shift 2
+      ;;
+    --ocr-throughput-max-pages)
+      need_value "$@"; ocr_throughput_max_pages="$2"; shift 2
+      ;;
+    --ocr-throughput-pages-per-document)
+      need_value "$@"; ocr_throughput_pages_per_document="$2"; shift 2
+      ;;
+    --ocr-throughput-max-run-ms)
+      need_value "$@"; ocr_throughput_max_run_ms="$2"; shift 2
+      ;;
+    --ocr-throughput-min-pages)
+      need_value "$@"; ocr_throughput_min_pages="$2"; shift 2
+      ;;
     -h|--help)
       usage
       ;;
@@ -1235,6 +1417,11 @@ require_positive_int "--ocr-render-dpi" "$ocr_render_dpi"
 require_positive_int "--embedding-max-docs" "$embedding_max_docs"
 require_positive_int "--embedding-max-text-bytes" "$embedding_max_text_bytes"
 require_positive_int "--embedding-timeout-ms" "$embedding_timeout_ms"
+require_positive_int "--ocr-throughput-max-documents" "$ocr_throughput_max_documents"
+require_positive_int "--ocr-throughput-max-pages" "$ocr_throughput_max_pages"
+require_positive_int "--ocr-throughput-pages-per-document" "$ocr_throughput_pages_per_document"
+require_positive_int "--ocr-throughput-max-run-ms" "$ocr_throughput_max_run_ms"
+require_positive_int "--ocr-throughput-min-pages" "$ocr_throughput_min_pages"
 [ -z "$dataset_manifest_sha256" ] || require_sha256 "--dataset-manifest-sha256" "$dataset_manifest_sha256"
 [ -z "$query_set_sha256" ] || require_sha256 "--query-set-sha256" "$query_set_sha256"
 [ -z "$model_manifest_sha256" ] || require_sha256 "--model-manifest-sha256" "$model_manifest_sha256"
@@ -1256,9 +1443,20 @@ case "$validation_profile" in
     private_query_partial_hot_index_plan=""
     full_baseline_satisfied="false"
     release_readiness_evidence="true"
+    ocr_throughput_plan_steps=$(cat <<EOF_STEPS
+    {
+      "id": "private_ocr_throughput_baseline",
+      "command": "resume-benchmark private-ocr-throughput --root <local-resume-root> --pdftoppm-command <local-pdftoppm-command> --tesseract-command <local-tesseract-command> --max-documents $ocr_throughput_max_documents --max-pages $ocr_throughput_max_pages --pages-per-document $ocr_throughput_pages_per_document --page-timeout-ms $ocr_page_timeout_ms --max-run-ms $ocr_throughput_max_run_ms --render-dpi $ocr_render_dpi --ocr-lang <ocr-language> --dataset-manifest-sha256 <dataset-manifest-sha256> --ocr-runtime-manifest-sha256 <ocr-runtime-manifest-sha256> --renderer-manifest-sha256 <renderer-manifest-sha256> --language-pack-manifest-sha256 <language-pack-manifest-sha256> --json > <local-evidence-dir>/private-ocr-throughput.json"
+    },
+    {
+      "id": "ocr_throughput_baseline_gate",
+      "command": "resume-benchmark ocr-gate --report <local-evidence-dir>/private-ocr-throughput.json --current-stage-baseline --require-private-real-corpus --min-pages $ocr_throughput_min_pages"
+    },
+EOF_STEPS
+)
     terminal_plan_steps='    {
       "id": "release_readiness_intake",
-      "command": "resume-cli --data-dir <local-data-dir> release-readiness --json --benchmark-report <local-evidence-dir>/private-benchmark-local.json --model-manifest <local-model-manifest> --ocr-runtime-manifest <local-ocr-runtime-manifest> --diagnostics-report <local-evidence-dir>/redacted-diagnostics.json > <local-evidence-dir>/release-readiness.json"
+      "command": "resume-cli --data-dir <local-data-dir> release-readiness --json --benchmark-report <local-evidence-dir>/private-benchmark-local.json --ocr-throughput-report <local-evidence-dir>/private-ocr-throughput.json --model-manifest <local-model-manifest> --ocr-runtime-manifest <local-ocr-runtime-manifest> --diagnostics-report <local-evidence-dir>/redacted-diagnostics.json > <local-evidence-dir>/release-readiness.json"
     },
     {
       "id": "redacted_evidence_manifest",
@@ -1282,6 +1480,7 @@ case "$validation_profile" in
     private_query_partial_hot_index_plan=" --allow-partial-hot-index-for-smoke"
     full_baseline_satisfied="false"
     release_readiness_evidence="false"
+    ocr_throughput_plan_steps=""
     terminal_plan_steps='    {
       "id": "redacted_smoke_summary",
       "command": "write <local-evidence-dir>/current-stage-smoke-summary.json with schema resume-ir.current-stage-smoke-summary.v1, file digests, step statuses, and explicit non-release-evidence blockers"
@@ -1320,7 +1519,12 @@ if [ "$mode" = "dry-run" ]; then
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
-    "baseline_min_queries": $baseline_min_queries
+    "baseline_min_queries": $baseline_min_queries,
+    "ocr_throughput_max_documents": $ocr_throughput_max_documents,
+    "ocr_throughput_max_pages": $ocr_throughput_max_pages,
+    "ocr_throughput_pages_per_document": $ocr_throughput_pages_per_document,
+    "ocr_throughput_max_run_ms": $ocr_throughput_max_run_ms,
+    "ocr_throughput_min_pages": $ocr_throughput_min_pages
   },
   "ordered_steps": [
     {
@@ -1387,6 +1591,7 @@ if [ "$mode" = "dry-run" ]; then
       "id": "baseline_shape_gate",
       "command": "resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus$benchmark_gate_smoke_plan --min-documents $baseline_min_documents --min-queries $baseline_min_queries --max-p95-ms 86400000 --max-zero-result-queries 500"
     },
+$ocr_throughput_plan_steps
     {
       "id": "redacted_diagnostics",
       "command": "resume-cli --data-dir <local-data-dir> export-diagnostics --redact > <local-evidence-dir>/redacted-diagnostics.json"
@@ -1848,6 +2053,64 @@ if [ "$baseline_gate_status" -ne 0 ]; then
   exit "$baseline_gate_status"
 fi
 
+if [ "$validation_profile" = "full" ]; then
+  if [ -z "$renderer_manifest_sha256" ]; then
+    renderer_manifest_sha256="$ocr_runtime_manifest_sha256"
+  fi
+  if [ -z "$language_pack_manifest_sha256" ]; then
+    language_pack_manifest_sha256="$ocr_runtime_manifest_sha256"
+  fi
+
+  printf '%s\n' "current-stage validation: private ocr throughput baseline"
+  set +e
+  "$resume_benchmark" private-ocr-throughput \
+    --root "$resume_root" \
+    --pdftoppm-command "$pdftoppm_command" \
+    --tesseract-command "$tesseract_command" \
+    --max-documents "$ocr_throughput_max_documents" \
+    --max-pages "$ocr_throughput_max_pages" \
+    --pages-per-document "$ocr_throughput_pages_per_document" \
+    --page-timeout-ms "$ocr_page_timeout_ms" \
+    --max-run-ms "$ocr_throughput_max_run_ms" \
+    --render-dpi "$ocr_render_dpi" \
+    --ocr-lang "$language" \
+    --dataset-manifest-sha256 "$dataset_manifest_sha256" \
+    --ocr-runtime-manifest-sha256 "$ocr_runtime_manifest_sha256" \
+    --renderer-manifest-sha256 "$renderer_manifest_sha256" \
+    --language-pack-manifest-sha256 "$language_pack_manifest_sha256" \
+    --json \
+    > "$out_dir/private-ocr-throughput.json"
+  private_ocr_throughput_status=$?
+  set -e
+  if [ "$private_ocr_throughput_status" -ne 0 ]; then
+    write_ocr_throughput_blocked_summary \
+      "private_ocr_throughput_baseline" \
+      "private_ocr_throughput_failed" \
+      "$private_ocr_throughput_status"
+    printf '%s\n' "current-stage validation blocked: private OCR throughput baseline failed" >&2
+    exit "$private_ocr_throughput_status"
+  fi
+
+  printf '%s\n' "current-stage validation: ocr throughput baseline gate"
+  set +e
+  "$resume_benchmark" ocr-gate \
+    --report "$out_dir/private-ocr-throughput.json" \
+    --current-stage-baseline \
+    --require-private-real-corpus \
+    --min-pages "$ocr_throughput_min_pages" \
+    > "$out_dir/ocr-throughput-gate.stdout.txt"
+  ocr_throughput_gate_status=$?
+  set -e
+  if [ "$ocr_throughput_gate_status" -ne 0 ]; then
+    write_ocr_throughput_blocked_summary \
+      "ocr_throughput_baseline_gate" \
+      "ocr_throughput_baseline_gate_failed" \
+      "$ocr_throughput_gate_status"
+    printf '%s\n' "current-stage validation blocked: OCR throughput baseline gate failed" >&2
+    exit "$ocr_throughput_gate_status"
+  fi
+fi
+
 printf '%s\n' "current-stage validation: redacted diagnostics"
 set +e
 "$resume_cli" --data-dir "$data_dir" export-diagnostics --redact \
@@ -1988,6 +2251,7 @@ printf '%s\n' "current-stage validation: release-readiness intake"
 set +e
 "$resume_cli" --data-dir "$data_dir" release-readiness --json \
   --benchmark-report "$out_dir/private-benchmark-local.json" \
+  --ocr-throughput-report "$out_dir/private-ocr-throughput.json" \
   --model-manifest "$model_manifest" \
   --ocr-runtime-manifest "$ocr_runtime_manifest" \
   --diagnostics-report "$out_dir/redacted-diagnostics.json" \
@@ -2032,6 +2296,8 @@ corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.jso
 query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
 private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
 private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
+private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.json")
+ocr_throughput_gate_sha256=$(sha256_file "$out_dir/ocr-throughput-gate.stdout.txt")
 redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
 release_readiness_sha256=$(sha256_file "$out_dir/release-readiness.json")
 release_readiness_stderr_sha256=$(sha256_file "$out_dir/release-readiness.stderr.txt")
@@ -2081,6 +2347,8 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"id": "query_set_draft", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "success"},
+    {"id": "private_ocr_throughput_baseline", "status": "success"},
+    {"id": "ocr_throughput_baseline_gate", "status": "success"},
     {"id": "redacted_diagnostics", "status": "success"},
     {"id": "release_readiness_intake", "status": "$release_readiness_step_status", "exit_code": $release_status}
   ],
@@ -2103,6 +2371,8 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
+    {"file": "private-ocr-throughput.json", "sha256": "$private_ocr_throughput_sha256"},
+    {"file": "ocr-throughput-gate.stdout.txt", "sha256": "$ocr_throughput_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
     {"file": "release-readiness.json", "sha256": "$release_readiness_sha256"},
     {"file": "release-readiness.stderr.txt", "sha256": "$release_readiness_stderr_sha256"}

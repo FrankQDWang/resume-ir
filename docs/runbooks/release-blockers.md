@@ -194,8 +194,10 @@ Run execute mode only on the operator's machine and keep every generated file
 local. The script performs OCR/model preflight, drafts local manifests, validates
 reviewed manifests, imports the selected root, runs bounded OCR and embedding
 worker loops, writes `benchmark-corpus-summary.local.json`, writes the private
-query baseline report, runs the current-stage baseline shape gate, exports
-redacted diagnostics, and feeds the local evidence into `release-readiness`.
+query baseline report, runs the current-stage baseline shape gate, writes the
+private OCR throughput baseline report, runs the current-stage OCR throughput
+baseline gate, exports redacted diagnostics, and feeds the local evidence into
+`release-readiness`.
 At the end it also writes
 `current-stage-validation-evidence.json` with schema
 `resume-ir.current-stage-validation-evidence.v1` and privacy boundary
@@ -215,7 +217,8 @@ basename-only output files with SHA-256 digests, and privacy sentinels without
 exposing the local evidence directory or report bodies. The required output
 inventory includes the dataset manifest, query set, OCR/model preflight logs,
 bounded worker stdout, corpus summary, private benchmark report, benchmark gate
-stdout, redacted diagnostics, and release-readiness stdout/stderr digests.
+stdout, private OCR throughput report, OCR throughput gate stdout, redacted
+diagnostics, and release-readiness stdout/stderr digests.
 The `redacted_outputs` inventory must contain exactly those expected basenames;
 unknown extra files are rejected even when their names are basename-only.
 The `steps` array must exactly match the ordered local validation flow; duplicate
@@ -243,6 +246,19 @@ private query text, report bodies, indexes, or diagnostics.
 When the baseline shape gate fails, treat the full current-stage baseline as
 not complete and continue from the blocked summary rather than reading private
 reports directly.
+
+If private OCR throughput generation or the current-stage OCR throughput
+baseline gate fails after the baseline shape gate has passed, execute mode
+writes `current-stage-blocked-summary.json` with `blocked_category: "ocr"` and
+either `blocked_step: "private_ocr_throughput_baseline"` or
+`blocked_step: "ocr_throughput_baseline_gate"`, then stops before diagnostics
+and release-readiness. That summary records aggregate corpus observability,
+the configured `ocr_throughput_min_pages`, and basename-only digests for the
+OCR throughput report and gate stdout. It does not include OCR text, rendered
+page images, local paths, document IDs, page IDs, command paths, report bodies,
+indexes, or SQLite data. This gate proves a reproducible current-stage
+baseline; strict P95/P99 and pages-per-second reduction remains the follow-up
+performance optimization goal.
 
 If local query-set generation fails before the private benchmark can run,
 execute mode also writes `current-stage-blocked-summary.json` with
