@@ -133,6 +133,14 @@ counts to classify current-stage blockers such as OCR backlog, retryable OCR
 failures, queued index work, or parser/import gaps without reading local paths,
 document IDs, query text, raw resume text, report bodies, indexes, SQLite data,
 or diagnostics.
+In full-profile execute mode, if the bounded OCR worker leaves OCR-required
+documents and the hot index is still not fully covered, the script stops before
+query-set generation and writes `current-stage-blocked-summary.json` with
+`blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, and
+`blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`. This is the
+expected current-stage handoff for an OCR-heavy private corpus; it is not
+release-readiness evidence and must not be used to claim the 10k/8000-document
+baseline is complete.
 The smoke and benchmark-blocked summaries copy those safe counts under
 `corpus_summary_observability`, so a handoff can classify blockers from the
 summary itself. The full release-readiness evidence manifest still records only

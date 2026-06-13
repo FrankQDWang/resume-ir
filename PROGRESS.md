@@ -350,6 +350,12 @@ production-ready scope source.
   raw query text, vectors, generated private reports, local manifests, runtime
   binaries, model artifacts, indexes, SQLite databases, diagnostics, or model
   caches were committed or uploaded.
+  S346 used synthetic/private-shaped current-stage execute fixtures and a fake
+  redacted corpus-summary shape matching the S345 OCR backlog aggregate only;
+  no real resume data, filenames, paths, raw OCR text, raw query text, vectors,
+  generated private reports, local manifests, runtime binaries, indexes,
+  SQLite databases, diagnostics, model artifacts, or model caches were
+  committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -976,6 +982,7 @@ obsolete preliminary files and checklists are not product scope.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S346 | Current-stage OCR backlog auto-handoff complete locally | Focused RED first failed because a full-profile fake current-stage execute with S345-shaped redacted corpus counts (`8720` documents, `162` searchable, `8538` OCR-required, `0` vector-indexed, hot index not covered) was accepted as full evidence. After implementation, full-profile execute classifies this state immediately after `benchmark-corpus-summary`, writes `current-stage-blocked-summary.json` with `blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`, safe corpus observability counts, and `current-stage-handoff.json`, then exits before query-set generation, private query benchmark, diagnostics, or release-readiness. | This is production complete for current-stage OCR-backlog failure handoff only. It does not drain the real OCR backlog, clear the full local 10k/8000-document baseline, generate a 500-query private benchmark, produce full-run diagnostics, clear OCR throughput evidence, optimize P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization/quality blockers, validate 100k/1M scale, or make stable release readiness true. |
 | S345 | BLOCKED on real local full-profile OCR backlog | A full-profile local current-stage validation attempt against the user-authorized resume root used reviewed local OCR and embedding runtime inputs and reached real private-corpus import plus bounded OCR execution. Preflight and manifest steps passed for OCR and embedding. The run imported/discovered 8720 supported documents with 49 ignored entries, zero scan errors, 20 permanent import failures, 162 searchable/indexed documents after the bounded OCR interruption, 8538 OCR-required documents remaining, and zero vector-indexed documents. A local redacted `benchmark-corpus-summary.local.json`, `current-stage-blocked-summary.json`, and `current-stage-handoff.json` were generated under a temporary directory and passed the handoff privacy marker check. | This does not clear current-stage full baseline evidence. The private corpus is overwhelmingly OCR-heavy, so full hot-index coverage, embedding coverage, 500-query private baseline, OCR throughput baseline, redacted diagnostics for the full run, and release-readiness current-stage evidence remain not complete. The next slice should either make the full-profile validation script produce this OCR-backlog blocked summary automatically when the operator budget is reached, or add an explicit bounded current-stage OCR-backlog classification mode, then verify it with synthetic fixtures and a short real local witness. |
 | S0 | Complete | Git initialized; initial design baseline committed as `43e3d1c`; acceptance showed only S0 files pending before commit. | None |
 | S1 | Complete | `cargo metadata --no-deps`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace` passed. | None |
@@ -1322,6 +1329,63 @@ obsolete preliminary files and checklists are not product scope.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S346
+
+- Scope: make the full-profile current-stage validation script automatically
+  classify the S345-shaped bounded OCR backlog as a structured blocked handoff
+  instead of continuing into query-set generation, private-query benchmarking,
+  diagnostics, and release-readiness.
+- TDD RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Failed as expected with `current-stage full profile accepted bounded OCR
+  backlog as full evidence` after the guard added a fake corpus summary with
+  8720 documents, 162 searchable documents, 8538 OCR-required documents, zero
+  vector-indexed documents, queued/running OCR jobs, and no private payload.
+
+- Implementation:
+  - `run-current-stage-validation.sh` now validates the redacted corpus summary
+    sentinels, detects full-profile bounded OCR backlog when OCR-required
+    documents remain and hot-index coverage is false, writes
+    `current-stage-blocked-summary.json`, generates `current-stage-handoff.json`,
+    and exits before query-set generation.
+  - The blocked summary records only basename SHA-256 evidence and aggregate
+    counts under `corpus_summary_observability`; it does not include report
+    bodies, paths, raw resume text, raw query text, model bytes, runtime
+    binaries, indexes, SQLite data, diagnostics, or private benchmark outputs.
+
+- Focused GREEN:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+sh -n scripts/local/run-current-stage-validation.sh scripts/ci/check-current-stage-validation.sh scripts/ci/check-runbooks.sh
+./scripts/ci/check-runbooks.sh
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `current-stage validation check passed`.
+- Shell syntax checking exited 0 for the touched shell scripts.
+- `check-runbooks.sh` exited 0.
+- `git diff --check` exited 0.
+- `verify-local.sh` exited 0; tail evidence included current-stage validation,
+  current-stage handoff, workflow, release-readiness, release artifact, signing,
+  notarization, SBOM, macOS package, macOS installer evidence, Windows installer
+  evidence, Windows service evidence, and public repo guard checks.
+
+- Scope note:
+  - S346 completes only automatic OCR-backlog blocked handoff for current-stage
+    validation. It does not clear the full real local baseline, OCR throughput,
+    vector coverage, private query baseline, diagnostics, release-readiness,
+    performance, platform, signing/notarization, or complete-product gates.
 
 ### S345
 

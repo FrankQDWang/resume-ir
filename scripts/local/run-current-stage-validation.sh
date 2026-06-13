@@ -167,6 +167,83 @@ sys.stdout.write("\n")
 PY
 }
 
+corpus_summary_has_bounded_ocr_backlog() {
+  path="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for OCR backlog classification"
+  set +e
+  python3 - "$path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+if report.get("privacy_boundary") != "redacted_local_aggregate":
+    raise SystemExit(2)
+
+for sentinel in (
+    "contains_raw_resume_text",
+    "contains_resume_paths",
+    "contains_queries",
+    "contains_sample_ids",
+):
+    if report.get(sentinel) is not False:
+        raise SystemExit(2)
+
+
+def int_field(name):
+    value = report.get(name)
+    if not isinstance(value, int) or value < 0:
+        raise SystemExit(2)
+    return value
+
+
+def dict_field(name):
+    value = report.get(name, {})
+    if not isinstance(value, dict):
+        raise SystemExit(2)
+    return value
+
+
+def count_from(mapping, key):
+    value = mapping.get(key, 0)
+    if not isinstance(value, int) or value < 0:
+        raise SystemExit(2)
+    return value
+
+
+hot_index_fully_covered = report.get("hot_index_fully_covered")
+if not isinstance(hot_index_fully_covered, bool):
+    raise SystemExit(2)
+
+document_count = int_field("document_count")
+searchable_document_count = int_field("searchable_document_count")
+vector_indexed_document_count = int_field("vector_indexed_document_count")
+document_status_counts = dict_field("document_status_counts")
+ocr_required_count = count_from(document_status_counts, "ocr_required")
+
+if (
+    document_count > 0
+    and ocr_required_count > 0
+    and not hot_index_fully_covered
+    and (
+        searchable_document_count < document_count
+        or vector_indexed_document_count < document_count
+    )
+):
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+  status=$?
+  set -e
+  if [ "$status" -eq 2 ]; then
+    fail "current-stage corpus summary privacy/shape validation failed"
+  fi
+  [ "$status" -eq 0 ]
+}
+
 write_runtime_preflight_blocked_summary() {
   blocked_step="$1"
   blocked_category="$2"
@@ -846,6 +923,123 @@ $ocr_throughput_steps
     "report_bodies_included": false
   },
   "not_completed": [
+    "private real-corpus OCR throughput baseline",
+    "redacted diagnostics for this blocked run",
+    "release-readiness current-stage evidence",
+    "P95/P99 latency reduction",
+    "external 100k/1M validation",
+    "stable release readiness"
+  ],
+  "must_not_upload": [
+    "raw resumes",
+    "query set",
+    "local manifests",
+    "benchmark reports",
+    "diagnostics",
+    "indexes",
+    "SQLite databases",
+    "model caches",
+    "runtime binaries"
+  ]
+}
+EOF
+  write_current_stage_handoff "$out_dir/current-stage-blocked-summary.json"
+}
+
+write_ocr_backlog_blocked_summary() {
+  blocked_exit=1
+  ocr_preflight_sha256=$(sha256_file "$out_dir/ocr-preflight.json")
+  ocr_draft_stdout_sha256=$(sha256_file "$out_dir/ocr-draft-manifest.stdout.txt")
+  ocr_validate_stdout_sha256=$(sha256_file "$out_dir/ocr-validate-manifest.stdout.txt")
+  model_draft_stdout_sha256=$(sha256_file "$out_dir/model-draft-manifest.stdout.txt")
+  model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
+  model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
+  import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
+  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
+  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
+  corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
+  dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
+  dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
+
+  cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
+{
+  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "privacy_boundary": "local_only_redacted_blocked_summary",
+  "validation_profile": "$validation_profile",
+  "current_stage_target": "$current_stage_target",
+  "private_corpus_read": true,
+  "full_baseline_satisfied": false,
+  "release_readiness_evidence": false,
+  "performance_optimization_deferred": true,
+  "blocked_step": "ocr_worker_bounded_loop",
+  "blocked_category": "ocr",
+  "blocked_reason": "ocr_backlog_exceeds_current_stage_budget",
+  "blocked_exit": $blocked_exit,
+  "input_digests": {
+    "dataset_manifest_sha256": "$dataset_manifest_sha256",
+    "query_set_sha256": null,
+    "model_manifest_sha256": "$model_manifest_sha256",
+    "ocr_runtime_manifest_sha256": "$ocr_runtime_manifest_sha256"
+  },
+  "parameters": {
+    "max_files": $max_files,
+    "max_queries": $max_queries,
+    "top_k": $top_k,
+    "embedding_dimension": $dimension,
+    "ocr_worker_ticks": $ocr_worker_ticks,
+    "embedding_worker_ticks": $embedding_worker_ticks,
+    "query_set_min_queries": $query_set_min_queries,
+    "baseline_min_documents": $baseline_min_documents,
+    "baseline_min_queries": $baseline_min_queries
+  },
+  "preflight_probes": {
+    "ocr_runtime_probe": "passed",
+    "embedding_protocol": "passed"
+  },
+  "corpus_summary_observability": $corpus_summary_observability,
+  "steps": [
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "success"},
+    {"id": "ocr_manifest_validate", "status": "success"},
+    {"id": "model_manifest_draft", "status": "success"},
+    {"id": "model_manifest_validate", "status": "success"},
+    {"id": "model_preflight", "status": "success"},
+    {"id": "dataset_manifest", "status": "success"},
+    {"id": "import_private_corpus", "status": "success"},
+    {"id": "ocr_worker_bounded_loop", "status": "blocked", "exit_code": $blocked_exit},
+    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "corpus_summary", "status": "success"}
+  ],
+  "redacted_outputs": [
+    {"file": "dataset-manifest.local.json", "sha256": "$dataset_manifest_sha256_output"},
+    {"file": "dataset-manifest.stdout.txt", "sha256": "$dataset_manifest_stdout_sha256"},
+    {"file": "ocr-runtime-manifest.local.json", "sha256": "$ocr_runtime_manifest_sha256_output"},
+    {"file": "ocr-preflight.json", "sha256": "$ocr_preflight_sha256"},
+    {"file": "ocr-draft-manifest.stdout.txt", "sha256": "$ocr_draft_stdout_sha256"},
+    {"file": "ocr-validate-manifest.stdout.txt", "sha256": "$ocr_validate_stdout_sha256"},
+    {"file": "model-manifest.local.json", "sha256": "$model_manifest_sha256_output"},
+    {"file": "model-draft-manifest.stdout.txt", "sha256": "$model_draft_stdout_sha256"},
+    {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
+    {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
+    {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
+    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
+    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"}
+  ],
+  "privacy_sentinels": {
+    "local_paths_included": false,
+    "raw_resume_text_included": false,
+    "raw_query_text_included": false,
+    "model_bytes_included": false,
+    "runtime_binaries_included": false,
+    "report_bodies_included": false
+  },
+  "not_completed": [
+    "full OCR backlog drain",
+    "private query-set draft",
+    "full 10k/8000-document current-stage baseline",
+    "500-query private baseline gate",
     "private real-corpus OCR throughput baseline",
     "redacted diagnostics for this blocked run",
     "release-readiness current-stage evidence",
@@ -1849,6 +2043,12 @@ printf '%s\n' "current-stage validation: bounded embedding worker"
 printf '%s\n' "current-stage validation: corpus summary"
 "$resume_cli" --data-dir "$data_dir" benchmark-corpus-summary --json \
   > "$out_dir/benchmark-corpus-summary.local.json"
+
+if [ "$validation_profile" = "full" ] && corpus_summary_has_bounded_ocr_backlog "$out_dir/benchmark-corpus-summary.local.json"; then
+  write_ocr_backlog_blocked_summary
+  printf '%s\n' "current-stage validation blocked: bounded OCR backlog remains" >&2
+  exit 1
+fi
 
 printf '%s\n' "current-stage validation: query set"
 if [ "$query_set_generated" = "true" ]; then

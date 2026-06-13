@@ -356,6 +356,10 @@ case "$cmd:$sub" in
     printf 'import task submitted\nstatus: completed\n'
     ;;
   benchmark-corpus-summary:*)
+    if [ "${FAKE_CORPUS_SUMMARY_MODE:-hot}" = "ocr-backlog" ]; then
+      printf '{"schema_version":"benchmark-corpus-summary.v1","privacy_boundary":"redacted_local_aggregate","document_count":8720,"searchable_document_count":162,"vector_indexed_document_count":0,"hot_index_fully_covered":false,"document_status_counts":{"failed_permanent":20,"ocr_required":8538,"searchable":162},"ingest_job_status_counts":{"completed":16,"queued":8537,"running":1},"ingest_job_kind_status_counts":{"ocr_document":{"completed":16,"queued":8537,"running":1}},"ingest_job_failure_counts":{},"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"contains_sample_ids":false}\n'
+      exit 0
+    fi
     printf '{"schema_version":"benchmark-corpus-summary.v1","privacy_boundary":"redacted_local_aggregate","document_count":8720,"searchable_document_count":8720,"vector_indexed_document_count":8720,"hot_index_fully_covered":true,"document_status_counts":{"searchable":8720},"ingest_job_status_counts":{"completed":8720},"ingest_job_kind_status_counts":{"update_index":{"completed":8720}},"ingest_job_failure_counts":{},"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"contains_sample_ids":false}\n'
     ;;
   export-diagnostics:*)
@@ -462,7 +466,11 @@ run_execute_smoke() {
   if [ "$mode" = "query-set-draft-failed" ]; then
     query_set_mode="draft-failed"
   fi
-  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
+  corpus_summary_mode="hot"
+  if [ "$mode" = "ocr-backlog" ]; then
+    corpus_summary_mode="ocr-backlog"
+  fi
+  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_CORPUS_SUMMARY_MODE="$corpus_summary_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
     --resume-daemon "$fake_resume_daemon" \
     --resume-benchmark "$fake_resume_benchmark" \
@@ -603,6 +611,62 @@ reject_text "$tmpdir/execute-smoke-profile-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-smoke-profile-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-smoke-profile-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-smoke-profile-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke ocr-backlog
+ocr_backlog_status=$(cat "$tmpdir/execute-ocr-backlog-status.txt")
+if [ "$ocr_backlog_status" -eq 0 ]; then
+  fail "current-stage full profile accepted bounded OCR backlog as full evidence"
+fi
+ocr_backlog_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$ocr_backlog_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary for bounded OCR backlog"
+fi
+if [ -e "$execute_out_dir/query-set-draft.stdout.txt" ]; then
+  fail "current-stage execute drafted private queries after bounded OCR backlog"
+fi
+if [ -e "$execute_out_dir/private-benchmark-local.json" ]; then
+  fail "current-stage execute benchmarked private queries after bounded OCR backlog"
+fi
+if [ -e "$execute_out_dir/redacted-diagnostics.json" ]; then
+  fail "current-stage execute ran diagnostics after bounded OCR backlog"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage execute ran release-readiness after bounded OCR backlog"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage execute wrote full evidence after bounded OCR backlog"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$ocr_backlog_summary" >/dev/null
+fi
+require_text "$ocr_backlog_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$ocr_backlog_summary" '"privacy_boundary": "local_only_redacted_blocked_summary"'
+require_text "$ocr_backlog_summary" '"validation_profile": "full"'
+require_text "$ocr_backlog_summary" '"current_stage_target": "reproducible_local_10k_baseline"'
+require_text "$ocr_backlog_summary" '"full_baseline_satisfied": false'
+require_text "$ocr_backlog_summary" '"release_readiness_evidence": false'
+require_text "$ocr_backlog_summary" '"blocked_step": "ocr_worker_bounded_loop"'
+require_text "$ocr_backlog_summary" '"blocked_category": "ocr"'
+require_text "$ocr_backlog_summary" '"blocked_reason": "ocr_backlog_exceeds_current_stage_budget"'
+require_text "$ocr_backlog_summary" '"ocr_runtime_probe": "passed"'
+require_text "$ocr_backlog_summary" '"embedding_protocol": "passed"'
+require_text "$ocr_backlog_summary" '"corpus_summary_observability": {'
+require_text "$ocr_backlog_summary" '"ocr_required": 8538'
+require_text "$ocr_backlog_summary" '"vector_indexed_document_count": 0'
+require_text "$ocr_backlog_summary" '"hot_index_fully_covered": false'
+require_text "$ocr_backlog_summary" '"benchmark-corpus-summary.local.json"'
+require_text "$ocr_backlog_summary" '"full 10k/8000-document current-stage baseline"'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
+reject_text "$ocr_backlog_summary" "$tmpdir"
+reject_text "$ocr_backlog_summary" "PRIVATE-current-stage"
+reject_text "$ocr_backlog_summary" "private fake query"
+require_text "$tmpdir/execute-ocr-backlog-stderr.txt" "current-stage validation blocked: bounded OCR backlog remains"
+reject_text "$tmpdir/execute-ocr-backlog-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-ocr-backlog-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-ocr-backlog-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-ocr-backlog-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke benchmark-gate-failed
 benchmark_gate_failed_status=$(cat "$tmpdir/execute-benchmark-gate-failed-status.txt")
@@ -1027,6 +1091,7 @@ require_text "$script" '"embedding_protocol": "passed"'
 require_text "$script" "current-stage-handoff.json"
 require_text "$script" "resume-ir.current-stage-handoff.v1"
 require_text "$script" "performance_optimization_deferred"
+require_text "$script" "ocr_backlog_exceeds_current_stage_budget"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"
 require_text "$runbook" "resume-ir.current-stage-validation-plan.v1"
@@ -1044,6 +1109,7 @@ require_text "$runbook" "stops before scanning the private corpus"
 require_text "$runbook" "privacy dataset-manifest"
 require_text "$runbook" "benchmark-query-set draft"
 require_text "$runbook" "baseline shape gate fails"
+require_text "$runbook" 'blocked_reason: "ocr_backlog_exceeds_current_stage_budget"'
 require_text "$runbook" "current-stage-blocked-summary.json"
 require_text "$runbook" "--current-stage-evidence current-stage-validation-evidence.json"
 require_text "$runbook" "--max-p95-ms 86400000"
