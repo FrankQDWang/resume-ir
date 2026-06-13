@@ -29,18 +29,32 @@ reject_text() {
 }
 
 service_script="scripts/release/create-windows-service-evidence.sh"
+lifecycle_script="scripts/release/run-windows-service-lifecycle.ps1"
 verify_script="scripts/ci/verify-local.sh"
 workflow_guard="scripts/ci/check-workflows.sh"
 release_workflow=".github/workflows/release.yml"
 runbook="docs/runbooks/release-blockers.md"
 
-for file in "$service_script" "$verify_script" "$workflow_guard" "$release_workflow" "$runbook"; do
+for file in "$service_script" "$lifecycle_script" "$verify_script" "$workflow_guard" "$release_workflow" "$runbook"; do
   require_file "$file"
 done
 
 if [ ! -x "$service_script" ]; then
   fail "Windows service evidence script is not executable"
 fi
+require_text "$lifecycle_script" 'schema_version = "release.windows_service_lifecycle_plan.v1"'
+require_text "$lifecycle_script" 'execution_mode = "dry_run"'
+require_text "$lifecycle_script" 'service_lifecycle_status = "blocked"'
+require_text "$lifecycle_script" 'sc.exe'
+require_text "$lifecycle_script" 'install'
+require_text "$lifecycle_script" 'start'
+require_text "$lifecycle_script" 'status'
+require_text "$lifecycle_script" 'stop'
+require_text "$lifecycle_script" 'recovery'
+require_text "$lifecycle_script" 'uninstall'
+require_text "$lifecycle_script" 'rollback'
+require_text "$lifecycle_script" 'requires_approval = $true'
+require_text "$lifecycle_script" 'admin_elevation = "required_not_observed"'
 
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-windows-service-evidence-check.XXXXXX")
 trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
@@ -119,11 +133,63 @@ if "$service_script" --version v0.0.1 --windows-package-manifest "$package_manif
   fail "Windows service evidence script accepted a mismatched package manifest version"
 fi
 
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoLogo -NoProfile -File "$lifecycle_script" \
+    -Version v0.0.0 \
+    -WindowsPackageManifest "$package_manifest" \
+    -Out "$out_dir/windows-service-lifecycle-dry-run.json" \
+    -DryRun >/dev/null
+
+  lifecycle_manifest="$out_dir/windows-service-lifecycle-dry-run.json"
+  require_file "$lifecycle_manifest"
+  require_text "$lifecycle_manifest" '"schema_version": "release.windows_service_lifecycle_plan.v1"'
+  require_text "$lifecycle_manifest" '"version": "v0.0.0"'
+  require_text "$lifecycle_manifest" '"execution_mode": "dry_run"'
+  require_text "$lifecycle_manifest" '"service_lifecycle_status": "blocked"'
+  require_text "$lifecycle_manifest" '"evidence_boundary": "dry_run_no_windows_service_registration"'
+  require_text "$lifecycle_manifest" '"windows_package_manifest_sha256": "'
+  require_text "$lifecycle_manifest" '"service_manager": "sc.exe"'
+  require_text "$lifecycle_manifest" '"admin_elevation": "required_not_observed"'
+  require_text "$lifecycle_manifest" '"release_runner": "windows_required_not_observed"'
+  require_text "$lifecycle_manifest" '"registration_status": "not_registered"'
+  require_text "$lifecycle_manifest" '"recovery_validation_status": "blocked"'
+  require_text "$lifecycle_manifest" '"rollback_validation_status": "blocked"'
+  require_text "$lifecycle_manifest" '"action": "install"'
+  require_text "$lifecycle_manifest" '"action": "start"'
+  require_text "$lifecycle_manifest" '"action": "status"'
+  require_text "$lifecycle_manifest" '"action": "stop"'
+  require_text "$lifecycle_manifest" '"action": "recovery"'
+  require_text "$lifecycle_manifest" '"action": "uninstall"'
+  require_text "$lifecycle_manifest" '"action": "rollback"'
+  require_text "$lifecycle_manifest" '"action_status": "blocked"'
+  require_text "$lifecycle_manifest" '"requires_approval": true'
+  require_text "$lifecycle_manifest" '"kind": "msi"'
+  require_text "$lifecycle_manifest" '"windows_service_install"'
+  require_text "$lifecycle_manifest" '"windows_service_rollback"'
+
+  reject_text "$lifecycle_manifest" "$tmpdir"
+  reject_text "$lifecycle_manifest" "/Users/"
+  reject_text "$lifecycle_manifest" "target/release"
+  reject_text "$lifecycle_manifest" "local-data"
+  reject_text "$lifecycle_manifest" "diagnostics"
+  reject_text "$lifecycle_manifest" "model-cache"
+  reject_text "$lifecycle_manifest" "windows-service-token"
+  reject_text "$lifecycle_manifest" "administrator-password"
+
+  if pwsh -NoLogo -NoProfile -File "$lifecycle_script" -Version v0.0.0 -WindowsPackageManifest "$package_manifest" -Out "$out_dir/no-dry-run.json" >/dev/null 2>&1; then
+    fail "Windows service lifecycle script accepted execution without -DryRun"
+  fi
+fi
+
 require_text "$verify_script" "./scripts/ci/check-windows-service-evidence.sh"
 require_text "$workflow_guard" "check-windows-service-evidence.sh"
 require_text "$release_workflow" "scripts/release/create-windows-service-evidence.sh"
+require_text "$release_workflow" "scripts/release/run-windows-service-lifecycle.ps1"
 require_text "$release_workflow" "windows-service-evidence.json"
+require_text "$release_workflow" "windows-service-lifecycle-dry-run.json"
 require_text "$runbook" "create-windows-service-evidence.sh"
+require_text "$runbook" "run-windows-service-lifecycle.ps1"
 require_text "$runbook" "release.windows_service_evidence.v1"
+require_text "$runbook" "release.windows_service_lifecycle_plan.v1"
 
 printf '%s\n' "Windows service evidence check passed"

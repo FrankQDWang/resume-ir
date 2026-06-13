@@ -377,6 +377,11 @@ production-ready scope source.
   filenames, paths, raw OCR text, raw query text, vectors, generated private
   reports, local manifests, runtime binaries, model artifacts, indexes, SQLite
   databases, diagnostics, or model caches were committed or uploaded.
+  S349 changed release automation, CI guards, and runbook text only; no real
+  resume data, filenames, paths, raw text, raw queries, diagnostics, model
+  caches, runtime binaries, signing material, notarization credentials,
+  service tokens, administrator passwords, local runtime data, or generated
+  release artifacts were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1003,6 +1008,7 @@ obsolete preliminary files and checklists are not product scope.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S349 | Windows Service lifecycle dry-run operator plan complete locally | Focused guard first failed before runbook/workflow lifecycle wiring was complete. After implementation, release automation writes `windows-service-lifecycle-dry-run.json` with schema `release.windows_service_lifecycle_plan.v1`, `execution_mode: "dry_run"`, blocked install/start/status/stop/recovery/uninstall/rollback actions, `sc.exe` service-manager boundary, required administrator approval, package manifest digest binding, and no local path/runtime-data markers. `check-windows-service-evidence.sh` now requires the lifecycle script, runbook coverage, workflow artifact wiring, and fail-closed `-DryRun` behavior when `pwsh` is available. Verification passed: `check-windows-service-evidence.sh`, `check-workflows.sh`, `check-runbooks.sh`, `git diff --check`, and `./scripts/ci/verify-local.sh`. | This is operator-plan and CI/runbook evidence only. It does not perform real Windows administrator-elevated service install/start/status/stop/recovery/uninstall/rollback, does not clear Windows runner/platform evidence, and does not clear signing, notarization, final model/runtime distribution, full current-stage baseline, real labeled quality, 100k/1M scale, or complete-product release blockers. |
 | S348 | Current-stage real local smoke/pilot chain complete locally | A smoke-profile real local current-stage validation witness against the user-authorized resume root used reviewed local OCR and embedding runtime inputs plus `eng+chi_sim` tessdata. Dry-run exited 0 without reading the private corpus. Execute exited 0 and completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, local query-set draft, private query baseline, smoke baseline gate, redacted diagnostics, smoke summary, and handoff summary. Redacted aggregate evidence reported 500 bounded documents, 4 searchable documents, 496 OCR-required documents, 1 vector-indexed document, 3 generated private query samples, 0 zero-result queries, `query_mode: "hybrid"`, `percentile_confidence: "smoke"`, query latency p50 3242.181ms, p95 3477.066ms, p99 3477.066ms, and no hot-path OCR/parsing/heavy model inference. `current-stage-smoke-summary.json` reported `smoke_satisfied: true`, OCR probe `passed`, embedding protocol `passed`, and `release_readiness_evidence: false`; `current-stage-handoff.json` reported `current_stage_status: "smoke_satisfied"`. Content marker scan over committed-safe smoke summaries, benchmark report, diagnostics, dry-run, execute stdout/stderr, and query-set stdout was clean. | This is smoke/pilot wiring evidence only, not full current-stage baseline or product completion. Full 10k/8000-document current-stage baseline, 500-query private baseline gate, full hot-index coverage, full OCR backlog drain, OCR throughput baseline, release-readiness evidence, P95/P99 optimization, external 100k/1M validation, final model/runtime distribution approval, installer/platform/signing/notarization blockers, and real labeled quality datasets remain not complete or BLOCKED. |
 | S347 | BLOCKED on real local current-stage OCR backlog auto-handoff | A full-profile real local current-stage validation witness against the user-authorized resume root used reviewed local OCR and embedding runtime inputs, reached private-corpus import, bounded OCR/embedding worker execution, and then let the S346 script path automatically classify the remaining OCR backlog. OCR preflight reported `runtime_probe: "passed"` and embedding preflight reported `embedding_protocol: "passed"`. The run imported/discovered 8720 supported documents with zero scan errors, 20 permanent import failures, 147 searchable documents, 8553 OCR-required documents remaining, and 1 vector-indexed document after bounded workers. It wrote local redacted `benchmark-corpus-summary.local.json`, `current-stage-blocked-summary.json`, and `current-stage-handoff.json`; the handoff reported `current_stage_status: "blocked"` and source schema `resume-ir.current-stage-blocked-summary.v1`. A privacy marker scan over the committed-safe local outputs and execute stdout/stderr was clean. | This is not full current-stage baseline evidence. The script correctly stopped before private query-set generation, private benchmark, redacted diagnostics, release-readiness, and `current-stage-validation-evidence.json`. Full hot-index coverage, 500-query private baseline, OCR throughput baseline, full-run diagnostics, release-readiness evidence, P95/P99 optimization, final model/runtime distribution approval, installer/platform/signing/notarization blockers, real labeled quality datasets, and external 100k/1M validation remain not complete or BLOCKED. |
 | S346 | Current-stage OCR backlog auto-handoff complete locally | Focused RED first failed because a full-profile fake current-stage execute with S345-shaped redacted corpus counts (`8720` documents, `162` searchable, `8538` OCR-required, `0` vector-indexed, hot index not covered) was accepted as full evidence. After implementation, full-profile execute classifies this state immediately after `benchmark-corpus-summary`, writes `current-stage-blocked-summary.json` with `blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`, safe corpus observability counts, and `current-stage-handoff.json`, then exits before query-set generation, private query benchmark, diagnostics, or release-readiness. | This is production complete for current-stage OCR-backlog failure handoff only. It does not drain the real OCR backlog, clear the full local 10k/8000-document baseline, generate a 500-query private benchmark, produce full-run diagnostics, clear OCR throughput evidence, optimize P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization/quality blockers, validate 100k/1M scale, or make stable release readiness true. |
@@ -1352,6 +1358,59 @@ obsolete preliminary files and checklists are not product scope.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S349
+
+- Scope: after a systematic remaining-gap investigation, close only the next
+  release-automation gap for Windows Service lifecycle dry-run evidence. The
+  investigation found that S348 proves a local smoke/pilot current-stage chain,
+  but stable release remains blocked by full baseline evidence, Windows/macOS
+  platform evidence, signing/notarization credentials, final model/runtime
+  distribution review, labeled quality datasets, and external scale validation.
+  The current slice intentionally does not add another benchmark micro-slice or
+  performance optimization.
+- Implementation:
+  - Added `scripts/release/run-windows-service-lifecycle.ps1`.
+  - The script accepts a reviewed Windows package manifest and writes
+    `release.windows_service_lifecycle_plan.v1` only when `-DryRun` is present.
+  - The generated plan binds to the Windows package manifest digest and records
+    planned install/start/status/stop/recovery/uninstall/rollback actions,
+    `sc.exe`, administrator approval requirements, blocked service lifecycle
+    steps, and the prohibited-public-material boundary.
+  - The plan keeps `service_lifecycle_status=blocked`,
+    `evidence_boundary=dry_run_no_windows_service_registration`,
+    `registration_status=not_registered`,
+    `recovery_validation_status=blocked`, and
+    `rollback_validation_status=blocked`.
+  - Updated the release workflow to generate and boundary-check
+    `windows-service-lifecycle-dry-run.json`.
+  - Updated workflow, Windows service evidence, and runbook guards to require
+    the new lifecycle plan and leak checks.
+  - Updated the release blocker runbook with the operator command and boundary.
+- Verification:
+
+```bash
+./scripts/ci/check-windows-service-evidence.sh
+./scripts/ci/check-workflows.sh
+./scripts/ci/check-runbooks.sh
+git diff --check
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+  All commands exited 0. Local `pwsh` was not present, so
+  `check-windows-service-evidence.sh` performed static/runbook/workflow checks
+  locally and will execute the PowerShell lifecycle plan on Windows runners.
+- Privacy:
+  - No real resume directory was read for this slice.
+  - No real resumes, local data directories, raw service logs, service tokens,
+    administrator passwords, diagnostics, model caches, runtime binaries,
+    signing material, notarization credentials, or generated release artifacts
+    were committed or uploaded.
+- Scope note:
+  - S349 is dry-run operator-plan evidence only. It does not clear actual
+    Windows administrator-elevated service install/start/status/stop/recovery/
+    uninstall/rollback evidence, platform evidence, signing/notarization,
+    full current-stage baseline, quality, 100k/1M, or complete-product gates.
 
 ### S348
 

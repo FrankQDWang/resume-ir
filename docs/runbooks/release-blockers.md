@@ -1067,6 +1067,27 @@ validator. It does not register a service, start/stop/query it, configure
 recovery, uninstall it, prove rollback, or clear the Windows service lifecycle
 blocker until administrator-elevated release-runner evidence exists.
 
+Release dry-runs must also write a Windows Service lifecycle dry-run operator
+plan:
+
+```powershell
+scripts/release/run-windows-service-lifecycle.ps1 `
+  -Version v0.1.0 `
+  -WindowsPackageManifest release-dry-run/windows-package.json `
+  -Out release-dry-run/windows-service-lifecycle-dry-run.json `
+  -DryRun
+```
+
+The generated plan schema is
+`release.windows_service_lifecycle_plan.v1`. It records the Windows package
+manifest digest, MSI artifact basenames, planned install/start/status/stop/
+recovery/uninstall/rollback actions, the `sc.exe` command boundary, required
+administrator approval, and blocked release steps. It must not contain service
+tokens, administrator passwords, local paths, raw service logs, resume data,
+diagnostics, indexes, model caches, or runtime artifacts. This is an operator
+plan only; it does not register, start, stop, query, recover, uninstall, roll
+back, or otherwise clear the Windows service lifecycle blocker.
+
 Validate any proposed local model pack before worker configuration:
 
 ```bash
