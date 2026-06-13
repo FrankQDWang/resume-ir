@@ -1378,6 +1378,59 @@ fn ocr_throughput_gate_requires_private_real_release_boundary() {
 }
 
 #[test]
+fn ocr_throughput_gate_accepts_private_real_baseline_observed_without_latency_target() {
+    let slow_baseline_report = concat!(
+        "{\"schema_version\":\"ocr-throughput.v1\",",
+        "\"run_id\":\"ocr_baseline_20260613\",",
+        "\"platform\":\"macos/aarch64\",",
+        "\"dataset_kind\":\"private-real-corpus\",",
+        "\"page_count\":500,",
+        "\"document_count\":200,",
+        "\"scanned_document_count\":150,",
+        "\"failed_document_count\":50,",
+        "\"render_failure_count\":50,",
+        "\"ocr_failure_count\":0,",
+        "\"run_budget_exhausted\":false,",
+        "\"engine_kind\":\"tesseract\",",
+        "\"total_ms\":1250000.0,",
+        "\"page_latency_ms\":{\"samples\":500,\"p50\":2200.0,\"p95\":4200.0,\"p99\":6100.0},",
+        "\"pages_per_second\":0.4,",
+        "\"target_claim\":\"ocr_throughput_baseline_observed\",",
+        "\"corpus_origin\":\"private_local\",",
+        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"contains_raw_ocr_text\":false,",
+        "\"contains_page_images\":false,",
+        "\"contains_resume_paths\":false,",
+        "\"contains_document_ids\":false,",
+        "\"contains_page_ids\":false,",
+        "\"contains_command_paths\":false,",
+        "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+        "\"ocr_runtime_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"renderer_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+        "\"language_pack_manifest_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+        "\"scope\":\"private real-corpus OCR throughput benchmark; aggregate redacted report only\"}"
+    );
+    let strict_config =
+        OcrThroughputGateConfig::new(500, 1_000.0, 1.0).require_private_real_corpus();
+
+    let strict_error =
+        evaluate_ocr_throughput_gate_json(slow_baseline_report, strict_config).unwrap_err();
+
+    assert!(strict_error
+        .to_string()
+        .contains("OCR page p95 exceeded threshold"));
+
+    let baseline_config = OcrThroughputGateConfig::current_stage_baseline(500);
+    let evaluation = evaluate_ocr_throughput_gate_json(slow_baseline_report, baseline_config)
+        .expect("current-stage baseline accepts observed OCR metrics");
+
+    assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
+    assert_eq!(evaluation.page_count(), 500);
+    assert_eq!(evaluation.p95_ms(), 4200.0);
+    assert_eq!(evaluation.pages_per_second(), 0.4);
+}
+
+#[test]
 fn ocr_throughput_gate_rejects_private_real_report_with_inconsistent_page_counts() {
     let report = minimal_private_real_ocr_throughput_json(100, 200, 150, 100, 40_000.0, 2.5);
     let config = OcrThroughputGateConfig::new(1, 1_000.0, 1.0).require_private_real_corpus();

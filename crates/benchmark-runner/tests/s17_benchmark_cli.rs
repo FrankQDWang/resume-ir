@@ -2044,6 +2044,94 @@ fn resume_benchmark_ocr_gate_requires_private_real_corpus_report() {
 }
 
 #[test]
+fn resume_benchmark_ocr_gate_accepts_current_stage_private_baseline_without_strict_target() {
+    let report_dir = temp_dir("ocr-throughput-cli-current-stage-baseline");
+    let report_path = report_dir.join("ocr-report.json");
+    fs::write(
+        &report_path,
+        concat!(
+            "{\"schema_version\":\"ocr-throughput.v1\",",
+            "\"run_id\":\"ocr_baseline_20260613\",",
+            "\"platform\":\"macos/aarch64\",",
+            "\"dataset_kind\":\"private-real-corpus\",",
+            "\"page_count\":500,",
+            "\"document_count\":200,",
+            "\"scanned_document_count\":150,",
+            "\"failed_document_count\":50,",
+            "\"render_failure_count\":50,",
+            "\"ocr_failure_count\":0,",
+            "\"run_budget_exhausted\":false,",
+            "\"engine_kind\":\"tesseract\",",
+            "\"total_ms\":1250000.0,",
+            "\"page_latency_ms\":{\"samples\":500,\"p50\":2200.0,\"p95\":4200.0,\"p99\":6100.0},",
+            "\"pages_per_second\":0.4,",
+            "\"target_claim\":\"ocr_throughput_baseline_observed\",",
+            "\"corpus_origin\":\"private_local\",",
+            "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"contains_raw_ocr_text\":false,",
+            "\"contains_page_images\":false,",
+            "\"contains_resume_paths\":false,",
+            "\"contains_document_ids\":false,",
+            "\"contains_page_ids\":false,",
+            "\"contains_command_paths\":false,",
+            "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+            "\"ocr_runtime_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"renderer_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
+            "\"language_pack_manifest_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+            "\"scope\":\"private real-corpus OCR throughput benchmark; aggregate redacted report only\"}"
+        ),
+    )
+    .unwrap();
+
+    let strict_gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "ocr-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-real-corpus",
+            "--min-pages",
+            "500",
+            "--max-p95-ms",
+            "1000",
+            "--min-pages-per-second",
+            "1",
+        ])
+        .output()
+        .expect("run strict OCR throughput gate");
+
+    assert!(!strict_gate.status.success());
+    assert!(
+        String::from_utf8_lossy(&strict_gate.stderr).contains("OCR page p95 exceeded threshold")
+    );
+
+    let baseline_gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "ocr-gate",
+            "--report",
+            path_str(&report_path),
+            "--current-stage-baseline",
+            "--min-pages",
+            "500",
+        ])
+        .output()
+        .expect("run current-stage OCR baseline gate");
+
+    assert!(
+        baseline_gate.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&baseline_gate.stdout),
+        String::from_utf8_lossy(&baseline_gate.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&baseline_gate.stdout).trim(),
+        "OCR throughput gate passed"
+    );
+    assert!(baseline_gate.stderr.is_empty());
+
+    remove_dir(&report_dir);
+}
+
+#[test]
 fn resume_benchmark_ocr_gate_rejects_private_real_inconsistent_throughput() {
     let report_dir = temp_dir("ocr-throughput-private-real-inconsistent");
     let report_path = report_dir.join("ocr-report.json");

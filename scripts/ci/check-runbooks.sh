@@ -101,7 +101,9 @@ require_text "$release_runbook" 'target_claim: "vector_quality_target_met"'
 require_text "$release_runbook" 'vector_taxonomy:'
 require_text "$release_runbook" "model_manifest_sha256"
 require_text "$release_runbook" "ocr-gate --report private-ocr-throughput.json"
-require_text "$release_runbook" 'target_claim: "ocr_throughput_target_met"'
+require_text "$release_runbook" "--current-stage-baseline"
+require_text "$release_runbook" 'target_claim: "ocr_throughput_baseline_observed"'
+require_text "$release_runbook" "strict OCR throughput target"
 require_text "$release_runbook" "ocr_runtime_manifest_sha256"
 require_text "$release_runbook" "renderer_manifest_sha256"
 require_text "$release_runbook" "language_pack_manifest_sha256"

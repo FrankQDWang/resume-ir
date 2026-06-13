@@ -370,7 +370,7 @@ SQLite databases, model caches, runtime binaries, or raw resumes.
 - private business labeled field-quality evidence is not available
 - private business labeled dedupe-quality evidence is not available
 - private business labeled vector-quality evidence is not available
-- private real-corpus OCR throughput evidence is not available
+- private real-corpus OCR baseline evidence is not available
 - reviewed OCR runtime manifest/dependency evidence for the selected external
   OCR direction is not available
 - a reviewed licensed embedding model is not selected or distributed
@@ -784,6 +784,7 @@ aggregate semantic retrieval metrics exist.
 
 Run private real-corpus OCR throughput gates only against local redacted
 aggregate reports. The report must use `dataset_kind: "private-real-corpus"`,
+`target_claim: "ocr_throughput_baseline_observed"` or
 `target_claim: "ocr_throughput_target_met"`, `corpus_origin:
 "private_local"`, `privacy_boundary: "redacted_local_aggregate"`, false raw
 OCR text/page image/path/document-ID/page-ID/command-path booleans, and sha256
@@ -792,9 +793,11 @@ digests for the dataset, OCR runtime, renderer, and language-pack manifests
 `renderer_manifest_sha256`, and `language_pack_manifest_sha256`). Do not upload
 reports if they contain raw OCR text, page images, resume text, filenames,
 local paths, document IDs, page IDs, command paths, runtime paths, or notes.
-Small or under-threshold diagnostic reports should use
-`target_claim: "not_evaluated"`; the private OCR throughput command emits
-`ocr_throughput_target_met` only when the built-in release OCR page, P95,
+Small, under-page-floor, or run-budget-exhausted diagnostic reports should use
+`target_claim: "not_evaluated"`. The private OCR throughput command emits
+`ocr_throughput_baseline_observed` when the representative page floor and
+run-budget checks pass but the strict OCR throughput target is not met, and
+emits `ocr_throughput_target_met` only when the built-in release OCR page, P95,
 throughput, and run-budget thresholds are met.
 Private OCR throughput reports must also include `total_ms` so
 `pages_per_second` can be recomputed, per-document failure aggregates
@@ -831,13 +834,24 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
 ```
 
 Small private smoke reports can prove command wiring, but they do not clear the
-release blocker. Representative evidence should set `--max-documents` above the
-minimum page count so isolated corrupt, encrypted, render-failed, or OCR-failed
-PDFs are counted in the redacted failure aggregates without aborting the whole
-run. A report with `run_budget_exhausted: true`, or a report that misses the
-latency/throughput thresholds below, is diagnostic local evidence only and
-cannot clear the release blocker. Stable-release OCR throughput evidence needs
-the representative page count and reviewed manifests required by the gate below.
+current-stage OCR baseline evidence blocker. Representative evidence should set
+`--max-documents` above the minimum page count so isolated corrupt, encrypted,
+render-failed, or OCR-failed PDFs are counted in the redacted failure aggregates
+without aborting the whole run. A report with `run_budget_exhausted: true` is
+diagnostic local evidence only. A representative report that misses the
+latency/throughput thresholds below can clear the current-stage OCR baseline
+evidence gate with `ocr_throughput_baseline_observed`, but it does not clear the
+follow-up strict performance optimization goal.
+
+```bash
+cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
+  ocr-gate --report private-ocr-throughput.json \
+  --current-stage-baseline \
+  --require-private-real-corpus \
+  --min-pages 500
+```
+
+The strict OCR throughput target remains a separate follow-up performance gate:
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
@@ -846,11 +860,12 @@ cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   --min-pages 500 --max-p95-ms 1000 --min-pages-per-second 1
 ```
 
-This gate is a release evidence validator. It does not run OCR, upload, label,
-or sanitize private OCR throughput reports and cannot clear the OCR throughput
-blocker until representative local scanned-resume runs, reviewed runtime/
-renderer/language-pack manifests, and aggregate latency/throughput metrics
-exist.
+These gates are evidence validators. They do not run OCR, upload, label, or
+sanitize private OCR throughput reports. The strict `ocr-gate` threshold form
+above remains the follow-up performance validator; current-stage
+release-readiness intake accepts representative baseline evidence with observed
+P50/P95/P99 latency and pages-per-second metrics, reviewed runtime/
+renderer/language-pack manifests, and no run-budget exhaustion.
 
 Generate a local release dry-run manifest only after release binaries have been
 built:

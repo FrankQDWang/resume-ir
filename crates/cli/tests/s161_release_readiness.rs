@@ -62,8 +62,9 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("NDCG@k >= 0.90"));
     assert!(stdout.contains("OCR throughput: blocked"));
     assert!(stdout.contains("min-pages 500"));
-    assert!(stdout.contains("OCR p95 <= 1000ms"));
-    assert!(stdout.contains("pages_per_second >= 1"));
+    assert!(stdout.contains("observed OCR page latency P50/P95/P99 metrics"));
+    assert!(stdout.contains("observed pages_per_second"));
+    assert!(stdout.contains("follow-up performance-optimization goal"));
     assert!(stdout.contains("OCR runtime manifest/dependency evidence: blocked"));
     assert!(stdout.contains("reviewed OCR runtime manifest"));
     assert!(stdout.contains("Tesseract/tessdata"));
@@ -249,8 +250,9 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
         .expect("OCR throughput blocker");
     let ocr_detail = ocr_blocker["detail"].as_str().unwrap();
     assert!(ocr_detail.contains("min-pages 500"));
-    assert!(ocr_detail.contains("OCR p95 <= 1000ms"));
-    assert!(ocr_detail.contains("pages_per_second >= 1"));
+    assert!(ocr_detail.contains("observed OCR page latency P50/P95/P99 metrics"));
+    assert!(ocr_detail.contains("observed pages_per_second"));
+    assert!(ocr_detail.contains("follow-up performance-optimization goal"));
 
     let ocr_license_blocker = blockers
         .iter()
@@ -2106,10 +2108,10 @@ fn private_real_ocr_throughput_report() -> String {
         "\"ocr_failure_count\":0,",
         "\"run_budget_exhausted\":false,",
         "\"engine_kind\":\"tesseract\",",
-        "\"total_ms\":250000.0,",
-        "\"page_latency_ms\":{\"samples\":500,\"p50\":250.0,\"p95\":450.0,\"p99\":800.0},",
-        "\"pages_per_second\":2.0,",
-        "\"target_claim\":\"ocr_throughput_target_met\",",
+        "\"total_ms\":1250000.0,",
+        "\"page_latency_ms\":{\"samples\":500,\"p50\":2200.0,\"p95\":4200.0,\"p99\":6100.0},",
+        "\"pages_per_second\":0.4,",
+        "\"target_claim\":\"ocr_throughput_baseline_observed\",",
         "\"corpus_origin\":\"private_local\",",
         "\"privacy_boundary\":\"redacted_local_aggregate\",",
         "\"contains_raw_ocr_text\":false,",

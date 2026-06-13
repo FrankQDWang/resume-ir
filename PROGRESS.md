@@ -322,6 +322,11 @@ production-ready scope source.
   real query set, real resume data, local private paths, raw query text,
   generated benchmark reports, diagnostics, indexes, SQLite databases, runtime
   artifacts, model files, or model caches were committed or uploaded.
+  S339, S340, and S341 used synthetic/private-shaped benchmark and release
+  evidence fixtures only; no real query set, real OCR throughput report, real
+  resume data, local private paths, raw query text, raw OCR text, page images,
+  generated benchmark reports, diagnostics, indexes, SQLite databases, runtime
+  artifacts, model files, or model caches were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1286,9 +1291,84 @@ obsolete preliminary files and checklists are not product scope.
 | S337 | WeChat contact field entity support complete locally | Focused RED first failed because `FieldType::WeChat` and `EntityType::WeChat` did not exist, and a search snippet containing `WeChat: Candidate_2026` did not emit `<redacted-wechat>`. After implementation, rule extraction recognizes labeled `wechat`/`weixin`/`wx`/`微信`/`微信号` contact values with spans and normalized lowercase values; import maps them into a first-class `wechat` entity mention; metadata schema migration V20 accepts the new entity type while storing raw and normalized values as `<redacted:wechat>`/`NULL`; CLI/daemon/detail/witness labels and benchmark field-quality taxonomy include `wechat`; full-text snippet/stored-field redaction removes labeled WeChat contacts. | This slice is production complete for WeChat as a privacy-redacted field/entity and benchmark taxonomy member only. It does not add `wechat_hash` to candidate strong dedupe, contact-hash search filters, cross-device account matching, or full private 10k field-quality evidence. Complete product readiness remains not complete. |
 | S338 | Private query benchmark protocol attestation complete locally | Focused RED first failed because `run_private_query_benchmark` accepted a legacy `resume-ir-query-v1` command response containing only `hits=...`, while the emitted private report still claimed `query_mode: hybrid` and `retrieval_layers: fulltext+field+vector+rrf`. After implementation, `resume-cli benchmark-query-protocol` emits `mode=<mode>` plus a layer label, and `benchmark-runner` rejects private query command output unless it explicitly attests `mode=hybrid` and `layers=fulltext+field+vector+rrf` before producing a private real-corpus benchmark report. | This slice is production complete for benchmark query protocol attestation only. It does not run the real private 10k/8000-document baseline, prove P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 | S339 | Private query benchmark top-k protocol attestation complete locally | Focused RED first failed because `run_private_query_benchmark` accepted a hybrid/layer-attested `resume-ir-query-v1` command response that omitted `top_k`, while the emitted private report still claimed the runner-configured `top_k`. After implementation, `resume-cli benchmark-query-protocol` emits `top_k=<n>`, and `benchmark-runner` rejects private query command output unless the attested `top_k` exists exactly once and matches the runner-provided `RESUME_IR_QUERY_TOP_K`; mismatched values fail closed before report generation. | This slice is production complete for private query benchmark budget attestation only. It does not add field rules, hand-tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
+| S341 | Current-stage OCR baseline evidence gate aligned locally | Focused RED first failed because representative private OCR reports that missed strict P95/pages-per-second targets were serialized or rejected as non-evidence, and `resume-benchmark ocr-gate` had no current-stage baseline mode. After implementation, representative non-budget-exhausted private OCR reports emit `target_claim: "ocr_throughput_baseline_observed"` when strict performance thresholds are missed, strict reports still emit `ocr_throughput_target_met`, `OcrThroughputGateConfig::current_stage_baseline` accepts observed P50/P95/P99/pages-per-second metrics without weakening the default strict gate, `resume-benchmark ocr-gate --current-stage-baseline` validates baseline reports, and release-readiness accepts OCR baseline evidence while preserving other stable-release blockers. | This slice is production complete for current-stage OCR baseline evidence semantics only. It does not run the real private 10k corpus, generate a real private OCR throughput report, optimize OCR P95/P99 or pages/sec, clear strict follow-up performance goals, approve model/runtime distribution, clear platform/signing/notarization/quality blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S341
+
+TDD red checks:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner ocr_throughput_gate_accepts_private_real_baseline_observed_without_latency_target --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner private_ocr_report_claims_baseline_when_release_latency_is_missed --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_gate_accepts_current_stage_private_baseline_without_strict_target --locked -- --exact
+```
+
+Output summary:
+
+- The benchmark-runner gate test failed because
+  `OcrThroughputGateConfig::current_stage_baseline` did not exist.
+- The release-readiness test failed because the slow
+  `ocr_throughput_baseline_observed` fixture was rejected before JSON output.
+- The CLI gate test failed because `--current-stage-baseline` was not a
+  recognized `resume-benchmark ocr-gate` flag.
+
+Focused verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner ocr_throughput_gate --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner private_ocr_report --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_ocr_gate --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness --locked
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_runner --locked
+/Users/frankqdwang/.cargo/bin/cargo test -p benchmark-runner --test s17_benchmark_cli --locked
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+/Users/frankqdwang/.cargo/bin/cargo check -p benchmark-runner -p resume-cli --tests --locked
+/Users/frankqdwang/.cargo/bin/cargo clippy -p benchmark-runner -p resume-cli --tests --locked -- -D warnings
+git diff --check
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- OCR throughput focused tests passed: strict config still rejects slow baseline
+  reports, current-stage baseline config accepts representative private
+  `ocr_throughput_baseline_observed` reports, synthetic reports still need
+  explicit allowance, inconsistent counts/throughput still fail closed, and
+  run-budget exhaustion remains non-gateable.
+- Private OCR report serialization now distinguishes
+  `ocr_throughput_baseline_observed`, `ocr_throughput_target_met`, and
+  `not_evaluated` without weakening strict target claims.
+- `resume-benchmark ocr-gate --current-stage-baseline` passed for a slow
+  representative private baseline fixture, while the same report failed the
+  strict OCR throughput gate.
+- Full `s17_benchmark_runner`, full `s17_benchmark_cli`, and full
+  `s161_release_readiness` passed.
+- `check-release-readiness.sh` and `check-runbooks.sh` passed with current-stage
+  OCR baseline wording and strict OCR throughput target retained as follow-up
+  performance validation.
+- `cargo fmt --check`, affected-package check, affected-package clippy, and
+  `git diff --check` passed.
+- `./scripts/ci/verify-local.sh` passed, including workspace tests, closed-loop
+  CLI/daemon checks, benchmark/OCR/vector gates, release-readiness, current
+  stage validation, runbooks, installer/signing/notarization evidence, and
+  public repository guard.
+
+Scope note:
+
+- S341 used synthetic/private-shaped OCR benchmark and release-readiness
+  fixtures only; no real OCR throughput report, real resume data, local private
+  paths, raw OCR text, page images, generated private reports, diagnostics,
+  indexes, SQLite databases, runtime artifacts, model files, or model caches
+  were committed or uploaded.
+- This aligns current-stage OCR evidence with the current `GOAL.md` boundary;
+  it does not run the local 10k validation, clear embedding/runtime legal
+  blockers, or complete the full product.
 
 ### S340
 

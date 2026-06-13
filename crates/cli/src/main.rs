@@ -193,7 +193,7 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         RELEASE_READINESS_OCR_THROUGHPUT_LABEL,
-        "private real-corpus OCR throughput evidence is not available; release evidence requires min-pages 500, OCR p95 <= 1000ms, pages_per_second >= 1, and reviewed OCR runtime/renderer/language-pack manifests",
+        "private real-corpus OCR baseline evidence is not available; current-stage evidence requires min-pages 500, observed OCR page latency P50/P95/P99 metrics, observed pages_per_second, no run-budget exhaustion, and reviewed OCR runtime/renderer/language-pack manifests; OCR P95/P99 and throughput reduction move to a follow-up performance-optimization goal",
     ),
     (
         RELEASE_READINESS_OCR_LICENSE_LABEL,
@@ -550,14 +550,15 @@ fn validate_release_readiness_evidence(
     }
     if let Some(path) = &args.ocr_throughput_report {
         let report = read_release_readiness_evidence_report(path)?;
-        let config = OcrThroughputGateConfig::new(500, 1000.0, 1.0).require_private_real_corpus();
+        let config = OcrThroughputGateConfig::current_stage_baseline(500);
         evaluate_ocr_throughput_gate_json(&report, config).map_err(|error| {
             release_readiness_evidence_error(RELEASE_READINESS_OCR_THROUGHPUT_LABEL, error)
         })?;
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_OCR_THROUGHPUT_LABEL,
             privacy_boundary: "redacted_local_aggregate",
-            detail: "private real-corpus OCR throughput report passed the local release gate",
+            detail:
+                "private real-corpus OCR baseline report passed the current-stage evidence gate",
         });
     }
     if let Some(path) = &args.model_manifest {

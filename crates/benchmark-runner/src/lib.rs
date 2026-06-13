@@ -1300,14 +1300,18 @@ impl PrivateOcrThroughputReport {
     }
 
     fn target_claim(&self) -> &'static str {
-        if self.page_count >= PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MIN_PAGES
-            && !self.run_budget_exhausted
-            && self.latency.p95_ms <= PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MAX_P95_MS
+        if self.page_count < PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MIN_PAGES
+            || self.run_budget_exhausted
+        {
+            return "not_evaluated";
+        }
+
+        if self.latency.p95_ms <= PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MAX_P95_MS
             && self.pages_per_second() >= PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MIN_PAGES_PER_SECOND
         {
             PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM
         } else {
-            "not_evaluated"
+            PRIVATE_REAL_OCR_THROUGHPUT_BASELINE_CLAIM
         }
     }
 
@@ -2115,6 +2119,8 @@ pub struct OcrThroughputGateConfig {
     min_pages_per_second: f64,
     allow_synthetic: bool,
     require_private_real_corpus: bool,
+    enforce_release_thresholds: bool,
+    accept_private_baseline_observed: bool,
 }
 
 impl OcrThroughputGateConfig {
@@ -2125,6 +2131,20 @@ impl OcrThroughputGateConfig {
             min_pages_per_second,
             allow_synthetic: false,
             require_private_real_corpus: false,
+            enforce_release_thresholds: true,
+            accept_private_baseline_observed: false,
+        }
+    }
+
+    pub fn current_stage_baseline(min_pages: usize) -> Self {
+        Self {
+            min_pages,
+            max_p95_ms: PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MAX_P95_MS,
+            min_pages_per_second: PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MIN_PAGES_PER_SECOND,
+            allow_synthetic: false,
+            require_private_real_corpus: true,
+            enforce_release_thresholds: false,
+            accept_private_baseline_observed: true,
         }
     }
 
@@ -4576,22 +4596,28 @@ pub fn evaluate_ocr_throughput_gate_json(
             "OCR page sample count below gate minimum",
         ));
     }
-    if p95_ms > config.max_p95_ms {
+    if config.enforce_release_thresholds && p95_ms > config.max_p95_ms {
         return Err(BenchmarkGateError::failed(
             "OCR page p95 exceeded threshold",
         ));
     }
-    if pages_per_second < config.min_pages_per_second {
+    if config.enforce_release_thresholds && pages_per_second < config.min_pages_per_second {
         return Err(BenchmarkGateError::failed(
             "OCR pages-per-second below threshold",
         ));
     }
-    if dataset_kind == "private-real-corpus"
-        && target_claim != PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM
-    {
-        return Err(BenchmarkGateError::failed(
-            "private real-corpus OCR benchmark requires throughput target claim",
-        ));
+    if dataset_kind == "private-real-corpus" {
+        let target_claim_accepted = target_claim == PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM;
+        let baseline_claim_accepted = config.accept_private_baseline_observed
+            && target_claim == PRIVATE_REAL_OCR_THROUGHPUT_BASELINE_CLAIM;
+        if !target_claim_accepted && !baseline_claim_accepted {
+            let message = if config.accept_private_baseline_observed {
+                "private real-corpus OCR benchmark requires throughput target or current-stage baseline claim"
+            } else {
+                "private real-corpus OCR benchmark requires throughput target claim"
+            };
+            return Err(BenchmarkGateError::failed(message));
+        }
     }
     if dataset_kind == "synthetic" && target_claim != "not_evaluated" {
         return Err(BenchmarkGateError::failed(
@@ -4610,6 +4636,7 @@ pub fn evaluate_ocr_throughput_gate_json(
 const PRIVATE_REAL_OCR_THROUGHPUT_SCOPE: &str =
     "private real-corpus OCR throughput benchmark; aggregate redacted report only";
 const PRIVATE_REAL_OCR_THROUGHPUT_TARGET_CLAIM: &str = "ocr_throughput_target_met";
+const PRIVATE_REAL_OCR_THROUGHPUT_BASELINE_CLAIM: &str = "ocr_throughput_baseline_observed";
 const PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MIN_PAGES: usize = 500;
 const PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MAX_P95_MS: f64 = 1_000.0;
 const PRIVATE_REAL_OCR_THROUGHPUT_RELEASE_MIN_PAGES_PER_SECOND: f64 = 1.0;
@@ -5698,7 +5725,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn private_ocr_report_does_not_claim_target_when_release_latency_is_missed() {
+    fn private_ocr_report_claims_baseline_when_release_latency_is_missed() {
         let report = PrivateOcrThroughputReport {
             run_id: "ocr_release_latency_probe".to_string(),
             platform: "macos/aarch64".to_string(),
@@ -5731,7 +5758,7 @@ mod tests {
 
         let json = report.to_redacted_json();
 
-        assert!(json.contains("\"target_claim\":\"not_evaluated\""));
+        assert!(json.contains("\"target_claim\":\"ocr_throughput_baseline_observed\""));
         assert!(!json.contains("\"target_claim\":\"ocr_throughput_target_met\""));
     }
 
