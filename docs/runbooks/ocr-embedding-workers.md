@@ -200,6 +200,27 @@ manifest. The model remains an external local runtime artifact; do not commit or
 upload model weights, model caches, generated manifests with local paths, vector
 snapshots, SQLite databases, query sets, or diagnostics.
 
+Use the local manifest preparation helper to turn an already cached
+sentence-transformers snapshot into a reviewed local model manifest. The helper
+does not download weights. It reads the local Hugging Face cache, requires the
+model card license to match the requested license, uses `model.safetensors` as
+the checksum-bearing artifact, calls `resume-cli model draft-manifest`, validates
+the manifest, and prints only redacted status output:
+
+```bash
+scripts/local/prepare-local-embedding-model-manifest.sh \
+  --out <local-model-manifest.json> \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-pack-id sentence-transformers-all-MiniLM-L6-v2-local \
+  --dimension 384 \
+  --license Apache-2.0
+```
+
+If the local cache, model card, `model.safetensors`, or license match is
+missing, the helper exits nonzero and the embedding runtime remains
+external/legal/runtime BLOCKED. The generated manifest contains local artifact
+paths and must stay local.
+
 By default, the adapter loads with local-files-only behavior so preflight and
 worker execution do not implicitly download model weights. To intentionally
 prepare a local cache, run the download in a private local environment first,
