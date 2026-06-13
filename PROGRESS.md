@@ -367,6 +367,16 @@ production-ready scope source.
   query text, vectors, generated private reports, local manifests, runtime
   binaries, model artifacts, indexes, SQLite databases, diagnostics, or model
   caches were committed or uploaded.
+  S348 used a private local-only smoke-profile current-stage validation witness
+  against the user-authorized local resume directory with local Tesseract,
+  Poppler/pdftoppm, `eng+chi_sim` tessdata, and the local
+  sentence-transformers model cache. The run read a bounded private corpus slice
+  locally, generated only local temporary manifests, indexes, SQLite data, query
+  set, benchmark report, diagnostics, logs, and redacted aggregate smoke/handoff
+  evidence, and did not produce release-readiness evidence. No real resume data,
+  filenames, paths, raw OCR text, raw query text, vectors, generated private
+  reports, local manifests, runtime binaries, model artifacts, indexes, SQLite
+  databases, diagnostics, or model caches were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -993,6 +1003,7 @@ obsolete preliminary files and checklists are not product scope.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S348 | Current-stage real local smoke/pilot chain complete locally | A smoke-profile real local current-stage validation witness against the user-authorized resume root used reviewed local OCR and embedding runtime inputs plus `eng+chi_sim` tessdata. Dry-run exited 0 without reading the private corpus. Execute exited 0 and completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, local query-set draft, private query baseline, smoke baseline gate, redacted diagnostics, smoke summary, and handoff summary. Redacted aggregate evidence reported 500 bounded documents, 4 searchable documents, 496 OCR-required documents, 1 vector-indexed document, 3 generated private query samples, 0 zero-result queries, `query_mode: "hybrid"`, `percentile_confidence: "smoke"`, query latency p50 3242.181ms, p95 3477.066ms, p99 3477.066ms, and no hot-path OCR/parsing/heavy model inference. `current-stage-smoke-summary.json` reported `smoke_satisfied: true`, OCR probe `passed`, embedding protocol `passed`, and `release_readiness_evidence: false`; `current-stage-handoff.json` reported `current_stage_status: "smoke_satisfied"`. Content marker scan over committed-safe smoke summaries, benchmark report, diagnostics, dry-run, execute stdout/stderr, and query-set stdout was clean. | This is smoke/pilot wiring evidence only, not full current-stage baseline or product completion. Full 10k/8000-document current-stage baseline, 500-query private baseline gate, full hot-index coverage, full OCR backlog drain, OCR throughput baseline, release-readiness evidence, P95/P99 optimization, external 100k/1M validation, final model/runtime distribution approval, installer/platform/signing/notarization blockers, and real labeled quality datasets remain not complete or BLOCKED. |
 | S347 | BLOCKED on real local current-stage OCR backlog auto-handoff | A full-profile real local current-stage validation witness against the user-authorized resume root used reviewed local OCR and embedding runtime inputs, reached private-corpus import, bounded OCR/embedding worker execution, and then let the S346 script path automatically classify the remaining OCR backlog. OCR preflight reported `runtime_probe: "passed"` and embedding preflight reported `embedding_protocol: "passed"`. The run imported/discovered 8720 supported documents with zero scan errors, 20 permanent import failures, 147 searchable documents, 8553 OCR-required documents remaining, and 1 vector-indexed document after bounded workers. It wrote local redacted `benchmark-corpus-summary.local.json`, `current-stage-blocked-summary.json`, and `current-stage-handoff.json`; the handoff reported `current_stage_status: "blocked"` and source schema `resume-ir.current-stage-blocked-summary.v1`. A privacy marker scan over the committed-safe local outputs and execute stdout/stderr was clean. | This is not full current-stage baseline evidence. The script correctly stopped before private query-set generation, private benchmark, redacted diagnostics, release-readiness, and `current-stage-validation-evidence.json`. Full hot-index coverage, 500-query private baseline, OCR throughput baseline, full-run diagnostics, release-readiness evidence, P95/P99 optimization, final model/runtime distribution approval, installer/platform/signing/notarization blockers, real labeled quality datasets, and external 100k/1M validation remain not complete or BLOCKED. |
 | S346 | Current-stage OCR backlog auto-handoff complete locally | Focused RED first failed because a full-profile fake current-stage execute with S345-shaped redacted corpus counts (`8720` documents, `162` searchable, `8538` OCR-required, `0` vector-indexed, hot index not covered) was accepted as full evidence. After implementation, full-profile execute classifies this state immediately after `benchmark-corpus-summary`, writes `current-stage-blocked-summary.json` with `blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`, safe corpus observability counts, and `current-stage-handoff.json`, then exits before query-set generation, private query benchmark, diagnostics, or release-readiness. | This is production complete for current-stage OCR-backlog failure handoff only. It does not drain the real OCR backlog, clear the full local 10k/8000-document baseline, generate a 500-query private benchmark, produce full-run diagnostics, clear OCR throughput evidence, optimize P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization/quality blockers, validate 100k/1M scale, or make stable release readiness true. |
 | S345 | BLOCKED on real local full-profile OCR backlog | A full-profile local current-stage validation attempt against the user-authorized resume root used reviewed local OCR and embedding runtime inputs and reached real private-corpus import plus bounded OCR execution. Preflight and manifest steps passed for OCR and embedding. The run imported/discovered 8720 supported documents with 49 ignored entries, zero scan errors, 20 permanent import failures, 162 searchable/indexed documents after the bounded OCR interruption, 8538 OCR-required documents remaining, and zero vector-indexed documents. A local redacted `benchmark-corpus-summary.local.json`, `current-stage-blocked-summary.json`, and `current-stage-handoff.json` were generated under a temporary directory and passed the handoff privacy marker check. | This does not clear current-stage full baseline evidence. The private corpus is overwhelmingly OCR-heavy, so full hot-index coverage, embedding coverage, 500-query private baseline, OCR throughput baseline, redacted diagnostics for the full run, and release-readiness current-stage evidence remain not complete. The next slice should either make the full-profile validation script produce this OCR-backlog blocked summary automatically when the operator budget is reached, or add an explicit bounded current-stage OCR-backlog classification mode, then verify it with synthetic fixtures and a short real local witness. |
@@ -1341,6 +1352,112 @@ obsolete preliminary files and checklists are not product scope.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S348
+
+- Scope: run a real local smoke-profile current-stage validation flow against
+  the user-authorized resume directory, proving local OCR/model preflight,
+  import, bounded workers, local query-set generation, private-query benchmark
+  protocol, smoke benchmark gate, redacted diagnostics, and handoff wiring
+  without claiming release-readiness or full baseline completion.
+- Runtime and corpus preflight:
+  - Local commands were present for Tesseract, Poppler `pdftoppm`, Python,
+    `resume-cli`, `resume-daemon`, `resume-benchmark`, and the committed
+    sentence-transformers embedding adapter.
+  - A local sentence-transformers Python runtime imported
+    `sentence_transformers 5.5.1`.
+  - A reviewed local model artifact for
+    `sentence-transformers/all-MiniLM-L6-v2` was available with dimension `384`
+    and Apache-2.0 license metadata.
+  - Local tessdata was available for `eng` and `chi_sim`; the smoke run used
+    `--language eng+chi_sim` with reviewed local OCR runtime metadata.
+- Execute shape:
+
+```bash
+PATH=<local-embedding-venv>:$PATH \
+HF_HOME=<local-huggingface-cache-root> \
+TRANSFORMERS_OFFLINE=1 \
+HF_HUB_OFFLINE=1 \
+RESUME_IR_SENTENCE_TRANSFORMERS_CACHE=<local-huggingface-cache-root>/hub \
+scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile smoke \
+  --resume-root <user-authorized-local-resume-root> \
+  --data-dir <local-temp-data-dir> \
+  --out-dir <local-temp-evidence-dir> \
+  --model-manifest <local-temp-model-manifest> \
+  --ocr-runtime-manifest <local-temp-ocr-runtime-manifest> \
+  --resume-cli target/debug/resume-cli \
+  --resume-daemon target/debug/resume-daemon \
+  --resume-benchmark target/debug/resume-benchmark \
+  --embedding-command scripts/local/embedding-runtime-sentence-transformers.py \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --dimension 384 \
+  --language eng+chi_sim \
+  --reviewed-model \
+  --reviewed-ocr-runtime \
+  --max-files 500 \
+  --max-queries 3 \
+  --top-k 5 \
+  --worker-interval-ms 1 \
+  --ocr-worker-ticks 1 \
+  --embedding-worker-ticks 1 \
+  --ocr-max-pages-per-document 1 \
+  --embedding-max-docs 1
+```
+
+- Result:
+  - Dry-run exited 0 and emitted parseable
+    `resume-ir.current-stage-validation-plan.v1` without reading the private
+    corpus.
+  - Execute exited 0.
+  - Completed steps: OCR preflight, OCR manifest draft/validate, model manifest
+    draft/validate, model preflight, dataset manifest, private corpus import,
+    bounded OCR worker, bounded embedding worker, corpus summary, query-set
+    draft, private query baseline, smoke baseline gate, redacted diagnostics,
+    smoke summary, and handoff summary.
+  - The script wrote `current-stage-smoke-summary.json` and
+    `current-stage-handoff.json` automatically.
+- Redacted aggregate observability:
+  - `current-stage-smoke-summary.json`: schema
+    `resume-ir.current-stage-smoke-summary.v1`,
+    `smoke_satisfied=true`, `full_baseline_satisfied=false`,
+    `release_readiness_evidence=false`, `performance_optimization_deferred=true`.
+  - Preflight probes: `ocr_runtime_probe=passed`,
+    `embedding_protocol=passed`.
+  - Corpus summary: 500 bounded documents, 4 searchable documents, 496
+    OCR-required documents, 1 vector-indexed document, hot-index fully covered
+    `false`, ingest jobs `completed=2` and `queued=496`.
+  - Query-set stdout: schema `resume-ir.query-set.jsonl.v1`, privacy boundary
+    `local_only_private_query_set`, `queries=3`, keyword fallback used, query
+    bodies redacted.
+  - Private query smoke benchmark: schema `benchmark.v1`, `query_mode=hybrid`,
+    `query_count=3`, `top_k=5`, `zero_result_queries=0`, `total_hits=3`,
+    `percentile_confidence=smoke`, `qps=0.303709`, p50 3242.181ms,
+    p95 3477.066ms, p99 3477.066ms, and hot-path OCR/parsing/heavy model
+    inference all `false`.
+  - Benchmark gate stdout: `benchmark gate passed`.
+  - Handoff: schema `resume-ir.current-stage-handoff.v1`, source schema
+    `resume-ir.current-stage-smoke-summary.v1`,
+    `current_stage_status=smoke_satisfied`, `complete_product=false`.
+- Privacy:
+  - `current-stage-smoke-summary.json` privacy sentinels reported
+    `local_paths_included=false`, `raw_resume_text_included=false`,
+    `raw_query_text_included=false`, `model_bytes_included=false`,
+    `runtime_binaries_included=false`, and `report_bodies_included=false`.
+  - `benchmark-corpus-summary.local.json` reported
+    `contains_raw_resume_text=false`, `contains_resume_paths=false`,
+    `contains_queries=false`, and `contains_sample_ids=false`.
+  - A content marker scan over the smoke summary, handoff summary, corpus
+    summary, private benchmark report, redacted diagnostics, dry-run output,
+    execute stdout/stderr, and query-set stdout found no local resume root,
+    private marker, email-like token, mainland mobile-like token, local cache
+    path, or temp path in file contents.
+- Scope note:
+  - S348 is local smoke/pilot chain evidence only. It does not clear full
+    current-stage baseline evidence, full hot-index coverage, the 500-query
+    private baseline gate, OCR throughput baseline, release-readiness,
+    performance optimization, platform, signing/notarization, quality, 100k/1M,
+    or complete-product gates.
 
 ### S347
 
