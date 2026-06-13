@@ -11,13 +11,16 @@ from __future__ import annotations
 import math
 import os
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
+from typing import Callable, TypeVar
 from typing import Iterable
 
 
 BOUNDARY = "--resume-ir-embedding-input-boundary--"
 INPUT_SCHEMA = "resume-ir-embedding-input-v1"
 OUTPUT_SCHEMA = "resume-ir-embedding-v1"
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,12 @@ class EmbeddingRequest:
 def fail(message: str) -> None:
     print(f"embedding runtime blocked: {message}", file=sys.stderr)
     raise SystemExit(2)
+
+
+def run_third_party_quietly(callback: Callable[[], T]) -> T:
+    with open(os.devnull, "w", encoding="utf-8") as sink:
+        with redirect_stdout(sink), redirect_stderr(sink):
+            return callback()
 
 
 def env_required(name: str) -> str:
@@ -108,20 +117,29 @@ def load_sentence_transformer(model_name: str, cache_folder: str | None, local_f
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
-    try:
+    def import_sentence_transformer():
         from sentence_transformers import SentenceTransformer
+
+        return SentenceTransformer
+
+    try:
+        SentenceTransformer = run_third_party_quietly(import_sentence_transformer)
     except Exception:
         fail("sentence-transformers is not installed")
 
     try:
-        return SentenceTransformer(
-            model_name,
-            cache_folder=cache_folder,
-            local_files_only=local_files_only,
+        return run_third_party_quietly(
+            lambda: SentenceTransformer(
+                model_name,
+                cache_folder=cache_folder,
+                local_files_only=local_files_only,
+            )
         )
     except TypeError:
         if not local_files_only:
-            return SentenceTransformer(model_name, cache_folder=cache_folder)
+            return run_third_party_quietly(
+                lambda: SentenceTransformer(model_name, cache_folder=cache_folder)
+            )
         fail("installed sentence-transformers does not support local-only loading")
     except Exception:
         fail("local sentence-transformers model is unavailable")
@@ -129,10 +147,12 @@ def load_sentence_transformer(model_name: str, cache_folder: str | None, local_f
 
 def encode(model, texts: list[str]) -> list[list[float]]:
     try:
-        vectors = model.encode(
-            texts,
-            normalize_embeddings=True,
-            show_progress_bar=False,
+        vectors = run_third_party_quietly(
+            lambda: model.encode(
+                texts,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
         )
     except Exception:
         fail("model encoding failed")

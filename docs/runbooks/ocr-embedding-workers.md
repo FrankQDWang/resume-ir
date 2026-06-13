@@ -227,7 +227,10 @@ prepare a local cache, run the download in a private local environment first,
 then switch back to offline execution:
 
 ```bash
-python3 -m pip install --user sentence-transformers
+uv venv .cache/resume-ir-embedding-runtime-py312 --python <python-3.12>
+uv pip install --python .cache/resume-ir-embedding-runtime-py312/bin/python \
+  sentence-transformers
+PATH=<repo>/.cache/resume-ir-embedding-runtime-py312/bin:$PATH \
 RESUME_IR_SENTENCE_TRANSFORMERS_ALLOW_DOWNLOAD=1 \
 RESUME_IR_SENTENCE_TRANSFORMERS_MODEL=sentence-transformers/all-MiniLM-L6-v2 \
 RESUME_IR_EMBEDDING_INPUT_PATH=<synthetic-local-input> \

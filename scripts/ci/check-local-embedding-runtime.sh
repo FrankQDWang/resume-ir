@@ -40,10 +40,13 @@ trap cleanup EXIT HUP INT TERM
 
 mkdir -p "$tmpdir/sentence_transformers"
 cat >"$tmpdir/sentence_transformers/__init__.py" <<'PY'
+import sys
+
 class SentenceTransformer:
     def __init__(self, model_name_or_path, cache_folder=None, local_files_only=True):
         if not local_files_only:
             raise RuntimeError("adapter must not allow runtime downloads by default")
+        print("PRIVATE loader stderr must be suppressed", file=sys.stderr)
         self.model_name_or_path = model_name_or_path
         self.cache_folder = cache_folder
 

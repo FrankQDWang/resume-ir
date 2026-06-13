@@ -334,6 +334,12 @@ production-ready scope source.
   no real resume data, local private paths, raw text, vectors, generated model
   manifests, model weights, model-cache paths, diagnostics, indexes, SQLite
   databases, or model caches were committed or uploaded.
+  S344 used synthetic embedding fixtures plus private local-only embedding
+  runtime and current-stage smoke witnesses against the user-authorized local
+  resume directory and local model cache; no real resume data, filenames,
+  paths, raw OCR text, raw query text, vectors, generated private reports,
+  local manifests, runtime binaries, model artifacts, indexes, SQLite
+  databases, diagnostics, or model caches were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1298,12 +1304,119 @@ obsolete preliminary files and checklists are not product scope.
 | S337 | WeChat contact field entity support complete locally | Focused RED first failed because `FieldType::WeChat` and `EntityType::WeChat` did not exist, and a search snippet containing `WeChat: Candidate_2026` did not emit `<redacted-wechat>`. After implementation, rule extraction recognizes labeled `wechat`/`weixin`/`wx`/`微信`/`微信号` contact values with spans and normalized lowercase values; import maps them into a first-class `wechat` entity mention; metadata schema migration V20 accepts the new entity type while storing raw and normalized values as `<redacted:wechat>`/`NULL`; CLI/daemon/detail/witness labels and benchmark field-quality taxonomy include `wechat`; full-text snippet/stored-field redaction removes labeled WeChat contacts. | This slice is production complete for WeChat as a privacy-redacted field/entity and benchmark taxonomy member only. It does not add `wechat_hash` to candidate strong dedupe, contact-hash search filters, cross-device account matching, or full private 10k field-quality evidence. Complete product readiness remains not complete. |
 | S338 | Private query benchmark protocol attestation complete locally | Focused RED first failed because `run_private_query_benchmark` accepted a legacy `resume-ir-query-v1` command response containing only `hits=...`, while the emitted private report still claimed `query_mode: hybrid` and `retrieval_layers: fulltext+field+vector+rrf`. After implementation, `resume-cli benchmark-query-protocol` emits `mode=<mode>` plus a layer label, and `benchmark-runner` rejects private query command output unless it explicitly attests `mode=hybrid` and `layers=fulltext+field+vector+rrf` before producing a private real-corpus benchmark report. | This slice is production complete for benchmark query protocol attestation only. It does not run the real private 10k/8000-document baseline, prove P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 | S339 | Private query benchmark top-k protocol attestation complete locally | Focused RED first failed because `run_private_query_benchmark` accepted a hybrid/layer-attested `resume-ir-query-v1` command response that omitted `top_k`, while the emitted private report still claimed the runner-configured `top_k`. After implementation, `resume-cli benchmark-query-protocol` emits `top_k=<n>`, and `benchmark-runner` rejects private query command output unless the attested `top_k` exists exactly once and matches the runner-provided `RESUME_IR_QUERY_TOP_K`; mismatched values fail closed before report generation. | This slice is production complete for private query benchmark budget attestation only. It does not add field rules, hand-tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
+| S344 | Local embedding runtime preflight and private smoke witness complete locally | Focused RED first failed because the local sentence-transformers adapter could allow third-party import/model-load progress or diagnostics to write to stderr on a successful protocol response, which would make preflight and worker output harder to treat as clean structured evidence. After implementation, the adapter suppresses third-party stdout/stderr around sentence-transformers import, model construction, and encode while preserving its own redacted failure messages; the CI stub now emits a private stderr sentinel to prove successful runs stay silent. A local Python 3.12 `uv` environment with sentence-transformers/torch/transformers made the real adapter protocol pass offline for synthetic input, made `resume-cli model preflight` report `runtime_status: "ready"`, `embedding_protocol: "passed"`, and supported a bounded private local 12-file current-stage smoke against the user-authorized resume root with OCR/runtime preflight, import, bounded OCR/embedding, query-set, benchmark, diagnostics, smoke summary, and handoff. | This slice is production complete for local embedding adapter stderr hygiene, runtime preflight proof, and a bounded smoke witness only. It does not clear the full local 10k/8000-document baseline, 500-query private baseline, full OCR backlog, vector quality, final model distribution/legal approval, P95/P99 optimization, platform signing/notarization/installer blockers, 100k/1M validation, or complete product readiness. |
 | S343 | Local embedding model manifest preparation complete locally | Focused RED first failed because `check-local-embedding-runtime.sh` could not find a local helper that turns an already cached sentence-transformers model into a reviewed model manifest. After implementation, `scripts/local/prepare-local-embedding-model-manifest.sh` resolves the Hugging Face cache snapshot for `sentence-transformers/all-MiniLM-L6-v2`, reads the local model card license, requires it to match the requested license, uses `model.safetensors` as the checksum-bearing artifact, calls `resume-cli model draft-manifest --reviewed`, validates the manifest, and prints only redacted status output. The guard covers success and license-mismatch failure without path/model-byte leakage, and the runbook now documents the helper. | This slice is production complete for local embedding model manifest preparation only. It does not install Python ML dependencies, make the embedding adapter protocol pass in the default environment, run real private resumes, clear vector quality, approve model distribution for bundled release, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 | S342 | Current-stage OCR baseline validation wiring complete locally | Focused RED first failed because `run-current-stage-validation.sh --dry-run` did not include `resume-benchmark private-ocr-throughput`, `ocr-gate --current-stage-baseline`, or `release-readiness --ocr-throughput-report`, and release-readiness still rejected current-stage manifests that contained the intended OCR throughput baseline steps/outputs. After implementation, full execute mode runs private OCR throughput baseline after the private query baseline shape gate, validates it with `ocr-gate --current-stage-baseline --require-private-real-corpus --min-pages 500`, passes the report into release-readiness, writes OCR throughput step/output digests into full evidence, and writes redacted OCR blocked summaries when the baseline or gate fails. Smoke profile remains non-release evidence. | This slice is production complete for current-stage OCR baseline validation wiring only. It does not run the real private 10k corpus, generate or commit a real OCR throughput report, optimize OCR P95/P99 or pages/sec, approve model/runtime distribution, clear platform/signing/notarization/quality blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 | S341 | Current-stage OCR baseline evidence gate aligned locally | Focused RED first failed because representative private OCR reports that missed strict P95/pages-per-second targets were serialized or rejected as non-evidence, and `resume-benchmark ocr-gate` had no current-stage baseline mode. After implementation, representative non-budget-exhausted private OCR reports emit `target_claim: "ocr_throughput_baseline_observed"` when strict performance thresholds are missed, strict reports still emit `ocr_throughput_target_met`, `OcrThroughputGateConfig::current_stage_baseline` accepts observed P50/P95/P99/pages-per-second metrics without weakening the default strict gate, `resume-benchmark ocr-gate --current-stage-baseline` validates baseline reports, and release-readiness accepts OCR baseline evidence while preserving other stable-release blockers. | This slice is production complete for current-stage OCR baseline evidence semantics only. It does not run the real private 10k corpus, generate a real private OCR throughput report, optimize OCR P95/P99 or pages/sec, clear strict follow-up performance goals, approve model/runtime distribution, clear platform/signing/notarization/quality blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S344
+
+TDD red check:
+
+```bash
+./scripts/ci/check-local-embedding-runtime.sh
+```
+
+Output summary:
+
+- The expanded guard failed before implementation with
+  `local embedding runtime check wrote stderr on success` after the stub
+  `SentenceTransformer` constructor wrote a private stderr sentinel. This
+  reproduced the real risk observed from third-party model-load/progress output
+  during successful adapter runs.
+
+Implementation and focused checks:
+
+```bash
+./scripts/ci/check-local-embedding-runtime.sh
+python3 -m py_compile scripts/local/embedding-runtime-sentence-transformers.py
+sh -n scripts/ci/check-local-embedding-runtime.sh scripts/ci/check-runbooks.sh
+./scripts/ci/check-runbooks.sh
+/Users/frankqdwang/.cargo/bin/cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- The local embedding runtime guard passed after the adapter redirected
+  third-party stdout/stderr around sentence-transformers import, model load, and
+  encode. The guard still validates the `resume-ir-embedding-v1` protocol and
+  rejects raw input text, temporary paths, cache markers, and model bytes.
+- Python compilation, shell syntax, runbook guard, Rust formatting, diff
+  whitespace, and public repository guard checks passed.
+
+Private local-only runtime witness:
+
+```bash
+uv venv .cache/resume-ir-embedding-runtime-py312 --python <local-python-3.12> --seed
+uv pip install --python .cache/resume-ir-embedding-runtime-py312/bin/python sentence-transformers
+PATH=<repo>/.cache/resume-ir-embedding-runtime-py312/bin:$PATH \
+TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 \
+RESUME_IR_EMBEDDING_INPUT_PATH=<synthetic-local-input> \
+RESUME_IR_EMBEDDING_MODEL_ID=sentence-transformers/all-MiniLM-L6-v2 \
+RESUME_IR_EMBEDDING_DIMENSION=384 \
+RESUME_IR_SENTENCE_TRANSFORMERS_MODEL=sentence-transformers/all-MiniLM-L6-v2 \
+scripts/local/embedding-runtime-sentence-transformers.py
+target/debug/resume-cli --data-dir <local-temp-data-dir> model preflight --json \
+  --manifest <local-temp-model-manifest> \
+  --embedding-command scripts/local/embedding-runtime-sentence-transformers.py \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --dimension 384
+```
+
+Output summary:
+
+- The real local adapter exited 0 offline with a locally cached
+  `sentence-transformers/all-MiniLM-L6-v2` model, emitted 2 synthetic vectors
+  with dimension 384, wrote no stderr on success, and passed a privacy scan for
+  local paths, raw text, vectors from real resumes, and cache markers.
+- The real model preflight exited 0 with `runtime_status: "ready"`,
+  `model_manifest: "valid"`, `embedding_command: "available"`,
+  `embedding_protocol: "passed"`, `license_reviewed: true`, and no remediation;
+  stdout/stderr privacy scan passed.
+
+Private local-only current-stage smoke witness:
+
+```bash
+scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile smoke \
+  --resume-root <user-authorized-local-resume-root> \
+  --data-dir <local-temp-data-dir> \
+  --out-dir <local-temp-evidence-dir> \
+  --max-files 12 --max-queries 3 --top-k 5 \
+  --ocr-worker-ticks 4 --embedding-worker-ticks 4 \
+  --ocr-throughput-max-pages 1 \
+  --reviewed-model --reviewed-ocr-runtime \
+  ...
+```
+
+Output summary:
+
+- The smoke run exited 0 and completed OCR preflight, OCR manifest
+  draft/validate, model manifest draft/validate, model preflight, dataset
+  manifest, import, bounded OCR worker, bounded embedding worker, corpus
+  summary, query-set draft, private-query baseline, smoke gate, redacted
+  diagnostics, smoke summary, and automatic handoff.
+- The redacted smoke summary reported `smoke_satisfied: true`, 12 documents, 1
+  searchable document, 1 vector-indexed document, and
+  `hot_index_fully_covered: false`. The not-complete list preserved the full
+  local 10k/8000-document baseline, 500-query private baseline, P95/P99
+  latency reduction, external 100k/1M validation, and stable release readiness.
+- The stdout/stderr/summary/handoff privacy scan passed without local resume
+  root, file names, local paths, raw resume text, raw OCR text, raw query text,
+  vectors, diagnostics, indexes, SQLite data, manifests, or model cache paths.
+  The temporary local evidence directory was removed after verification.
+
+Scope note:
+
+- S344 closes the local embedding runtime dependency/preflight blocker for a
+  bounded current-stage smoke path on this machine. It is not a full current
+  stage baseline, not vector-quality evidence, not final model distribution
+  approval, and not complete product readiness.
 
 ### S343
 
