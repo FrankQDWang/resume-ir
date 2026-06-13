@@ -301,6 +301,107 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
 }
 
 #[test]
+fn release_readiness_json_reports_goal_gap_matrix_without_claiming_complete_product() {
+    let data_dir = temp_path("release-readiness-goal-gap-private-data");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+        ])
+        .output()
+        .expect("run release readiness goal gap matrix");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("release readiness json report");
+
+    let matrix = &report["goal_gap_matrix"];
+    assert_eq!(matrix["schema_version"], "resume-ir.goal-gap-matrix.v1");
+    assert_eq!(matrix["complete_product"], false);
+    assert_eq!(matrix["current_stage"], "baseline_not_complete");
+    assert_eq!(
+        matrix["completion_statement"],
+        "complete product is not complete while any row is blocked or not_complete"
+    );
+
+    let rows = matrix["rows"].as_array().expect("goal matrix rows");
+    assert_eq!(rows.len(), 7);
+    let ids = rows
+        .iter()
+        .map(|row| row["id"].as_str().expect("row id"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        vec![
+            "P0_foundation",
+            "P1_text_import_fulltext",
+            "P2_fields_dedupe",
+            "P3_semantic_vector",
+            "P4_ocr",
+            "P5_cross_platform_release",
+            "P6_performance_stability",
+        ]
+    );
+
+    let p0 = rows
+        .iter()
+        .find(|row| row["id"] == "P0_foundation")
+        .expect("P0 row");
+    assert_eq!(p0["implementation_status"], "production_complete");
+    assert_eq!(p0["release_status"], "covered_by_local_ci");
+    assert!(p0["evidence"]
+        .as_array()
+        .expect("P0 evidence")
+        .iter()
+        .any(|item| item == "daemon/CLI/metadata/IPC tests"));
+
+    let p2 = rows
+        .iter()
+        .find(|row| row["id"] == "P2_fields_dedupe")
+        .expect("P2 row");
+    assert_eq!(p2["implementation_status"], "production_complete");
+    assert_eq!(p2["release_status"], "blocked");
+    assert!(p2["blocked_by"]
+        .as_array()
+        .expect("P2 blockers")
+        .iter()
+        .any(|item| item == "private business labeled field/dedupe quality reports"));
+
+    let p5 = rows
+        .iter()
+        .find(|row| row["id"] == "P5_cross_platform_release")
+        .expect("P5 row");
+    assert_eq!(p5["implementation_status"], "blocked");
+    assert_eq!(p5["release_status"], "blocked");
+    assert!(p5["blocked_by"]
+        .as_array()
+        .expect("P5 blockers")
+        .iter()
+        .any(|item| item == "real signing/notarization credentials"));
+
+    let p6 = rows
+        .iter()
+        .find(|row| row["id"] == "P6_performance_stability")
+        .expect("P6 row");
+    assert_eq!(p6["implementation_status"], "not_complete");
+    assert_eq!(p6["release_status"], "blocked");
+    assert!(p6["blocked_by"]
+        .as_array()
+        .expect("P6 blockers")
+        .iter()
+        .any(|item| item == "full current-stage local baseline evidence"));
+
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+}
+
+#[test]
 fn release_readiness_json_accepts_redacted_diagnostics_report_without_path_leaks() {
     let data_dir = temp_path("release-readiness-diagnostics-private-data");
     let evidence_dir = temp_path("release-readiness-diagnostics-private-reports");

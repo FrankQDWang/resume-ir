@@ -303,6 +303,7 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
             "local_dry_run_artifacts": "evidence_only",
             "provided_evidence": provided_evidence,
             "blockers": blockers,
+            "goal_gap_matrix": release_readiness_goal_gap_matrix_json(),
             "next_gate": "keep release blocked until every item has current local evidence",
         });
         let report = serde_json::to_string_pretty(&report)
@@ -338,6 +339,125 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
     Err(CliError::user(
         "release readiness blocked: stable release criteria are not met",
     ))
+}
+
+fn release_readiness_goal_gap_matrix_json() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "resume-ir.goal-gap-matrix.v1",
+        "complete_product": false,
+        "current_stage": "baseline_not_complete",
+        "stable_release": "blocked",
+        "completion_statement": "complete product is not complete while any row is blocked or not_complete",
+        "rows": [
+            {
+                "id": "P0_foundation",
+                "label": "Rust workspace, daemon, CLI, metadata, task queue, IPC, diagnostics skeleton, CI",
+                "implementation_status": "production_complete",
+                "release_status": "covered_by_local_ci",
+                "evidence": [
+                    "daemon/CLI/metadata/IPC tests",
+                    "kill/restart recovery tests",
+                    "PR rust workspace checks"
+                ],
+                "blocked_by": []
+            },
+            {
+                "id": "P1_text_import_fulltext",
+                "label": "file scan, docx/PDF text layer parsing, normalization, full-text index, snippets",
+                "implementation_status": "production_complete",
+                "release_status": "covered_by_local_ci",
+                "evidence": [
+                    "parser fixture tests",
+                    "import/search closed-loop checks",
+                    "persistent full-text index recovery tests"
+                ],
+                "blocked_by": []
+            },
+            {
+                "id": "P2_fields_dedupe",
+                "label": "field extraction, confidence/evidence, filters, soft dedupe, multi-version folding",
+                "implementation_status": "production_complete",
+                "release_status": "blocked",
+                "evidence": [
+                    "extractor/filter tests",
+                    "candidate folding tests",
+                    "field persistence tests"
+                ],
+                "blocked_by": [
+                    "private business labeled field/dedupe quality reports",
+                    "field F1 production threshold evidence",
+                    "dedupe precision/recall/F1 production threshold evidence"
+                ]
+            },
+            {
+                "id": "P3_semantic_vector",
+                "label": "local embedding protocol, vector persistence, semantic/hybrid search, RRF",
+                "implementation_status": "production_complete",
+                "release_status": "blocked",
+                "evidence": [
+                    "local embedding protocol tests",
+                    "persistent vector snapshot tests",
+                    "hybrid search tests"
+                ],
+                "blocked_by": [
+                    "final reviewed embedding model distribution decision",
+                    "private business vector quality report",
+                    "release model manifest evidence"
+                ]
+            },
+            {
+                "id": "P4_ocr",
+                "label": "scanned PDF detection, OCR worker, cache, pause/resume, retry, OCR result indexing",
+                "implementation_status": "production_complete",
+                "release_status": "blocked",
+                "evidence": [
+                    "OCR worker tests",
+                    "OCR manifest/preflight tests",
+                    "current-stage smoke local runtime probe"
+                ],
+                "blocked_by": [
+                    "full current-stage OCR throughput baseline evidence",
+                    "full hot-index current-stage validation evidence",
+                    "representative OCR backlog drain evidence"
+                ]
+            },
+            {
+                "id": "P5_cross_platform_release",
+                "label": "Windows/macOS packages, install, upgrade, uninstall, rollback, service lifecycle, signing/notarization",
+                "implementation_status": "blocked",
+                "release_status": "blocked",
+                "evidence": [
+                    "unsigned dry-run package manifests",
+                    "installer lifecycle dry-run plans",
+                    "Windows Service lifecycle dry-run plan"
+                ],
+                "blocked_by": [
+                    "real signing/notarization credentials",
+                    "administrator-elevated Windows release-runner transcripts",
+                    "fresh macOS installer and Gatekeeper transcripts",
+                    "GitHub Release approval"
+                ]
+            },
+            {
+                "id": "P6_performance_stability",
+                "label": "reproducible baseline, regression gates, fault injection, diagnostics, 100k/1M validation",
+                "implementation_status": "not_complete",
+                "release_status": "blocked",
+                "evidence": [
+                    "benchmark runner tests",
+                    "fault simulation tests",
+                    "diagnostics redaction tests",
+                    "current-stage smoke handoff"
+                ],
+                "blocked_by": [
+                    "full current-stage local baseline evidence",
+                    "private labeled quality datasets",
+                    "real hardware/platform fault drill transcripts",
+                    "external 100k/1M real-corpus validation deferred to performance goal"
+                ]
+            }
+        ]
+    })
 }
 
 fn release_readiness_usage() -> &'static str {

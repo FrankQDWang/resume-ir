@@ -382,6 +382,11 @@ production-ready scope source.
   caches, runtime binaries, signing material, notarization credentials,
   service tokens, administrator passwords, local runtime data, or generated
   release artifacts were committed or uploaded.
+  S350 changed release-readiness reporting, CI guards, tests, runbook text, and
+  this progress log only; no real resume data, filenames, paths, raw text, raw
+  queries, diagnostics, model caches, runtime binaries, signing material,
+  notarization credentials, local runtime data, or generated release artifacts
+  were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1008,6 +1013,7 @@ obsolete preliminary files and checklists are not product scope.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S350 | Product-level release-readiness gap matrix complete locally | Focused RED first failed because `release-readiness --json` did not expose a product-level P0-P6 gap matrix and therefore could not distinguish local implementation coverage from stable-release blockers in one machine-readable report. After implementation, the JSON report includes `goal_gap_matrix` with schema `resume-ir.goal-gap-matrix.v1`, `complete_product: false`, `current_stage: "baseline_not_complete"`, and rows for P0 foundation, P1 text import/fulltext, P2 fields/dedupe, P3 semantic/vector, P4 OCR, P5 cross-platform release, and P6 performance/stability. The matrix marks P0/P1 as local-CI covered, P2/P3/P4 as locally implemented but release-blocked by quality/runtime/baseline evidence, P5 as blocked on real platform credentials/transcripts, and P6 as not complete until full current-stage baseline, labeled quality, hardware drills, and deferred external scale validation exist. Verification passed: the focused RED/GREEN unit test, full `s161_release_readiness` test file, `check-release-readiness.sh`, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is a reporting and guard slice only. It does not create missing full current-stage baseline evidence, labeled quality datasets, real release-runner transcripts, signing/notarization credentials, hardware fault drill evidence, external 100k/1M validation, or complete-product readiness. |
 | S349 | Windows Service lifecycle dry-run operator plan complete locally | Focused guard first failed before runbook/workflow lifecycle wiring was complete. After implementation, release automation writes `windows-service-lifecycle-dry-run.json` with schema `release.windows_service_lifecycle_plan.v1`, `execution_mode: "dry_run"`, blocked install/start/status/stop/recovery/uninstall/rollback actions, `sc.exe` service-manager boundary, required administrator approval, package manifest digest binding, and no local path/runtime-data markers. `check-windows-service-evidence.sh` now requires the lifecycle script, runbook coverage, workflow artifact wiring, and fail-closed `-DryRun` behavior when `pwsh` is available. Verification passed: `check-windows-service-evidence.sh`, `check-workflows.sh`, `check-runbooks.sh`, `git diff --check`, and `./scripts/ci/verify-local.sh`. | This is operator-plan and CI/runbook evidence only. It does not perform real Windows administrator-elevated service install/start/status/stop/recovery/uninstall/rollback, does not clear Windows runner/platform evidence, and does not clear signing, notarization, final model/runtime distribution, full current-stage baseline, real labeled quality, 100k/1M scale, or complete-product release blockers. |
 | S348 | Current-stage real local smoke/pilot chain complete locally | A smoke-profile real local current-stage validation witness against the user-authorized resume root used reviewed local OCR and embedding runtime inputs plus `eng+chi_sim` tessdata. Dry-run exited 0 without reading the private corpus. Execute exited 0 and completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, local query-set draft, private query baseline, smoke baseline gate, redacted diagnostics, smoke summary, and handoff summary. Redacted aggregate evidence reported 500 bounded documents, 4 searchable documents, 496 OCR-required documents, 1 vector-indexed document, 3 generated private query samples, 0 zero-result queries, `query_mode: "hybrid"`, `percentile_confidence: "smoke"`, query latency p50 3242.181ms, p95 3477.066ms, p99 3477.066ms, and no hot-path OCR/parsing/heavy model inference. `current-stage-smoke-summary.json` reported `smoke_satisfied: true`, OCR probe `passed`, embedding protocol `passed`, and `release_readiness_evidence: false`; `current-stage-handoff.json` reported `current_stage_status: "smoke_satisfied"`. Content marker scan over committed-safe smoke summaries, benchmark report, diagnostics, dry-run, execute stdout/stderr, and query-set stdout was clean. | This is smoke/pilot wiring evidence only, not full current-stage baseline or product completion. Full 10k/8000-document current-stage baseline, 500-query private baseline gate, full hot-index coverage, full OCR backlog drain, OCR throughput baseline, release-readiness evidence, P95/P99 optimization, external 100k/1M validation, final model/runtime distribution approval, installer/platform/signing/notarization blockers, and real labeled quality datasets remain not complete or BLOCKED. |
 | S347 | BLOCKED on real local current-stage OCR backlog auto-handoff | A full-profile real local current-stage validation witness against the user-authorized resume root used reviewed local OCR and embedding runtime inputs, reached private-corpus import, bounded OCR/embedding worker execution, and then let the S346 script path automatically classify the remaining OCR backlog. OCR preflight reported `runtime_probe: "passed"` and embedding preflight reported `embedding_protocol: "passed"`. The run imported/discovered 8720 supported documents with zero scan errors, 20 permanent import failures, 147 searchable documents, 8553 OCR-required documents remaining, and 1 vector-indexed document after bounded workers. It wrote local redacted `benchmark-corpus-summary.local.json`, `current-stage-blocked-summary.json`, and `current-stage-handoff.json`; the handoff reported `current_stage_status: "blocked"` and source schema `resume-ir.current-stage-blocked-summary.v1`. A privacy marker scan over the committed-safe local outputs and execute stdout/stderr was clean. | This is not full current-stage baseline evidence. The script correctly stopped before private query-set generation, private benchmark, redacted diagnostics, release-readiness, and `current-stage-validation-evidence.json`. Full hot-index coverage, 500-query private baseline, OCR throughput baseline, full-run diagnostics, release-readiness evidence, P95/P99 optimization, final model/runtime distribution approval, installer/platform/signing/notarization blockers, real labeled quality datasets, and external 100k/1M validation remain not complete or BLOCKED. |
@@ -1358,6 +1364,61 @@ obsolete preliminary files and checklists are not product scope.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S350
+
+- Scope: add a product-level release-readiness gap matrix so `release-readiness
+  --json` can report P0-P6 implementation status, stable-release evidence
+  status, and blockers without implying the complete product is done.
+- TDD RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_reports_goal_gap_matrix_without_claiming_complete_product -- --nocapture
+```
+
+  Failed as expected because `goal_gap_matrix` was missing:
+  `left: Null`, `right: "resume-ir.goal-gap-matrix.v1"`.
+- Implementation:
+  - Added `goal_gap_matrix` to `release-readiness --json`.
+  - The matrix schema is `resume-ir.goal-gap-matrix.v1`.
+  - It sets `complete_product=false`, `stable_release=blocked`, and
+    `current_stage=baseline_not_complete`.
+  - It includes P0-P6 rows:
+    - P0 foundation and P1 text/fulltext are local-CI covered.
+    - P2 field/dedupe, P3 semantic/vector, and P4 OCR have local production
+      implementation evidence but remain release-blocked by quality, runtime,
+      or full-baseline evidence.
+    - P5 cross-platform release remains blocked by signing/notarization
+      credentials and real platform release-runner transcripts.
+    - P6 performance/stability remains not complete until the full
+      current-stage baseline, labeled quality datasets, hardware drills, and
+      deferred external scale validation exist.
+  - Updated `check-release-readiness.sh` and the release blocker runbook so the
+    matrix is a maintained guard.
+- Verification:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness release_readiness_json_reports_goal_gap_matrix_without_claiming_complete_product -- --nocapture
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo test -p resume-cli --test s161_release_readiness
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/verify-local.sh
+```
+
+  All verification commands exited 0.
+- Privacy:
+  - No real resume directory was read for this slice.
+  - The new matrix contains only static status labels, evidence categories, and
+    blocker categories. It does not include local paths, raw queries, raw resume
+    text, report bodies, diagnostics, model caches, runtime binaries, signing
+    material, or release artifacts.
+- Scope note:
+  - S350 makes the product gap report harder to misread. It does not clear the
+    full current-stage baseline, quality, platform, signing/notarization,
+    hardware-drill, 100k/1M, or complete-product gates.
 
 ### S349
 

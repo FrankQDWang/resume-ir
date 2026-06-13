@@ -67,6 +67,26 @@ require_text "$stdout_file" '"stable_release": "blocked"'
 require_text "$stdout_file" '"local_dry_run_artifacts": "evidence_only"'
 require_text "$stdout_file" '"provided_evidence": []'
 require_text "$stdout_file" '"blockers": ['
+require_text "$stdout_file" '"goal_gap_matrix": {'
+require_text "$stdout_file" '"schema_version": "resume-ir.goal-gap-matrix.v1"'
+require_text "$stdout_file" '"complete_product": false'
+require_text "$stdout_file" '"current_stage": "baseline_not_complete"'
+require_text "$stdout_file" '"completion_statement": "complete product is not complete while any row is blocked or not_complete"'
+require_text "$stdout_file" '"id": "P0_foundation"'
+require_text "$stdout_file" '"implementation_status": "production_complete"'
+require_text "$stdout_file" '"release_status": "covered_by_local_ci"'
+require_text "$stdout_file" '"id": "P1_text_import_fulltext"'
+require_text "$stdout_file" '"id": "P2_fields_dedupe"'
+require_text "$stdout_file" "private business labeled field/dedupe quality reports"
+require_text "$stdout_file" '"id": "P3_semantic_vector"'
+require_text "$stdout_file" "final reviewed embedding model distribution decision"
+require_text "$stdout_file" '"id": "P4_ocr"'
+require_text "$stdout_file" "full current-stage OCR throughput baseline evidence"
+require_text "$stdout_file" '"id": "P5_cross_platform_release"'
+require_text "$stdout_file" "real signing/notarization credentials"
+require_text "$stdout_file" '"id": "P6_performance_stability"'
+require_text "$stdout_file" '"implementation_status": "not_complete"'
+require_text "$stdout_file" "full current-stage local baseline evidence"
 require_text "$stdout_file" '"label": "signing certificates"'
 require_text "$stdout_file" "production signing certificates"
 require_text "$stdout_file" "certificate chain"
