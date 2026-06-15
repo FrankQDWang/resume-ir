@@ -84,6 +84,8 @@ require_text "$stdout_file" '"id": "P4_ocr"'
 require_text "$stdout_file" "full current-stage OCR throughput baseline evidence"
 require_text "$stdout_file" '"id": "P5_cross_platform_release"'
 require_text "$stdout_file" "real signing/notarization credentials"
+require_text "$stdout_file" "signing/notarization fail-closed dry-run gates"
+require_text "$stdout_file" "hosted macOS/Windows build/test workflows"
 require_text "$stdout_file" '"id": "P6_performance_stability"'
 require_text "$stdout_file" '"implementation_status": "not_complete"'
 require_text "$stdout_file" "full current-stage local baseline evidence"
@@ -98,14 +100,16 @@ require_text "$stdout_file" "notarization credentials"
 require_text "$stdout_file" "notarization ticket"
 require_text "$stdout_file" "Gatekeeper validation"
 require_text "$stdout_file" '"label": "Windows installer lifecycle"'
+require_text "$stdout_file" "dry-run automation exists"
 require_text "$stdout_file" "MSI install"
 require_text "$stdout_file" "upgrade"
 require_text "$stdout_file" "uninstall"
 require_text "$stdout_file" "rollback"
-require_text "$stdout_file" "release Windows runner"
+require_text "$stdout_file" "administrator-elevated release Windows runner"
 require_text "$stdout_file" '"label": "Windows service lifecycle"'
 require_text "$stdout_file" "install/start/stop/status/uninstall/recovery"
 require_text "$stdout_file" '"label": "macOS installer lifecycle"'
+require_text "$stdout_file" "LaunchAgent dry-run automation exists"
 require_text "$stdout_file" "signed pkg/dmg"
 require_text "$stdout_file" "install/upgrade/uninstall/rollback"
 require_text "$stdout_file" '"label": "private real-corpus performance evidence"'
@@ -148,6 +152,7 @@ require_text "$stdout_file" "model manifest"
 require_text "$stdout_file" "offline distribution"
 require_text "$stdout_file" "license review"
 require_text "$stdout_file" '"label": "cross-platform release validation"'
+require_text "$stdout_file" "hosted macOS/Windows build/test and dry-run packaging evidence exist"
 require_text "$stdout_file" "Windows and macOS release platforms"
 require_text "$stdout_file" "fresh release artifacts"
 require_text "$stdout_file" "install/upgrade/uninstall"

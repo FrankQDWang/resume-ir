@@ -194,25 +194,28 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
         .find(|blocker| blocker["label"] == "Windows installer lifecycle")
         .expect("Windows installer blocker");
     let windows_installer_detail = windows_installer_blocker["detail"].as_str().unwrap();
+    assert!(windows_installer_detail.contains("dry-run automation exists"));
     assert!(windows_installer_detail.contains("MSI install"));
     assert!(windows_installer_detail.contains("upgrade"));
     assert!(windows_installer_detail.contains("uninstall"));
     assert!(windows_installer_detail.contains("rollback"));
-    assert!(windows_installer_detail.contains("release Windows runner"));
+    assert!(windows_installer_detail.contains("administrator-elevated release Windows runner"));
 
     let windows_service_blocker = blockers
         .iter()
         .find(|blocker| blocker["label"] == "Windows service lifecycle")
         .expect("Windows service blocker");
     let windows_service_detail = windows_service_blocker["detail"].as_str().unwrap();
+    assert!(windows_service_detail.contains("dry-run automation exists"));
     assert!(windows_service_detail.contains("install/start/stop/status/uninstall/recovery"));
-    assert!(windows_service_detail.contains("release Windows runner"));
+    assert!(windows_service_detail.contains("administrator-elevated release Windows runner"));
 
     let macos_installer_blocker = blockers
         .iter()
         .find(|blocker| blocker["label"] == "macOS installer lifecycle")
         .expect("macOS installer blocker");
     let macos_installer_detail = macos_installer_blocker["detail"].as_str().unwrap();
+    assert!(macos_installer_detail.contains("dry-run automation exists"));
     assert!(macos_installer_detail.contains("signed pkg/dmg"));
     assert!(macos_installer_detail.contains("install/upgrade/uninstall/rollback"));
     assert!(macos_installer_detail.contains("Gatekeeper validation"));
@@ -281,6 +284,8 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
         .find(|blocker| blocker["label"] == "cross-platform release validation")
         .expect("cross-platform release validation blocker");
     let platform_detail = platform_blocker["detail"].as_str().unwrap();
+    assert!(platform_detail.contains("hosted macOS/Windows build/test"));
+    assert!(platform_detail.contains("dry-run packaging evidence"));
     assert!(platform_detail.contains("Windows and macOS release platforms"));
     assert!(platform_detail.contains("fresh release artifacts"));
     assert!(platform_detail.contains("install/upgrade/uninstall"));
@@ -376,8 +381,18 @@ fn release_readiness_json_reports_goal_gap_matrix_without_claiming_complete_prod
         .iter()
         .find(|row| row["id"] == "P5_cross_platform_release")
         .expect("P5 row");
-    assert_eq!(p5["implementation_status"], "blocked");
+    assert_eq!(p5["implementation_status"], "production_complete");
     assert_eq!(p5["release_status"], "blocked");
+    assert!(p5["evidence"]
+        .as_array()
+        .expect("P5 evidence")
+        .iter()
+        .any(|item| item == "installer lifecycle dry-run plans"));
+    assert!(p5["evidence"]
+        .as_array()
+        .expect("P5 evidence")
+        .iter()
+        .any(|item| item == "signing/notarization fail-closed dry-run gates"));
     assert!(p5["blocked_by"]
         .as_array()
         .expect("P5 blockers")

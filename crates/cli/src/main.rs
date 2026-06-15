@@ -173,15 +173,15 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "Windows installer lifecycle",
-        "MSI install, upgrade, uninstall, and rollback are not proven on a release Windows runner with fresh release artifacts",
+        "Windows MSI install, upgrade, uninstall, and rollback dry-run automation exists, but actual lifecycle execution is not proven on an administrator-elevated release Windows runner with fresh release artifacts",
     ),
     (
         "Windows service lifecycle",
-        "Windows service install/start/stop/status/uninstall/recovery lifecycle is not proven on a release Windows runner with fresh release artifacts",
+        "Windows service install/start/stop/status/uninstall/recovery dry-run automation exists, but actual lifecycle execution is not proven on an administrator-elevated release Windows runner with fresh release artifacts",
     ),
     (
         "macOS installer lifecycle",
-        "signed pkg/dmg install/upgrade/uninstall/rollback and Gatekeeper validation are not proven on fresh macOS release artifacts",
+        "macOS pkg/dmg install, upgrade, uninstall, rollback, and LaunchAgent dry-run automation exists, but signed pkg/dmg install/upgrade/uninstall/rollback and Gatekeeper validation are not proven on fresh macOS release artifacts",
     ),
     (
         RELEASE_READINESS_PERFORMANCE_LABEL,
@@ -213,7 +213,7 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "cross-platform release validation",
-        "Windows and macOS release platforms validation is not complete; release evidence requires fresh release artifacts, install/upgrade/uninstall, and service lifecycle proof",
+        "hosted macOS/Windows build/test and dry-run packaging evidence exist, but Windows and macOS release platforms validation is not complete; release evidence requires fresh release artifacts, install/upgrade/uninstall, and service lifecycle proof",
     ),
     (
         RELEASE_READINESS_DIAGNOSTICS_LABEL,
@@ -432,12 +432,14 @@ fn release_readiness_goal_gap_matrix_json() -> serde_json::Value {
             {
                 "id": "P5_cross_platform_release",
                 "label": "Windows/macOS packages, install, upgrade, uninstall, rollback, service lifecycle, signing/notarization",
-                "implementation_status": "blocked",
+                "implementation_status": "production_complete",
                 "release_status": "blocked",
                 "evidence": [
                     "unsigned dry-run package manifests",
                     "installer lifecycle dry-run plans",
-                    "Windows Service lifecycle dry-run plan"
+                    "Windows Service lifecycle dry-run plan",
+                    "signing/notarization fail-closed dry-run gates",
+                    "hosted macOS/Windows build/test workflows"
                 ],
                 "blocked_by": [
                     "real signing/notarization credentials",

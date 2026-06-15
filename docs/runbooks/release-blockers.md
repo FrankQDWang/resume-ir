@@ -468,10 +468,11 @@ The JSON report must include `goal_gap_matrix` with schema
 `resume-ir.goal-gap-matrix.v1`. That matrix is the product-level P0-P6 gap view:
 P0/P1 can show local implementation covered by CI, P2/P3/P4 can show local
 implementation present while quality/runtime/baseline evidence remains blocked,
-P5 remains blocked on real platform credentials and release-runner transcripts,
-and P6 remains not complete until the full current-stage baseline, quality
-datasets, hardware drills, and later external scale validation exist. The
-matrix must keep `complete_product: false`,
+P5 can show local release automation implementation complete while real signing,
+notarization, administrator-elevated platform transcripts, and release approval
+remain blocked, and P6 remains not complete until the full current-stage
+baseline, quality datasets, hardware drills, and later external scale validation
+exist. The matrix must keep `complete_product: false`,
 `current_stage: "baseline_not_complete"`, and the completion statement that the
 complete product is not complete while any row is blocked or not_complete.
 
