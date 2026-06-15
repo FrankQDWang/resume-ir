@@ -443,6 +443,24 @@ production-ready scope source.
   text, raw query text, vectors, generated private reports, local manifests,
   runtime binaries, model artifacts, indexes, SQLite databases, diagnostics,
   model caches, or hardware drill transcripts were committed or uploaded.
+  S359 and S361 used fake local current-stage execute fixtures, CI guards, and
+  runbook text only; no real resume data, filenames, paths, raw text, raw
+  queries, private query sets, generated private benchmark reports, generated
+  diagnostics, local manifests, runtime binaries, model artifacts, indexes,
+  SQLite databases, signing material, notarization credentials, model caches,
+  or hardware drill transcripts were committed or uploaded.
+  S360 used a private local-only full-profile current-stage validation attempt
+  against the user-authorized local resume directory with local Tesseract,
+  Poppler/pdftoppm, `eng+chi_sim` tessdata, and the local
+  sentence-transformers model cache. The run read a bounded private corpus slice
+  locally, generated only local temporary manifests, indexes, SQLite data, logs,
+  redacted diagnostics, and redacted aggregate blocked-summary/handoff evidence,
+  and stopped at the designed OCR backlog handoff before query-set generation,
+  private query benchmarking, OCR throughput baseline, release-readiness, or
+  full evidence generation. No real resume data, filenames, paths, raw OCR
+  text, raw query text, vectors, generated private reports, local manifests,
+  runtime binaries, model artifacts, indexes, SQLite databases, diagnostics,
+  model caches, or hardware drill transcripts were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1116,6 +1134,7 @@ obsolete `S0-S13` long-running checklist as product truth.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S361 | Current-stage embedding runtime PATH binding complete locally | Focused RED first failed because `run-current-stage-validation.sh` did not accept an explicit embedding runtime bin directory, leaving S360-style local embedding preflight reproduction dependent on an operator-modified shell `PATH`. After implementation, `--embedding-runtime-bin-dir DIR` prepends that directory to child-command `PATH` only in execute mode, fails before private corpus read if the directory is unavailable, and records only `embedding_runtime_bin_dir_configured: true|false` in dry-run plans plus redacted smoke, blocked, and full evidence summaries. The current-stage guard now proves the PATH prefix reaches fake model preflight, embedding worker, and private-query benchmark execution while rejecting temp path leakage, and the release blocker runbook documents the local-runtime boundary. Verification passed shell syntax checks, focused current-stage validation guard, and full `./scripts/ci/verify-local.sh`. | This is current-stage reproducibility plumbing only. It does not rerun the private corpus, drain OCR backlog, generate full current-stage evidence, clear the 500-query private benchmark, approve model distribution, improve P95/P99, clear installer/platform/signing/notarization/quality blockers, validate external 100k/1M scale, or make complete product readiness true. |
 | S360 | Full-profile current-stage real local OCR-backlog diagnostics handoff reproduced | A fresh private local-only full-profile current-stage validation witness used current `codex/fault-injection-diagnostics` HEAD, local Tesseract/Poppler, `eng+chi_sim` tessdata, a reviewed local `sentence-transformers/all-MiniLM-L6-v2` manifest, the existing local Python runtime with `sentence-transformers 5.5.1`, `--max-files 8000`, `--max-queries 500`, `--ocr-worker-ticks 2`, and `--embedding-worker-ticks 2`. An initial preflight-only attempt correctly stopped before private corpus read when the default system Python lacked `sentence-transformers`; the rerun with the local runtime completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, and redacted diagnostics, then stopped with `current-stage-blocked-summary.json` and `current-stage-handoff.json`. The redacted blocked summary reported `blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`, `private_corpus_read: true`, OCR runtime probe `passed`, embedding protocol `passed`, `redacted_diagnostics` success, 8000 documents, 86 searchable documents, 7899 OCR-required documents, 15 permanent failures, 16 vector-indexed documents, 7898 queued OCR jobs, one completed OCR document job, one retryable OCR page-budget failure, and `hot_index_fully_covered: false`. A privacy scan over committed-safe stdout/stderr, corpus summary, blocked summary, handoff, and diagnostics found no local paths, private markers, model-cache paths, model artifact names, private resume directory names, email-like tokens, or mainland mobile-like tokens. The local temporary private evidence/data directories were removed after extracting this aggregate summary. | This is a real full-profile current-stage blocked handoff with diagnostics, not current-stage completion or release-readiness evidence. It stops before private query-set generation, 500-query private baseline, OCR throughput baseline, release-readiness current-stage evidence, full OCR backlog drain, hot-index coverage, P95/P99 optimization, external 100k/1M validation, model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets. |
 | S359 | OCR-backlog blocked handoff now binds redacted diagnostics evidence | Focused RED first failed because the full-profile OCR-backlog path stopped after corpus summary without writing `redacted-diagnostics.json`. After implementation, `run-current-stage-validation.sh` runs `export-diagnostics --redact` before writing the OCR-backlog blocked summary, records a `redacted_diagnostics` step, records the diagnostics basename and digest, and still exits before query-set generation, private benchmarking, release-readiness, or full evidence. The guard validates the diagnostics JSON, privacy sentinels, summary binding, handoff generation, and absence of private query/benchmark/release outputs. | This is current-stage blocked-handoff evidence only. It does not drain the OCR backlog, complete the full local 10k/8000-document baseline, generate a 500-query private benchmark, clear OCR throughput/release-readiness evidence, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization/quality blockers, validate external 100k/1M scale, or make the product complete. |
 | S358 | Full-profile current-stage real local bounded handoff reproduced OCR backlog blocker | A private local-only full-profile current-stage validation attempt used current `codex/fault-injection-diagnostics` HEAD, local Tesseract/Poppler, `eng+chi_sim` tessdata, a reviewed local `sentence-transformers/all-MiniLM-L6-v2` manifest, `--max-files 8000`, `--max-queries 500`, `--ocr-worker-ticks 2`, and `--embedding-worker-ticks 2`. It completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, and corpus summary, then stopped as designed with `current-stage-blocked-summary.json` and `current-stage-handoff.json`. The redacted blocked summary reported `blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`, `private_corpus_read: true`, OCR runtime probe `passed`, embedding protocol `passed`, 8000 documents, 86 searchable documents, 7899 OCR-required documents, 15 permanent failures, 16 vector-indexed documents, 7898 queued OCR jobs, one completed OCR document job, one retryable OCR page-budget failure, and `hot_index_fully_covered: false`. Regenerating the handoff from the blocked summary was stable, and a precise privacy scan over committed-safe stdout/stderr, corpus summary, blocked summary, and handoff found no local paths, private markers, model-cache paths, model artifact names, or private resume directory names. | This is a real full-profile blocked handoff, not current-stage completion. It stops before private query-set generation, 500-query private baseline, OCR throughput baseline, redacted diagnostics for the run, release-readiness current-stage evidence, full OCR backlog drain, hot-index coverage, P95/P99 optimization, external 100k/1M validation, model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets. |
@@ -1477,6 +1496,66 @@ obsolete `S0-S13` long-running checklist as product truth.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S361
+
+- Scope: make the current-stage validation flow reproducible when the reviewed
+  embedding command depends on a local runtime whose `python3`/tools are not the
+  operator's default shell runtime. This directly addresses the S360 first
+  attempt, which correctly failed model preflight before private corpus read
+  when the default Python lacked the local embedding dependencies.
+- TDD RED:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Exit 2 before implementation because `run-current-stage-validation.sh` did
+  not accept `--embedding-runtime-bin-dir`.
+
+- Implementation:
+  - Added optional `--embedding-runtime-bin-dir DIR` to
+    `scripts/local/run-current-stage-validation.sh`.
+  - Execute mode validates that the directory exists before private corpus read,
+    prepends it to child-command `PATH`, and records only
+    `embedding_runtime_bin_dir_configured: true|false` in dry-run plans,
+    smoke summaries, blocked summaries, and full evidence manifests.
+  - The CI fake harness now requires the PATH prefix for model preflight,
+    embedding worker, and private-query benchmark execution, proving the option
+    affects the full embedding-dependent local validation chain.
+  - The release blocker runbook now documents the parameter and explicitly says
+    local runtime paths must not appear in dry-run, smoke, blocked, or full
+    evidence output.
+
+Verification:
+
+```bash
+sh -n scripts/local/run-current-stage-validation.sh && sh -n scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-validation.sh
+./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Shell syntax checks exited 0.
+- `check-current-stage-validation.sh`: exit 0; verified redacted dry-run
+  planning, no temp path leakage, PATH-prefix propagation through fake model
+  preflight, embedding worker, and private-query execution, and unchanged
+  blocked/smoke/full evidence behavior.
+- `verify-local.sh`: exit 0; workspace tests, CLI/daemon closed loops,
+  benchmark/vector/OCR gates, license/runbook/local embedding runtime checks,
+  current-stage validation/handoff, workflow/release-readiness checks,
+  release artifact/SBOM/package evidence checks, and public repo guard passed.
+
+Scope note:
+
+- S361 is current-stage reproducibility plumbing only. It does not rerun the
+  private corpus, drain OCR backlog, generate full current-stage evidence,
+  clear the 500-query private benchmark, approve model distribution, improve
+  P95/P99, clear installer/platform/signing/notarization/quality blockers,
+  validate external 100k/1M scale, or make complete product readiness true.
 
 ### S360
 

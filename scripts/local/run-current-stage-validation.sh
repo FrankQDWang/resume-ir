@@ -8,6 +8,7 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   [--validation-profile full|smoke]
   --model-manifest FILE --ocr-runtime-manifest FILE
   --model-artifact FILE --embedding-command FILE
+  [--embedding-runtime-bin-dir DIR]
   --model-pack-id ID --model-id ID --model-format ID --dimension N --model-license ID
   --runtime-pack-id ID --tesseract-command FILE --pdftoppm-command FILE
   --language LANG --language-pack FILE|LANG=FILE [--language-pack LANG=FILE ...]
@@ -360,6 +361,7 @@ EOF_STEPS
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -485,6 +487,7 @@ EOF_STEPS
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -597,6 +600,7 @@ write_query_set_blocked_summary() {
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -720,6 +724,7 @@ write_private_query_blocked_summary() {
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -863,6 +868,7 @@ EOF_STEPS
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -1000,6 +1006,7 @@ EOF_DIAGNOSTICS_STEP
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -1128,6 +1135,7 @@ write_redacted_diagnostics_blocked_summary() {
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -1267,6 +1275,7 @@ write_release_readiness_blocked_summary() {
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -1424,6 +1433,7 @@ EOF_OUTPUTS
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -1530,6 +1540,8 @@ model_manifest=""
 ocr_runtime_manifest=""
 model_artifact=""
 embedding_command=""
+embedding_runtime_bin_dir=""
+embedding_runtime_bin_dir_configured="false"
 model_pack_id=""
 model_id=""
 model_format=""
@@ -1615,6 +1627,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --embedding-command)
       need_value "$@"; embedding_command="$2"; shift 2
+      ;;
+    --embedding-runtime-bin-dir)
+      need_value "$@"; embedding_runtime_bin_dir="$2"; shift 2
       ;;
     --model-pack-id)
       need_value "$@"; model_pack_id="$2"; shift 2
@@ -1793,6 +1808,9 @@ require_positive_int "--ocr-throughput-min-pages" "$ocr_throughput_min_pages"
 [ -z "$ocr_runtime_manifest_sha256" ] || require_sha256 "--ocr-runtime-manifest-sha256" "$ocr_runtime_manifest_sha256"
 [ -z "$renderer_manifest_sha256" ] || require_sha256 "--renderer-manifest-sha256" "$renderer_manifest_sha256"
 [ -z "$language_pack_manifest_sha256" ] || require_sha256 "--language-pack-manifest-sha256" "$language_pack_manifest_sha256"
+if [ -n "$embedding_runtime_bin_dir" ]; then
+  embedding_runtime_bin_dir_configured="true"
+fi
 
 case "$validation_profile" in
   full)
@@ -1880,6 +1898,7 @@ if [ "$mode" = "dry-run" ]; then
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -1980,6 +1999,7 @@ $terminal_plan_steps
   "notes": [
     "Dry-run does not read the private resume root.",
     "Execute mode validates OCR and embedding runtime manifests/preflight before reading the private resume root.",
+    "Optional --embedding-runtime-bin-dir prepends a local runtime bin directory to child-command PATH in execute mode; dry-run and redacted evidence record only whether it was configured, never the local path.",
     "After runtime preflight succeeds, execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
     "If --query-set is omitted, execute mode writes resume-ir.query-set.jsonl.v1 under <local-evidence-dir> with privacy boundary local_only_private_query_set, then uses its sha256 as the query-set digest.",
     "Execute mode writes resume-ir.current-stage-handoff.v1 under <local-evidence-dir> after writing a smoke summary, blocked summary, or full current-stage evidence manifest.",
@@ -1997,6 +2017,15 @@ fi
 [ "$mode" = "execute" ] || usage
 [ -d "$resume_root" ] || fail "resume root must exist and be a directory"
 mkdir -p "$data_dir" "$out_dir"
+if [ -n "$embedding_runtime_bin_dir" ]; then
+  if [ ! -d "$embedding_runtime_bin_dir" ]; then
+    write_runtime_preflight_blocked_summary \
+      "model_preflight" "embedding" "embedding_runtime_bin_dir_unavailable" 1
+    fail "current-stage validation blocked: embedding runtime bin dir unavailable before reading private corpus"
+  fi
+  PATH="$embedding_runtime_bin_dir:$PATH"
+  export PATH
+fi
 dataset_manifest="$out_dir/dataset-manifest.local.json"
 query_set_generated="false"
 provided_query_set=""
@@ -2354,6 +2383,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -2568,6 +2598,7 @@ if [ "$validation_profile" = "smoke" ]; then
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
@@ -2733,6 +2764,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     "max_queries": $max_queries,
     "top_k": $top_k,
     "embedding_dimension": $dimension,
+    "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "embedding_worker_ticks": $embedding_worker_ticks
   },

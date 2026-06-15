@@ -79,6 +79,7 @@ resume_root="$tmpdir/PRIVATE-current-stage-resumes"
 data_dir="$tmpdir/PRIVATE-current-stage-data"
 out_dir="$tmpdir/PRIVATE-current-stage-evidence"
 query_set="$tmpdir/PRIVATE-current-stage-query-set.jsonl"
+embedding_runtime_bin_dir="$tmpdir/PRIVATE-current-stage-embedding-runtime-bin"
 model_manifest="$tmpdir/PRIVATE-current-stage-model-manifest.json"
 ocr_manifest="$tmpdir/PRIVATE-current-stage-ocr-manifest.json"
 model_artifact="$tmpdir/PRIVATE-current-stage-model.onnx"
@@ -87,7 +88,7 @@ tesseract_command="$tmpdir/PRIVATE-current-stage-tesseract"
 pdftoppm_command="$tmpdir/PRIVATE-current-stage-pdftoppm"
 language_pack="$tmpdir/PRIVATE-current-stage-tessdata.traineddata"
 
-mkdir -p "$resume_root" "$data_dir" "$out_dir"
+mkdir -p "$resume_root" "$data_dir" "$out_dir" "$embedding_runtime_bin_dir"
 
 "$script" --dry-run \
   --resume-root "$resume_root" \
@@ -97,6 +98,7 @@ mkdir -p "$resume_root" "$data_dir" "$out_dir"
   --ocr-runtime-manifest "$ocr_manifest" \
   --model-artifact "$model_artifact" \
   --embedding-command "$embedding_command" \
+  --embedding-runtime-bin-dir "$embedding_runtime_bin_dir" \
   --model-pack-id reviewed-local-model-pack \
   --model-id reviewed-local-embedding-model \
   --model-format onnx \
@@ -160,6 +162,7 @@ require_text "$plan" '"data_dir": "<local-data-dir>"'
 require_text "$plan" '"out_dir": "<local-evidence-dir>"'
 require_text "$plan" '"current_stage_target": "reproducible_local_10k_baseline"'
 require_text "$plan" '"performance_optimization_deferred": true'
+require_text "$plan" '"embedding_runtime_bin_dir_configured": true'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> privacy dataset-manifest --root <local-resume-root> --out <local-evidence-dir>/dataset-manifest.local.json --profile explicit --max-files 10000'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> ocr preflight --json'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> ocr draft-manifest'
@@ -206,6 +209,7 @@ reject_text "$plan" "$out_dir"
 reject_text "$plan" "$query_set"
 reject_text "$plan" "$model_manifest"
 reject_text "$plan" "$ocr_manifest"
+reject_text "$plan" "$embedding_runtime_bin_dir"
 reject_text "$plan" "$embedding_command"
 reject_text "$plan" "$tesseract_command"
 reject_text "$plan" "$pdftoppm_command"
@@ -224,6 +228,7 @@ smoke_plan="$tmpdir/current-stage-validation-smoke-plan.json"
   --ocr-runtime-manifest "$ocr_manifest" \
   --model-artifact "$model_artifact" \
   --embedding-command "$embedding_command" \
+  --embedding-runtime-bin-dir "$embedding_runtime_bin_dir" \
   --model-pack-id reviewed-local-model-pack \
   --model-id reviewed-local-embedding-model \
   --model-format onnx \
@@ -345,6 +350,15 @@ case "$cmd:$sub" in
     printf 'model manifest valid\n'
     ;;
   model:preflight)
+    if [ -n "${FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR:-}" ]; then
+      case ":$PATH:" in
+        *":$FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR:"*) ;;
+        *)
+          printf 'embedding runtime PATH prefix missing\n' >&2
+          exit 1
+          ;;
+      esac
+    fi
     if [ "${FAKE_RUNTIME_PREFLIGHT_MODE:-ready}" = "model-failed" ]; then
       printf 'fake model preflight failed\n' >&2
       exit 1
@@ -399,6 +413,19 @@ chmod 700 "$fake_resume_cli"
 cat > "$fake_resume_daemon" <<'SH'
 #!/usr/bin/env sh
 set -eu
+if [ -n "${FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR:-}" ]; then
+  case " $* " in
+    *" --work-embeddings "*)
+      case ":$PATH:" in
+        *":$FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR:"*) ;;
+        *)
+          printf 'embedding worker PATH prefix missing\n' >&2
+          exit 1
+          ;;
+      esac
+      ;;
+  esac
+fi
 printf 'fake worker completed\n'
 SH
 chmod 700 "$fake_resume_daemon"
@@ -408,6 +435,15 @@ cat > "$fake_resume_benchmark" <<'SH'
 set -eu
 case "${1:-}" in
   private-query)
+    if [ -n "${FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR:-}" ]; then
+      case ":$PATH:" in
+        *":$FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR:"*) ;;
+        *)
+          printf 'private query PATH prefix missing\n' >&2
+          exit 1
+          ;;
+      esac
+    fi
     if [ "${FAKE_BENCHMARK_MODE:-pass}" = "private-query-failed" ]; then
       printf 'private query baseline blocked: query protocol failed\n' >&2
       exit 1
@@ -484,7 +520,7 @@ run_execute_smoke() {
   if [ "$mode" = "ocr-backlog" ]; then
     corpus_summary_mode="ocr-backlog"
   fi
-  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_CORPUS_SUMMARY_MODE="$corpus_summary_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_FAULT_SIMULATION_MODE="$fault_simulation_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
+  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_CORPUS_SUMMARY_MODE="$corpus_summary_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_FAULT_SIMULATION_MODE="$fault_simulation_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR="$embedding_runtime_bin_dir" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
     --resume-daemon "$fake_resume_daemon" \
     --resume-benchmark "$fake_resume_benchmark" \
@@ -495,6 +531,7 @@ run_execute_smoke() {
     --ocr-runtime-manifest "$execute_ocr_manifest" \
     --model-artifact "$execute_model_artifact" \
     --embedding-command "$execute_embedding_command" \
+    --embedding-runtime-bin-dir "$embedding_runtime_bin_dir" \
     --model-pack-id reviewed-local-model-pack \
     --model-id reviewed-local-embedding-model \
     --model-format onnx \
@@ -1140,6 +1177,7 @@ reject_text "$tmpdir/execute-evidence-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-evidence-failed-stderr.txt" "PRIVATE-current-stage"
 
 require_text "$script" "--execute"
+require_text "$script" "--embedding-runtime-bin-dir"
 require_text "$script" "resume-ir.current-stage-validation-plan.v1"
 require_text "$script" "resume-ir.current-stage-validation-evidence.v1"
 require_text "$script" "resume-ir.dataset-manifest.v1"
@@ -1158,6 +1196,7 @@ require_text "$script" "performance_optimization_deferred"
 require_text "$script" "ocr_backlog_exceeds_current_stage_budget"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"
+require_text "$runbook" "--embedding-runtime-bin-dir <local-runtime-bin-dir>"
 require_text "$runbook" "resume-ir.current-stage-validation-plan.v1"
 require_text "$runbook" "resume-ir.current-stage-validation-evidence.v1"
 require_text "$runbook" "resume-ir.current-stage-blocked-summary.v1"
