@@ -191,6 +191,7 @@ macos_installer_lifecycle_plan="$tmpdir/macos-installer-lifecycle-dry-run.json"
 windows_installer_lifecycle_plan="$tmpdir/windows-installer-lifecycle-dry-run.json"
 windows_service_lifecycle_plan="$tmpdir/windows-service-lifecycle-dry-run.json"
 current_stage_evidence="$tmpdir/current-stage-validation-evidence.json"
+current_stage_blocked_summary="$tmpdir/current-stage-blocked-summary.json"
 evidence_stdout_file="$tmpdir/evidence-stdout.txt"
 evidence_stderr_file="$tmpdir/evidence-stderr.txt"
 
@@ -324,6 +325,96 @@ cat > "$current_stage_evidence" <<'JSON'
   ]
 }
 JSON
+cat > "$current_stage_blocked_summary" <<'JSON'
+{
+  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "privacy_boundary": "local_only_redacted_blocked_summary",
+  "validation_profile": "full",
+  "current_stage_target": "reproducible_local_10k_baseline",
+  "private_corpus_read": true,
+  "full_baseline_satisfied": false,
+  "release_readiness_evidence": false,
+  "performance_optimization_deferred": true,
+  "blocked_step": "ocr_worker_bounded_loop",
+  "blocked_category": "ocr",
+  "blocked_reason": "ocr_backlog_exceeds_current_stage_budget",
+  "blocked_exit": 1,
+  "input_digests": {
+    "dataset_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "query_set_sha256": null,
+    "model_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "ocr_runtime_manifest_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "parameters": {
+    "max_files": 10000,
+    "max_queries": 500,
+    "top_k": 10,
+    "embedding_dimension": 384,
+    "embedding_runtime_bin_dir_configured": true,
+    "ocr_worker_ticks": 25,
+    "embedding_worker_ticks": 25,
+    "query_set_min_queries": 500,
+    "baseline_min_documents": 8000,
+    "baseline_min_queries": 500
+  },
+  "preflight_probes": {
+    "ocr_runtime_probe": "passed",
+    "embedding_protocol": "passed"
+  },
+  "corpus_summary_observability": {
+    "document_status_counts": {"imported": 9000, "ocr_required": 1200},
+    "ingest_job_status_counts": {"queued": 1200, "completed": 7800},
+    "ingest_job_kind_status_counts": {"ocr": {"queued": 1200, "completed": 7800}},
+    "ingest_job_failure_counts": {}
+  },
+  "steps": [
+    {"id": "ocr_preflight", "status": "success"},
+    {"id": "ocr_manifest_draft", "status": "success"},
+    {"id": "ocr_manifest_validate", "status": "success"},
+    {"id": "model_manifest_draft", "status": "success"},
+    {"id": "model_manifest_validate", "status": "success"},
+    {"id": "model_preflight", "status": "success"},
+    {"id": "dataset_manifest", "status": "success"},
+    {"id": "import_private_corpus", "status": "success"},
+    {"id": "ocr_worker_bounded_loop", "status": "blocked", "exit_code": 1}
+  ],
+  "redacted_outputs": [
+    {"file": "dataset-manifest.local.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"file": "ocr-runtime-manifest.local.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+    {"file": "ocr-preflight.json", "sha256": "1212121212121212121212121212121212121212121212121212121212121212"},
+    {"file": "model-manifest.local.json", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+    {"file": "model-preflight.json", "sha256": "1717171717171717171717171717171717171717171717171717171717171717"},
+    {"file": "ocr-worker.stdout.txt", "sha256": "1919191919191919191919191919191919191919191919191919191919191919"},
+    {"file": "private-query-set.local.jsonl", "sha256": null}
+  ],
+  "privacy_sentinels": {
+    "local_paths_included": false,
+    "raw_resume_text_included": false,
+    "raw_query_text_included": false,
+    "model_bytes_included": false,
+    "runtime_binaries_included": false,
+    "report_bodies_included": false
+  },
+  "not_completed": [
+    "full 10k/8000-document current-stage baseline",
+    "500-query private baseline gate",
+    "release-readiness current-stage evidence",
+    "P95/P99 latency reduction",
+    "stable release readiness"
+  ],
+  "must_not_upload": [
+    "raw resumes",
+    "query set",
+    "local manifests",
+    "benchmark reports",
+    "diagnostics",
+    "indexes",
+    "SQLite databases",
+    "model caches",
+    "runtime binaries"
+  ]
+}
+JSON
 
 set +e
 "$CARGO_BIN" run --quiet -p resume-cli --locked -- \
@@ -341,6 +432,7 @@ set +e
   --windows-installer-lifecycle-plan "$windows_installer_lifecycle_plan" \
   --windows-service-lifecycle-plan "$windows_service_lifecycle_plan" \
   --current-stage-evidence "$current_stage_evidence" \
+  --current-stage-blocked-summary "$current_stage_blocked_summary" \
   > "$evidence_stdout_file" 2> "$evidence_stderr_file"
 evidence_status=$?
 set -e
@@ -362,10 +454,14 @@ require_text "$evidence_stdout_file" '"label": "macOS installer lifecycle plan e
 require_text "$evidence_stdout_file" '"label": "Windows installer lifecycle plan evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows service lifecycle plan evidence"'
 require_text "$evidence_stdout_file" '"label": "current-stage validation evidence manifest"'
+require_text "$evidence_stdout_file" '"label": "current-stage blocked handoff"'
 require_text "$evidence_stdout_file" '"privacy_boundary": "blocked_release_evidence_manifest"'
 require_text "$evidence_stdout_file" '"privacy_boundary": "local_only_redacted_evidence_manifest"'
+require_text "$evidence_stdout_file" '"privacy_boundary": "local_only_redacted_blocked_summary"'
 require_text "$evidence_stdout_file" "blocked dry-run evidence passed schema and boundary checks"
 require_text "$evidence_stdout_file" "current-stage validation evidence manifest passed redacted schema and digest checks"
+require_text "$evidence_stdout_file" "current-stage blocked summary passed redacted handoff checks"
+require_text "$evidence_stdout_file" "does not clear full baseline evidence"
 require_text "$evidence_stdout_file" "release.artifacts.v1 dry-run manifest passed schema and artifact boundary checks"
 require_text "$evidence_stdout_file" "SPDX-2.3 release dry-run SBOM passed redaction and package boundary checks"
 require_text "$evidence_stdout_file" "release.macos_package.v1 unsigned dry-run manifest passed package boundary checks"
@@ -406,6 +502,7 @@ require_text "$runbook" "--vector-quality-report private-vector-quality.json"
 require_text "$runbook" "--ocr-throughput-report private-ocr-throughput.json"
 require_text "$runbook" "--diagnostics-report redacted-diagnostics.json"
 require_text "$runbook" "--current-stage-evidence current-stage-validation-evidence.json"
+require_text "$runbook" "--current-stage-blocked-summary current-stage-blocked-summary.json"
 require_text "$runbook" "--release-artifact-manifest release-artifacts.json"
 require_text "$runbook" "--release-sbom release-sbom.json"
 require_text "$runbook" "--macos-package-manifest macos-package.json"
@@ -433,6 +530,9 @@ require_text "$runbook" "Windows service lifecycle plan evidence"
 require_text "$runbook" "release.windows_service_lifecycle_plan.v1"
 require_text "$runbook" "current-stage validation evidence manifest"
 require_text "$runbook" "local_only_redacted_evidence_manifest"
+require_text "$runbook" "current-stage blocked handoff"
+require_text "$runbook" "local_only_redacted_blocked_summary"
+require_text "$runbook" "non-clearing handoff context"
 require_text "$runbook" "redacted diagnostics evidence"
 require_text "$runbook" "provided_evidence"
 require_text "$runbook" "hardware fault drills"

@@ -159,6 +159,7 @@ const RELEASE_READINESS_WINDOWS_SERVICE_LIFECYCLE_PLAN_LABEL: &str =
     "Windows service lifecycle plan evidence";
 const RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL: &str =
     "current-stage validation evidence manifest";
+const RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL: &str = "current-stage blocked handoff";
 const RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS: usize = 8_000;
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     (
@@ -467,7 +468,7 @@ fn release_readiness_goal_gap_matrix_json() -> serde_json::Value {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>] [--macos-installer-lifecycle-plan <path>] [--windows-installer-lifecycle-plan <path>] [--windows-service-lifecycle-plan <path>]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--current-stage-blocked-summary <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>] [--macos-installer-lifecycle-plan <path>] [--windows-installer-lifecycle-plan <path>] [--windows-service-lifecycle-plan <path>]"
 }
 
 #[derive(Default)]
@@ -481,6 +482,7 @@ struct ReleaseReadinessEvidenceArgs {
     ocr_runtime_manifest: Option<PathBuf>,
     diagnostics_report: Option<PathBuf>,
     current_stage_evidence: Option<PathBuf>,
+    current_stage_blocked_summary: Option<PathBuf>,
     release_artifact_manifest: Option<PathBuf>,
     release_sbom: Option<PathBuf>,
     macos_package_manifest: Option<PathBuf>,
@@ -561,6 +563,10 @@ fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs>
             }
             "--current-stage-evidence" => {
                 parsed.evidence.current_stage_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--current-stage-blocked-summary" => {
+                parsed.evidence.current_stage_blocked_summary =
                     Some(take_release_readiness_path(args, &mut index)?);
             }
             "--release-artifact-manifest" => {
@@ -754,6 +760,20 @@ fn validate_release_readiness_evidence(
             privacy_boundary: "local_only_redacted_evidence_manifest",
             detail:
                 "current-stage validation evidence manifest passed redacted schema and digest checks",
+        });
+    }
+    if let Some(path) = &args.current_stage_blocked_summary {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_current_stage_blocked_summary_manifest(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL,
+            privacy_boundary: "local_only_redacted_blocked_summary",
+            detail: "current-stage blocked summary passed redacted handoff checks; it does not clear full baseline evidence",
         });
     }
     if let Some(path) = &args.release_artifact_manifest {
@@ -1175,6 +1195,189 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         require_release_evidence_bool(privacy_sentinels, key, false, CONTEXT)?;
     }
 
+    for item in [
+        "raw resumes",
+        "query set",
+        "local manifests",
+        "benchmark reports",
+        "diagnostics",
+        "indexes",
+        "SQLite databases",
+        "model caches",
+        "runtime binaries",
+    ] {
+        require_release_evidence_array_contains_string(object, "must_not_upload", item, CONTEXT)?;
+    }
+
+    Ok(())
+}
+
+fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
+    const CONTEXT: &str = "current-stage blocked summary";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+        || report.contains("PRIVATE-")
+        || report.contains("private fake query")
+    {
+        return Err(CliError::user(
+            "current-stage blocked summary blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("current-stage blocked summary blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("current-stage blocked summary blocked: expected JSON object")
+    })?;
+
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "resume-ir.current-stage-blocked-summary.v1",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "privacy_boundary",
+        "local_only_redacted_blocked_summary",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(object, "validation_profile", "full", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "current_stage_target",
+        "reproducible_local_10k_baseline",
+        CONTEXT,
+    )?;
+    require_release_evidence_bool_value(object, "private_corpus_read", CONTEXT)?;
+    require_release_evidence_bool_value(object, "full_baseline_satisfied", CONTEXT)?;
+    require_release_evidence_bool(object, "release_readiness_evidence", false, CONTEXT)?;
+    require_release_evidence_bool(object, "performance_optimization_deferred", true, CONTEXT)?;
+    let blocked_step = require_release_evidence_non_empty_string(object, "blocked_step", CONTEXT)?;
+    let blocked_category =
+        require_release_evidence_non_empty_string(object, "blocked_category", CONTEXT)?;
+    if ![
+        "ocr",
+        "embedding",
+        "import/parser",
+        "query-set",
+        "benchmark",
+        "diagnostics",
+        "fault-injection",
+        "release-readiness",
+    ]
+    .contains(&blocked_category)
+    {
+        return Err(release_evidence_invalid(CONTEXT, "blocked_category"));
+    }
+    require_release_evidence_non_empty_string(object, "blocked_reason", CONTEXT)?;
+    let blocked_exit =
+        require_release_evidence_positive_u64_value(object, "blocked_exit", CONTEXT)?;
+
+    let input_digests = require_release_evidence_object(object, "input_digests", CONTEXT)?;
+    for key in [
+        "dataset_manifest_sha256",
+        "query_set_sha256",
+        "model_manifest_sha256",
+        "ocr_runtime_manifest_sha256",
+    ] {
+        require_release_evidence_optional_sha256_value(input_digests, key, CONTEXT)?;
+    }
+
+    let parameters = require_release_evidence_object(object, "parameters", CONTEXT)?;
+    require_release_evidence_min_u64(parameters, "max_files", 8000, CONTEXT)?;
+    require_release_evidence_min_u64(parameters, "max_queries", 500, CONTEXT)?;
+    require_release_evidence_min_u64(parameters, "baseline_min_documents", 8000, CONTEXT)?;
+    require_release_evidence_min_u64(parameters, "baseline_min_queries", 500, CONTEXT)?;
+    for key in [
+        "top_k",
+        "embedding_dimension",
+        "ocr_worker_ticks",
+        "embedding_worker_ticks",
+        "query_set_min_queries",
+    ] {
+        require_release_evidence_positive_u64(parameters, key, CONTEXT)?;
+    }
+    require_release_evidence_bool_value(
+        parameters,
+        "embedding_runtime_bin_dir_configured",
+        CONTEXT,
+    )?;
+
+    let preflight_probes = require_release_evidence_object(object, "preflight_probes", CONTEXT)?;
+    for key in ["ocr_runtime_probe", "embedding_protocol"] {
+        let status = require_release_evidence_string_value(preflight_probes, key, CONTEXT)?;
+        if !["passed", "blocked", "not_run"].contains(&status) {
+            return Err(release_evidence_invalid(CONTEXT, key));
+        }
+    }
+
+    if let Some(observability) = object.get("corpus_summary_observability") {
+        validate_current_stage_aggregate_observability(observability, CONTEXT)?;
+    }
+
+    let steps = require_release_evidence_array(object, "steps", CONTEXT)?;
+    let mut seen_steps = BTreeSet::new();
+    let mut saw_blocked_step = false;
+    for step in steps {
+        let step = step
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "steps"))?;
+        let id = require_release_evidence_non_empty_string(step, "id", CONTEXT)?;
+        let status = require_release_evidence_string_value(step, "status", CONTEXT)?;
+        if !["success", "blocked", "expected_blocked"].contains(&status) {
+            return Err(release_evidence_invalid(CONTEXT, "steps"));
+        }
+        if !seen_steps.insert(id.to_string()) {
+            return Err(release_evidence_invalid(CONTEXT, "steps"));
+        }
+        if status == "blocked" {
+            let exit_code =
+                require_release_evidence_positive_u64_value(step, "exit_code", CONTEXT)?;
+            if id == blocked_step && exit_code == blocked_exit {
+                saw_blocked_step = true;
+            }
+        }
+    }
+    if !saw_blocked_step {
+        return Err(release_evidence_invalid(CONTEXT, "steps"));
+    }
+
+    let redacted_outputs = require_release_evidence_array(object, "redacted_outputs", CONTEXT)?;
+    let mut seen_outputs = BTreeSet::new();
+    let mut saw_output_digest = false;
+    for output in redacted_outputs {
+        let output = output
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "redacted_outputs"))?;
+        let file = require_release_evidence_string_value(output, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) || !seen_outputs.insert(file.to_string()) {
+            return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+        }
+        if require_release_evidence_optional_sha256_value(output, "sha256", CONTEXT)?.is_some() {
+            saw_output_digest = true;
+        }
+    }
+    if !saw_output_digest {
+        return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+    }
+
+    let privacy_sentinels = require_release_evidence_object(object, "privacy_sentinels", CONTEXT)?;
+    for key in [
+        "local_paths_included",
+        "raw_resume_text_included",
+        "raw_query_text_included",
+        "model_bytes_included",
+        "runtime_binaries_included",
+        "report_bodies_included",
+    ] {
+        require_release_evidence_bool(privacy_sentinels, key, false, CONTEXT)?;
+    }
+    require_release_evidence_array_contains_string(
+        object,
+        "not_completed",
+        "stable release readiness",
+        CONTEXT,
+    )?;
     for item in [
         "raw resumes",
         "query set",
@@ -1955,6 +2158,19 @@ fn require_release_evidence_string_value<'a>(
         .ok_or_else(|| release_evidence_invalid(context, key))
 }
 
+fn require_release_evidence_non_empty_string<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<&'a str> {
+    let value = require_release_evidence_string_value(object, key, context)?;
+    if value.trim().is_empty() {
+        Err(release_evidence_invalid(context, key))
+    } else {
+        Ok(value)
+    }
+}
+
 fn require_release_evidence_object<'a>(
     object: &'a serde_json::Map<String, serde_json::Value>,
     key: &str,
@@ -2069,6 +2285,31 @@ fn require_release_evidence_sha256_value<'a>(
     }
 }
 
+fn require_release_evidence_optional_sha256_value<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<Option<&'a str>> {
+    let Some(value) = object.get(key) else {
+        return Err(release_evidence_invalid(context, key));
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(value) = value.as_str() else {
+        return Err(release_evidence_invalid(context, key));
+    };
+    let is_sha256 = value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+    if is_sha256 {
+        Ok(Some(value))
+    } else {
+        Err(release_evidence_invalid(context, key))
+    }
+}
+
 fn require_release_evidence_output_digest(
     output_digests: &BTreeMap<String, String>,
     file: &str,
@@ -2091,6 +2332,17 @@ fn require_release_evidence_bool(
         Some(value) if value == expected => Ok(()),
         _ => Err(release_evidence_invalid(context, key)),
     }
+}
+
+fn require_release_evidence_bool_value(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<bool> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| release_evidence_invalid(context, key))
 }
 
 fn require_release_evidence_u64(
@@ -2126,6 +2378,51 @@ fn require_release_evidence_positive_u64(
         Some(value) if value > 0 => Ok(()),
         _ => Err(release_evidence_invalid(context, key)),
     }
+}
+
+fn require_release_evidence_positive_u64_value(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<u64> {
+    match object.get(key).and_then(serde_json::Value::as_u64) {
+        Some(value) if value > 0 => Ok(value),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn validate_current_stage_aggregate_observability(
+    value: &serde_json::Value,
+    context: &'static str,
+) -> Result<()> {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, nested) in object {
+                if !is_current_stage_aggregate_key(key) {
+                    return Err(release_evidence_invalid(
+                        context,
+                        "corpus_summary_observability",
+                    ));
+                }
+                validate_current_stage_aggregate_observability(nested, context)?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Number(number) if number.as_u64().is_some() => Ok(()),
+        serde_json::Value::Null => Ok(()),
+        _ => Err(release_evidence_invalid(
+            context,
+            "corpus_summary_observability",
+        )),
+    }
+}
+
+fn is_current_stage_aggregate_key(key: &str) -> bool {
+    !key.trim().is_empty()
+        && key.len() <= 80
+        && key.bytes().all(
+            |byte| matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-' | b'.'),
+        )
 }
 
 fn validate_release_evidence_version(version: &str, context: &'static str) -> Result<()> {

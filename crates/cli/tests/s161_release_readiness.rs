@@ -1050,6 +1050,120 @@ fn release_readiness_json_accepts_current_stage_evidence_without_clearing_blocke
 }
 
 #[test]
+fn release_readiness_json_accepts_current_stage_blocked_summary_without_clearing_blockers() {
+    let data_dir = temp_path("release-readiness-current-stage-blocked-private-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-blocked-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let blocked_summary = evidence_dir.join("current-stage-blocked-summary.json");
+    fs::write(&blocked_summary, current_stage_blocked_summary()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-blocked-summary",
+            path_str(&blocked_summary),
+        ])
+        .output()
+        .expect("run release readiness with current-stage blocked summary");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("release readiness blocked-summary json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let blocked_handoff = provided
+        .iter()
+        .find(|evidence| evidence["label"] == "current-stage blocked handoff")
+        .expect("current-stage blocked handoff evidence");
+    assert_eq!(blocked_handoff["status"], "provided");
+    assert_eq!(
+        blocked_handoff["privacy_boundary"],
+        "local_only_redacted_blocked_summary"
+    );
+    assert!(blocked_handoff["detail"]
+        .as_str()
+        .unwrap()
+        .contains("does not clear full baseline evidence"));
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(blocker_labels.contains(&"private real-corpus performance evidence"));
+    assert!(blocker_labels.contains(&"OCR throughput"));
+    assert!(blocker_labels.contains(&"redacted diagnostics evidence"));
+    assert!(blocker_labels.contains(&"embedding model license/distribution"));
+    assert!(!blocker_labels.contains(&"current-stage blocked handoff"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stdout.contains("private fake query"));
+    assert!(!stdout.contains("/Users/"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_current_stage_blocked_summary_with_private_marker_without_path_leaks()
+{
+    let data_dir = temp_path("release-readiness-current-stage-blocked-leak-private-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-blocked-leak-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let blocked_summary = evidence_dir.join("current-stage-blocked-summary.json");
+    fs::write(
+        &blocked_summary,
+        current_stage_blocked_summary().replace(
+            "\"blocked_reason\":\"ocr_backlog_exceeds_current_stage_budget\"",
+            "\"blocked_reason\":\"PRIVATE-current-stage\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-blocked-summary",
+            path_str(&blocked_summary),
+        ])
+        .output()
+        .expect("run release readiness with private-marker blocked summary");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("current-stage blocked handoff"));
+    assert!(stderr.contains("private marker"));
+    assert!(!stderr.contains(path_str(&blocked_summary)));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE-current-stage"));
+    assert!(!stderr.contains("PRIVATE-current-stage"));
+    assert!(!stdout.contains("/Users/"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_current_stage_evidence_missing_local_flow_output_without_path_leaks() {
     let data_dir = temp_path("release-readiness-current-stage-missing-output-private-data");
     let evidence_dir = temp_path("release-readiness-current-stage-missing-output-private-reports");
@@ -1904,6 +2018,100 @@ fn current_stage_evidence_manifest() -> String {
         "\"runtime_binaries_included\":false,",
         "\"report_bodies_included\":false",
         "},",
+        "\"must_not_upload\":[",
+        "\"raw resumes\",",
+        "\"query set\",",
+        "\"local manifests\",",
+        "\"benchmark reports\",",
+        "\"diagnostics\",",
+        "\"indexes\",",
+        "\"SQLite databases\",",
+        "\"model caches\",",
+        "\"runtime binaries\"",
+        "]",
+        "}"
+    )
+    .to_string()
+}
+
+fn current_stage_blocked_summary() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"resume-ir.current-stage-blocked-summary.v1\",",
+        "\"privacy_boundary\":\"local_only_redacted_blocked_summary\",",
+        "\"validation_profile\":\"full\",",
+        "\"current_stage_target\":\"reproducible_local_10k_baseline\",",
+        "\"private_corpus_read\":true,",
+        "\"full_baseline_satisfied\":false,",
+        "\"release_readiness_evidence\":false,",
+        "\"performance_optimization_deferred\":true,",
+        "\"blocked_step\":\"ocr_worker_bounded_loop\",",
+        "\"blocked_category\":\"ocr\",",
+        "\"blocked_reason\":\"ocr_backlog_exceeds_current_stage_budget\",",
+        "\"blocked_exit\":1,",
+        "\"input_digests\":{",
+        "\"dataset_manifest_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",",
+        "\"query_set_sha256\":null,",
+        "\"model_manifest_sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",",
+        "\"ocr_runtime_manifest_sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"",
+        "},",
+        "\"parameters\":{",
+        "\"max_files\":10000,",
+        "\"max_queries\":500,",
+        "\"top_k\":10,",
+        "\"embedding_dimension\":384,",
+        "\"embedding_runtime_bin_dir_configured\":true,",
+        "\"ocr_worker_ticks\":25,",
+        "\"embedding_worker_ticks\":25,",
+        "\"query_set_min_queries\":500,",
+        "\"baseline_min_documents\":8000,",
+        "\"baseline_min_queries\":500",
+        "},",
+        "\"preflight_probes\":{",
+        "\"ocr_runtime_probe\":\"passed\",",
+        "\"embedding_protocol\":\"passed\"",
+        "},",
+        "\"corpus_summary_observability\":{",
+        "\"document_status_counts\":{\"imported\":9000,\"ocr_required\":1200},",
+        "\"ingest_job_status_counts\":{\"queued\":1200,\"completed\":7800},",
+        "\"ingest_job_kind_status_counts\":{\"ocr\":{\"queued\":1200,\"completed\":7800}},",
+        "\"ingest_job_failure_counts\":{}",
+        "},",
+        "\"steps\":[",
+        "{\"id\":\"ocr_preflight\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_manifest_draft\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_manifest_validate\",\"status\":\"success\"},",
+        "{\"id\":\"model_manifest_draft\",\"status\":\"success\"},",
+        "{\"id\":\"model_manifest_validate\",\"status\":\"success\"},",
+        "{\"id\":\"model_preflight\",\"status\":\"success\"},",
+        "{\"id\":\"dataset_manifest\",\"status\":\"success\"},",
+        "{\"id\":\"import_private_corpus\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_worker_bounded_loop\",\"status\":\"blocked\",\"exit_code\":1}",
+        "],",
+        "\"redacted_outputs\":[",
+        "{\"file\":\"dataset-manifest.local.json\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},",
+        "{\"file\":\"ocr-runtime-manifest.local.json\",\"sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"},",
+        "{\"file\":\"ocr-preflight.json\",\"sha256\":\"1212121212121212121212121212121212121212121212121212121212121212\"},",
+        "{\"file\":\"model-manifest.local.json\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},",
+        "{\"file\":\"model-preflight.json\",\"sha256\":\"1717171717171717171717171717171717171717171717171717171717171717\"},",
+        "{\"file\":\"ocr-worker.stdout.txt\",\"sha256\":\"1919191919191919191919191919191919191919191919191919191919191919\"},",
+        "{\"file\":\"private-query-set.local.jsonl\",\"sha256\":null}",
+        "],",
+        "\"privacy_sentinels\":{",
+        "\"local_paths_included\":false,",
+        "\"raw_resume_text_included\":false,",
+        "\"raw_query_text_included\":false,",
+        "\"model_bytes_included\":false,",
+        "\"runtime_binaries_included\":false,",
+        "\"report_bodies_included\":false",
+        "},",
+        "\"not_completed\":[",
+        "\"full 10k/8000-document current-stage baseline\",",
+        "\"500-query private baseline gate\",",
+        "\"release-readiness current-stage evidence\",",
+        "\"P95/P99 latency reduction\",",
+        "\"stable release readiness\"",
+        "],",
         "\"must_not_upload\":[",
         "\"raw resumes\",",
         "\"query set\",",

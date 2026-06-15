@@ -145,8 +145,11 @@ before query-set generation and writes `current-stage-blocked-summary.json` with
 `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`. The blocked
 summary records the diagnostics output only by basename and SHA-256 digest. This
 is the expected current-stage handoff for an OCR-heavy private corpus; it is not
-release-readiness evidence and must not be used to claim the 10k/8000-document
-baseline is complete.
+release-clearing evidence and must not be passed to `--current-stage-evidence`
+or used to claim the 10k/8000-document baseline is complete. It may be passed to
+`release-readiness --current-stage-blocked-summary` only as non-clearing
+operator handoff evidence; the full baseline and stable release blockers must
+remain blocked.
 The smoke and benchmark-blocked summaries copy those safe counts under
 `corpus_summary_observability`, so a handoff can classify blockers from the
 summary itself. The full release-readiness evidence manifest still records only
@@ -169,7 +172,9 @@ must-not-upload categories, and not-complete/BLOCKED items. It fails closed if
 the input contains private markers or local path shapes. The handoff report is
 for operator continuity only: it is not release-readiness evidence, not a
 substitute for the full current-stage validation evidence manifest, and not
-proof that the complete product is done.
+proof that the complete product is done. Pass the blocked summary itself, not
+the handoff report, to `--current-stage-blocked-summary` when release-readiness
+needs structured non-clearing blocked-state context.
 
 ```bash
 scripts/local/run-current-stage-validation.sh --dry-run \
@@ -263,10 +268,13 @@ gate fails, execute mode writes `current-stage-blocked-summary.json` with schema
 `release-readiness`. That file records the blocked step/category/reason, input
 digests, preflight probe statuses, completed step statuses,
 `corpus_summary_observability` aggregate counts, and basename-only output
-digests. It is not release-readiness evidence and must not be passed to
-`--current-stage-evidence`; it exists so the next operator can see whether the
-failure was benchmark coverage/query/gate related without exposing local paths,
-private query text, report bodies, indexes, or diagnostics.
+digests. It is not release-clearing evidence and must not be passed to
+`--current-stage-evidence`; after review it may be passed to
+`--current-stage-blocked-summary` only to record a structured blocked handoff in
+release-readiness without clearing the private real-corpus baseline blocker. It
+exists so the next operator can see whether the failure was benchmark
+coverage/query/gate related without exposing local paths, private query text,
+report bodies, indexes, or diagnostics.
 When the baseline shape gate fails, treat the full current-stage baseline as
 not complete and continue from the blocked summary rather than reading private
 reports directly.
@@ -490,6 +498,20 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --windows-service-lifecycle-plan windows-service-lifecycle-dry-run.json
 ```
 
+If the full current-stage execute flow stops before producing
+`current-stage-validation-evidence.json`, validate the redacted blocked summary
+as non-clearing handoff context instead:
+
+```bash
+resume-cli --data-dir <local-data-dir> release-readiness --json \
+  --current-stage-blocked-summary current-stage-blocked-summary.json
+```
+
+This records `current-stage blocked handoff` under `provided_evidence` with
+privacy boundary `local_only_redacted_blocked_summary`; it does not clear the
+private real-corpus baseline, OCR throughput, diagnostics, model, runtime,
+quality, platform, signing, or hardware fault-drill blockers.
+
 Passing these local evidence inputs marks only the corresponding local evidence
 items as `provided_evidence`; aggregate reports and redacted diagnostics evidence
 are marked `redacted_local_aggregate`, and reviewed model/OCR manifests are marked
@@ -500,9 +522,10 @@ package dry-run manifests are marked
 `blocked_release_evidence_manifest`. The current-stage validation evidence
 manifest is marked `local_only_redacted_evidence_manifest`; it records the
 local operator flow, input/output digests, step statuses, and privacy sentinels,
-but it does not replace the benchmark, quality, model, OCR runtime, signing,
-notarization, installer, platform, diagnostics, or hardware-drill evidence
-items. The labels are:
+and the current-stage blocked handoff is marked
+`local_only_redacted_blocked_summary`; neither replaces the benchmark, quality,
+model, OCR runtime, signing, notarization, installer, platform, diagnostics, or
+hardware-drill evidence items. The labels are:
 
 - signing automation evidence
 - notarization automation evidence
@@ -517,6 +540,7 @@ items. The labels are:
 - Windows installer lifecycle plan evidence
 - Windows service lifecycle plan evidence
 - current-stage validation evidence manifest
+- current-stage blocked handoff
 
 Those automation and dry-run manifest evidence entries prove only that
 fail-closed automation, schema checks, redacted artifact inventory, and redacted
