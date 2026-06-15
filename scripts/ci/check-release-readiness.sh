@@ -187,6 +187,8 @@ windows_package="$tmpdir/windows-package.json"
 macos_installer_evidence="$tmpdir/macos-installer-evidence.json"
 windows_installer_evidence="$tmpdir/windows-installer-evidence.json"
 windows_service_evidence="$tmpdir/windows-service-evidence.json"
+macos_installer_lifecycle_plan="$tmpdir/macos-installer-lifecycle-dry-run.json"
+windows_installer_lifecycle_plan="$tmpdir/windows-installer-lifecycle-dry-run.json"
 windows_service_lifecycle_plan="$tmpdir/windows-service-lifecycle-dry-run.json"
 current_stage_evidence="$tmpdir/current-stage-validation-evidence.json"
 evidence_stdout_file="$tmpdir/evidence-stdout.txt"
@@ -218,6 +220,12 @@ cat > "$windows_installer_evidence" <<'JSON'
 JSON
 cat > "$windows_service_evidence" <<'JSON'
 {"schema_version":"release.windows_service_evidence.v1","version":"v0.0.0","service_lifecycle_status":"blocked","evidence_boundary":"dry_run_no_windows_service_registration","windows_package_manifest_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","required_evidence":["service_install_validation"],"blocked_release_steps":["windows_service_install"],"planned_actions":[{"action":"install","action_status":"blocked"}]}
+JSON
+cat > "$macos_installer_lifecycle_plan" <<'JSON'
+{"schema_version":"release.macos_installer_lifecycle_plan.v1","version":"v0.0.0","execution_mode":"dry_run","installer_lifecycle_status":"blocked","evidence_boundary":"dry_run_no_macos_installer_execution","macos_package_manifest_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","admin_elevation":"required_not_observed","release_runner":"macos_required_not_observed","installer_artifacts":[{"kind":"pkg","file":"resume-ir-v0.0.0-macos.pkg","artifact_sha256":"4444444444444444444444444444444444444444444444444444444444444444","bytes":404},{"kind":"dmg","file":"resume-ir-v0.0.0-macos.dmg","artifact_sha256":"5555555555555555555555555555555555555555555555555555555555555555","bytes":505}],"planned_actions":[{"action":"install","command":"installer","target_artifact":"resume-ir-v0.0.0-macos.pkg","dry_run_intent":"validate administrator-elevated pkg install on release runner","requires_approval":true,"action_status":"blocked"},{"action":"upgrade","command":"installer","target_artifact":"resume-ir-v0.0.0-macos.pkg","dry_run_intent":"install prior version, upgrade, and verify binary replacement","requires_approval":true,"action_status":"blocked"},{"action":"uninstall","command":"pkgutil","target_artifact":"resume-ir-v0.0.0-macos.pkg","dry_run_intent":"forget package receipt and remove installed files while preserving user data","requires_approval":true,"action_status":"blocked"},{"action":"rollback","command":"installer","target_artifact":"resume-ir-v0.0.0-macos.pkg","dry_run_intent":"force installer failure and verify system state restoration","requires_approval":true,"action_status":"blocked"},{"action":"launch-agent-start","command":"launchctl","target_artifact":"resume-ir-v0.0.0-macos.dmg","dry_run_intent":"bootstrap LaunchAgent and verify daemon IPC health","requires_approval":true,"action_status":"blocked"},{"action":"launch-agent-stop","command":"launchctl","target_artifact":"resume-ir-v0.0.0-macos.dmg","dry_run_intent":"stop and bootout LaunchAgent and verify daemon shutdown","requires_approval":true,"action_status":"blocked"}],"blocked_release_steps":["macos_pkg_install","macos_pkg_upgrade","macos_pkg_uninstall","macos_pkg_rollback","macos_launch_agent_start","macos_launch_agent_stop"],"prohibited_public_material":["installer_tokens","administrator_passwords","local_paths","raw_installer_logs","raw_resume_data","diagnostic_packages","model_artifact_caches"],"notes":"Dry-run operator plan only. It does not execute installer lifecycle commands or clear release blockers; release-runner transcripts are required before stable release."}
+JSON
+cat > "$windows_installer_lifecycle_plan" <<'JSON'
+{"schema_version":"release.windows_installer_lifecycle_plan.v1","version":"v0.0.0","execution_mode":"dry_run","installer_lifecycle_status":"blocked","evidence_boundary":"dry_run_no_windows_installer_execution","windows_package_manifest_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","installer_engine":"msiexec.exe","admin_elevation":"required_not_observed","release_runner":"windows_required_not_observed","installation_status":"not_installed","rollback_validation_status":"blocked","installer_artifacts":[{"kind":"msi","file":"resume-ir-v0.0.0-windows.msi","artifact_sha256":"6666666666666666666666666666666666666666666666666666666666666666","bytes":606}],"planned_actions":[{"action":"install","command":"msiexec.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"validate administrator-elevated MSI install on release runner","requires_approval":true,"action_status":"blocked"},{"action":"upgrade","command":"msiexec.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"install prior version, upgrade, and verify binary replacement","requires_approval":true,"action_status":"blocked"},{"action":"repair","command":"msiexec.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"run MSI repair and verify installed-file integrity","requires_approval":true,"action_status":"blocked"},{"action":"uninstall","command":"msiexec.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"uninstall MSI and verify user-data preservation","requires_approval":true,"action_status":"blocked"},{"action":"rollback","command":"msiexec.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"force MSI failure and verify rollback state restoration","requires_approval":true,"action_status":"blocked"}],"blocked_release_steps":["windows_msi_install","windows_msi_upgrade","windows_msi_repair","windows_msi_uninstall","windows_msi_rollback"],"prohibited_public_material":["installer_tokens","administrator_passwords","local_paths","raw_installer_logs","raw_resume_data","diagnostic_packages","model_artifact_caches"],"notes":"Dry-run operator plan only. It does not execute installer lifecycle commands or clear release blockers; release-runner transcripts are required before stable release."}
 JSON
 cat > "$windows_service_lifecycle_plan" <<'JSON'
 {"schema_version":"release.windows_service_lifecycle_plan.v1","version":"v0.0.0","execution_mode":"dry_run","service_lifecycle_status":"blocked","evidence_boundary":"dry_run_no_windows_service_registration","windows_package_manifest_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","service_manager":"sc.exe","admin_elevation":"required_not_observed","release_runner":"windows_required_not_observed","registration_status":"not_registered","recovery_validation_status":"blocked","rollback_validation_status":"blocked","service_artifacts":[{"kind":"msi","file":"resume-ir-v0.0.0-windows.msi","artifact_sha256":"6666666666666666666666666666666666666666666666666666666666666666","bytes":606,"service_validation_status":"not_executed"}],"planned_actions":[{"action":"install","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"register Windows Service after administrator-elevated MSI install and verify binary binding","requires_approval":true,"action_status":"blocked"},{"action":"start","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"start service and verify daemon IPC health","requires_approval":true,"action_status":"blocked"},{"action":"status","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"query service status on release Windows runner","requires_approval":true,"action_status":"blocked"},{"action":"stop","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"stop service and verify daemon shutdown","requires_approval":true,"action_status":"blocked"},{"action":"recovery","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"configure and prove restart-after-kill recovery policy","requires_approval":true,"action_status":"blocked"},{"action":"uninstall","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"delete service registration while preserving user data","requires_approval":true,"action_status":"blocked"},{"action":"rollback","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"force service install/start failure and verify rollback state restoration","requires_approval":true,"action_status":"blocked"}],"blocked_release_steps":["windows_service_install","windows_service_start","windows_service_status","windows_service_stop","windows_service_recovery","windows_service_uninstall","windows_service_rollback"],"prohibited_public_material":["service_tokens","administrator_passwords","local_paths","raw_service_logs","raw_resume_data","diagnostic_packages","model_artifact_caches"],"notes":"Dry-run operator plan only. It does not register, start, stop, query, recover, uninstall, or roll back a Windows service; release-runner transcripts are required before stable release."}
@@ -327,6 +335,8 @@ set +e
   --macos-installer-evidence "$macos_installer_evidence" \
   --windows-installer-evidence "$windows_installer_evidence" \
   --windows-service-evidence "$windows_service_evidence" \
+  --macos-installer-lifecycle-plan "$macos_installer_lifecycle_plan" \
+  --windows-installer-lifecycle-plan "$windows_installer_lifecycle_plan" \
   --windows-service-lifecycle-plan "$windows_service_lifecycle_plan" \
   --current-stage-evidence "$current_stage_evidence" \
   > "$evidence_stdout_file" 2> "$evidence_stderr_file"
@@ -346,6 +356,8 @@ require_text "$evidence_stdout_file" '"label": "Windows package manifest evidenc
 require_text "$evidence_stdout_file" '"label": "macOS installer automation evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows installer automation evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows service automation evidence"'
+require_text "$evidence_stdout_file" '"label": "macOS installer lifecycle plan evidence"'
+require_text "$evidence_stdout_file" '"label": "Windows installer lifecycle plan evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows service lifecycle plan evidence"'
 require_text "$evidence_stdout_file" '"label": "current-stage validation evidence manifest"'
 require_text "$evidence_stdout_file" '"privacy_boundary": "blocked_release_evidence_manifest"'
@@ -356,6 +368,8 @@ require_text "$evidence_stdout_file" "release.artifacts.v1 dry-run manifest pass
 require_text "$evidence_stdout_file" "SPDX-2.3 release dry-run SBOM passed redaction and package boundary checks"
 require_text "$evidence_stdout_file" "release.macos_package.v1 unsigned dry-run manifest passed package boundary checks"
 require_text "$evidence_stdout_file" "release.windows_package.v1 unsigned dry-run manifest passed package boundary checks"
+require_text "$evidence_stdout_file" "release.macos_installer_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks"
+require_text "$evidence_stdout_file" "release.windows_installer_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks"
 require_text "$evidence_stdout_file" "release.windows_service_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks"
 require_text "$evidence_stdout_file" '"label": "signing certificates"'
 require_text "$evidence_stdout_file" '"label": "macOS notarization"'
@@ -399,6 +413,8 @@ require_text "$runbook" "--notarization-evidence notarization-evidence.json"
 require_text "$runbook" "--macos-installer-evidence macos-installer-evidence.json"
 require_text "$runbook" "--windows-installer-evidence windows-installer-evidence.json"
 require_text "$runbook" "--windows-service-evidence windows-service-evidence.json"
+require_text "$runbook" "--macos-installer-lifecycle-plan macos-installer-lifecycle-dry-run.json"
+require_text "$runbook" "--windows-installer-lifecycle-plan windows-installer-lifecycle-dry-run.json"
 require_text "$runbook" "--windows-service-lifecycle-plan windows-service-lifecycle-dry-run.json"
 require_text "$runbook" "blocked_release_evidence_manifest"
 require_text "$runbook" "release artifact manifest evidence"
@@ -406,6 +422,10 @@ require_text "$runbook" "release SBOM evidence"
 require_text "$runbook" "macOS package manifest evidence"
 require_text "$runbook" "Windows package manifest evidence"
 require_text "$runbook" "signing automation evidence"
+require_text "$runbook" "macOS installer lifecycle plan evidence"
+require_text "$runbook" "Windows installer lifecycle plan evidence"
+require_text "$runbook" "release.macos_installer_lifecycle_plan.v1"
+require_text "$runbook" "release.windows_installer_lifecycle_plan.v1"
 require_text "$runbook" "Windows service automation evidence"
 require_text "$runbook" "Windows service lifecycle plan evidence"
 require_text "$runbook" "release.windows_service_lifecycle_plan.v1"

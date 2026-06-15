@@ -151,6 +151,10 @@ const RELEASE_READINESS_WINDOWS_INSTALLER_AUTOMATION_LABEL: &str =
     "Windows installer automation evidence";
 const RELEASE_READINESS_WINDOWS_SERVICE_AUTOMATION_LABEL: &str =
     "Windows service automation evidence";
+const RELEASE_READINESS_MACOS_INSTALLER_LIFECYCLE_PLAN_LABEL: &str =
+    "macOS installer lifecycle plan evidence";
+const RELEASE_READINESS_WINDOWS_INSTALLER_LIFECYCLE_PLAN_LABEL: &str =
+    "Windows installer lifecycle plan evidence";
 const RELEASE_READINESS_WINDOWS_SERVICE_LIFECYCLE_PLAN_LABEL: &str =
     "Windows service lifecycle plan evidence";
 const RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL: &str =
@@ -463,7 +467,7 @@ fn release_readiness_goal_gap_matrix_json() -> serde_json::Value {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>] [--windows-service-lifecycle-plan <path>]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>] [--macos-installer-lifecycle-plan <path>] [--windows-installer-lifecycle-plan <path>] [--windows-service-lifecycle-plan <path>]"
 }
 
 #[derive(Default)]
@@ -486,6 +490,8 @@ struct ReleaseReadinessEvidenceArgs {
     macos_installer_evidence: Option<PathBuf>,
     windows_installer_evidence: Option<PathBuf>,
     windows_service_evidence: Option<PathBuf>,
+    macos_installer_lifecycle_plan: Option<PathBuf>,
+    windows_installer_lifecycle_plan: Option<PathBuf>,
     windows_service_lifecycle_plan: Option<PathBuf>,
 }
 
@@ -590,6 +596,14 @@ fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs>
             }
             "--windows-service-evidence" => {
                 parsed.evidence.windows_service_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--macos-installer-lifecycle-plan" => {
+                parsed.evidence.macos_installer_lifecycle_plan =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--windows-installer-lifecycle-plan" => {
+                parsed.evidence.windows_installer_lifecycle_plan =
                     Some(take_release_readiness_path(args, &mut index)?);
             }
             "--windows-service-lifecycle-plan" => {
@@ -833,6 +847,34 @@ fn validate_release_readiness_evidence(
             label: RELEASE_READINESS_WINDOWS_SERVICE_AUTOMATION_LABEL,
             privacy_boundary: "blocked_release_evidence_manifest",
             detail: "release.windows_service_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.macos_installer_lifecycle_plan {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_macos_installer_lifecycle_plan_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_MACOS_INSTALLER_LIFECYCLE_PLAN_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_MACOS_INSTALLER_LIFECYCLE_PLAN_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.macos_installer_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.windows_installer_lifecycle_plan {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_windows_installer_lifecycle_plan_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_WINDOWS_INSTALLER_LIFECYCLE_PLAN_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_WINDOWS_INSTALLER_LIFECYCLE_PLAN_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.windows_installer_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks",
         });
     }
     if let Some(path) = &args.windows_service_lifecycle_plan {
@@ -1355,6 +1397,302 @@ fn validate_windows_package_manifest_report(report: &str) -> Result<()> {
         )?;
     }
 
+    Ok(())
+}
+
+struct InstallerLifecycleActionExpectation {
+    action: &'static str,
+    command: &'static str,
+    target_kind: &'static str,
+}
+
+fn validate_macos_installer_lifecycle_plan_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "macOS installer lifecycle plan";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "macOS installer lifecycle plan blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("macOS installer lifecycle plan blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("macOS installer lifecycle plan blocked: expected JSON object")
+    })?;
+
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.macos_installer_lifecycle_plan.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "execution_mode", "dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "installer_lifecycle_status", "blocked", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "evidence_boundary",
+        "dry_run_no_macos_installer_execution",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "macos_package_manifest_sha256", CONTEXT)?;
+    require_release_evidence_string(object, "admin_elevation", "required_not_observed", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "release_runner",
+        "macos_required_not_observed",
+        CONTEXT,
+    )?;
+
+    let artifacts = validate_installer_lifecycle_artifacts(object, CONTEXT, &["pkg", "dmg"])?;
+    validate_installer_lifecycle_actions(
+        object,
+        CONTEXT,
+        &artifacts,
+        &[
+            InstallerLifecycleActionExpectation {
+                action: "install",
+                command: "installer",
+                target_kind: "pkg",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "upgrade",
+                command: "installer",
+                target_kind: "pkg",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "uninstall",
+                command: "pkgutil",
+                target_kind: "pkg",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "rollback",
+                command: "installer",
+                target_kind: "pkg",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "launch-agent-start",
+                command: "launchctl",
+                target_kind: "dmg",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "launch-agent-stop",
+                command: "launchctl",
+                target_kind: "dmg",
+            },
+        ],
+    )?;
+    for step in [
+        "macos_pkg_install",
+        "macos_pkg_upgrade",
+        "macos_pkg_uninstall",
+        "macos_pkg_rollback",
+        "macos_launch_agent_start",
+        "macos_launch_agent_stop",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+    validate_installer_lifecycle_prohibited_material(object, CONTEXT)
+}
+
+fn validate_windows_installer_lifecycle_plan_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "Windows installer lifecycle plan";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "Windows installer lifecycle plan blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("Windows installer lifecycle plan blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("Windows installer lifecycle plan blocked: expected JSON object")
+    })?;
+
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.windows_installer_lifecycle_plan.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "execution_mode", "dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "installer_lifecycle_status", "blocked", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "evidence_boundary",
+        "dry_run_no_windows_installer_execution",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "windows_package_manifest_sha256", CONTEXT)?;
+    require_release_evidence_string(object, "installer_engine", "msiexec.exe", CONTEXT)?;
+    require_release_evidence_string(object, "admin_elevation", "required_not_observed", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "release_runner",
+        "windows_required_not_observed",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(object, "installation_status", "not_installed", CONTEXT)?;
+    require_release_evidence_string(object, "rollback_validation_status", "blocked", CONTEXT)?;
+
+    let artifacts = validate_installer_lifecycle_artifacts(object, CONTEXT, &["msi"])?;
+    validate_installer_lifecycle_actions(
+        object,
+        CONTEXT,
+        &artifacts,
+        &[
+            InstallerLifecycleActionExpectation {
+                action: "install",
+                command: "msiexec.exe",
+                target_kind: "msi",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "upgrade",
+                command: "msiexec.exe",
+                target_kind: "msi",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "repair",
+                command: "msiexec.exe",
+                target_kind: "msi",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "uninstall",
+                command: "msiexec.exe",
+                target_kind: "msi",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "rollback",
+                command: "msiexec.exe",
+                target_kind: "msi",
+            },
+        ],
+    )?;
+    for step in [
+        "windows_msi_install",
+        "windows_msi_upgrade",
+        "windows_msi_repair",
+        "windows_msi_uninstall",
+        "windows_msi_rollback",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+    validate_installer_lifecycle_prohibited_material(object, CONTEXT)
+}
+
+fn validate_installer_lifecycle_artifacts(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+    required_kinds: &[&'static str],
+) -> Result<BTreeMap<String, String>> {
+    let artifacts = require_release_evidence_array(object, "installer_artifacts", context)?;
+    let mut artifacts_by_file = BTreeMap::new();
+    let mut seen_kinds = BTreeSet::new();
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "installer_artifacts"))?;
+        let kind = require_release_evidence_string_value(artifact, "kind", context)?;
+        if !required_kinds.contains(&kind) {
+            return Err(release_evidence_invalid(context, "installer_artifacts"));
+        }
+        let file = require_release_evidence_string_value(artifact, "file", context)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(context, "file"));
+        }
+        require_release_evidence_sha256(artifact, "artifact_sha256", context)?;
+        require_release_evidence_positive_u64(artifact, "bytes", context)?;
+        if artifacts_by_file
+            .insert(file.to_string(), kind.to_string())
+            .is_some()
+        {
+            return Err(release_evidence_invalid(context, "installer_artifacts"));
+        }
+        seen_kinds.insert(kind.to_string());
+    }
+    if required_kinds.iter().all(|kind| seen_kinds.contains(*kind)) {
+        Ok(artifacts_by_file)
+    } else {
+        Err(release_evidence_invalid(context, "installer_artifacts"))
+    }
+}
+
+fn validate_installer_lifecycle_actions(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+    artifacts_by_file: &BTreeMap<String, String>,
+    expected_actions: &[InstallerLifecycleActionExpectation],
+) -> Result<()> {
+    let actions = require_release_evidence_array(object, "planned_actions", context)?;
+    if actions.len() != expected_actions.len() {
+        return Err(release_evidence_invalid(context, "planned_actions"));
+    }
+    let mut seen_actions = BTreeSet::new();
+    for (action, expected) in actions.iter().zip(expected_actions.iter()) {
+        let action = action
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "planned_actions"))?;
+        let action_name = require_release_evidence_string_value(action, "action", context)?;
+        if action_name != expected.action || !seen_actions.insert(action_name.to_string()) {
+            return Err(release_evidence_invalid(context, "planned_actions"));
+        }
+        require_release_evidence_string(action, "command", expected.command, context)?;
+        let target_artifact =
+            require_release_evidence_string_value(action, "target_artifact", context)?;
+        if !is_release_evidence_basename(target_artifact) {
+            return Err(release_evidence_invalid(context, "target_artifact"));
+        }
+        match artifacts_by_file.get(target_artifact) {
+            Some(kind) if kind == expected.target_kind => {}
+            _ => return Err(release_evidence_invalid(context, "target_artifact")),
+        }
+        if require_release_evidence_string_value(action, "dry_run_intent", context)?
+            .trim()
+            .is_empty()
+        {
+            return Err(release_evidence_invalid(context, "dry_run_intent"));
+        }
+        require_release_evidence_bool(action, "requires_approval", true, context)?;
+        require_release_evidence_string(action, "action_status", "blocked", context)?;
+    }
+    Ok(())
+}
+
+fn validate_installer_lifecycle_prohibited_material(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+) -> Result<()> {
+    for material in [
+        "installer_tokens",
+        "administrator_passwords",
+        "local_paths",
+        "raw_installer_logs",
+        "raw_resume_data",
+        "diagnostic_packages",
+        "model_artifact_caches",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "prohibited_public_material",
+            material,
+            context,
+        )?;
+    }
     Ok(())
 }
 

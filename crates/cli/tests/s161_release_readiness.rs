@@ -629,6 +629,95 @@ fn release_readiness_json_accepts_windows_service_lifecycle_plan_without_clearin
 }
 
 #[test]
+fn release_readiness_json_accepts_installer_lifecycle_plans_without_clearing_blockers() {
+    let data_dir = temp_path("release-readiness-installer-lifecycle-plan-private-data");
+    let evidence_dir = temp_path("release-readiness-installer-lifecycle-plan-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let macos_lifecycle_plan = evidence_dir.join("macos-installer-lifecycle-dry-run.json");
+    let windows_lifecycle_plan = evidence_dir.join("windows-installer-lifecycle-dry-run.json");
+    fs::write(
+        &macos_lifecycle_plan,
+        blocked_macos_installer_lifecycle_plan(),
+    )
+    .unwrap();
+    fs::write(
+        &windows_lifecycle_plan,
+        blocked_windows_installer_lifecycle_plan(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--macos-installer-lifecycle-plan",
+            path_str(&macos_lifecycle_plan),
+            "--windows-installer-lifecycle-plan",
+            path_str(&windows_lifecycle_plan),
+        ])
+        .output()
+        .expect("run release readiness with installer lifecycle plan evidence");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .expect("release readiness installer lifecycle plan json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let provided_labels = provided
+        .iter()
+        .map(|evidence| evidence["label"].as_str().expect("provided label"))
+        .collect::<Vec<_>>();
+    assert!(provided_labels.contains(&"macOS installer lifecycle plan evidence"));
+    assert!(provided_labels.contains(&"Windows installer lifecycle plan evidence"));
+    for label in [
+        "macOS installer lifecycle plan evidence",
+        "Windows installer lifecycle plan evidence",
+    ] {
+        let evidence = provided
+            .iter()
+            .find(|evidence| evidence["label"] == label)
+            .expect("installer lifecycle plan evidence");
+        assert_eq!(evidence["status"], "provided");
+        assert_eq!(
+            evidence["privacy_boundary"],
+            "blocked_release_evidence_manifest"
+        );
+        assert!(evidence["detail"]
+            .as_str()
+            .expect("provided detail")
+            .contains("installer_lifecycle_plan.v1"));
+    }
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(blocker_labels.contains(&"macOS installer lifecycle"));
+    assert!(blocker_labels.contains(&"Windows installer lifecycle"));
+    assert!(blocker_labels.contains(&"cross-platform release validation"));
+    assert!(blocker_labels.contains(&"signing certificates"));
+    assert!(!blocker_labels.contains(&"macOS installer lifecycle plan evidence"));
+    assert!(!blocker_labels.contains(&"Windows installer lifecycle plan evidence"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stdout.contains("resume-ir-v0.0.0"));
+    assert!(!stderr.contains("resume-ir-v0.0.0"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_release_artifact_and_sbom_evidence_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-release-manifest-private-data");
     let evidence_dir = temp_path("release-readiness-release-manifest-private-reports");
@@ -1995,6 +2084,67 @@ fn blocked_windows_installer_evidence() -> String {
         "\"required_evidence\":[\"administrator-elevated install transcript\",\"installer_lifecycle_validation\",\"upgrade_validation\",\"repair_validation\",\"uninstall_validation\",\"rollback_validation\"],",
         "\"blocked_release_steps\":[\"windows_msi_install\",\"windows_msi_upgrade\",\"windows_msi_repair\",\"windows_msi_uninstall\",\"windows_msi_rollback\"],",
         "\"prohibited_public_material\":[\"installer_tokens\",\"administrator_passwords\",\"local_paths\",\"raw_installer_logs\",\"raw_resume_data\",\"diagnostic_packages\",\"model_artifact_caches\"]",
+        "}"
+    )
+    .to_string()
+}
+
+fn blocked_macos_installer_lifecycle_plan() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.macos_installer_lifecycle_plan.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"execution_mode\":\"dry_run\",",
+        "\"installer_lifecycle_status\":\"blocked\",",
+        "\"evidence_boundary\":\"dry_run_no_macos_installer_execution\",",
+        "\"macos_package_manifest_sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",",
+        "\"admin_elevation\":\"required_not_observed\",",
+        "\"release_runner\":\"macos_required_not_observed\",",
+        "\"installer_artifacts\":[",
+        "{\"kind\":\"pkg\",\"file\":\"resume-ir-v0.0.0-macos.pkg\",\"artifact_sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"bytes\":404},",
+        "{\"kind\":\"dmg\",\"file\":\"resume-ir-v0.0.0-macos.dmg\",\"artifact_sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"bytes\":505}",
+        "],",
+        "\"planned_actions\":[",
+        "{\"action\":\"install\",\"command\":\"installer\",\"target_artifact\":\"resume-ir-v0.0.0-macos.pkg\",\"dry_run_intent\":\"validate administrator-elevated pkg install on release runner\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"upgrade\",\"command\":\"installer\",\"target_artifact\":\"resume-ir-v0.0.0-macos.pkg\",\"dry_run_intent\":\"install prior version, upgrade, and verify binary replacement\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"uninstall\",\"command\":\"pkgutil\",\"target_artifact\":\"resume-ir-v0.0.0-macos.pkg\",\"dry_run_intent\":\"forget package receipt and remove installed files while preserving user data\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"rollback\",\"command\":\"installer\",\"target_artifact\":\"resume-ir-v0.0.0-macos.pkg\",\"dry_run_intent\":\"force installer failure and verify system state restoration\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"launch-agent-start\",\"command\":\"launchctl\",\"target_artifact\":\"resume-ir-v0.0.0-macos.dmg\",\"dry_run_intent\":\"bootstrap LaunchAgent and verify daemon IPC health\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"launch-agent-stop\",\"command\":\"launchctl\",\"target_artifact\":\"resume-ir-v0.0.0-macos.dmg\",\"dry_run_intent\":\"stop and bootout LaunchAgent and verify daemon shutdown\",\"requires_approval\":true,\"action_status\":\"blocked\"}",
+        "],",
+        "\"blocked_release_steps\":[\"macos_pkg_install\",\"macos_pkg_upgrade\",\"macos_pkg_uninstall\",\"macos_pkg_rollback\",\"macos_launch_agent_start\",\"macos_launch_agent_stop\"],",
+        "\"prohibited_public_material\":[\"installer_tokens\",\"administrator_passwords\",\"local_paths\",\"raw_installer_logs\",\"raw_resume_data\",\"diagnostic_packages\",\"model_artifact_caches\"],",
+        "\"notes\":\"Dry-run operator plan only. It does not execute installer lifecycle commands or clear release blockers; release-runner transcripts are required before stable release.\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn blocked_windows_installer_lifecycle_plan() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.windows_installer_lifecycle_plan.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"execution_mode\":\"dry_run\",",
+        "\"installer_lifecycle_status\":\"blocked\",",
+        "\"evidence_boundary\":\"dry_run_no_windows_installer_execution\",",
+        "\"windows_package_manifest_sha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",",
+        "\"installer_engine\":\"msiexec.exe\",",
+        "\"admin_elevation\":\"required_not_observed\",",
+        "\"release_runner\":\"windows_required_not_observed\",",
+        "\"installation_status\":\"not_installed\",",
+        "\"rollback_validation_status\":\"blocked\",",
+        "\"installer_artifacts\":[{\"kind\":\"msi\",\"file\":\"resume-ir-v0.0.0-windows.msi\",\"artifact_sha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"bytes\":606}],",
+        "\"planned_actions\":[",
+        "{\"action\":\"install\",\"command\":\"msiexec.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"validate administrator-elevated MSI install on release runner\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"upgrade\",\"command\":\"msiexec.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"install prior version, upgrade, and verify binary replacement\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"repair\",\"command\":\"msiexec.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"run MSI repair and verify installed-file integrity\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"uninstall\",\"command\":\"msiexec.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"uninstall MSI and verify user-data preservation\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"rollback\",\"command\":\"msiexec.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"force MSI failure and verify rollback state restoration\",\"requires_approval\":true,\"action_status\":\"blocked\"}",
+        "],",
+        "\"blocked_release_steps\":[\"windows_msi_install\",\"windows_msi_upgrade\",\"windows_msi_repair\",\"windows_msi_uninstall\",\"windows_msi_rollback\"],",
+        "\"prohibited_public_material\":[\"installer_tokens\",\"administrator_passwords\",\"local_paths\",\"raw_installer_logs\",\"raw_resume_data\",\"diagnostic_packages\",\"model_artifact_caches\"],",
+        "\"notes\":\"Dry-run operator plan only. It does not execute installer lifecycle commands or clear release blockers; release-runner transcripts are required before stable release.\"",
         "}"
     )
     .to_string()
