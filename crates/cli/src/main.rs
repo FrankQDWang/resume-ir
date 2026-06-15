@@ -160,6 +160,7 @@ const RELEASE_READINESS_WINDOWS_SERVICE_LIFECYCLE_PLAN_LABEL: &str =
 const RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL: &str =
     "current-stage validation evidence manifest";
 const RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL: &str = "current-stage blocked handoff";
+const RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL: &str = "hardware fault drills";
 const RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS: usize = 8_000;
 const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
     (
@@ -219,7 +220,7 @@ const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
         "redacted local aggregate diagnostics evidence is not available; release evidence requires export-diagnostics --redact output with diagnostics.v1 schema, local aggregate diagnostics scope, and redacted paths, queries, and resume text",
     ),
     (
-        "hardware fault drills",
+        RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL,
         "actual ENOSPC, service-level daemon kill, battery-mode, and external-drive disconnect drills are not proven on release platforms",
     ),
 ];
@@ -468,7 +469,7 @@ fn release_readiness_goal_gap_matrix_json() -> serde_json::Value {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--current-stage-blocked-summary <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>] [--macos-installer-lifecycle-plan <path>] [--windows-installer-lifecycle-plan <path>] [--windows-service-lifecycle-plan <path>]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--current-stage-blocked-summary <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>] [--macos-installer-lifecycle-plan <path>] [--windows-installer-lifecycle-plan <path>] [--windows-service-lifecycle-plan <path>] [--hardware-fault-evidence <path>]"
 }
 
 #[derive(Default)]
@@ -495,6 +496,7 @@ struct ReleaseReadinessEvidenceArgs {
     macos_installer_lifecycle_plan: Option<PathBuf>,
     windows_installer_lifecycle_plan: Option<PathBuf>,
     windows_service_lifecycle_plan: Option<PathBuf>,
+    hardware_fault_evidence: Option<PathBuf>,
 }
 
 struct ReleaseReadinessArgs {
@@ -614,6 +616,10 @@ fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs>
             }
             "--windows-service-lifecycle-plan" => {
                 parsed.evidence.windows_service_lifecycle_plan =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--hardware-fault-evidence" => {
+                parsed.evidence.hardware_fault_evidence =
                     Some(take_release_readiness_path(args, &mut index)?);
             }
             _ => return Err(CliError::usage(release_readiness_usage())),
@@ -917,6 +923,17 @@ fn validate_release_readiness_evidence(
             label: RELEASE_READINESS_WINDOWS_SERVICE_LIFECYCLE_PLAN_LABEL,
             privacy_boundary: "blocked_release_evidence_manifest",
             detail: "release.windows_service_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.hardware_fault_evidence {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_hardware_fault_drill_evidence_report(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL,
+            privacy_boundary: "redacted_release_hardware_fault_drills",
+            detail: "release.hardware_fault_drills.v1 actual release-platform drill evidence passed schema and redaction checks",
         });
     }
     Ok(provided)
@@ -2203,6 +2220,124 @@ fn validate_windows_service_lifecycle_actions(
         require_release_evidence_string(action, "action_status", "blocked", CONTEXT)?;
     }
 
+    Ok(())
+}
+
+fn validate_hardware_fault_drill_evidence_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "hardware fault drills";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+        || report.contains("PRIVATE-")
+    {
+        return Err(CliError::user(
+            "hardware fault drills blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("hardware fault drills blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("hardware fault drills blocked: expected JSON object"))?;
+
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.hardware_fault_drills.v1",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "evidence_boundary",
+        "redacted_release_hardware_fault_drills",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "execution_mode",
+        "actual_release_platform_drill",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "artifact_manifest_sha256", CONTEXT)?;
+    validate_release_hardware_fault_build_sha(object, CONTEXT)?;
+    for key in ["redacted", "dedicated_test_environment", "cleanup_verified"] {
+        require_release_evidence_bool(object, key, true, CONTEXT)?;
+    }
+    for key in [
+        "contains_local_paths",
+        "contains_raw_resume_text",
+        "contains_secrets",
+        "contains_diagnostics_package",
+    ] {
+        require_release_evidence_bool(object, key, false, CONTEXT)?;
+    }
+
+    let drills = require_release_evidence_array(object, "drills", CONTEXT)?;
+    validate_release_hardware_fault_drills(drills, CONTEXT)?;
+    for item in [
+        "raw resumes",
+        "local paths",
+        "diagnostics packages",
+        "tokens",
+        "model caches",
+        "indexes",
+        "SQLite databases",
+    ] {
+        require_release_evidence_array_contains_string(object, "must_not_upload", item, CONTEXT)?;
+    }
+    Ok(())
+}
+
+fn validate_release_hardware_fault_build_sha(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+) -> Result<()> {
+    let build_sha = require_release_evidence_string_value(object, "build_sha", context)?;
+    let is_full_git_sha = build_sha.len() == 40
+        && build_sha
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+    if is_full_git_sha {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, "build_sha"))
+    }
+}
+
+fn validate_release_hardware_fault_drills(
+    drills: &[serde_json::Value],
+    context: &'static str,
+) -> Result<()> {
+    let expected_drills = [
+        "actual_enospc",
+        "service_daemon_kill",
+        "battery_mode",
+        "external_drive_disconnect",
+    ];
+    if drills.len() != expected_drills.len() {
+        return Err(release_evidence_invalid(context, "drills"));
+    }
+    let mut seen_drills = BTreeSet::new();
+    for (drill, expected_drill) in drills.iter().zip(expected_drills.iter()) {
+        let drill = drill
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "drills"))?;
+        let drill_id = require_release_evidence_string_value(drill, "drill", context)?;
+        if drill_id != *expected_drill || !seen_drills.insert(drill_id.to_string()) {
+            return Err(release_evidence_invalid(context, "drills"));
+        }
+        require_release_evidence_string(drill, "status", "passed", context)?;
+        require_release_evidence_string(
+            drill,
+            "evidence_kind",
+            "actual_release_platform_drill",
+            context,
+        )?;
+        let platforms = require_release_evidence_object(drill, "platforms", context)?;
+        require_release_evidence_string(platforms, "macos", "passed", context)?;
+        require_release_evidence_string(platforms, "windows", "passed", context)?;
+        require_release_evidence_sha256(drill, "transcript_sha256", context)?;
+        require_release_evidence_sha256(drill, "diagnostics_sha256", context)?;
+    }
     Ok(())
 }
 

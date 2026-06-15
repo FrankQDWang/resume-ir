@@ -190,6 +190,7 @@ windows_service_evidence="$tmpdir/windows-service-evidence.json"
 macos_installer_lifecycle_plan="$tmpdir/macos-installer-lifecycle-dry-run.json"
 windows_installer_lifecycle_plan="$tmpdir/windows-installer-lifecycle-dry-run.json"
 windows_service_lifecycle_plan="$tmpdir/windows-service-lifecycle-dry-run.json"
+hardware_fault_evidence="$tmpdir/hardware-fault-drills.json"
 current_stage_evidence="$tmpdir/current-stage-validation-evidence.json"
 current_stage_blocked_summary="$tmpdir/current-stage-blocked-summary.json"
 evidence_stdout_file="$tmpdir/evidence-stdout.txt"
@@ -232,6 +233,9 @@ cat > "$windows_installer_lifecycle_plan" <<'JSON'
 JSON
 cat > "$windows_service_lifecycle_plan" <<'JSON'
 {"schema_version":"release.windows_service_lifecycle_plan.v1","version":"v0.0.0","execution_mode":"dry_run","service_lifecycle_status":"blocked","evidence_boundary":"dry_run_no_windows_service_registration","windows_package_manifest_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","service_manager":"sc.exe","admin_elevation":"required_not_observed","release_runner":"windows_required_not_observed","registration_status":"not_registered","recovery_validation_status":"blocked","rollback_validation_status":"blocked","service_artifacts":[{"kind":"msi","file":"resume-ir-v0.0.0-windows.msi","artifact_sha256":"6666666666666666666666666666666666666666666666666666666666666666","bytes":606,"service_validation_status":"not_executed"}],"planned_actions":[{"action":"install","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"register Windows Service after administrator-elevated MSI install and verify binary binding","requires_approval":true,"action_status":"blocked"},{"action":"start","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"start service and verify daemon IPC health","requires_approval":true,"action_status":"blocked"},{"action":"status","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"query service status on release Windows runner","requires_approval":true,"action_status":"blocked"},{"action":"stop","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"stop service and verify daemon shutdown","requires_approval":true,"action_status":"blocked"},{"action":"recovery","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"configure and prove restart-after-kill recovery policy","requires_approval":true,"action_status":"blocked"},{"action":"uninstall","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"delete service registration while preserving user data","requires_approval":true,"action_status":"blocked"},{"action":"rollback","command":"sc.exe","target_artifact":"resume-ir-v0.0.0-windows.msi","dry_run_intent":"force service install/start failure and verify rollback state restoration","requires_approval":true,"action_status":"blocked"}],"blocked_release_steps":["windows_service_install","windows_service_start","windows_service_status","windows_service_stop","windows_service_recovery","windows_service_uninstall","windows_service_rollback"],"prohibited_public_material":["service_tokens","administrator_passwords","local_paths","raw_service_logs","raw_resume_data","diagnostic_packages","model_artifact_caches"],"notes":"Dry-run operator plan only. It does not register, start, stop, query, recover, uninstall, or roll back a Windows service; release-runner transcripts are required before stable release."}
+JSON
+cat > "$hardware_fault_evidence" <<'JSON'
+{"schema_version":"release.hardware_fault_drills.v1","evidence_boundary":"redacted_release_hardware_fault_drills","execution_mode":"actual_release_platform_drill","artifact_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","build_sha":"de49f836aa52a8a98261b47a6bdd42a943226a7a","redacted":true,"dedicated_test_environment":true,"cleanup_verified":true,"contains_local_paths":false,"contains_raw_resume_text":false,"contains_secrets":false,"contains_diagnostics_package":false,"drills":[{"drill":"actual_enospc","status":"passed","evidence_kind":"actual_release_platform_drill","platforms":{"macos":"passed","windows":"passed"},"transcript_sha256":"1111111111111111111111111111111111111111111111111111111111111111","diagnostics_sha256":"1212121212121212121212121212121212121212121212121212121212121212"},{"drill":"service_daemon_kill","status":"passed","evidence_kind":"actual_release_platform_drill","platforms":{"macos":"passed","windows":"passed"},"transcript_sha256":"2121212121212121212121212121212121212121212121212121212121212121","diagnostics_sha256":"2222222222222222222222222222222222222222222222222222222222222222"},{"drill":"battery_mode","status":"passed","evidence_kind":"actual_release_platform_drill","platforms":{"macos":"passed","windows":"passed"},"transcript_sha256":"3131313131313131313131313131313131313131313131313131313131313131","diagnostics_sha256":"3232323232323232323232323232323232323232323232323232323232323232"},{"drill":"external_drive_disconnect","status":"passed","evidence_kind":"actual_release_platform_drill","platforms":{"macos":"passed","windows":"passed"},"transcript_sha256":"4141414141414141414141414141414141414141414141414141414141414141","diagnostics_sha256":"4242424242424242424242424242424242424242424242424242424242424242"}],"must_not_upload":["raw resumes","local paths","diagnostics packages","tokens","model caches","indexes","SQLite databases"]}
 JSON
 cat > "$current_stage_evidence" <<'JSON'
 {
@@ -433,6 +437,7 @@ set +e
   --macos-installer-lifecycle-plan "$macos_installer_lifecycle_plan" \
   --windows-installer-lifecycle-plan "$windows_installer_lifecycle_plan" \
   --windows-service-lifecycle-plan "$windows_service_lifecycle_plan" \
+  --hardware-fault-evidence "$hardware_fault_evidence" \
   --current-stage-evidence "$current_stage_evidence" \
   > "$evidence_stdout_file" 2> "$evidence_stderr_file"
 evidence_status=$?
@@ -454,8 +459,10 @@ require_text "$evidence_stdout_file" '"label": "Windows service automation evide
 require_text "$evidence_stdout_file" '"label": "macOS installer lifecycle plan evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows installer lifecycle plan evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows service lifecycle plan evidence"'
+require_text "$evidence_stdout_file" '"label": "hardware fault drills"'
 require_text "$evidence_stdout_file" '"label": "current-stage validation evidence manifest"'
 require_text "$evidence_stdout_file" '"privacy_boundary": "blocked_release_evidence_manifest"'
+require_text "$evidence_stdout_file" '"privacy_boundary": "redacted_release_hardware_fault_drills"'
 require_text "$evidence_stdout_file" '"privacy_boundary": "local_only_redacted_evidence_manifest"'
 require_text "$evidence_stdout_file" "blocked dry-run evidence passed schema and boundary checks"
 require_text "$evidence_stdout_file" "current-stage validation evidence manifest passed redacted schema and digest checks"
@@ -466,6 +473,7 @@ require_text "$evidence_stdout_file" "release.windows_package.v1 unsigned dry-ru
 require_text "$evidence_stdout_file" "release.macos_installer_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks"
 require_text "$evidence_stdout_file" "release.windows_installer_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks"
 require_text "$evidence_stdout_file" "release.windows_service_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks"
+require_text "$evidence_stdout_file" "release.hardware_fault_drills.v1 actual release-platform drill evidence passed schema and redaction checks"
 require_text "$evidence_stdout_file" '"label": "signing certificates"'
 require_text "$evidence_stdout_file" '"label": "macOS notarization"'
 require_text "$evidence_stdout_file" '"label": "macOS installer lifecycle"'
@@ -542,6 +550,7 @@ require_text "$runbook" "--windows-service-evidence windows-service-evidence.jso
 require_text "$runbook" "--macos-installer-lifecycle-plan macos-installer-lifecycle-dry-run.json"
 require_text "$runbook" "--windows-installer-lifecycle-plan windows-installer-lifecycle-dry-run.json"
 require_text "$runbook" "--windows-service-lifecycle-plan windows-service-lifecycle-dry-run.json"
+require_text "$runbook" "--hardware-fault-evidence hardware-fault-drills.json"
 require_text "$runbook" "blocked_release_evidence_manifest"
 require_text "$runbook" "release artifact manifest evidence"
 require_text "$runbook" "release SBOM evidence"
@@ -555,6 +564,9 @@ require_text "$runbook" "release.windows_installer_lifecycle_plan.v1"
 require_text "$runbook" "Windows service automation evidence"
 require_text "$runbook" "Windows service lifecycle plan evidence"
 require_text "$runbook" "release.windows_service_lifecycle_plan.v1"
+require_text "$runbook" "release.hardware_fault_drills.v1"
+require_text "$runbook" "redacted_release_hardware_fault_drills"
+require_text "$runbook" "actual_release_platform_drill"
 require_text "$runbook" "current-stage validation evidence manifest"
 require_text "$runbook" "local_only_redacted_evidence_manifest"
 require_text "$runbook" "current-stage blocked handoff"

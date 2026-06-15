@@ -502,7 +502,8 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --windows-service-evidence windows-service-evidence.json \
   --macos-installer-lifecycle-plan macos-installer-lifecycle-dry-run.json \
   --windows-installer-lifecycle-plan windows-installer-lifecycle-dry-run.json \
-  --windows-service-lifecycle-plan windows-service-lifecycle-dry-run.json
+  --windows-service-lifecycle-plan windows-service-lifecycle-dry-run.json \
+  --hardware-fault-evidence hardware-fault-drills.json
 ```
 
 If the full current-stage execute flow stops before producing
@@ -550,6 +551,7 @@ hardware-drill evidence items. The labels are:
 - macOS installer lifecycle plan evidence
 - Windows installer lifecycle plan evidence
 - Windows service lifecycle plan evidence
+- hardware fault drills
 - current-stage validation evidence manifest
 - current-stage blocked handoff
 
@@ -564,6 +566,20 @@ commit generated reports or manifests unless they have been separately reviewed
 to contain no raw resume text, filenames, local paths, queries, labels, sample
 IDs, document IDs, vectors, page images, secrets, diagnostics, indexes, model
 files, OCR runtime binaries, or model caches.
+
+Actual hardware fault-drill evidence is separate from the dry-run and
+simulation paths. `--hardware-fault-evidence hardware-fault-drills.json`
+accepts only `release.hardware_fault_drills.v1` summaries with
+`evidence_boundary: "redacted_release_hardware_fault_drills"` and
+`execution_mode: "actual_release_platform_drill"`. The file must be produced
+after running actual ENOSPC, service-level daemon kill, battery-mode, and
+external-drive disconnect drills on dedicated release-platform test machines or
+VMs, with both macOS and Windows marked `passed` for each drill. It may contain
+only build/artifact digests, transcript/diagnostics SHA-256 digests, redaction
+booleans, cleanup confirmation, and the must-not-upload list. Do not pass
+`fault-simulate` output, dry-run operator plans, raw logs, local paths, raw
+resume text, diagnostic packages, tokens, indexes, SQLite databases, model
+caches, or release-runner machine paths as hardware fault evidence.
 
 Generate the diagnostics report from the same local data directory used for the
 current validation run:

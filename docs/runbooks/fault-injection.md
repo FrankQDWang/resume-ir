@@ -151,6 +151,22 @@ Do not simulate those by damaging user data. Use a dedicated test machine or VM
 with disposable data and document the exact platform, build SHA, and cleanup
 steps.
 
+After those actual release-platform drills are run and reviewed, attach only a
+redacted summary to the release gate:
+
+```bash
+resume-cli --data-dir <local-data-dir> release-readiness --json \
+  --hardware-fault-evidence hardware-fault-drills.json
+```
+
+The hardware evidence schema is `release.hardware_fault_drills.v1` with
+`evidence_boundary: "redacted_release_hardware_fault_drills"` and
+`execution_mode: "actual_release_platform_drill"`. It must record actual
+ENOSPC, service-level daemon kill, battery-mode, and external-drive disconnect
+drill results for macOS and Windows using SHA-256 digests only. Do not attach
+`fault-simulate` output, dry-run plans, raw logs, local paths, raw resume text,
+diagnostic packages, indexes, SQLite databases, tokens, or model caches.
+
 ## Cleanup
 
 ```bash

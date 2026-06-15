@@ -871,6 +871,122 @@ fn release_readiness_json_accepts_platform_package_manifest_evidence_without_cle
 }
 
 #[test]
+fn release_readiness_json_accepts_actual_hardware_fault_drill_evidence_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-hardware-fault-private-data");
+    let evidence_dir = temp_path("release-readiness-hardware-fault-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let hardware_fault_evidence = evidence_dir.join("hardware-fault-drills.json");
+    fs::write(
+        &hardware_fault_evidence,
+        actual_hardware_fault_drills_evidence(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--hardware-fault-evidence",
+            path_str(&hardware_fault_evidence),
+        ])
+        .output()
+        .expect("run release readiness with actual hardware fault drill evidence");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .expect("release readiness hardware fault drill evidence json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let hardware_fault_drills = provided
+        .iter()
+        .find(|evidence| evidence["label"] == "hardware fault drills")
+        .expect("hardware fault drills evidence");
+    assert_eq!(hardware_fault_drills["status"], "provided");
+    assert_eq!(
+        hardware_fault_drills["privacy_boundary"],
+        "redacted_release_hardware_fault_drills"
+    );
+    assert!(hardware_fault_drills["detail"]
+        .as_str()
+        .expect("provided detail")
+        .contains("release.hardware_fault_drills.v1"));
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(!blocker_labels.contains(&"hardware fault drills"));
+    assert!(blocker_labels.contains(&"signing certificates"));
+    assert!(blocker_labels.contains(&"macOS notarization"));
+    assert!(blocker_labels.contains(&"cross-platform release validation"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&hardware_fault_evidence)));
+    assert!(!stderr.contains(path_str(&hardware_fault_evidence)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stdout.contains("/Users/"));
+    assert!(!stderr.contains("/Users/"));
+    assert!(!stdout.contains("raw resume"));
+    assert!(!stdout.contains("diagnostics.zip"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_dry_run_hardware_fault_drill_evidence_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-hardware-fault-dry-run-private-data");
+    let evidence_dir = temp_path("release-readiness-hardware-fault-dry-run-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let hardware_fault_evidence = evidence_dir.join("hardware-fault-drills-dry-run.json");
+    fs::write(
+        &hardware_fault_evidence,
+        actual_hardware_fault_drills_evidence().replace(
+            "\"execution_mode\":\"actual_release_platform_drill\"",
+            "\"execution_mode\":\"dry_run\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--hardware-fault-evidence",
+            path_str(&hardware_fault_evidence),
+        ])
+        .output()
+        .expect("reject dry-run hardware fault drill evidence");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("hardware fault drills"));
+    assert!(stderr.contains("execution_mode"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&hardware_fault_evidence)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers() {
     let data_dir = temp_path("release-readiness-evidence-private-data");
     let evidence_dir = temp_path("release-readiness-evidence-private-reports");
@@ -2070,6 +2186,41 @@ fn redacted_diagnostics_report() -> String {
         "},",
         "\"evidence_level\":\"local_aggregate_only\",",
         "\"scope\":\"redacted local aggregate diagnostics; no raw resume text, paths, queries, tokens, or index segment contents included\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn actual_hardware_fault_drills_evidence() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.hardware_fault_drills.v1\",",
+        "\"evidence_boundary\":\"redacted_release_hardware_fault_drills\",",
+        "\"execution_mode\":\"actual_release_platform_drill\",",
+        "\"artifact_manifest_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",",
+        "\"build_sha\":\"de49f836aa52a8a98261b47a6bdd42a943226a7a\",",
+        "\"redacted\":true,",
+        "\"dedicated_test_environment\":true,",
+        "\"cleanup_verified\":true,",
+        "\"contains_local_paths\":false,",
+        "\"contains_raw_resume_text\":false,",
+        "\"contains_secrets\":false,",
+        "\"contains_diagnostics_package\":false,",
+        "\"drills\":[",
+        "{\"drill\":\"actual_enospc\",\"status\":\"passed\",\"evidence_kind\":\"actual_release_platform_drill\",\"platforms\":{\"macos\":\"passed\",\"windows\":\"passed\"},\"transcript_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"diagnostics_sha256\":\"1212121212121212121212121212121212121212121212121212121212121212\"},",
+        "{\"drill\":\"service_daemon_kill\",\"status\":\"passed\",\"evidence_kind\":\"actual_release_platform_drill\",\"platforms\":{\"macos\":\"passed\",\"windows\":\"passed\"},\"transcript_sha256\":\"2121212121212121212121212121212121212121212121212121212121212121\",\"diagnostics_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\"},",
+        "{\"drill\":\"battery_mode\",\"status\":\"passed\",\"evidence_kind\":\"actual_release_platform_drill\",\"platforms\":{\"macos\":\"passed\",\"windows\":\"passed\"},\"transcript_sha256\":\"3131313131313131313131313131313131313131313131313131313131313131\",\"diagnostics_sha256\":\"3232323232323232323232323232323232323232323232323232323232323232\"},",
+        "{\"drill\":\"external_drive_disconnect\",\"status\":\"passed\",\"evidence_kind\":\"actual_release_platform_drill\",\"platforms\":{\"macos\":\"passed\",\"windows\":\"passed\"},\"transcript_sha256\":\"4141414141414141414141414141414141414141414141414141414141414141\",\"diagnostics_sha256\":\"4242424242424242424242424242424242424242424242424242424242424242\"}",
+        "],",
+        "\"must_not_upload\":[",
+        "\"raw resumes\",",
+        "\"local paths\",",
+        "\"diagnostics packages\",",
+        "\"tokens\",",
+        "\"model caches\",",
+        "\"indexes\",",
+        "\"SQLite databases\"",
+        "]",
         "}"
     )
     .to_string()
