@@ -1427,6 +1427,54 @@ fn release_readiness_rejects_current_stage_evidence_with_mismatched_runtime_mani
 }
 
 #[test]
+fn release_readiness_rejects_current_stage_blocked_summary_with_inconsistent_preflight_probe_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-preflight-private-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-preflight-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let blocked_summary = evidence_dir.join("current-stage-blocked-summary.json");
+    fs::write(
+        &blocked_summary,
+        current_stage_blocked_summary().replace(
+            "\"ocr_runtime_probe\":\"passed\"",
+            "\"ocr_runtime_probe\":\"not_run\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-blocked-summary",
+            path_str(&blocked_summary),
+        ])
+        .output()
+        .expect("run release readiness with inconsistent preflight blocked summary");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("current-stage blocked handoff"));
+    assert!(stderr.contains("preflight"));
+    assert!(!stderr.contains(path_str(&blocked_summary)));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stdout.contains("/Users/"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_current_stage_evidence_missing_preflight_probe_status_without_path_leaks(
 ) {
     let data_dir =

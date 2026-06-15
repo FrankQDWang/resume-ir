@@ -1309,8 +1309,14 @@ fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
     )?;
 
     let preflight_probes = require_release_evidence_object(object, "preflight_probes", CONTEXT)?;
-    for key in ["ocr_runtime_probe", "embedding_protocol"] {
-        let status = require_release_evidence_string_value(preflight_probes, key, CONTEXT)?;
+    let ocr_runtime_probe =
+        require_release_evidence_string_value(preflight_probes, "ocr_runtime_probe", CONTEXT)?;
+    let embedding_protocol =
+        require_release_evidence_string_value(preflight_probes, "embedding_protocol", CONTEXT)?;
+    for (key, status) in [
+        ("ocr_runtime_probe", ocr_runtime_probe),
+        ("embedding_protocol", embedding_protocol),
+    ] {
         if !["passed", "blocked", "not_run"].contains(&status) {
             return Err(release_evidence_invalid(CONTEXT, key));
         }
@@ -1321,7 +1327,7 @@ fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
     }
 
     let steps = require_release_evidence_array(object, "steps", CONTEXT)?;
-    let mut seen_steps = BTreeSet::new();
+    let mut step_statuses = BTreeMap::new();
     let mut saw_blocked_step = false;
     for step in steps {
         let step = step
@@ -1332,7 +1338,10 @@ fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
         if !["success", "blocked", "expected_blocked"].contains(&status) {
             return Err(release_evidence_invalid(CONTEXT, "steps"));
         }
-        if !seen_steps.insert(id.to_string()) {
+        if step_statuses
+            .insert(id.to_string(), status.to_string())
+            .is_some()
+        {
             return Err(release_evidence_invalid(CONTEXT, "steps"));
         }
         if status == "blocked" {
@@ -1346,6 +1355,18 @@ fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
     if !saw_blocked_step {
         return Err(release_evidence_invalid(CONTEXT, "steps"));
     }
+    validate_current_stage_blocked_preflight_consistency(
+        &step_statuses,
+        "ocr_preflight",
+        ocr_runtime_probe,
+        CONTEXT,
+    )?;
+    validate_current_stage_blocked_preflight_consistency(
+        &step_statuses,
+        "model_preflight",
+        embedding_protocol,
+        CONTEXT,
+    )?;
 
     let redacted_outputs = require_release_evidence_array(object, "redacted_outputs", CONTEXT)?;
     let mut seen_outputs = BTreeSet::new();
@@ -1398,6 +1419,20 @@ fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn validate_current_stage_blocked_preflight_consistency(
+    step_statuses: &BTreeMap<String, String>,
+    step_id: &str,
+    probe_status: &str,
+    context: &'static str,
+) -> Result<()> {
+    match step_statuses.get(step_id).map(String::as_str) {
+        Some("success") if probe_status == "passed" => Ok(()),
+        Some("blocked") if probe_status == "blocked" => Ok(()),
+        None if probe_status == "not_run" => Ok(()),
+        _ => Err(release_evidence_invalid(context, "preflight_probes")),
+    }
 }
 
 fn validate_release_artifact_manifest_report(report: &str) -> Result<()> {
