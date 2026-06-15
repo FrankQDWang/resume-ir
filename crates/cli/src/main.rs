@@ -2687,6 +2687,8 @@ fn validate_current_stage_aggregate_observability(
             Ok(())
         }
         serde_json::Value::Number(number) if number.as_u64().is_some() => Ok(()),
+        serde_json::Value::Bool(_) => Ok(()),
+        serde_json::Value::String(value) if value == "redacted_local_aggregate" => Ok(()),
         serde_json::Value::Null => Ok(()),
         _ => Err(release_evidence_invalid(
             context,
