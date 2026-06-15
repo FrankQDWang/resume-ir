@@ -245,6 +245,85 @@ PY
   [ "$status" -eq 0 ]
 }
 
+validate_redacted_diagnostics_report() {
+  path="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for redacted diagnostics validation"
+  python3 - "$path" "$resume_root" "$data_dir" "$out_dir" <<'PY'
+import json
+import sys
+
+path, resume_root, data_dir, out_dir = sys.argv[1:5]
+with open(path, "r", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+if not isinstance(report, dict):
+    raise SystemExit("diagnostics report must be an object")
+
+
+def require_string(mapping, key, expected):
+    value = mapping.get(key)
+    if value != expected:
+        raise SystemExit(f"diagnostics report field failed: {key}")
+
+
+def require_bool(mapping, key, expected):
+    value = mapping.get(key)
+    if value is not expected:
+        raise SystemExit(f"diagnostics report field failed: {key}")
+
+
+def require_optional_nested_string(mapping, parent, key, expected):
+    if parent not in mapping:
+        return
+    value = mapping[parent]
+    if not isinstance(value, dict):
+        raise SystemExit(f"diagnostics report field failed: {parent}")
+    require_string(value, key, expected)
+
+
+require_string(report, "schema_version", "diagnostics.v1")
+require_bool(report, "redacted", True)
+require_string(report, "raw_paths", "<redacted>")
+require_string(report, "raw_queries", "<redacted>")
+require_string(report, "raw_resume_text", "<redacted>")
+require_string(report, "evidence_level", "local_aggregate_only")
+require_optional_nested_string(report, "resource_telemetry", "paths", "<redacted>")
+require_optional_nested_string(report, "ocr_runtime", "paths", "<redacted>")
+require_optional_nested_string(report, "query_latency", "raw_queries", "<redacted>")
+
+scope = report.get("diagnostic_scope")
+if not isinstance(scope, dict):
+    raise SystemExit("diagnostics report scope missing")
+
+for key, expected in (
+    ("metadata", "aggregate_counts"),
+    ("search_index", "state_and_snapshot_health"),
+    ("vector_index", "state_backend_and_counts"),
+    ("query_latency", "aggregate_observations"),
+    ("runtime_dependencies", "presence_only"),
+    ("fault_simulations", "available_cases_only"),
+):
+    require_string(scope, key, expected)
+
+
+def walk_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for child in value.values():
+            yield from walk_strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from walk_strings(child)
+
+
+for text in walk_strings(report):
+    for marker in (resume_root, data_dir, out_dir, "PRIVATE-current-stage", "/Users/"):
+        if marker and marker in text:
+            raise SystemExit("diagnostics report leaked local marker")
+PY
+}
+
 write_runtime_preflight_blocked_summary() {
   blocked_step="$1"
   blocked_category="$2"
@@ -2256,9 +2335,18 @@ if [ "$validation_profile" = "full" ] && corpus_summary_has_bounded_ocr_backlog 
     > "$out_dir/redacted-diagnostics.json"
   redacted_diagnostics_status=$?
   set -e
+  redacted_diagnostics_invalid=false
+  if [ "$redacted_diagnostics_status" -eq 0 ] && ! validate_redacted_diagnostics_report "$out_dir/redacted-diagnostics.json"; then
+    redacted_diagnostics_status=1
+    redacted_diagnostics_invalid=true
+  fi
   write_ocr_backlog_blocked_summary "$redacted_diagnostics_status"
   if [ "$redacted_diagnostics_status" -ne 0 ]; then
-    printf '%s\n' "current-stage validation blocked: bounded OCR backlog remains; redacted diagnostics failed" >&2
+    if [ "$redacted_diagnostics_invalid" = "true" ]; then
+      printf '%s\n' "current-stage validation blocked: bounded OCR backlog remains; redacted diagnostics evidence failed validation" >&2
+    else
+      printf '%s\n' "current-stage validation blocked: bounded OCR backlog remains; redacted diagnostics failed" >&2
+    fi
     exit "$redacted_diagnostics_status"
   fi
   printf '%s\n' "current-stage validation blocked: bounded OCR backlog remains" >&2
@@ -2537,6 +2625,11 @@ if [ "$redacted_diagnostics_status" -ne 0 ]; then
   write_redacted_diagnostics_blocked_summary "$redacted_diagnostics_status" "redacted_diagnostics_failed"
   printf '%s\n' "current-stage validation blocked: redacted diagnostics failed" >&2
   exit "$redacted_diagnostics_status"
+fi
+if ! validate_redacted_diagnostics_report "$out_dir/redacted-diagnostics.json"; then
+  write_redacted_diagnostics_blocked_summary 1 "redacted_diagnostics_invalid"
+  printf '%s\n' "current-stage validation blocked: redacted diagnostics evidence failed validation" >&2
+  exit 1
 fi
 
 printf '%s\n' "current-stage validation: fault simulation smoke"

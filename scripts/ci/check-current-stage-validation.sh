@@ -384,7 +384,11 @@ case "$cmd:$sub" in
       printf 'redacted diagnostics blocked: fake diagnostics failure\n' >&2
       exit 1
     fi
-    printf '{"schema_version":"diagnostics.v1","redacted":true,"evidence_level":"local_aggregate_only"}\n'
+    if [ "${FAKE_DIAGNOSTICS_MODE:-ready}" = "invalid" ]; then
+      printf '{"schema_version":"diagnostics.v1","redacted":true,"evidence_level":"local_aggregate_only"}\n'
+      exit 0
+    fi
+    printf '{"schema_version":"diagnostics.v1","redacted":true,"raw_paths":"<redacted>","raw_queries":"<redacted>","raw_resume_text":"<redacted>","metadata":{"indexed_documents":8720,"searchable_documents":8720},"search_index_state":"available","vector_index_state":"available","query_latency":{"sample_count":500,"raw_queries":"<redacted>"},"resource_telemetry":{"status":"available","paths":"<redacted>"},"ocr_runtime":{"paths":"<redacted>","pdftoppm":"available","tesseract":"available","requested_language":"eng","requested_language_status":"available"},"diagnostic_scope":{"metadata":"aggregate_counts","search_index":"state_and_snapshot_health","vector_index":"state_backend_and_counts","query_latency":"aggregate_observations","runtime_dependencies":"presence_only","fault_simulations":"available_cases_only"},"evidence_level":"local_aggregate_only"}\n'
     ;;
   fault-simulate:*)
     if [ "${FAKE_FAULT_SIMULATION_MODE:-ready}" = "failed" ]; then
@@ -503,6 +507,9 @@ run_execute_smoke() {
   diagnostics_mode="ready"
   if [ "$mode" = "diagnostics-failed" ]; then
     diagnostics_mode="failed"
+  fi
+  if [ "$mode" = "diagnostics-invalid" ]; then
+    diagnostics_mode="invalid"
   fi
   fault_simulation_mode="ready"
   if [ "$mode" = "fault-simulation-failed" ]; then
@@ -965,6 +972,43 @@ reject_text "$tmpdir/execute-diagnostics-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-diagnostics-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-diagnostics-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-diagnostics-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke diagnostics-invalid
+diagnostics_invalid_status=$(cat "$tmpdir/execute-diagnostics-invalid-status.txt")
+if [ "$diagnostics_invalid_status" -eq 0 ]; then
+  fail "current-stage full profile accepted invalid redacted diagnostics schema"
+fi
+diagnostics_invalid_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$diagnostics_invalid_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on invalid diagnostics evidence"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage execute ran release-readiness after invalid diagnostics evidence"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage execute wrote full evidence after invalid diagnostics evidence"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$diagnostics_invalid_summary" >/dev/null
+fi
+require_text "$diagnostics_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$diagnostics_invalid_summary" '"blocked_step": "redacted_diagnostics"'
+require_text "$diagnostics_invalid_summary" '"blocked_category": "diagnostics"'
+require_text "$diagnostics_invalid_summary" '"blocked_reason": "redacted_diagnostics_invalid"'
+require_text "$diagnostics_invalid_summary" '"redacted-diagnostics.json"'
+require_text "$diagnostics_invalid_summary" '"private-benchmark-gate.stdout.txt"'
+require_text "$diagnostics_invalid_summary" '"corpus_summary_observability": {'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
+reject_text "$diagnostics_invalid_summary" "$tmpdir"
+reject_text "$diagnostics_invalid_summary" "PRIVATE-current-stage"
+reject_text "$diagnostics_invalid_summary" "private fake query"
+require_text "$tmpdir/execute-diagnostics-invalid-stderr.txt" "current-stage validation blocked: redacted diagnostics evidence failed validation"
+reject_text "$tmpdir/execute-diagnostics-invalid-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-diagnostics-invalid-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-diagnostics-invalid-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-diagnostics-invalid-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke fault-simulation-failed
 fault_simulation_failed_status=$(cat "$tmpdir/execute-fault-simulation-failed-status.txt")
