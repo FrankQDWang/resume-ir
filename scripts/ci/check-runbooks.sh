@@ -43,6 +43,7 @@ require_text "$diagnostics_runbook" "--diagnostics-report redacted-diagnostics.j
 require_text "$diagnostics_runbook" "redacted diagnostics evidence"
 require_text "$diagnostics_runbook" "raw resume text"
 require_text "$diagnostics_runbook" "complete paths"
+require_text "$release_runbook" "unknown top-level payload fields are rejected"
 require_text "$fault_runbook" "resume-cli fault-simulate --case disk-space-low"
 require_text "$fault_runbook" "resume-cli fault-simulate --case permission-denied"
 require_text "$fault_runbook" "resume-cli fault-simulate --case file-lock"

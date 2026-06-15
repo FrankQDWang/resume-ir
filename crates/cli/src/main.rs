@@ -2816,6 +2816,7 @@ fn validate_release_readiness_diagnostics_report(report: &str) -> Result<()> {
         .as_object()
         .ok_or_else(|| CliError::user("diagnostics report blocked: expected JSON object"))?;
 
+    validate_release_readiness_diagnostics_allowed_keys(object)?;
     require_json_string(object, "schema_version", "diagnostics.v1")?;
     require_json_bool(object, "redacted", true)?;
     require_json_string(object, "raw_paths", "<redacted>")?;
@@ -2839,6 +2840,48 @@ fn validate_release_readiness_diagnostics_report(report: &str) -> Result<()> {
         ("fault_simulations", "available_cases_only"),
     ] {
         require_json_string(diagnostic_scope, key, expected)?;
+    }
+
+    Ok(())
+}
+
+fn validate_release_readiness_diagnostics_allowed_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    const ALLOWED_KEYS: &[&str] = &[
+        "schema_version",
+        "redacted",
+        "raw_paths",
+        "raw_queries",
+        "raw_resume_text",
+        "metadata",
+        "search_index_state",
+        "vector_index_state",
+        "vector_index_backend",
+        "vector_index_vectors",
+        "vector_index_tombstones",
+        "search_index_read_target",
+        "index_health",
+        "last_snapshot",
+        "staging_orphans",
+        "snapshot_fallback",
+        "query_smoke",
+        "query_latency",
+        "contact_hash_key",
+        "resource_telemetry",
+        "ocr_runtime",
+        "fault_simulations",
+        "diagnostic_scope",
+        "evidence_level",
+        "scope",
+    ];
+
+    for key in object.keys() {
+        if !ALLOWED_KEYS.contains(&key.as_str()) {
+            return Err(CliError::user(format!(
+                "diagnostics report blocked: {key} is not allowed"
+            )));
+        }
     }
 
     Ok(())

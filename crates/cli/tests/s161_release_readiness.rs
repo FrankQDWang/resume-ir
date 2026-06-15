@@ -476,6 +476,50 @@ fn release_readiness_json_accepts_redacted_diagnostics_report_without_path_leaks
 }
 
 #[test]
+fn release_readiness_rejects_diagnostics_report_with_unknown_payload_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-diagnostics-extra-payload-data");
+    let evidence_dir = temp_path("release-readiness-diagnostics-extra-payload-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let diagnostics_report = evidence_dir.join("redacted-diagnostics.json");
+    fs::write(
+        &diagnostics_report,
+        redacted_diagnostics_report().replace(
+            "\"scope\":\"redacted local aggregate diagnostics; no raw resume text, paths, queries, tokens, or index segment contents included\"",
+            "\"raw_payload\":{\"note\":\"synthetic extra payload\"},\"scope\":\"redacted local aggregate diagnostics; no raw resume text, paths, queries, tokens, or index segment contents included\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--diagnostics-report",
+            path_str(&diagnostics_report),
+        ])
+        .output()
+        .expect("reject diagnostics report with unknown payload");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("redacted diagnostics evidence"));
+    assert!(stderr.contains("diagnostics report blocked: raw_payload is not allowed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&diagnostics_report)));
+    assert!(!stderr.contains(path_str(&diagnostics_report)));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_blocked_release_automation_evidence_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-release-evidence-private-data");
     let evidence_dir = temp_path("release-readiness-release-evidence-private-reports");

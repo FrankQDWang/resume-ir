@@ -604,8 +604,12 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
 The release-readiness diagnostics intake validates only `diagnostics.v1`
 redacted local aggregate diagnostics: top-level `redacted: true`, redacted path,
 query, and resume-text sentinels, `evidence_level: "local_aggregate_only"`, and
-the expected aggregate diagnostic scope. It rejects reports with common local
-path or secret markers and never prints the report path or report body.
+the expected aggregate diagnostic scope. The report may contain only the
+defined top-level aggregate diagnostics fields emitted by
+`export-diagnostics --redact`; unknown top-level payload fields are rejected so
+raw logs, samples, or ad hoc diagnostic details cannot be smuggled into release
+evidence. It rejects reports with common local path or secret markers and never
+prints the report path or report body.
 
 Release dry-runs must also produce a blocked signing evidence manifest, not a
 fake signature result. The manifest schema is `release.signing_evidence.v1` and
