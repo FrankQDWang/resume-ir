@@ -387,6 +387,22 @@ production-ready scope source.
   queries, diagnostics, model caches, runtime binaries, signing material,
   notarization credentials, local runtime data, or generated release artifacts
   were committed or uploaded.
+  S351 and S352 changed release-readiness evidence intake, CI guards, tests,
+  runbook text, and this progress log only; no real resume data, filenames,
+  paths, raw text, raw queries, diagnostics, model caches, runtime binaries,
+  signing material, notarization credentials, local runtime data, generated
+  release artifacts, administrator passwords, service tokens, or installer logs
+  were committed or uploaded.
+  S353 used a private local-only smoke-profile current-stage validation witness
+  against the user-authorized local resume directory with local Tesseract,
+  Poppler/pdftoppm, `eng+chi_sim` tessdata, and the local
+  sentence-transformers model cache. The run read a bounded private corpus slice
+  locally, generated only local temporary manifests, indexes, SQLite data, query
+  set, benchmark report, diagnostics, logs, and redacted aggregate smoke/handoff
+  evidence, and did not produce release-readiness evidence. No real resume data,
+  filenames, paths, raw OCR text, raw query text, vectors, generated private
+  reports, local manifests, runtime binaries, model artifacts, indexes, SQLite
+  databases, diagnostics, or model caches were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1013,6 +1029,7 @@ obsolete preliminary files and checklists are not product scope.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S353 | Current-stage real local smoke chain revalidated on current HEAD | A smoke-profile real local current-stage validation witness against the user-authorized resume root used current `codex/fault-injection-diagnostics` HEAD, local Tesseract 5.5.2, Poppler/pdftoppm 26.04.0, `eng+chi_sim` tessdata, a local `sentence-transformers/all-MiniLM-L6-v2` model cache whose model card records `apache-2.0`, and a temporary local Python runtime for `sentence-transformers`. Execute mode exited 0 after OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, local query-set draft, private query baseline, smoke baseline gate, redacted diagnostics, smoke summary, and handoff summary. Redacted aggregate smoke evidence reported 50 bounded documents, 2 searchable documents, 48 OCR-required documents, 2 vector-indexed documents, one retryable OCR page-budget failure, OCR probe `passed`, embedding protocol `passed`, `full_baseline_satisfied: false`, `release_readiness_evidence: false`, and `performance_optimization_deferred: true`. The smoke stdout used `<local-evidence-dir>` placeholders and stderr was empty. | This is current-HEAD smoke/wiring evidence only, not full current-stage baseline or product completion. Full 10k/8000-document current-stage baseline, 500-query private baseline gate, full hot-index coverage, full OCR backlog drain, OCR throughput baseline, release-readiness evidence, P95/P99 optimization, external 100k/1M validation, final model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets remain not complete or BLOCKED. |
 | S352 | Installer lifecycle plan release-readiness intake complete locally | Focused RED first failed because `resume-cli release-readiness --json --macos-installer-lifecycle-plan <path> --windows-installer-lifecycle-plan <path>` rejected the lifecycle plan flags and produced no JSON report. After implementation, release-readiness accepts `release.macos_installer_lifecycle_plan.v1` and `release.windows_installer_lifecycle_plan.v1` dry-run operator plans, validates dry-run execution mode, package manifest digests, expected platform release runner, required administrator approval, artifact basename/hash/byte metadata, planned installer lifecycle actions and commands (`installer`/`pkgutil`/`launchctl` on macOS and `msiexec.exe` on Windows), blocked release steps, and prohibited public material markers, then records `macOS installer lifecycle plan evidence` and `Windows installer lifecycle plan evidence` under `blocked_release_evidence_manifest`. The evidence labels are intentionally distinct from the real macOS/Windows installer lifecycle blockers, so installer/platform blockers remain blocked. CI guard and runbook now require `--macos-installer-lifecycle-plan macos-installer-lifecycle-dry-run.json` and `--windows-installer-lifecycle-plan windows-installer-lifecycle-dry-run.json`. Verification passed: focused RED/GREEN unit test, full `s161_release_readiness` test file, `check-release-readiness.sh`, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is release-readiness evidence intake only. It does not run `installer`, `pkgutil`, `launchctl`, or `msiexec.exe`; does not perform install/upgrade/uninstall/rollback on release runners; does not clear macOS installer lifecycle, Windows installer lifecycle, Windows service lifecycle, cross-platform validation, signing, notarization, final model/runtime distribution, full current-stage baseline, labeled quality, hardware drills, external 100k/1M validation, or complete-product readiness. |
 | S351 | Windows Service lifecycle plan release-readiness intake complete locally | Focused RED first failed because `resume-cli release-readiness --json --windows-service-lifecycle-plan <path>` was rejected as an unknown evidence flag and produced no JSON report. After implementation, release-readiness accepts `release.windows_service_lifecycle_plan.v1` dry-run operator plans, validates the dry-run boundary, package manifest digest, `sc.exe` service manager, required administrator approval, not-registered service state, blocked recovery/rollback status, MSI artifact basename/hash/byte metadata, seven blocked lifecycle actions, blocked release steps, and prohibited public material markers, then records `Windows service lifecycle plan evidence` under `blocked_release_evidence_manifest`. The evidence label is intentionally distinct from the real `Windows service lifecycle` blocker, so service/platform blockers remain blocked. CI guard and runbook now require `--windows-service-lifecycle-plan windows-service-lifecycle-dry-run.json`. Verification passed: focused RED/GREEN unit test, full `s161_release_readiness` test file, `check-release-readiness.sh`, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, and full `./scripts/ci/verify-local.sh`. | This is release-readiness evidence intake only. It does not register, start, stop, query, recover, uninstall, or roll back a Windows service; does not run administrator-elevated release-runner transcripts; does not clear Windows service lifecycle, cross-platform validation, signing, notarization, final model/runtime distribution, full current-stage baseline, labeled quality, hardware drills, external 100k/1M validation, or complete-product readiness. |
 | S350 | Product-level release-readiness gap matrix complete locally | Focused RED first failed because `release-readiness --json` did not expose a product-level P0-P6 gap matrix and therefore could not distinguish local implementation coverage from stable-release blockers in one machine-readable report. After implementation, the JSON report includes `goal_gap_matrix` with schema `resume-ir.goal-gap-matrix.v1`, `complete_product: false`, `current_stage: "baseline_not_complete"`, and rows for P0 foundation, P1 text import/fulltext, P2 fields/dedupe, P3 semantic/vector, P4 OCR, P5 cross-platform release, and P6 performance/stability. The matrix marks P0/P1 as local-CI covered, P2/P3/P4 as locally implemented but release-blocked by quality/runtime/baseline evidence, P5 as blocked on real platform credentials/transcripts, and P6 as not complete until full current-stage baseline, labeled quality, hardware drills, and deferred external scale validation exist. Verification passed: the focused RED/GREEN unit test, full `s161_release_readiness` test file, `check-release-readiness.sh`, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is a reporting and guard slice only. It does not create missing full current-stage baseline evidence, labeled quality datasets, real release-runner transcripts, signing/notarization credentials, hardware fault drill evidence, external 100k/1M validation, or complete-product readiness. |
@@ -1366,6 +1383,136 @@ obsolete preliminary files and checklists are not product scope.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S353
+
+- Scope: revalidate the current-stage real local smoke chain on the current
+  `codex/fault-injection-diagnostics` HEAD after S349-S352 release-readiness
+  evidence changes. This is deliberately a bounded smoke witness, not the full
+  current-stage baseline and not release-readiness evidence.
+- Read-only gap audit before running the witness:
+  - `GOAL.md` current stage still requires reproducible local baseline evidence,
+    runtime manifests/checksums/licenses, local validation workflow, and clear
+    BLOCKED boundaries.
+  - `release-readiness --json` still reports `complete_product: false`,
+    `current_stage: "baseline_not_complete"`, P5 blocked, and P6
+    `not_complete`.
+  - Local dependency probes found Tesseract 5.5.2, Poppler/pdftoppm 26.04.0,
+    `eng`/`chi_sim` tessdata, and a cached
+    `sentence-transformers/all-MiniLM-L6-v2` model whose model card records
+    `apache-2.0`.
+  - A local temporary Python runtime was created for `sentence-transformers`.
+    No Python packages, model caches, generated manifests, query sets, indexes,
+    SQLite databases, diagnostics, or private reports were committed.
+- Runtime preflight:
+
+```bash
+resume-cli ocr preflight --json \
+  --ocr-lang eng+chi_sim \
+  --tesseract-command <local-tesseract> \
+  --pdftoppm-command <local-pdftoppm>
+
+scripts/local/prepare-local-embedding-model-manifest.sh \
+  --out <local-model-manifest> \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-pack-id sentence-transformers-all-MiniLM-L6-v2-local \
+  --dimension 384 \
+  --license Apache-2.0 \
+  --resume-cli <local-resume-cli>
+
+resume-cli model preflight --json \
+  --manifest <local-model-manifest> \
+  --embedding-command scripts/local/embedding-runtime-sentence-transformers.py \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --dimension 384
+```
+
+  Output summary:
+
+  - `ocr_schema`: `ocr-runtime-preflight.v1`
+  - `ocr_runtime_probe`: `passed`
+  - `model_schema`: `embedding-runtime-preflight.v1`
+  - `embedding_protocol`: `passed`
+  - `model_prepare_summary`: `embedding model manifest: written`
+
+- Real local smoke execute:
+
+```bash
+scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile smoke \
+  --resume-cli <local-resume-cli> \
+  --resume-daemon <local-resume-daemon> \
+  --resume-benchmark <local-resume-benchmark> \
+  --resume-root <private-local-resume-root> \
+  --data-dir <local-data-dir> \
+  --out-dir <local-evidence-dir> \
+  --model-manifest <local-model-manifest> \
+  --ocr-runtime-manifest <local-ocr-runtime-manifest> \
+  --model-artifact <local-model-artifact> \
+  --embedding-command scripts/local/embedding-runtime-sentence-transformers.py \
+  --model-pack-id sentence-transformers-all-MiniLM-L6-v2-local \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-format safetensors \
+  --dimension 384 \
+  --model-license Apache-2.0 \
+  --runtime-pack-id tesseract-poppler-local-20260615 \
+  --tesseract-command <local-tesseract> \
+  --pdftoppm-command <local-pdftoppm> \
+  --language eng+chi_sim \
+  --language-pack eng=<local-eng-tessdata> \
+  --language-pack chi_sim=<local-chi-sim-tessdata> \
+  --engine-license Apache-2.0 \
+  --renderer-license GPL-family-external-command \
+  --language-license Apache-2.0 \
+  --reviewed-model \
+  --reviewed-ocr-runtime \
+  --max-files 50 \
+  --max-queries 5 \
+  --top-k 5 \
+  --worker-interval-ms 1 \
+  --ocr-worker-ticks 2 \
+  --embedding-worker-ticks 2 \
+  --ocr-max-pages-per-document 1 \
+  --embedding-max-docs 8 \
+  --embedding-timeout-ms 60000
+```
+
+  Output summary:
+
+  - Exit code: 0.
+  - Completed ordered steps: OCR preflight, OCR manifest draft/validate, model
+    manifest draft/validate, model preflight, dataset manifest, private corpus
+    import, bounded OCR worker, bounded embedding worker, corpus summary, query
+    set, private query baseline, baseline shape gate, redacted diagnostics,
+    smoke summary, handoff summary.
+  - `current-stage-smoke-summary.json` schema:
+    `resume-ir.current-stage-smoke-summary.v1`.
+  - `current-stage-smoke-summary.json` privacy boundary:
+    `local_only_redacted_aggregate_summary`.
+  - `current-stage-handoff.json` schema:
+    `resume-ir.current-stage-handoff.v1`.
+  - Preflight probes: OCR runtime `passed`, embedding protocol `passed`.
+  - Redacted aggregate corpus observability: 50 documents, 2 searchable
+    documents, 48 OCR-required documents, 2 vector-indexed documents, one
+    retryable OCR page-budget failure.
+  - `full_baseline_satisfied=false`, `release_readiness_evidence=false`, and
+    `performance_optimization_deferred=true`.
+  - The smoke stdout used `<local-evidence-dir>` placeholders; stderr was empty.
+- Privacy:
+  - The witness read only the user-authorized local resume directory.
+  - All generated manifests, query sets, benchmark reports, diagnostics,
+    indexes, SQLite databases, model-runtime data, and logs stayed in a local
+    temporary directory and were not committed or uploaded.
+  - This progress entry records only aggregate counts, schema/status names, and
+    redacted command shapes.
+- Scope note:
+  - S353 is fresh current-HEAD smoke evidence only. It does not clear the full
+    10k/8000-document current-stage baseline, 500-query private baseline,
+    full hot-index coverage, full OCR backlog drain, OCR throughput baseline,
+    release-readiness evidence, P95/P99 optimization, external 100k/1M
+    validation, final model/runtime distribution approval, installer/platform
+    signing/notarization blockers, hardware drills, real labeled quality
+    datasets, or complete-product readiness.
 
 ### S350
 
