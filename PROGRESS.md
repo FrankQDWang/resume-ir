@@ -1116,6 +1116,7 @@ obsolete `S0-S13` long-running checklist as product truth.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S359 | OCR-backlog blocked handoff now binds redacted diagnostics evidence | Focused RED first failed because the full-profile OCR-backlog path stopped after corpus summary without writing `redacted-diagnostics.json`. After implementation, `run-current-stage-validation.sh` runs `export-diagnostics --redact` before writing the OCR-backlog blocked summary, records a `redacted_diagnostics` step, records the diagnostics basename and digest, and still exits before query-set generation, private benchmarking, release-readiness, or full evidence. The guard validates the diagnostics JSON, privacy sentinels, summary binding, handoff generation, and absence of private query/benchmark/release outputs. | This is current-stage blocked-handoff evidence only. It does not drain the OCR backlog, complete the full local 10k/8000-document baseline, generate a 500-query private benchmark, clear OCR throughput/release-readiness evidence, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization/quality blockers, validate external 100k/1M scale, or make the product complete. |
 | S358 | Full-profile current-stage real local bounded handoff reproduced OCR backlog blocker | A private local-only full-profile current-stage validation attempt used current `codex/fault-injection-diagnostics` HEAD, local Tesseract/Poppler, `eng+chi_sim` tessdata, a reviewed local `sentence-transformers/all-MiniLM-L6-v2` manifest, `--max-files 8000`, `--max-queries 500`, `--ocr-worker-ticks 2`, and `--embedding-worker-ticks 2`. It completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, and corpus summary, then stopped as designed with `current-stage-blocked-summary.json` and `current-stage-handoff.json`. The redacted blocked summary reported `blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`, `private_corpus_read: true`, OCR runtime probe `passed`, embedding protocol `passed`, 8000 documents, 86 searchable documents, 7899 OCR-required documents, 15 permanent failures, 16 vector-indexed documents, 7898 queued OCR jobs, one completed OCR document job, one retryable OCR page-budget failure, and `hot_index_fully_covered: false`. Regenerating the handoff from the blocked summary was stable, and a precise privacy scan over committed-safe stdout/stderr, corpus summary, blocked summary, and handoff found no local paths, private markers, model-cache paths, model artifact names, or private resume directory names. | This is a real full-profile blocked handoff, not current-stage completion. It stops before private query-set generation, 500-query private baseline, OCR throughput baseline, redacted diagnostics for the run, release-readiness current-stage evidence, full OCR backlog drain, hot-index coverage, P95/P99 optimization, external 100k/1M validation, model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets. |
 | S357 | Product gap audit refreshed on current HEAD | Read-only audit used `GOAL.md`, `MANIFEST.md`, all system-design and execution-plan documents from their read-order files, `AGENTS.md`, runbooks, CI scripts, crate/test inventories, `PROGRESS.md`, and fresh `release-readiness --json`. The current readiness matrix reports `stable_release: "blocked"`, `complete_product: false`, and 15 blockers. It marks P0/P1 as implementation complete and locally/CI covered; P2/P3/P4 as implementation complete but release-blocked by quality/runtime/baseline evidence; P5 as platform/credential/transcript blocked; and P6 as not complete. The audit confirms current-stage scope is reproducible local baseline/observability/validation flow, not P95/P99 optimization or million-real-resume validation. | Complete product remains not complete. Full current-stage baseline evidence, full hot-index coverage, 500-query private baseline, reviewed model/OCR evidence for release, redacted diagnostics evidence, labeled field/dedupe/vector quality datasets, real installer/service transcripts, signing/notarization credentials, actual hardware fault drills, and external 100k/1M validation remain missing or BLOCKED. |
 | S356 | Current-stage real local smoke chain revalidated with fault simulation on current HEAD | A smoke-profile real local current-stage validation witness against the user-authorized resume root used current `codex/fault-injection-diagnostics` HEAD, local Tesseract 5.5.2, Poppler/pdftoppm 26.04.0, `eng+chi_sim` tessdata, a local `sentence-transformers/all-MiniLM-L6-v2` model cache whose model card records Apache-2.0, and a temporary local Python runtime for `sentence-transformers` 5.5.1. Execute mode exited 0 after OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, local query-set draft, private query baseline, smoke baseline gate, redacted diagnostics, safe synthetic `fault_simulation_smoke`, smoke summary, and handoff summary. Redacted aggregate smoke evidence reported 50 bounded documents, 2 searchable documents, 48 OCR-required documents, 2 vector-indexed documents, one retryable OCR page-budget failure, OCR probe `passed`, embedding protocol `passed`, `fault-simulation.v1` status `reproduced`, `full_baseline_satisfied: false`, `release_readiness_evidence: false`, and `performance_optimization_deferred: true`. A precise privacy scan over committed-safe stdout/stderr, smoke summary, handoff, and fault output found no local paths, private markers, model-cache paths, or resume directory names. | This is current-HEAD smoke/wiring evidence only, not full current-stage baseline or product completion. Full 10k/8000-document current-stage baseline, 500-query private baseline gate, full hot-index coverage, full OCR backlog drain, OCR throughput baseline, release-readiness current-stage evidence, P95/P99 optimization, external 100k/1M validation, final model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets remain not complete or BLOCKED. |
@@ -1475,6 +1476,53 @@ obsolete `S0-S13` long-running checklist as product truth.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S359
+
+- Scope: bind redacted diagnostics evidence to the full-profile
+  OCR-backlog blocked handoff without continuing into query-set generation,
+  private benchmarking, release-readiness, full evidence, or performance work.
+- TDD RED:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Failed as expected with
+  `current-stage execute did not write redacted diagnostics before bounded OCR backlog handoff`.
+
+- Implementation:
+  - `run-current-stage-validation.sh` now runs
+    `resume-cli --data-dir <local-data-dir> export-diagnostics --redact` after
+    detecting a full-profile bounded OCR backlog and before writing
+    `current-stage-blocked-summary.json`.
+  - The OCR-backlog blocked summary records `redacted_diagnostics` as a
+    completed step when export succeeds, includes the
+    `redacted-diagnostics.json` basename and SHA-256 digest, and still marks
+    `release_readiness_evidence: false`.
+  - If diagnostics export fails on that path, the script still writes the
+    blocked summary and marks `redacted_diagnostics` blocked instead of silently
+    omitting the handoff.
+- Focused GREEN:
+
+```bash
+PATH=/Users/frankqdwang/.cargo/bin:$PATH ./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Passed with the OCR-backlog guard validating the diagnostics JSON, blocked
+  summary binding, privacy sentinels, handoff generation, and absence of
+  query-set/private benchmark/release-readiness/full-evidence outputs.
+
+- Scope note:
+  - S359 is current-stage blocked-handoff evidence plumbing only. It does not
+    clear the full current-stage baseline, full OCR backlog, private query-set,
+    private query benchmark, OCR throughput baseline, release-readiness
+    evidence, P95/P99 optimization, quality datasets, platform/signing blockers,
+    external 100k/1M validation, or complete-product readiness.
 
 ### S358
 

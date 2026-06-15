@@ -645,8 +645,9 @@ fi
 if [ -e "$execute_out_dir/private-benchmark-local.json" ]; then
   fail "current-stage execute benchmarked private queries after bounded OCR backlog"
 fi
-if [ -e "$execute_out_dir/redacted-diagnostics.json" ]; then
-  fail "current-stage execute ran diagnostics after bounded OCR backlog"
+ocr_backlog_diagnostics="$execute_out_dir/redacted-diagnostics.json"
+if [ ! -s "$ocr_backlog_diagnostics" ]; then
+  fail "current-stage execute did not write redacted diagnostics before bounded OCR backlog handoff"
 fi
 if [ -e "$execute_out_dir/release-readiness.json" ]; then
   fail "current-stage execute ran release-readiness after bounded OCR backlog"
@@ -656,6 +657,7 @@ if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
 fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$ocr_backlog_summary" >/dev/null
+  python3 -m json.tool "$ocr_backlog_diagnostics" >/dev/null
 fi
 require_text "$ocr_backlog_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
 require_text "$ocr_backlog_summary" '"privacy_boundary": "local_only_redacted_blocked_summary"'
@@ -672,14 +674,21 @@ require_text "$ocr_backlog_summary" '"corpus_summary_observability": {'
 require_text "$ocr_backlog_summary" '"ocr_required": 8538'
 require_text "$ocr_backlog_summary" '"vector_indexed_document_count": 0'
 require_text "$ocr_backlog_summary" '"hot_index_fully_covered": false'
+require_text "$ocr_backlog_summary" '"redacted_diagnostics", "status": "success"'
 require_text "$ocr_backlog_summary" '"benchmark-corpus-summary.local.json"'
+require_text "$ocr_backlog_summary" '"redacted-diagnostics.json"'
 require_text "$ocr_backlog_summary" '"full 10k/8000-document current-stage baseline"'
 require_current_stage_handoff \
   "blocked" \
   "resume-ir.current-stage-blocked-summary.v1"
+require_text "$ocr_backlog_diagnostics" '"schema_version":"diagnostics.v1"'
+require_text "$ocr_backlog_diagnostics" '"redacted":true'
 reject_text "$ocr_backlog_summary" "$tmpdir"
 reject_text "$ocr_backlog_summary" "PRIVATE-current-stage"
 reject_text "$ocr_backlog_summary" "private fake query"
+reject_text "$ocr_backlog_diagnostics" "$tmpdir"
+reject_text "$ocr_backlog_diagnostics" "PRIVATE-current-stage"
+reject_text "$ocr_backlog_diagnostics" "private fake query"
 require_text "$tmpdir/execute-ocr-backlog-stderr.txt" "current-stage validation blocked: bounded OCR backlog remains"
 reject_text "$tmpdir/execute-ocr-backlog-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-ocr-backlog-stderr.txt" "$tmpdir"

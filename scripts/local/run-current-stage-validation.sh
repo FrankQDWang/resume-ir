@@ -947,6 +947,7 @@ EOF
 }
 
 write_ocr_backlog_blocked_summary() {
+  redacted_diagnostics_exit="${1:-0}"
   blocked_exit=1
   ocr_preflight_sha256=$(sha256_file "$out_dir/ocr-preflight.json")
   ocr_draft_stdout_sha256=$(sha256_file "$out_dir/ocr-draft-manifest.stdout.txt")
@@ -961,6 +962,18 @@ write_ocr_backlog_blocked_summary() {
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
   dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
+  redacted_diagnostics_sha256_json=$(sha256_file_json_or_null "$out_dir/redacted-diagnostics.json")
+
+  if [ "$redacted_diagnostics_exit" -eq 0 ]; then
+    redacted_diagnostics_step_json='    {"id": "redacted_diagnostics", "status": "success"}'
+    redacted_diagnostics_not_completed=''
+  else
+    redacted_diagnostics_step_json=$(cat <<EOF_DIAGNOSTICS_STEP
+    {"id": "redacted_diagnostics", "status": "blocked", "exit_code": $redacted_diagnostics_exit}
+EOF_DIAGNOSTICS_STEP
+)
+    redacted_diagnostics_not_completed='    "redacted diagnostics for this blocked run",'
+  fi
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
@@ -1009,7 +1022,8 @@ write_ocr_backlog_blocked_summary() {
     {"id": "import_private_corpus", "status": "success"},
     {"id": "ocr_worker_bounded_loop", "status": "blocked", "exit_code": $blocked_exit},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
-    {"id": "corpus_summary", "status": "success"}
+    {"id": "corpus_summary", "status": "success"},
+$redacted_diagnostics_step_json
   ],
   "redacted_outputs": [
     {"file": "dataset-manifest.local.json", "sha256": "$dataset_manifest_sha256_output"},
@@ -1025,7 +1039,8 @@ write_ocr_backlog_blocked_summary() {
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
     {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
-    {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"}
+    {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
+    {"file": "redacted-diagnostics.json", "sha256": $redacted_diagnostics_sha256_json}
   ],
   "privacy_sentinels": {
     "local_paths_included": false,
@@ -1041,7 +1056,7 @@ write_ocr_backlog_blocked_summary() {
     "full 10k/8000-document current-stage baseline",
     "500-query private baseline gate",
     "private real-corpus OCR throughput baseline",
-    "redacted diagnostics for this blocked run",
+$redacted_diagnostics_not_completed
     "release-readiness current-stage evidence",
     "P95/P99 latency reduction",
     "external 100k/1M validation",
@@ -2206,7 +2221,17 @@ printf '%s\n' "current-stage validation: corpus summary"
   > "$out_dir/benchmark-corpus-summary.local.json"
 
 if [ "$validation_profile" = "full" ] && corpus_summary_has_bounded_ocr_backlog "$out_dir/benchmark-corpus-summary.local.json"; then
-  write_ocr_backlog_blocked_summary
+  printf '%s\n' "current-stage validation: redacted diagnostics"
+  set +e
+  "$resume_cli" --data-dir "$data_dir" export-diagnostics --redact \
+    > "$out_dir/redacted-diagnostics.json"
+  redacted_diagnostics_status=$?
+  set -e
+  write_ocr_backlog_blocked_summary "$redacted_diagnostics_status"
+  if [ "$redacted_diagnostics_status" -ne 0 ]; then
+    printf '%s\n' "current-stage validation blocked: bounded OCR backlog remains; redacted diagnostics failed" >&2
+    exit "$redacted_diagnostics_status"
+  fi
   printf '%s\n' "current-stage validation blocked: bounded OCR backlog remains" >&2
   exit 1
 fi
