@@ -1116,6 +1116,7 @@ obsolete `S0-S13` long-running checklist as product truth.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S360 | Full-profile current-stage real local OCR-backlog diagnostics handoff reproduced | A fresh private local-only full-profile current-stage validation witness used current `codex/fault-injection-diagnostics` HEAD, local Tesseract/Poppler, `eng+chi_sim` tessdata, a reviewed local `sentence-transformers/all-MiniLM-L6-v2` manifest, the existing local Python runtime with `sentence-transformers 5.5.1`, `--max-files 8000`, `--max-queries 500`, `--ocr-worker-ticks 2`, and `--embedding-worker-ticks 2`. An initial preflight-only attempt correctly stopped before private corpus read when the default system Python lacked `sentence-transformers`; the rerun with the local runtime completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, and redacted diagnostics, then stopped with `current-stage-blocked-summary.json` and `current-stage-handoff.json`. The redacted blocked summary reported `blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`, `private_corpus_read: true`, OCR runtime probe `passed`, embedding protocol `passed`, `redacted_diagnostics` success, 8000 documents, 86 searchable documents, 7899 OCR-required documents, 15 permanent failures, 16 vector-indexed documents, 7898 queued OCR jobs, one completed OCR document job, one retryable OCR page-budget failure, and `hot_index_fully_covered: false`. A privacy scan over committed-safe stdout/stderr, corpus summary, blocked summary, handoff, and diagnostics found no local paths, private markers, model-cache paths, model artifact names, private resume directory names, email-like tokens, or mainland mobile-like tokens. The local temporary private evidence/data directories were removed after extracting this aggregate summary. | This is a real full-profile current-stage blocked handoff with diagnostics, not current-stage completion or release-readiness evidence. It stops before private query-set generation, 500-query private baseline, OCR throughput baseline, release-readiness current-stage evidence, full OCR backlog drain, hot-index coverage, P95/P99 optimization, external 100k/1M validation, model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets. |
 | S359 | OCR-backlog blocked handoff now binds redacted diagnostics evidence | Focused RED first failed because the full-profile OCR-backlog path stopped after corpus summary without writing `redacted-diagnostics.json`. After implementation, `run-current-stage-validation.sh` runs `export-diagnostics --redact` before writing the OCR-backlog blocked summary, records a `redacted_diagnostics` step, records the diagnostics basename and digest, and still exits before query-set generation, private benchmarking, release-readiness, or full evidence. The guard validates the diagnostics JSON, privacy sentinels, summary binding, handoff generation, and absence of private query/benchmark/release outputs. | This is current-stage blocked-handoff evidence only. It does not drain the OCR backlog, complete the full local 10k/8000-document baseline, generate a 500-query private benchmark, clear OCR throughput/release-readiness evidence, improve P95/P99, approve model/runtime distribution, clear installer/platform/signing/notarization/quality blockers, validate external 100k/1M scale, or make the product complete. |
 | S358 | Full-profile current-stage real local bounded handoff reproduced OCR backlog blocker | A private local-only full-profile current-stage validation attempt used current `codex/fault-injection-diagnostics` HEAD, local Tesseract/Poppler, `eng+chi_sim` tessdata, a reviewed local `sentence-transformers/all-MiniLM-L6-v2` manifest, `--max-files 8000`, `--max-queries 500`, `--ocr-worker-ticks 2`, and `--embedding-worker-ticks 2`. It completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, and corpus summary, then stopped as designed with `current-stage-blocked-summary.json` and `current-stage-handoff.json`. The redacted blocked summary reported `blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`, `private_corpus_read: true`, OCR runtime probe `passed`, embedding protocol `passed`, 8000 documents, 86 searchable documents, 7899 OCR-required documents, 15 permanent failures, 16 vector-indexed documents, 7898 queued OCR jobs, one completed OCR document job, one retryable OCR page-budget failure, and `hot_index_fully_covered: false`. Regenerating the handoff from the blocked summary was stable, and a precise privacy scan over committed-safe stdout/stderr, corpus summary, blocked summary, and handoff found no local paths, private markers, model-cache paths, model artifact names, or private resume directory names. | This is a real full-profile blocked handoff, not current-stage completion. It stops before private query-set generation, 500-query private baseline, OCR throughput baseline, redacted diagnostics for the run, release-readiness current-stage evidence, full OCR backlog drain, hot-index coverage, P95/P99 optimization, external 100k/1M validation, model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets. |
 | S357 | Product gap audit refreshed on current HEAD | Read-only audit used `GOAL.md`, `MANIFEST.md`, all system-design and execution-plan documents from their read-order files, `AGENTS.md`, runbooks, CI scripts, crate/test inventories, `PROGRESS.md`, and fresh `release-readiness --json`. The current readiness matrix reports `stable_release: "blocked"`, `complete_product: false`, and 15 blockers. It marks P0/P1 as implementation complete and locally/CI covered; P2/P3/P4 as implementation complete but release-blocked by quality/runtime/baseline evidence; P5 as platform/credential/transcript blocked; and P6 as not complete. The audit confirms current-stage scope is reproducible local baseline/observability/validation flow, not P95/P99 optimization or million-real-resume validation. | Complete product remains not complete. Full current-stage baseline evidence, full hot-index coverage, 500-query private baseline, reviewed model/OCR evidence for release, redacted diagnostics evidence, labeled field/dedupe/vector quality datasets, real installer/service transcripts, signing/notarization credentials, actual hardware fault drills, and external 100k/1M validation remain missing or BLOCKED. |
@@ -1476,6 +1477,120 @@ obsolete `S0-S13` long-running checklist as product truth.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S360
+
+- Scope: rerun the full-profile current-stage real local bounded witness after
+  S359, proving the OCR-backlog handoff now includes redacted diagnostics on the
+  user-authorized private local resume corpus without attempting full OCR drain
+  or performance optimization.
+- Preflight:
+  - `cargo build --locked -p resume-cli -p resume-daemon -p benchmark-runner --bin resume-benchmark` exited 0.
+  - Local OCR dependencies were present: Tesseract 5.5.2, Poppler/pdftoppm
+    26.04.0, and `eng+chi_sim` tessdata.
+  - The user-authorized local corpus contained 8721 supported PDF/Word files.
+  - The local `sentence-transformers/all-MiniLM-L6-v2` cache and model artifact
+    were present.
+- First execute attempt:
+  - Using the default system Python, execute exited 1 before private corpus
+    read.
+  - The blocked summary reported `private_corpus_read: false`,
+    `blocked_step: "model_preflight"`, `blocked_category: "embedding"`, and
+    `blocked_reason: "embedding_runtime_preflight_failed"`.
+  - This was a correct fail-closed runtime preflight result, not a corpus
+    validation result.
+- Second execute attempt:
+
+```bash
+PATH=<local-current-stage-python-runtime>:/Users/frankqdwang/.cargo/bin:$PATH \
+scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile full \
+  --resume-cli target/debug/resume-cli \
+  --resume-daemon target/debug/resume-daemon \
+  --resume-benchmark target/debug/resume-benchmark \
+  --resume-root <user-authorized-local-resume-root> \
+  --data-dir <local-private-data-dir> \
+  --out-dir <local-private-evidence-dir> \
+  --model-manifest <local-model-manifest> \
+  --ocr-runtime-manifest <local-ocr-runtime-manifest> \
+  --model-artifact <local-all-MiniLM-L6-v2-safetensors> \
+  --embedding-command scripts/local/embedding-runtime-sentence-transformers.py \
+  --model-pack-id sentence-transformers-all-MiniLM-L6-v2-local \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-format safetensors \
+  --dimension 384 \
+  --model-license Apache-2.0 \
+  --runtime-pack-id tesseract-poppler-local-20260615 \
+  --tesseract-command <local-tesseract> \
+  --pdftoppm-command <local-pdftoppm> \
+  --language eng+chi_sim \
+  --language-pack eng=<local-eng-tessdata> \
+  --language-pack chi_sim=<local-chi-sim-tessdata> \
+  --engine-license Apache-2.0 \
+  --renderer-license GPL-family-external-command \
+  --language-license Apache-2.0 \
+  --reviewed-model \
+  --reviewed-ocr-runtime \
+  --max-files 8000 \
+  --max-queries 500 \
+  --top-k 10 \
+  --worker-interval-ms 1 \
+  --ocr-worker-ticks 2 \
+  --embedding-worker-ticks 2 \
+  --ocr-max-pages-per-document 1 \
+  --embedding-max-docs 8 \
+  --embedding-timeout-ms 60000
+```
+
+Output summary:
+
+- Execute exited 1 as expected with
+  `current-stage validation blocked: bounded OCR backlog remains`.
+- Completed steps: OCR preflight, OCR manifest draft/validate, model manifest
+  draft/validate, model preflight, dataset manifest, private corpus import,
+  bounded OCR worker, bounded embedding worker, corpus summary, and redacted
+  diagnostics.
+- `current-stage-blocked-summary.json` reported:
+  - `blocked_step: "ocr_worker_bounded_loop"`.
+  - `blocked_category: "ocr"`.
+  - `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`.
+  - `private_corpus_read: true`.
+  - `ocr_runtime_probe: "passed"`.
+  - `embedding_protocol: "passed"`.
+  - `redacted_diagnostics` step status `success`.
+  - `redacted-diagnostics.json` recorded by basename and SHA-256 digest.
+- Redacted aggregate observability:
+  - `document_count`: 8000.
+  - `searchable_document_count`: 86.
+  - `vector_indexed_document_count`: 16.
+  - `hot_index_fully_covered`: `false`.
+  - `document_status_counts`: `failed_permanent=15`,
+    `ocr_required=7899`, `searchable=86`.
+  - `ingest_job_status_counts`: `completed=17`, `failed_retryable=1`,
+    `queued=7898`.
+  - `ingest_job_kind_status_counts`: `ocr_document.completed=1`,
+    `ocr_document.failed_retryable=1`, `ocr_document.queued=7898`,
+    `update_index.completed=16`.
+  - `ingest_job_failure_counts`: `ocr_page_budget_exceeded=1`.
+- `redacted-diagnostics.json` reported schema `diagnostics.v1`,
+  `redacted: true`, and local aggregate-only diagnostic scopes.
+- Expected absent outputs check passed:
+  - No `private-query-set.local.jsonl`.
+  - No `private-benchmark-local.json`.
+  - No `release-readiness.json`.
+  - No `current-stage-validation-evidence.json`.
+- Privacy:
+  - A marker scan over execute stdout/stderr, blocked summary, handoff, corpus
+    summary, and redacted diagnostics found no local home path, local evidence
+    directory, private markers, model-cache paths, model artifact names, private
+    resume directory names, email-like tokens, or mainland mobile-like tokens.
+  - Temporary local private evidence/data directories were removed after the
+    redacted aggregate summary was extracted.
+- Scope note:
+  - S360 is a real local current-stage blocked handoff witness with diagnostics.
+    It is not full current-stage evidence, release-readiness evidence, full OCR
+    completion, private benchmark completion, performance optimization, quality
+    evidence, or complete-product readiness.
 
 ### S359
 
