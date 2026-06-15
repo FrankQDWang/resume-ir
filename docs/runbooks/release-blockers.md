@@ -784,9 +784,12 @@ production field metrics for name, email, phone, school, school_tier, degree,
 major, company, title, location, skill, certificate, date ranges, and years
 experience. Every production field metric must have positive labeled support
 (`true_positive + false_negative > 0`), and the reported precision, recall, and
-F1 must match the aggregate counts within rounding tolerance. Do not upload
-reports if they contain raw resume text, local paths, field values, sample IDs,
-filenames, or notes.
+F1 must match the aggregate counts within rounding tolerance. The field-level
+counts, overall counts, `expected_mentions`, and `predicted_mentions` must also
+be internally consistent so an aggregate report cannot claim a larger labeled
+surface than its per-field evidence proves. Do not upload reports if they
+contain raw resume text, local paths, field values, sample IDs, filenames, or
+notes.
 
 Generate the private field-quality aggregate report locally from a reviewed
 business-labeled JSONL dataset. The JSONL may contain raw resume text, sample

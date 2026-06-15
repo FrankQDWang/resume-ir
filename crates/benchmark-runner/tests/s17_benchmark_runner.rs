@@ -921,6 +921,20 @@ fn field_quality_gate_rejects_private_business_report_with_inconsistent_metric_c
 }
 
 #[test]
+fn field_quality_gate_rejects_private_business_report_with_inconsistent_aggregate_counts() {
+    let report = inconsistent_private_business_field_quality_json();
+    let config = FieldQualityGateConfig::new(0.93, 0.93, 0.93)
+        .with_min_samples(1_000)
+        .require_private_business_labeled();
+
+    let error = evaluate_field_quality_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private business field quality aggregate counts are inconsistent"));
+}
+
+#[test]
 fn field_quality_gate_rejects_private_business_report_without_school_tier_metric() {
     let report = minimal_private_business_field_quality_json().replace(
         ",\"school_tier\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0}",
@@ -2045,6 +2059,50 @@ fn minimal_private_real_benchmark_json_without_hot_coverage(
 }
 
 fn minimal_private_business_field_quality_json() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"field-quality.v1\",",
+        "\"run_id\":\"fieldq_test\",",
+        "\"platform\":\"test/test\",",
+        "\"dataset_kind\":\"private-business-labeled\",",
+        "\"sample_count\":1000,",
+        "\"expected_mentions\":1875,",
+        "\"predicted_mentions\":1875,",
+        "\"overall\":{\"true_positive\":1875,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"fields\":{",
+        "\"name\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"email\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"phone\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"wechat\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"school\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"school_tier\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"degree\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"major\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"company\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"title\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"location\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"skill\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"certificate\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"date_range\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"years_experience\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0}",
+        "},",
+        "\"target_claim\":\"field_quality_target_met\",",
+        "\"corpus_origin\":\"private_local\",",
+        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"contains_raw_resume_text\":false,",
+        "\"contains_resume_paths\":false,",
+        "\"contains_field_values\":false,",
+        "\"contains_sample_ids\":false,",
+        "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
+        "\"annotation_manifest_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"field_taxonomy\":\"resume-ir.fields.v1\",",
+        "\"scope\":\"private business field-quality benchmark; aggregate redacted report only\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn inconsistent_private_business_field_quality_json() -> String {
     concat!(
         "{",
         "\"schema_version\":\"field-quality.v1\",",

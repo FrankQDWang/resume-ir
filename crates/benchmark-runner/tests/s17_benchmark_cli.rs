@@ -1110,6 +1110,45 @@ fn resume_benchmark_field_gate_accepts_private_business_labeled_report() {
 }
 
 #[test]
+fn resume_benchmark_field_gate_rejects_private_business_inconsistent_aggregate_counts() {
+    let dataset_dir = temp_dir("field-quality-private-business-inconsistent-aggregate");
+    let report_path = dataset_dir.join("field-report.json");
+    fs::write(
+        &report_path,
+        minimal_private_business_field_quality_json().replace(
+            "\"overall\":{\"true_positive\":1875,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0}",
+            "\"overall\":{\"true_positive\":1000,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0}",
+        ),
+    )
+    .unwrap();
+
+    let gate = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "field-gate",
+            "--report",
+            path_str(&report_path),
+            "--require-private-business-labeled",
+            "--min-samples",
+            "1000",
+            "--min-precision",
+            "0.93",
+            "--min-recall",
+            "0.93",
+            "--min-f1",
+            "0.93",
+        ])
+        .output()
+        .expect("run private business field quality gate");
+
+    assert!(!gate.status.success());
+    assert!(String::from_utf8_lossy(&gate.stderr)
+        .contains("private business field quality aggregate counts are inconsistent"));
+    assert!(!String::from_utf8_lossy(&gate.stderr).contains(path_str(&report_path)));
+
+    remove_dir(&dataset_dir);
+}
+
+#[test]
 fn resume_benchmark_field_gate_requires_private_business_school_tier_metric() {
     let dataset_dir = temp_dir("field-quality-private-business-school-tier");
     let report_path = dataset_dir.join("field-report.json");
@@ -3030,9 +3069,9 @@ fn minimal_private_business_field_quality_json() -> String {
         "\"platform\":\"test/test\",",
         "\"dataset_kind\":\"private-business-labeled\",",
         "\"sample_count\":1000,",
-        "\"expected_mentions\":1000,",
-        "\"predicted_mentions\":1000,",
-        "\"overall\":{\"true_positive\":1000,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
+        "\"expected_mentions\":1875,",
+        "\"predicted_mentions\":1875,",
+        "\"overall\":{\"true_positive\":1875,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"fields\":{",
         "\"name\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",
         "\"email\":{\"true_positive\":125,\"false_positive\":0,\"false_negative\":0,\"precision\":1.0,\"recall\":1.0,\"f1\":1.0},",

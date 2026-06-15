@@ -2974,8 +2974,8 @@ fn validate_private_business_field_quality_shape(
     private_field_quality_str(report, "platform")?;
     private_field_quality_str(report, "dataset_kind")?;
     private_field_quality_usize(report, "sample_count")?;
-    private_field_quality_usize(report, "expected_mentions")?;
-    private_field_quality_usize(report, "predicted_mentions")?;
+    let expected_mentions = private_field_quality_usize(report, "expected_mentions")?;
+    let predicted_mentions = private_field_quality_usize(report, "predicted_mentions")?;
     private_field_quality_str(report, "target_claim")?;
     private_field_quality_str(report, "corpus_origin")?;
     private_field_quality_str(report, "privacy_boundary")?;
@@ -2990,18 +2990,24 @@ fn validate_private_business_field_quality_shape(
     let overall = report
         .get("overall")
         .ok_or_else(private_field_quality_boundary_error)?;
-    validate_private_business_field_quality_metric_shape(overall)?;
+    let overall = validate_private_business_field_quality_metric_shape(overall)?;
     let fields = report
         .get("fields")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(private_business_field_metric_error)?;
-    validate_private_business_field_metrics(fields)?;
+    let field_counts = validate_private_business_field_metrics(fields)?;
+    validate_private_business_field_quality_aggregate_counts(
+        expected_mentions,
+        predicted_mentions,
+        overall,
+        field_counts,
+    )?;
     Ok(())
 }
 
 fn validate_private_business_field_metrics(
     fields: &serde_json::Map<String, serde_json::Value>,
-) -> std::result::Result<(), BenchmarkGateError> {
+) -> std::result::Result<FieldCounts, BenchmarkGateError> {
     for field_name in fields.keys() {
         if !PRODUCTION_FIELD_QUALITY_THRESHOLDS
             .iter()
@@ -3013,11 +3019,17 @@ fn validate_private_business_field_metrics(
         }
     }
 
+    let mut aggregate_counts = FieldCounts::default();
     for (field_name, min_score) in PRODUCTION_FIELD_QUALITY_THRESHOLDS {
         let metric = fields
             .get(*field_name)
             .ok_or_else(private_business_field_metric_error)?;
         let metric = validate_private_business_field_quality_metric_shape(metric)?;
+        aggregate_counts = aggregate_counts.extend(FieldCounts {
+            true_positive: metric.true_positive,
+            false_positive: metric.false_positive,
+            false_negative: metric.false_negative,
+        });
         let precision = metric.precision();
         let recall = metric.recall();
         let f1 = metric.f1();
@@ -3028,6 +3040,28 @@ fn validate_private_business_field_metrics(
         }
     }
 
+    Ok(aggregate_counts)
+}
+
+fn validate_private_business_field_quality_aggregate_counts(
+    expected_mentions: usize,
+    predicted_mentions: usize,
+    overall: FieldQualityMetric,
+    field_counts: FieldCounts,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let overall_counts = FieldCounts {
+        true_positive: overall.true_positive,
+        false_positive: overall.false_positive,
+        false_negative: overall.false_negative,
+    };
+    if overall_counts != field_counts
+        || expected_mentions != field_counts.true_positive + field_counts.false_negative
+        || predicted_mentions != field_counts.true_positive + field_counts.false_positive
+    {
+        return Err(BenchmarkGateError::failed(
+            "private business field quality aggregate counts are inconsistent",
+        ));
+    }
     Ok(())
 }
 
