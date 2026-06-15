@@ -450,6 +450,13 @@ production-ready scope source.
   diagnostics, local manifests, runtime binaries, model artifacts, indexes,
   SQLite databases, signing material, notarization credentials, model caches,
   or hardware drill transcripts were committed or uploaded.
+  S368 used read-only repository inspection, release-readiness/current-stage
+  guard runs, and runbook/progress text updates only; no real resume data,
+  filenames, paths, raw text, raw queries, private query sets, generated
+  private benchmark reports, generated diagnostics, local manifests, runtime
+  binaries, model artifacts, indexes, SQLite databases, signing material,
+  notarization credentials, model caches, or hardware drill transcripts were
+  committed or uploaded.
   S360 used a private local-only full-profile current-stage validation attempt
   against the user-authorized local resume directory with local Tesseract,
   Poppler/pdftoppm, `eng+chi_sim` tessdata, and the local
@@ -538,6 +545,47 @@ obsolete `S0-S13` long-running checklist as product truth.
   priorities are redacted diagnostics intake from the same data-dir, reviewed
   OCR/model manifest intake, and runbook-aligned release dry-run evidence. The
   external-only items remain labeled credentials/platform/dataset BLOCKED.
+
+S368 refreshed the pre-slice gap investigation on current HEAD after S367 before
+opening another implementation slice. Sources read were `GOAL.md`, current
+runbooks, `scripts/local/run-current-stage-validation.sh`, release and CI
+scripts, `crates/cli/src/main.rs`, the release-readiness tests, current
+`PROGRESS.md`, fresh `release-readiness --json`, focused readiness/current-stage
+guards, local runtime discovery, and PR #9 CI state.
+
+- Fresh readiness result is unchanged: stable release is blocked with 15
+  blockers, `goal_gap_matrix.complete_product: false`, P0/P1 covered by local
+  implementation/CI, P2/P3/P4 implemented but release-blocked by
+  quality/runtime/baseline evidence, P5 blocked by real credentials/platform
+  transcripts, and P6 not complete.
+- Current-stage validation plumbing is strong enough to continue: the script
+  has fail-closed blocked summaries for runtime preflight, manifest, import/
+  parser, query-set, benchmark, OCR, diagnostics, fault-simulation, and
+  release-readiness failures. The local machine can discover `tesseract`,
+  `pdftoppm`, `python3`, and `cargo` when `~/.cargo/bin` is on `PATH`.
+- The remaining local work should prioritize producing or cleanly classifying a
+  real current-stage validation attempt, not additional micro evidence-chain
+  slices. A full run may stop at the designed OCR backlog blocked summary; that
+  is acceptable if it includes redacted aggregate observability and does not
+  chase P95/P99 optimization.
+- The biggest release-readiness gap in code shape is that several real blocker
+  labels still only have dry-run automation evidence (`signing certificates`,
+  `macOS notarization`, real macOS/Windows installer lifecycle, Windows service
+  lifecycle, and cross-platform validation). Hardware fault drills now have an
+  actual evidence schema; signing/notarization/platform blockers still need
+  real redacted evidence schemas or must stay external BLOCKED.
+- A runbook inconsistency was found and corrected: the stable release checklist
+  still listed 100k/1M benchmark runs as a current gate, while `GOAL.md` and
+  release-readiness defer external 100k/1M validation to the performance
+  optimization goal. The runbook now keeps the current-stage local baseline as
+  the current gate and marks 100k/1M as follow-up performance evidence.
+- Recommended next slices: first run the authorized local current-stage
+  validation flow far enough to produce either full evidence or a redacted
+  blocked summary; second, if the run hits a true local blocker, fix that
+  blocker by category instead of starting unrelated evidence slices; third,
+  add actual release evidence schemas for signing/notarization/platform only
+  when the product needs machine-readable handoff for human-provided credentials
+  and release-runner transcripts.
 
 - P0 architecture: Rust workspace, CLI/daemon entrypoints, SQLite metadata,
   task/status tables, loopback status IPC, an authenticated loopback import
@@ -1142,6 +1190,7 @@ obsolete `S0-S13` long-running checklist as product truth.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S368 | Pre-slice product gap investigation refreshed and paused | Read-only investigation reran `release-readiness --json`, inspected `GOAL.md`, release/current-stage runbooks, local validation script flow, release-readiness implementation/tests, CI/release scripts, local runtime discovery, and PR #9 checks. Fresh evidence: release-readiness still reports 15 blockers and `complete_product: false`; `check-release-readiness.sh`, `check-current-stage-validation.sh`, `check-runbooks.sh`, `cargo test -p resume-cli --locked --test s161_release_readiness`, `check-local-embedding-runtime.sh`, and `check-licenses.sh` passed; PR #9 checks are green; the working tree was clean before this documentation update. The investigation also fixed the runbook checklist so 100k/1M validation is not a current-stage gate and remains follow-up performance evidence. | This is an audit and documentation alignment slice only. It does not run the private 10k corpus, does not produce full current-stage validation evidence, does not drain OCR backlog, does not generate the 500-query private baseline, does not add signing/notarization/platform real evidence schemas, does not obtain credentials or release-runner transcripts, does not perform hardware drills, and does not make complete product readiness true. |
 | S367 | Hardware fault drill release-readiness evidence intake complete locally | Focused RED first failed because `release-readiness --hardware-fault-evidence ...` was an unknown flag and produced no JSON evidence report. After implementation, `release-readiness` accepts `release.hardware_fault_drills.v1` only when the evidence boundary is `redacted_release_hardware_fault_drills`, execution mode is `actual_release_platform_drill`, redaction/privacy booleans are fail-closed, all four required drills are present in order, every drill marks macOS and Windows as `passed`, transcript/diagnostics are represented only by SHA-256 digests, and the must-not-upload list is present. It rejects dry-run hardware evidence without printing local paths. The release blockers and fault-injection runbooks now document the hardware evidence flag, schema, redaction boundary, and prohibition on using `fault-simulate`/dry-run output as actual hardware evidence. Verification passed the focused RED/GREEN hardware tests, full `s161_release_readiness`, `cargo fmt --all -- --check`, `check-release-readiness.sh`, `check-runbooks.sh`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is release-readiness evidence intake/schema validation only. It does not perform actual ENOSPC, service-level daemon kill, battery-mode, or external-drive disconnect drills; does not produce real release-platform transcripts; does not clear signing/notarization/installer/platform/performance/quality/OCR/model blockers; and does not make complete product readiness true. |
 | S366 | Current-stage evidence bundle digest binding complete locally | Focused RED first failed because `release-readiness --current-stage-evidence ... --diagnostics-report ...` accepted a valid diagnostics report whose file SHA-256 did not match the `redacted-diagnostics.json` digest recorded inside the current-stage evidence manifest, producing blocked JSON instead of failing closed. After implementation, current-stage evidence validation returns the input/output digest inventory and release-readiness recomputes SHA-256 for same-invocation `--benchmark-report`, `--ocr-throughput-report`, `--diagnostics-report`, `--model-manifest`, and `--ocr-runtime-manifest` files, requiring each supplied file to match the corresponding current-stage manifest digest without printing local paths. The runbook now documents this evidence-bundle binding rule. Verification passed the focused RED/GREEN test, full `s161_release_readiness`, `check-release-readiness.sh`, and `check-current-stage-validation.sh`. | This is current-stage release-readiness evidence integrity only. It does not produce full current-stage validation evidence, rerun the private corpus, drain OCR backlog, generate a 500-query private benchmark, clear OCR throughput/diagnostics/model/runtime/quality/platform/signing/notarization/hardware blockers, improve P95/P99, validate external 100k/1M scale, or make complete product readiness true. |
 | S365 | Current-stage redacted diagnostics schema validation complete locally | Focused RED first failed because `run-current-stage-validation.sh` accepted an `export-diagnostics --redact` command that exited 0 with an under-specified `diagnostics.v1` JSON body lacking required redaction sentinels and diagnostic scope, then continued toward full current-stage evidence instead of failing closed at diagnostics. After implementation, execute mode validates `redacted-diagnostics.json` immediately after generation for `diagnostics.v1`, `redacted: true`, `<redacted>` path/query/resume-text sentinels, `local_aggregate_only`, required diagnostic-scope claims, redacted nested runtime/resource/query fields, and absence of local private markers before OCR-backlog summaries, fault simulation, release-readiness intake, or full evidence generation can proceed. Verification passed the focused current-stage validation guard, `sh -n` for the touched scripts, `check-release-readiness.sh`, `check-runbooks.sh`, and full `./scripts/ci/verify-local.sh`. | This is current-stage diagnostics evidence integrity only. It does not produce full current-stage validation evidence, rerun the private corpus, drain OCR backlog, generate a 500-query private benchmark, clear OCR throughput/diagnostics/model/runtime/quality/platform/signing/notarization/hardware blockers, improve P95/P99, validate external 100k/1M scale, or make complete product readiness true. |

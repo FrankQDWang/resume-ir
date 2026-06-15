@@ -1245,7 +1245,10 @@ Stable release requires current evidence for:
 - Windows install, upgrade, uninstall, service start, service stop, and rollback
 - macOS install, upgrade, uninstall, LaunchAgent start, LaunchAgent stop, signing,
   and notarization
-- 100k and 1M hot-index hybrid benchmark runs on representative hardware
+- current-stage private hot-index hybrid benchmark baseline over the available
+  local corpus with aggregate P50/P95/P99 metrics
+- external 100k and 1M hot-index hybrid benchmark runs on representative
+  hardware as follow-up performance-optimization evidence
 - private real-corpus OCR throughput gate with reviewed OCR runtime, renderer,
   and language-pack manifests
 - OCR and embedding model license review
