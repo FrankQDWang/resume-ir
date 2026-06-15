@@ -414,6 +414,17 @@ production-ready scope source.
   binaries, indexes, SQLite databases, signing material, notarization
   credentials, model caches, or hardware drill transcripts were committed or
   uploaded.
+  S356 used a private local-only smoke-profile current-stage validation witness
+  against the user-authorized local resume directory with local Tesseract,
+  Poppler/pdftoppm, `eng+chi_sim` tessdata, and the local
+  sentence-transformers model cache. The run read a bounded private corpus slice
+  locally, generated only local temporary manifests, indexes, SQLite data, query
+  set, benchmark report, diagnostics, logs, synthetic fault-simulation output,
+  and redacted aggregate smoke/handoff evidence, and did not produce
+  release-readiness evidence. No real resume data, filenames, paths, raw OCR
+  text, raw query text, vectors, generated private reports, local manifests,
+  runtime binaries, model artifacts, indexes, SQLite databases, diagnostics,
+  model caches, or hardware drill transcripts were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1040,6 +1051,7 @@ obsolete preliminary files and checklists are not product scope.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S356 | Current-stage real local smoke chain revalidated with fault simulation on current HEAD | A smoke-profile real local current-stage validation witness against the user-authorized resume root used current `codex/fault-injection-diagnostics` HEAD, local Tesseract 5.5.2, Poppler/pdftoppm 26.04.0, `eng+chi_sim` tessdata, a local `sentence-transformers/all-MiniLM-L6-v2` model cache whose model card records Apache-2.0, and a temporary local Python runtime for `sentence-transformers` 5.5.1. Execute mode exited 0 after OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, local query-set draft, private query baseline, smoke baseline gate, redacted diagnostics, safe synthetic `fault_simulation_smoke`, smoke summary, and handoff summary. Redacted aggregate smoke evidence reported 50 bounded documents, 2 searchable documents, 48 OCR-required documents, 2 vector-indexed documents, one retryable OCR page-budget failure, OCR probe `passed`, embedding protocol `passed`, `fault-simulation.v1` status `reproduced`, `full_baseline_satisfied: false`, `release_readiness_evidence: false`, and `performance_optimization_deferred: true`. A precise privacy scan over committed-safe stdout/stderr, smoke summary, handoff, and fault output found no local paths, private markers, model-cache paths, or resume directory names. | This is current-HEAD smoke/wiring evidence only, not full current-stage baseline or product completion. Full 10k/8000-document current-stage baseline, 500-query private baseline gate, full hot-index coverage, full OCR backlog drain, OCR throughput baseline, release-readiness current-stage evidence, P95/P99 optimization, external 100k/1M validation, final model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets remain not complete or BLOCKED. |
 | S355 | Current-stage fault simulation evidence binding complete locally | Focused RED first failed because `run-current-stage-validation.sh --dry-run` did not include a `fault-simulate --case disk-space-low --json` step, and the fake execute harness/full and smoke evidence did not require a `fault_simulation_smoke` step or redacted fault output digest. After implementation, dry-run plans include the safe synthetic fault simulation step after redacted diagnostics, execute mode writes `fault-simulation-storage-low.json`, smoke summaries and full current-stage evidence include the `fault_simulation_smoke` step/output digest, fault-probe failure writes `current-stage-blocked-summary.json` with `blocked_category: "fault-injection"`, and release-readiness strictly requires the new step/output in `resume-ir.current-stage-validation-evidence.v1`. The output basename avoids token-leak false positives while the actual CLI probe remains `--case disk-space-low`. Verification passed: RED check, `check-current-stage-validation.sh`, `cargo test -p resume-cli --test s161_release_readiness --locked`, `check-release-readiness.sh`, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is current-stage evidence wiring only. It does not run a real private full-profile baseline, does not clear full 10k/8000-document current-stage evidence, does not perform actual ENOSPC or hardware drills, does not reduce P95/P99, does not approve model/runtime distribution, does not clear installer/signing/notarization/platform blockers, and does not make complete product readiness true. |
 | S354 | Fault-simulation structured evidence output complete locally | Focused RED first failed because `resume-cli fault-simulate --case disk-space-low ... --json` was rejected by usage and produced no machine-readable report. After implementation, every safe synthetic `fault-simulate` case accepts `--json` and emits `fault-simulation.v1` with `redacted: true`, `paths: <redacted>`, `evidence_level: "local_synthetic_fault_probe"`, canonical fault name, reproduced/not-reproduced status, and case-specific synthetic/aggregate details. Default human-readable output remains compatible. The fault runbook now documents `migration-failure`, JSON evidence output, and the no-upload boundary; the runbook guard requires those entries. Verification passed: focused RED/GREEN test, full `s71_fault_injection`, daemon kill integration test, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is P6/diagnostics evidence plumbing only. It does not perform actual ENOSPC, real service-manager daemon kill, battery transition, or external-drive disconnect drills; does not clear release-readiness hardware fault blockers; does not run the full 10k current-stage baseline; does not optimize P95/P99; and does not make complete product readiness true. |
 | S353 | Current-stage real local smoke chain revalidated on current HEAD | A smoke-profile real local current-stage validation witness against the user-authorized resume root used current `codex/fault-injection-diagnostics` HEAD, local Tesseract 5.5.2, Poppler/pdftoppm 26.04.0, `eng+chi_sim` tessdata, a local `sentence-transformers/all-MiniLM-L6-v2` model cache whose model card records `apache-2.0`, and a temporary local Python runtime for `sentence-transformers`. Execute mode exited 0 after OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, local query-set draft, private query baseline, smoke baseline gate, redacted diagnostics, smoke summary, and handoff summary. Redacted aggregate smoke evidence reported 50 bounded documents, 2 searchable documents, 48 OCR-required documents, 2 vector-indexed documents, one retryable OCR page-budget failure, OCR probe `passed`, embedding protocol `passed`, `full_baseline_satisfied: false`, `release_readiness_evidence: false`, and `performance_optimization_deferred: true`. The smoke stdout used `<local-evidence-dir>` placeholders and stderr was empty. | This is current-HEAD smoke/wiring evidence only, not full current-stage baseline or product completion. Full 10k/8000-document current-stage baseline, 500-query private baseline gate, full hot-index coverage, full OCR backlog drain, OCR throughput baseline, release-readiness evidence, P95/P99 optimization, external 100k/1M validation, final model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets remain not complete or BLOCKED. |
@@ -1396,6 +1408,143 @@ obsolete preliminary files and checklists are not product scope.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S356
+
+- Scope: revalidate the current-stage real local smoke chain on current HEAD
+  after S355 bound safe synthetic fault simulation into the validation flow.
+  This is bounded smoke evidence only; it is not release-readiness evidence and
+  does not claim the full current-stage baseline.
+- Runtime probes:
+
+```bash
+command -v tesseract
+command -v pdftoppm
+tesseract --version
+pdftoppm -v
+scripts/local/prepare-local-embedding-model-manifest.sh \
+  --resume-cli <local-resume-cli> \
+  --out <local-model-manifest> \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-pack-id sentence-transformers-all-MiniLM-L6-v2-local \
+  --dimension 384 \
+  --license Apache-2.0
+resume-cli ocr preflight --json \
+  --ocr-lang eng+chi_sim \
+  --tesseract-command <local-tesseract> \
+  --pdftoppm-command <local-pdftoppm>
+resume-cli model preflight --json \
+  --manifest <local-model-manifest> \
+  --embedding-command scripts/local/embedding-runtime-sentence-transformers.py \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --dimension 384
+```
+
+Output summary:
+
+- Tesseract 5.5.2 and Poppler/pdftoppm 26.04.0 were available locally.
+- The user-authorized local resume directory contained 8721 PDF/Word candidate
+  files by extension.
+- The local model manifest helper reported `embedding model manifest: written`,
+  `license: Apache-2.0`, `license source: local model card`, and
+  `license reviewed: yes`.
+- OCR preflight reported `runtime_status=ready` and `runtime_probe=passed`.
+- Embedding preflight reported `runtime_status=ready` and
+  `embedding_protocol=passed`.
+
+Real local smoke execute:
+
+```bash
+scripts/local/run-current-stage-validation.sh --execute \
+  --validation-profile smoke \
+  --resume-cli <local-resume-cli> \
+  --resume-daemon <local-resume-daemon> \
+  --resume-benchmark <local-resume-benchmark> \
+  --resume-root <user-authorized-local-resume-root> \
+  --data-dir <local-private-data-dir> \
+  --out-dir <local-private-evidence-dir> \
+  --model-manifest <local-model-manifest> \
+  --ocr-runtime-manifest <local-ocr-runtime-manifest> \
+  --model-artifact <local-all-MiniLM-L6-v2-safetensors> \
+  --embedding-command scripts/local/embedding-runtime-sentence-transformers.py \
+  --model-pack-id sentence-transformers-all-MiniLM-L6-v2-local \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-format safetensors \
+  --dimension 384 \
+  --model-license Apache-2.0 \
+  --runtime-pack-id tesseract-poppler-local-20260615 \
+  --tesseract-command <local-tesseract> \
+  --pdftoppm-command <local-pdftoppm> \
+  --language eng+chi_sim \
+  --language-pack eng=<local-eng-tessdata> \
+  --language-pack chi_sim=<local-chi-sim-tessdata> \
+  --engine-license Apache-2.0 \
+  --renderer-license GPL-family-external-command \
+  --language-license Apache-2.0 \
+  --reviewed-model \
+  --reviewed-ocr-runtime \
+  --max-files 50 \
+  --max-queries 5 \
+  --top-k 5 \
+  --worker-interval-ms 1 \
+  --ocr-worker-ticks 2 \
+  --embedding-worker-ticks 2 \
+  --ocr-max-pages-per-document 1 \
+  --embedding-max-docs 8 \
+  --embedding-timeout-ms 60000
+```
+
+Output summary:
+
+- Exit code: 0.
+- stderr was empty.
+- Completed ordered steps: OCR preflight, OCR manifest draft/validate, model
+  manifest draft/validate, model preflight, dataset manifest, private corpus
+  import, bounded OCR worker, bounded embedding worker, corpus summary,
+  query-set draft, private query baseline, smoke baseline gate, redacted
+  diagnostics, safe synthetic fault simulation, smoke summary, and handoff
+  summary.
+- `current-stage-smoke-summary.json` reported schema
+  `resume-ir.current-stage-smoke-summary.v1`, privacy boundary
+  `local_only_redacted_aggregate_summary`, `smoke_satisfied: true`,
+  `full_baseline_satisfied: false`, `release_readiness_evidence: false`, and
+  `performance_optimization_deferred: true`.
+- Redacted aggregate corpus observability reported 50 documents, 2 searchable
+  documents, 48 OCR-required documents, 2 vector-indexed documents, and one
+  retryable OCR page-budget failure.
+- `current-stage-handoff.json` reported schema
+  `resume-ir.current-stage-handoff.v1`, privacy boundary
+  `local_only_redacted_handoff`, `current_stage_status: "smoke_satisfied"`,
+  `complete_product: false`, and the same not-complete items.
+- `fault-simulation-storage-low.json` reported schema `fault-simulation.v1`,
+  fault `disk_space_low`, status `reproduced`, evidence level
+  `local_synthetic_fault_probe`, `redacted: true`, and paths `<redacted>`.
+
+Privacy/verification checks:
+
+```bash
+grep -F <local-home> <committed-safe-smoke-output>
+grep -F <local-temp-evidence-dir> <committed-safe-smoke-output>
+grep -F <private-marker> <committed-safe-smoke-output>
+grep -F huggingface <committed-safe-smoke-output>
+grep -F <private-resume-directory-name> <committed-safe-smoke-output>
+```
+
+Output summary:
+
+- Precise privacy scan passed for smoke stdout/stderr, smoke summary, handoff,
+  and fault output. The scan found no local paths, local evidence directory,
+  private markers, model-cache paths, model artifact names, or private resume
+  directory names.
+
+- Scope note:
+  - S356 is current-HEAD smoke evidence only. It does not clear the full
+    10k/8000-document current-stage baseline, 500-query private baseline,
+    full hot-index coverage, full OCR backlog drain, OCR throughput baseline,
+    release-readiness current-stage evidence, P95/P99 optimization, external
+    100k/1M validation, final model/runtime distribution approval,
+    installer/platform/signing/notarization blockers, hardware fault drills,
+    real labeled quality datasets, or complete-product readiness.
 
 ### S355
 
