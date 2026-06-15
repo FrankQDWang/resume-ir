@@ -91,12 +91,16 @@ is dominated by OCR-required files and full OCR would make the current
 interaction run for too long. Smoke still performs runtime preflight, manifest
 validation, import, bounded OCR/embedding workers, query-set generation,
 private-query benchmark protocol, a low-floor benchmark gate, and redacted
-diagnostics, then writes `current-stage-smoke-summary.json` with schema
-`resume-ir.current-stage-smoke-summary.v1`. Smoke output is explicitly not
-release-readiness evidence, must not be passed as proof of the 10k/8000-document
-baseline, and must keep full baseline, 500-query baseline, P95/P99 optimization,
-100k/1M validation, and stable release readiness marked not complete or
-BLOCKED.
+diagnostics. It then runs the safe synthetic `fault-simulate --case
+disk-space-low --json` smoke probe and writes `current-stage-smoke-summary.json`
+with schema `resume-ir.current-stage-smoke-summary.v1`. Smoke output is
+explicitly not release-readiness evidence, must not be passed as proof of the
+10k/8000-document baseline, and must keep full baseline, 500-query baseline,
+P95/P99 optimization, 100k/1M validation, and stable release readiness marked
+not complete or BLOCKED. The synthetic fault probe only proves that local
+diagnostic/fault evidence wiring can produce `fault-simulation.v1`; it does not
+clear actual ENOSPC, daemon kill, process crash, power-loss, or hardware
+fault-drill release blockers.
 
 If `--query-set <local-query-set.jsonl>` is omitted, execute mode drafts a
 local private query set after import/OCR/embedding work by running
@@ -205,7 +209,8 @@ worker loops, writes `benchmark-corpus-summary.local.json`, writes the private
 query baseline report, runs the current-stage baseline shape gate, writes the
 private OCR throughput baseline report, runs the current-stage OCR throughput
 baseline gate, exports redacted diagnostics, and feeds the local evidence into
-`release-readiness`.
+the local safe synthetic fault probe before feeding the redacted local evidence
+into `release-readiness`.
 At the end it also writes
 `current-stage-validation-evidence.json` with schema
 `resume-ir.current-stage-validation-evidence.v1` and privacy boundary
@@ -226,7 +231,8 @@ exposing the local evidence directory or report bodies. The required output
 inventory includes the dataset manifest, query set, OCR/model preflight logs,
 bounded worker stdout, corpus summary, private benchmark report, benchmark gate
 stdout, private OCR throughput report, OCR throughput gate stdout, redacted
-diagnostics, and release-readiness stdout/stderr digests.
+diagnostics, `fault-simulation-storage-low.json`, and release-readiness
+stdout/stderr digests.
 The `redacted_outputs` inventory must contain exactly those expected basenames;
 unknown extra files are rejected even when their names are basename-only.
 The `steps` array must exactly match the ordered local validation flow; duplicate
@@ -290,8 +296,18 @@ mode writes `current-stage-blocked-summary.json` with
 release-readiness. That summary records aggregate corpus observability and file
 digests up to the failed diagnostics output, not diagnostic bodies, local
 paths, query text, indexes, or SQLite data.
+If the safe synthetic fault simulation smoke fails after redacted diagnostics,
+execute mode writes `current-stage-blocked-summary.json` with
+`blocked_step: "fault_simulation_smoke"`, `blocked_category:
+"fault-injection"`, and `blocked_reason: "fault_simulation_smoke_failed"`, then
+stops before release-readiness. That summary records aggregate corpus
+observability plus basename-only digests through
+`fault-simulation-storage-low.json`; it does not include local paths,
+diagnostic bodies, query text, raw resume text, indexes, SQLite data, or scratch
+directory contents. A passing synthetic smoke remains a wiring check only and
+does not clear the separate hardware fault-drill blocker.
 If `release-readiness` rejects the local evidence inputs themselves after the
-baseline gate and redacted diagnostics pass, execute mode writes the same
+baseline gate, redacted diagnostics, and fault simulation smoke pass, execute mode writes the same
 blocked summary schema with `blocked_step: "release_readiness_intake"`,
 `blocked_category: "release-readiness"`, and
 `blocked_reason: "release_readiness_evidence_failed_validation"`, then stops

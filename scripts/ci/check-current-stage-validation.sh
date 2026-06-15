@@ -180,6 +180,8 @@ require_text "$plan" 'resume-benchmark gate --report <local-evidence-dir>/privat
 require_text "$plan" 'resume-benchmark private-ocr-throughput'
 require_text "$plan" 'resume-benchmark ocr-gate --report <local-evidence-dir>/private-ocr-throughput.json --current-stage-baseline --require-private-real-corpus --min-pages 500'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> export-diagnostics --redact > <local-evidence-dir>/redacted-diagnostics.json'
+require_text "$plan" 'resume-cli --data-dir <local-data-dir> fault-simulate --case disk-space-low --scratch-dir <local-evidence-dir>/fault-simulation-scratch --required-bytes 4096 --available-bytes 1024 --json > <local-evidence-dir>/fault-simulation-storage-low.json'
+require_text "$plan" 'fault-simulation.v1'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> release-readiness --json'
 require_text "$plan" '--benchmark-report <local-evidence-dir>/private-benchmark-local.json'
 require_text "$plan" '--ocr-throughput-report <local-evidence-dir>/private-ocr-throughput.json'
@@ -250,6 +252,7 @@ require_text "$smoke_plan" '"release_readiness_evidence": false'
 require_text "$smoke_plan" 'benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries 3 --min-queries 1 --allow-keyword-fallback'
 require_text "$smoke_plan" '--corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json --allow-partial-hot-index-for-smoke --max-queries 3 --top-k 5'
 require_text "$smoke_plan" 'resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --allow-smoke-confidence --min-documents 1 --min-queries 1'
+require_text "$smoke_plan" 'resume-cli --data-dir <local-data-dir> fault-simulate --case disk-space-low --scratch-dir <local-evidence-dir>/fault-simulation-scratch --required-bytes 4096 --available-bytes 1024 --json > <local-evidence-dir>/fault-simulation-storage-low.json'
 require_text "$smoke_plan" 'write <local-evidence-dir>/current-stage-smoke-summary.json'
 require_text "$smoke_plan" 'current-stage-handoff.json'
 require_text "$smoke_plan" 'resume-ir.current-stage-handoff.v1'
@@ -369,6 +372,13 @@ case "$cmd:$sub" in
     fi
     printf '{"schema_version":"diagnostics.v1","redacted":true,"evidence_level":"local_aggregate_only"}\n'
     ;;
+  fault-simulate:*)
+    if [ "${FAKE_FAULT_SIMULATION_MODE:-ready}" = "failed" ]; then
+      printf 'fault simulation blocked: fake fault probe failure\n' >&2
+      exit 1
+    fi
+    printf '{"schema_version":"fault-simulation.v1","redacted":true,"fault":"disk_space_low","status":"reproduced","paths":"<redacted>","details":{"required_bytes":4096,"available_bytes":1024,"probe_writes":"skipped"},"evidence_level":"local_synthetic_fault_probe"}\n'
+    ;;
   release-readiness:*)
     printf '{"schema_version":"release-readiness.v1","stable_release":"blocked"}\n'
     if [ "${FAKE_RELEASE_READINESS_MODE:-blocked}" = "evidence-failed" ]; then
@@ -458,6 +468,10 @@ run_execute_smoke() {
   if [ "$mode" = "diagnostics-failed" ]; then
     diagnostics_mode="failed"
   fi
+  fault_simulation_mode="ready"
+  if [ "$mode" = "fault-simulation-failed" ]; then
+    fault_simulation_mode="failed"
+  fi
   import_mode="ready"
   if [ "$mode" = "import-failed" ]; then
     import_mode="failed"
@@ -470,7 +484,7 @@ run_execute_smoke() {
   if [ "$mode" = "ocr-backlog" ]; then
     corpus_summary_mode="ocr-backlog"
   fi
-  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_CORPUS_SUMMARY_MODE="$corpus_summary_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
+  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_CORPUS_SUMMARY_MODE="$corpus_summary_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_FAULT_SIMULATION_MODE="$fault_simulation_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
     --resume-daemon "$fake_resume_daemon" \
     --resume-benchmark "$fake_resume_benchmark" \
@@ -544,6 +558,8 @@ require_text "$evidence_manifest" '"private-benchmark-local.json"'
 require_text "$evidence_manifest" '"private-ocr-throughput.json"'
 require_text "$evidence_manifest" '"ocr-throughput-gate.stdout.txt"'
 require_text "$evidence_manifest" '"redacted-diagnostics.json"'
+require_text "$evidence_manifest" '"fault_simulation_smoke"'
+require_text "$evidence_manifest" '"fault-simulation-storage-low.json"'
 require_text "$evidence_manifest" '"release-readiness.json"'
 require_text "$evidence_manifest" '"local_paths_included": false'
 require_text "$evidence_manifest" '"raw_resume_text_included": false'
@@ -599,6 +615,8 @@ require_text "$smoke_summary" '"document_status_counts": {'
 require_text "$smoke_summary" '"ingest_job_kind_status_counts": {'
 require_text "$smoke_summary" '"private_query_baseline"'
 require_text "$smoke_summary" '"redacted_diagnostics"'
+require_text "$smoke_summary" '"fault_simulation_smoke"'
+require_text "$smoke_summary" '"fault-simulation-storage-low.json"'
 require_text "$smoke_summary" '"full 10k/8000-document current-stage baseline"'
 require_current_stage_handoff \
   "smoke_satisfied" \
@@ -901,6 +919,43 @@ reject_text "$tmpdir/execute-diagnostics-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-diagnostics-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-diagnostics-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-diagnostics-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke fault-simulation-failed
+fault_simulation_failed_status=$(cat "$tmpdir/execute-fault-simulation-failed-status.txt")
+if [ "$fault_simulation_failed_status" -eq 0 ]; then
+  fail "current-stage full profile accepted failed fault simulation smoke"
+fi
+fault_simulation_blocked_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$fault_simulation_blocked_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on fault simulation failure"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage execute ran release-readiness after fault simulation failure"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage execute wrote full evidence after fault simulation failure"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$fault_simulation_blocked_summary" >/dev/null
+fi
+require_text "$fault_simulation_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$fault_simulation_blocked_summary" '"blocked_step": "fault_simulation_smoke"'
+require_text "$fault_simulation_blocked_summary" '"blocked_category": "fault-injection"'
+require_text "$fault_simulation_blocked_summary" '"blocked_reason": "fault_simulation_smoke_failed"'
+require_text "$fault_simulation_blocked_summary" '"redacted-diagnostics.json"'
+require_text "$fault_simulation_blocked_summary" '"fault-simulation-storage-low.json"'
+require_text "$fault_simulation_blocked_summary" '"corpus_summary_observability": {'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
+reject_text "$fault_simulation_blocked_summary" "$tmpdir"
+reject_text "$fault_simulation_blocked_summary" "PRIVATE-current-stage"
+reject_text "$fault_simulation_blocked_summary" "private fake query"
+require_text "$tmpdir/execute-fault-simulation-failed-stderr.txt" "current-stage validation blocked: fault simulation smoke failed"
+reject_text "$tmpdir/execute-fault-simulation-failed-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-fault-simulation-failed-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-fault-simulation-failed-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-fault-simulation-failed-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke ocr-digest-mismatch \
   --ocr-runtime-manifest-sha256 0000000000000000000000000000000000000000000000000000000000000000

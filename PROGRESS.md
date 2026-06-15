@@ -407,6 +407,13 @@ production-ready scope source.
   local private paths, raw text, raw queries, diagnostics, runtime data, model
   files, model caches, indexes, SQLite databases, signing material, generated
   private reports, or hardware drill transcripts were committed or uploaded.
+  S355 used fake local current-stage execute fixtures and synthetic/private-
+  shaped current-stage evidence manifest fixtures only; no real resume data,
+  private query sets, local paths, generated private benchmark reports,
+  generated diagnostics, local runtime manifests, model files, runtime
+  binaries, indexes, SQLite databases, signing material, notarization
+  credentials, model caches, or hardware drill transcripts were committed or
+  uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1033,6 +1040,7 @@ obsolete preliminary files and checklists are not product scope.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S355 | Current-stage fault simulation evidence binding complete locally | Focused RED first failed because `run-current-stage-validation.sh --dry-run` did not include a `fault-simulate --case disk-space-low --json` step, and the fake execute harness/full and smoke evidence did not require a `fault_simulation_smoke` step or redacted fault output digest. After implementation, dry-run plans include the safe synthetic fault simulation step after redacted diagnostics, execute mode writes `fault-simulation-storage-low.json`, smoke summaries and full current-stage evidence include the `fault_simulation_smoke` step/output digest, fault-probe failure writes `current-stage-blocked-summary.json` with `blocked_category: "fault-injection"`, and release-readiness strictly requires the new step/output in `resume-ir.current-stage-validation-evidence.v1`. The output basename avoids token-leak false positives while the actual CLI probe remains `--case disk-space-low`. Verification passed: RED check, `check-current-stage-validation.sh`, `cargo test -p resume-cli --test s161_release_readiness --locked`, `check-release-readiness.sh`, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is current-stage evidence wiring only. It does not run a real private full-profile baseline, does not clear full 10k/8000-document current-stage evidence, does not perform actual ENOSPC or hardware drills, does not reduce P95/P99, does not approve model/runtime distribution, does not clear installer/signing/notarization/platform blockers, and does not make complete product readiness true. |
 | S354 | Fault-simulation structured evidence output complete locally | Focused RED first failed because `resume-cli fault-simulate --case disk-space-low ... --json` was rejected by usage and produced no machine-readable report. After implementation, every safe synthetic `fault-simulate` case accepts `--json` and emits `fault-simulation.v1` with `redacted: true`, `paths: <redacted>`, `evidence_level: "local_synthetic_fault_probe"`, canonical fault name, reproduced/not-reproduced status, and case-specific synthetic/aggregate details. Default human-readable output remains compatible. The fault runbook now documents `migration-failure`, JSON evidence output, and the no-upload boundary; the runbook guard requires those entries. Verification passed: focused RED/GREEN test, full `s71_fault_injection`, daemon kill integration test, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is P6/diagnostics evidence plumbing only. It does not perform actual ENOSPC, real service-manager daemon kill, battery transition, or external-drive disconnect drills; does not clear release-readiness hardware fault blockers; does not run the full 10k current-stage baseline; does not optimize P95/P99; and does not make complete product readiness true. |
 | S353 | Current-stage real local smoke chain revalidated on current HEAD | A smoke-profile real local current-stage validation witness against the user-authorized resume root used current `codex/fault-injection-diagnostics` HEAD, local Tesseract 5.5.2, Poppler/pdftoppm 26.04.0, `eng+chi_sim` tessdata, a local `sentence-transformers/all-MiniLM-L6-v2` model cache whose model card records `apache-2.0`, and a temporary local Python runtime for `sentence-transformers`. Execute mode exited 0 after OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, local query-set draft, private query baseline, smoke baseline gate, redacted diagnostics, smoke summary, and handoff summary. Redacted aggregate smoke evidence reported 50 bounded documents, 2 searchable documents, 48 OCR-required documents, 2 vector-indexed documents, one retryable OCR page-budget failure, OCR probe `passed`, embedding protocol `passed`, `full_baseline_satisfied: false`, `release_readiness_evidence: false`, and `performance_optimization_deferred: true`. The smoke stdout used `<local-evidence-dir>` placeholders and stderr was empty. | This is current-HEAD smoke/wiring evidence only, not full current-stage baseline or product completion. Full 10k/8000-document current-stage baseline, 500-query private baseline gate, full hot-index coverage, full OCR backlog drain, OCR throughput baseline, release-readiness evidence, P95/P99 optimization, external 100k/1M validation, final model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets remain not complete or BLOCKED. |
 | S352 | Installer lifecycle plan release-readiness intake complete locally | Focused RED first failed because `resume-cli release-readiness --json --macos-installer-lifecycle-plan <path> --windows-installer-lifecycle-plan <path>` rejected the lifecycle plan flags and produced no JSON report. After implementation, release-readiness accepts `release.macos_installer_lifecycle_plan.v1` and `release.windows_installer_lifecycle_plan.v1` dry-run operator plans, validates dry-run execution mode, package manifest digests, expected platform release runner, required administrator approval, artifact basename/hash/byte metadata, planned installer lifecycle actions and commands (`installer`/`pkgutil`/`launchctl` on macOS and `msiexec.exe` on Windows), blocked release steps, and prohibited public material markers, then records `macOS installer lifecycle plan evidence` and `Windows installer lifecycle plan evidence` under `blocked_release_evidence_manifest`. The evidence labels are intentionally distinct from the real macOS/Windows installer lifecycle blockers, so installer/platform blockers remain blocked. CI guard and runbook now require `--macos-installer-lifecycle-plan macos-installer-lifecycle-dry-run.json` and `--windows-installer-lifecycle-plan windows-installer-lifecycle-dry-run.json`. Verification passed: focused RED/GREEN unit test, full `s161_release_readiness` test file, `check-release-readiness.sh`, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is release-readiness evidence intake only. It does not run `installer`, `pkgutil`, `launchctl`, or `msiexec.exe`; does not perform install/upgrade/uninstall/rollback on release runners; does not clear macOS installer lifecycle, Windows installer lifecycle, Windows service lifecycle, cross-platform validation, signing, notarization, final model/runtime distribution, full current-stage baseline, labeled quality, hardware drills, external 100k/1M validation, or complete-product readiness. |
@@ -1388,6 +1396,59 @@ obsolete preliminary files and checklists are not product scope.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S355
+
+- Scope: bind the S354 structured safe synthetic fault probe into the
+  current-stage validation flow as local-only evidence, without claiming actual
+  hardware fault drills or full current-stage baseline completion.
+- TDD RED:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+```
+
+Output summary:
+
+- Exit 1 before implementation because the dry-run plan did not contain the
+  required `fault-simulate --case disk-space-low ... --json` command or
+  `fault-simulation.v1` evidence binding.
+
+- Implementation checks:
+
+```bash
+./scripts/ci/check-current-stage-validation.sh
+PATH="$HOME/.cargo/bin:$PATH" cargo test -p resume-cli --test s161_release_readiness --locked
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+PATH="$HOME/.cargo/bin:$PATH" cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH="$HOME/.cargo/bin:$PATH" ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- `check-current-stage-validation.sh`: exit 0; dry-run, smoke execute, full
+  fake execute, fault-simulation failure blocked summary, handoff, and privacy
+  marker checks passed.
+- `s161_release_readiness`: exit 0; 25 tests passed, including current-stage
+  evidence acceptance/rejection and no-path-leak coverage.
+- `check-release-readiness.sh`: exit 0 after updating the guard fixture to the
+  new current-stage evidence schema.
+- `check-runbooks.sh`: exit 0.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- `verify-local.sh`: exit 0; full local verification passed, including
+  workspace tests/doc-tests, CLI/daemon closed-loop checks, benchmark/license/
+  runbook/workflow/release/current-stage guards, release artifact/SBOM/package
+  dry-run guards, installer evidence guards, and public repo guard.
+
+- Scope note:
+  - S355 is current-stage evidence plumbing only. It does not execute actual
+    hardware-dependent fault drills, does not produce full private baseline
+    evidence, and does not clear release-readiness hardware fault blockers.
 
 ### S354
 

@@ -1070,6 +1070,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
             ("private_ocr_throughput_baseline", "success"),
             ("ocr_throughput_baseline_gate", "success"),
             ("redacted_diagnostics", "success"),
+            ("fault_simulation_smoke", "success"),
             ("release_readiness_intake", "expected_blocked"),
         ],
         CONTEXT,
@@ -1105,6 +1106,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         "private-ocr-throughput.json",
         "ocr-throughput-gate.stdout.txt",
         "redacted-diagnostics.json",
+        "fault-simulation-storage-low.json",
         "release-readiness.json",
         "release-readiness.stderr.txt",
     ];
