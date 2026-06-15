@@ -403,6 +403,10 @@ production-ready scope source.
   filenames, paths, raw OCR text, raw query text, vectors, generated private
   reports, local manifests, runtime binaries, model artifacts, indexes, SQLite
   databases, diagnostics, or model caches were committed or uploaded.
+  S354 used synthetic fault-injection CLI fixtures only; no real resume data,
+  local private paths, raw text, raw queries, diagnostics, runtime data, model
+  files, model caches, indexes, SQLite databases, signing material, generated
+  private reports, or hardware drill transcripts were committed or uploaded.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -1029,6 +1033,7 @@ obsolete preliminary files and checklists are not product scope.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S354 | Fault-simulation structured evidence output complete locally | Focused RED first failed because `resume-cli fault-simulate --case disk-space-low ... --json` was rejected by usage and produced no machine-readable report. After implementation, every safe synthetic `fault-simulate` case accepts `--json` and emits `fault-simulation.v1` with `redacted: true`, `paths: <redacted>`, `evidence_level: "local_synthetic_fault_probe"`, canonical fault name, reproduced/not-reproduced status, and case-specific synthetic/aggregate details. Default human-readable output remains compatible. The fault runbook now documents `migration-failure`, JSON evidence output, and the no-upload boundary; the runbook guard requires those entries. Verification passed: focused RED/GREEN test, full `s71_fault_injection`, daemon kill integration test, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is P6/diagnostics evidence plumbing only. It does not perform actual ENOSPC, real service-manager daemon kill, battery transition, or external-drive disconnect drills; does not clear release-readiness hardware fault blockers; does not run the full 10k current-stage baseline; does not optimize P95/P99; and does not make complete product readiness true. |
 | S353 | Current-stage real local smoke chain revalidated on current HEAD | A smoke-profile real local current-stage validation witness against the user-authorized resume root used current `codex/fault-injection-diagnostics` HEAD, local Tesseract 5.5.2, Poppler/pdftoppm 26.04.0, `eng+chi_sim` tessdata, a local `sentence-transformers/all-MiniLM-L6-v2` model cache whose model card records `apache-2.0`, and a temporary local Python runtime for `sentence-transformers`. Execute mode exited 0 after OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, local query-set draft, private query baseline, smoke baseline gate, redacted diagnostics, smoke summary, and handoff summary. Redacted aggregate smoke evidence reported 50 bounded documents, 2 searchable documents, 48 OCR-required documents, 2 vector-indexed documents, one retryable OCR page-budget failure, OCR probe `passed`, embedding protocol `passed`, `full_baseline_satisfied: false`, `release_readiness_evidence: false`, and `performance_optimization_deferred: true`. The smoke stdout used `<local-evidence-dir>` placeholders and stderr was empty. | This is current-HEAD smoke/wiring evidence only, not full current-stage baseline or product completion. Full 10k/8000-document current-stage baseline, 500-query private baseline gate, full hot-index coverage, full OCR backlog drain, OCR throughput baseline, release-readiness evidence, P95/P99 optimization, external 100k/1M validation, final model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets remain not complete or BLOCKED. |
 | S352 | Installer lifecycle plan release-readiness intake complete locally | Focused RED first failed because `resume-cli release-readiness --json --macos-installer-lifecycle-plan <path> --windows-installer-lifecycle-plan <path>` rejected the lifecycle plan flags and produced no JSON report. After implementation, release-readiness accepts `release.macos_installer_lifecycle_plan.v1` and `release.windows_installer_lifecycle_plan.v1` dry-run operator plans, validates dry-run execution mode, package manifest digests, expected platform release runner, required administrator approval, artifact basename/hash/byte metadata, planned installer lifecycle actions and commands (`installer`/`pkgutil`/`launchctl` on macOS and `msiexec.exe` on Windows), blocked release steps, and prohibited public material markers, then records `macOS installer lifecycle plan evidence` and `Windows installer lifecycle plan evidence` under `blocked_release_evidence_manifest`. The evidence labels are intentionally distinct from the real macOS/Windows installer lifecycle blockers, so installer/platform blockers remain blocked. CI guard and runbook now require `--macos-installer-lifecycle-plan macos-installer-lifecycle-dry-run.json` and `--windows-installer-lifecycle-plan windows-installer-lifecycle-dry-run.json`. Verification passed: focused RED/GREEN unit test, full `s161_release_readiness` test file, `check-release-readiness.sh`, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is release-readiness evidence intake only. It does not run `installer`, `pkgutil`, `launchctl`, or `msiexec.exe`; does not perform install/upgrade/uninstall/rollback on release runners; does not clear macOS installer lifecycle, Windows installer lifecycle, Windows service lifecycle, cross-platform validation, signing, notarization, final model/runtime distribution, full current-stage baseline, labeled quality, hardware drills, external 100k/1M validation, or complete-product readiness. |
 | S351 | Windows Service lifecycle plan release-readiness intake complete locally | Focused RED first failed because `resume-cli release-readiness --json --windows-service-lifecycle-plan <path>` was rejected as an unknown evidence flag and produced no JSON report. After implementation, release-readiness accepts `release.windows_service_lifecycle_plan.v1` dry-run operator plans, validates the dry-run boundary, package manifest digest, `sc.exe` service manager, required administrator approval, not-registered service state, blocked recovery/rollback status, MSI artifact basename/hash/byte metadata, seven blocked lifecycle actions, blocked release steps, and prohibited public material markers, then records `Windows service lifecycle plan evidence` under `blocked_release_evidence_manifest`. The evidence label is intentionally distinct from the real `Windows service lifecycle` blocker, so service/platform blockers remain blocked. CI guard and runbook now require `--windows-service-lifecycle-plan windows-service-lifecycle-dry-run.json`. Verification passed: focused RED/GREEN unit test, full `s161_release_readiness` test file, `check-release-readiness.sh`, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, and full `./scripts/ci/verify-local.sh`. | This is release-readiness evidence intake only. It does not register, start, stop, query, recover, uninstall, or roll back a Windows service; does not run administrator-elevated release-runner transcripts; does not clear Windows service lifecycle, cross-platform validation, signing, notarization, final model/runtime distribution, full current-stage baseline, labeled quality, hardware drills, external 100k/1M validation, or complete-product readiness. |
@@ -1383,6 +1388,67 @@ obsolete preliminary files and checklists are not product scope.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S354
+
+- Scope: add machine-readable, redacted evidence output to safe synthetic
+  `fault-simulate` probes so local current-stage validation and later operator
+  scripts can collect structured P6 fault evidence without parsing
+  human-readable text or expanding the real hardware gate.
+- TDD RED:
+
+```bash
+PATH="$HOME/.cargo/bin:$PATH" \
+  cargo test -p resume-cli --test s71_fault_injection \
+  fault_simulate_json_outputs_structured_redacted_evidence --locked
+```
+
+Output summary:
+
+- Exit 101 before implementation because `fault-simulate --json` was rejected
+  by usage and produced no `fault-simulation.v1` JSON report.
+
+- Implementation checks:
+
+```bash
+PATH="$HOME/.cargo/bin:$PATH" \
+  cargo test -p resume-cli --test s71_fault_injection \
+  fault_simulate_json_outputs_structured_redacted_evidence --locked
+PATH="$HOME/.cargo/bin:$PATH" \
+  cargo test -p resume-cli --test s71_fault_injection --locked
+PATH="$HOME/.cargo/bin:$PATH" \
+  cargo test -p resume-daemon --test s81_daemon_kill --locked
+./scripts/ci/check-runbooks.sh
+PATH="$HOME/.cargo/bin:$PATH" cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+PATH="$HOME/.cargo/bin:$PATH" ./scripts/ci/verify-local.sh
+```
+
+Output summary:
+
+- Focused JSON test: exit 0.
+- `s71_fault_injection`: exit 0; 14 tests passed, including JSON output,
+  redaction, disk, permission, lock, full-text snapshot corruption, metadata
+  migration, model checksum, daemon kill, OCR crash, battery-mode, external
+  drive, and usage-error coverage.
+- `s81_daemon_kill`: exit 0; daemon foreground kill/restart path remained
+  covered.
+- `check-runbooks.sh`: exit 0; runbook guard now requires
+  `migration-failure`, `fault-simulation.v1`, and
+  `local_synthetic_fault_probe`.
+- `cargo fmt --check`: exit 0.
+- `git diff --check`: exit 0.
+- `guard-public-repo.sh`: exit 0.
+- `verify-local.sh`: exit 0; full local verification passed, including
+  workspace tests, CLI/daemon closed-loop checks, benchmark and release guards,
+  current-stage validation/handoff checks, installer evidence guards, and final
+  public repo guard.
+
+- Scope note:
+  - S354 is structured evidence output for safe synthetic probes only. It does
+    not execute destructive or hardware-dependent drills and does not clear the
+    release-readiness hardware fault blocker.
 
 ### S353
 

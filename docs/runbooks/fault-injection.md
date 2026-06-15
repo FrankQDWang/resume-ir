@@ -24,6 +24,7 @@ Canonical probe forms:
 - `resume-cli fault-simulate --case permission-denied`
 - `resume-cli fault-simulate --case file-lock`
 - `resume-cli fault-simulate --case index-snapshot-corrupt`
+- `resume-cli fault-simulate --case migration-failure`
 - `resume-cli fault-simulate --case model-checksum`
 - `resume-cli fault-simulate --case daemon-kill`
 - `resume-cli fault-simulate --case ocr-crash`
@@ -64,6 +65,14 @@ Run full-text index active-snapshot corruption simulation:
 ```bash
 resume-cli --data-dir "$data_dir" fault-simulate \
   --case index-snapshot-corrupt \
+  --scratch-dir "$scratch"
+```
+
+Run metadata migration failure simulation:
+
+```bash
+resume-cli --data-dir "$data_dir" fault-simulate \
+  --case migration-failure \
   --scratch-dir "$scratch"
 ```
 
@@ -119,6 +128,13 @@ scratch path, data path, command path, model bytes, OCR stdout, OCR stderr,
 synthetic index probe text, or probe bytes. Checksum output is limited to short
 digest prefixes. Battery and external-drive probes are safe state simulations
 only; their output must say `real hardware drill: blocked`.
+
+Add `--json` to any safe fault probe to emit structured evidence using
+`fault-simulation.v1`. JSON output must include `redacted: true`,
+`paths: <redacted>`, `evidence_level: local_synthetic_fault_probe`, the
+canonical fault name, reproduced/not-reproduced status, and only aggregate or
+synthetic probe details. Do not upload JSON reports generated from local
+operator runs.
 
 ## Unsafe Faults
 

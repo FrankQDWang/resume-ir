@@ -48,6 +48,51 @@ fn fault_simulate_disk_space_low_reproduces_without_writing_or_leaking_paths() {
 }
 
 #[test]
+fn fault_simulate_json_outputs_structured_redacted_evidence() {
+    let data_dir = temp_path("fault-json-private-data");
+    let scratch_dir = temp_path("fault-json-private-scratch");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--case",
+            "disk-space-low",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+            "--required-bytes",
+            "4096",
+            "--available-bytes",
+            "1024",
+            "--json",
+        ])
+        .output()
+        .expect("run disk-space-low JSON fault simulation");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema_version"], "fault-simulation.v1");
+    assert_eq!(report["redacted"], true);
+    assert_eq!(report["fault"], "disk_space_low");
+    assert_eq!(report["status"], "reproduced");
+    assert_eq!(report["paths"], "<redacted>");
+    assert_eq!(report["details"]["required_bytes"], 4096);
+    assert_eq!(report["details"]["available_bytes"], 1024);
+    assert_eq!(report["details"]["probe_writes"], "skipped");
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(!scratch_dir.exists());
+}
+
+#[test]
 fn fault_simulate_disk_space_ok_writes_bounded_probe_and_cleans_up() {
     let data_dir = temp_path("fault-disk-ok-private-data");
     let scratch_dir = temp_path("fault-disk-ok-private-scratch");

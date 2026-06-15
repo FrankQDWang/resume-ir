@@ -5632,7 +5632,7 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .scratch_dir
         .unwrap_or_else(|| data_dir.join("fault-probes"));
 
-    match fault_args.case {
+    let report = match fault_args.case {
         FaultSimulationCase::DiskSpaceLow => {
             let required = fault_args
                 .required_bytes
@@ -5641,108 +5641,171 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 .available_bytes
                 .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
 
-            println!("fault: disk_space_low");
-            println!("required bytes: {required}");
-            println!("available bytes: {available}");
             if required > available {
-                println!("status: reproduced");
-                println!("probe writes: skipped");
-                println!("paths: <redacted>");
-                return Ok(());
-            }
-
-            let probe_bytes = required.min(FAULT_PROBE_MAX_BYTES);
-            write_fault_probe(&scratch_dir, probe_bytes)
-                .map_err(|_| CliError::user("fault simulation probe failed"))?;
-            println!("status: not reproduced");
-            println!("probe writes: completed");
-            println!("probe bytes: {probe_bytes}");
-            println!("paths: <redacted>");
-            Ok(())
-        }
-        FaultSimulationCase::PermissionDenied => {
-            println!("fault: permission_denied");
-            match write_fault_probe(&scratch_dir, 1) {
-                Ok(()) => {
-                    println!("status: not reproduced");
-                    println!("probe writes: completed");
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                    println!("status: reproduced");
-                    println!("probe writes: denied");
-                }
-                Err(_) => return Err(CliError::user("fault simulation probe failed")),
-            }
-            println!("paths: <redacted>");
-            Ok(())
-        }
-        FaultSimulationCase::FileLock => {
-            println!("fault: file_lock");
-            match contend_file_lock_probe(&scratch_dir) {
-                Ok(FileLockProbeResult::Contended) => {
-                    println!("status: reproduced");
-                    println!("lock holder: active");
-                    println!("contended lock: denied");
-                }
-                Ok(FileLockProbeResult::NotContended) => {
-                    println!("status: not reproduced");
-                    println!("lock holder: active");
-                    println!("contended lock: acquired");
-                }
-                Err(_) => return Err(CliError::user("fault simulation probe failed")),
-            }
-            println!("paths: <redacted>");
-            Ok(())
-        }
-        FaultSimulationCase::IndexSnapshotCorrupt => {
-            println!("fault: index_snapshot_corrupt");
-            let result = simulate_index_snapshot_corrupt_probe(&scratch_dir)?;
-            if result.reproduced {
-                println!("status: reproduced");
+                fault_report(
+                    "disk_space_low",
+                    "reproduced",
+                    serde_json::json!({
+                        "required_bytes": required,
+                        "available_bytes": available,
+                        "probe_writes": "skipped"
+                    }),
+                    vec![
+                        "fault: disk_space_low".to_string(),
+                        format!("required bytes: {required}"),
+                        format!("available bytes: {available}"),
+                        "status: reproduced".to_string(),
+                        "probe writes: skipped".to_string(),
+                        "paths: <redacted>".to_string(),
+                    ],
+                )
             } else {
-                println!("status: not reproduced");
+                let probe_bytes = required.min(FAULT_PROBE_MAX_BYTES);
+                write_fault_probe(&scratch_dir, probe_bytes)
+                    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+                fault_report(
+                    "disk_space_low",
+                    "not reproduced",
+                    serde_json::json!({
+                        "required_bytes": required,
+                        "available_bytes": available,
+                        "probe_writes": "completed",
+                        "probe_bytes": probe_bytes
+                    }),
+                    vec![
+                        "fault: disk_space_low".to_string(),
+                        format!("required bytes: {required}"),
+                        format!("available bytes: {available}"),
+                        "status: not reproduced".to_string(),
+                        "probe writes: completed".to_string(),
+                        format!("probe bytes: {probe_bytes}"),
+                        "paths: <redacted>".to_string(),
+                    ],
+                )
             }
-            println!(
-                "active snapshot: {}",
-                if result.active_snapshot_corrupt {
-                    "corrupt"
-                } else {
-                    "not_corrupt"
-                }
-            );
-            println!(
-                "fallback snapshot: {}",
-                if result.fallback_recovered {
-                    "recovered"
-                } else {
-                    "not_recovered"
-                }
-            );
-            println!(
-                "query after recovery: {}",
-                if result.query_after_recovery_passed {
-                    "passed"
-                } else {
-                    "failed"
-                }
-            );
-            println!("paths: <redacted>");
-            Ok(())
+        }
+        FaultSimulationCase::PermissionDenied => match write_fault_probe(&scratch_dir, 1) {
+            Ok(()) => fault_report(
+                "permission_denied",
+                "not reproduced",
+                serde_json::json!({ "probe_writes": "completed" }),
+                vec![
+                    "fault: permission_denied".to_string(),
+                    "status: not reproduced".to_string(),
+                    "probe writes: completed".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => fault_report(
+                "permission_denied",
+                "reproduced",
+                serde_json::json!({ "probe_writes": "denied" }),
+                vec![
+                    "fault: permission_denied".to_string(),
+                    "status: reproduced".to_string(),
+                    "probe writes: denied".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            ),
+            Err(_) => return Err(CliError::user("fault simulation probe failed")),
+        },
+        FaultSimulationCase::FileLock => match contend_file_lock_probe(&scratch_dir) {
+            Ok(FileLockProbeResult::Contended) => fault_report(
+                "file_lock",
+                "reproduced",
+                serde_json::json!({
+                    "lock_holder": "active",
+                    "contended_lock": "denied"
+                }),
+                vec![
+                    "fault: file_lock".to_string(),
+                    "status: reproduced".to_string(),
+                    "lock holder: active".to_string(),
+                    "contended lock: denied".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            ),
+            Ok(FileLockProbeResult::NotContended) => fault_report(
+                "file_lock",
+                "not reproduced",
+                serde_json::json!({
+                    "lock_holder": "active",
+                    "contended_lock": "acquired"
+                }),
+                vec![
+                    "fault: file_lock".to_string(),
+                    "status: not reproduced".to_string(),
+                    "lock holder: active".to_string(),
+                    "contended lock: acquired".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            ),
+            Err(_) => return Err(CliError::user("fault simulation probe failed")),
+        },
+        FaultSimulationCase::IndexSnapshotCorrupt => {
+            let result = simulate_index_snapshot_corrupt_probe(&scratch_dir)?;
+            let status = if result.reproduced {
+                "reproduced"
+            } else {
+                "not reproduced"
+            };
+            let active_snapshot = if result.active_snapshot_corrupt {
+                "corrupt"
+            } else {
+                "not_corrupt"
+            };
+            let fallback_snapshot = if result.fallback_recovered {
+                "recovered"
+            } else {
+                "not_recovered"
+            };
+            let query_after_recovery = if result.query_after_recovery_passed {
+                "passed"
+            } else {
+                "failed"
+            };
+            fault_report(
+                "index_snapshot_corrupt",
+                status,
+                serde_json::json!({
+                    "active_snapshot": active_snapshot,
+                    "fallback_snapshot": fallback_snapshot,
+                    "query_after_recovery": query_after_recovery
+                }),
+                vec![
+                    "fault: index_snapshot_corrupt".to_string(),
+                    format!("status: {status}"),
+                    format!("active snapshot: {active_snapshot}"),
+                    format!("fallback snapshot: {fallback_snapshot}"),
+                    format!("query after recovery: {query_after_recovery}"),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
         }
         FaultSimulationCase::MetadataMigration => {
-            println!("fault: metadata_migration");
             let result = simulate_metadata_migration_failure_probe(&scratch_dir)
                 .map_err(|_| CliError::user("fault simulation probe failed"))?;
-            if result.reproduced {
-                println!("status: reproduced");
-                println!("migration check: failed");
+            let (status, migration_check) = if result.reproduced {
+                ("reproduced", "failed")
             } else {
-                println!("status: not reproduced");
-                println!("migration check: passed");
-            }
-            println!("recovery: restore metadata backup before retrying migration");
-            println!("paths: <redacted>");
-            Ok(())
+                ("not reproduced", "passed")
+            };
+            let recovery = "restore metadata backup before retrying migration";
+            fault_report(
+                "metadata_migration",
+                status,
+                serde_json::json!({
+                    "migration_check": migration_check,
+                    "recovery": recovery
+                }),
+                vec![
+                    "fault: metadata_migration".to_string(),
+                    format!("status: {status}"),
+                    format!("migration check: {migration_check}"),
+                    format!("recovery: {recovery}"),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
         }
         FaultSimulationCase::ModelChecksum => {
             let model_file = fault_args
@@ -5754,24 +5817,33 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 .as_deref()
                 .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
 
-            println!("fault: model_checksum");
             let actual_sha256 = file_sha256_hex(model_file)
                 .map_err(|_| CliError::user("fault simulation probe failed"))?;
             let reproduced = actual_sha256 != expected_sha256;
-            if reproduced {
-                println!("status: reproduced");
-                println!("checksum match: no");
+            let (status, checksum_match) = if reproduced {
+                ("reproduced", "no")
             } else {
-                println!("status: not reproduced");
-                println!("checksum match: yes");
-            }
-            println!(
-                "expected sha256 prefix: {}",
-                checksum_prefix(expected_sha256)
-            );
-            println!("actual sha256 prefix: {}", checksum_prefix(&actual_sha256));
-            println!("paths: <redacted>");
-            Ok(())
+                ("not reproduced", "yes")
+            };
+            let expected_prefix = checksum_prefix(expected_sha256).to_string();
+            let actual_prefix = checksum_prefix(&actual_sha256).to_string();
+            fault_report(
+                "model_checksum",
+                status,
+                serde_json::json!({
+                    "checksum_match": checksum_match,
+                    "expected_sha256_prefix": expected_prefix,
+                    "actual_sha256_prefix": actual_prefix
+                }),
+                vec![
+                    "fault: model_checksum".to_string(),
+                    format!("status: {status}"),
+                    format!("checksum match: {checksum_match}"),
+                    format!("expected sha256 prefix: {expected_prefix}"),
+                    format!("actual sha256 prefix: {actual_prefix}"),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
         }
         FaultSimulationCase::DaemonKill => {
             let daemon_binary = fault_args
@@ -5779,29 +5851,36 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 .as_deref()
                 .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
 
-            println!("fault: daemon_kill");
             let result = simulate_daemon_kill_probe(&scratch_dir, daemon_binary)
                 .map_err(|_| CliError::user("fault simulation probe failed"))?;
-            if result.terminated && result.restart_succeeded {
-                println!("status: reproduced");
+            let status = if result.terminated && result.restart_succeeded {
+                "reproduced"
             } else {
-                println!("status: not reproduced");
-            }
-            println!("daemon ready: yes");
-            println!(
-                "terminated daemon: {}",
-                if result.terminated { "yes" } else { "no" }
-            );
-            println!(
-                "restart check: {}",
-                if result.restart_succeeded {
-                    "passed"
-                } else {
-                    "failed"
-                }
-            );
-            println!("paths: <redacted>");
-            Ok(())
+                "not reproduced"
+            };
+            let terminated_daemon = if result.terminated { "yes" } else { "no" };
+            let restart_check = if result.restart_succeeded {
+                "passed"
+            } else {
+                "failed"
+            };
+            fault_report(
+                "daemon_kill",
+                status,
+                serde_json::json!({
+                    "daemon_ready": "yes",
+                    "terminated_daemon": terminated_daemon,
+                    "restart_check": restart_check
+                }),
+                vec![
+                    "fault: daemon_kill".to_string(),
+                    format!("status: {status}"),
+                    "daemon ready: yes".to_string(),
+                    format!("terminated daemon: {terminated_daemon}"),
+                    format!("restart check: {restart_check}"),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
         }
         FaultSimulationCase::OcrCrash => {
             let ocr_command = fault_args
@@ -5809,66 +5888,142 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 .as_deref()
                 .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
 
-            println!("fault: ocr_crash");
             let result = simulate_ocr_crash_probe(&scratch_dir, ocr_command)?;
-            if result.reproduced {
-                println!("status: reproduced");
-                println!("ocr command: failed");
+            let (status, ocr_command_status) = if result.reproduced {
+                ("reproduced", "failed")
             } else {
-                println!("status: not reproduced");
-                println!("ocr command: completed");
-            }
-            println!("probe bytes: {}", result.probe_bytes);
-            println!("paths: <redacted>");
-            Ok(())
+                ("not reproduced", "completed")
+            };
+            fault_report(
+                "ocr_crash",
+                status,
+                serde_json::json!({
+                    "ocr_command": ocr_command_status,
+                    "probe_bytes": result.probe_bytes
+                }),
+                vec![
+                    "fault: ocr_crash".to_string(),
+                    format!("status: {status}"),
+                    format!("ocr command: {ocr_command_status}"),
+                    format!("probe bytes: {}", result.probe_bytes),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
         }
         FaultSimulationCase::BatteryMode => {
             let battery_state = fault_args
                 .battery_state
                 .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
 
-            println!("fault: battery_mode");
-            match battery_state {
-                FaultBatteryState::Battery => {
-                    println!("status: reproduced");
-                    println!("power source: battery");
-                    println!("degradation: pause or lower OCR/vector worker budgets");
-                }
-                FaultBatteryState::Ac => {
-                    println!("status: not reproduced");
-                    println!("power source: ac");
-                    println!("degradation: not required");
-                }
-            }
-            println!("real hardware drill: blocked");
-            println!("paths: <redacted>");
-            Ok(())
+            let (status, power_source, degradation) = match battery_state {
+                FaultBatteryState::Battery => (
+                    "reproduced",
+                    "battery",
+                    "pause or lower OCR/vector worker budgets",
+                ),
+                FaultBatteryState::Ac => ("not reproduced", "ac", "not required"),
+            };
+            fault_report(
+                "battery_mode",
+                status,
+                serde_json::json!({
+                    "power_source": power_source,
+                    "degradation": degradation,
+                    "real_hardware_drill": "blocked"
+                }),
+                vec![
+                    "fault: battery_mode".to_string(),
+                    format!("status: {status}"),
+                    format!("power source: {power_source}"),
+                    format!("degradation: {degradation}"),
+                    "real hardware drill: blocked".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
         }
         FaultSimulationCase::ExternalDriveDisconnect => {
             let drive_state = fault_args
                 .drive_state
                 .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
 
-            println!("fault: external_drive_disconnect");
-            match drive_state {
-                FaultDriveState::Disconnected => {
-                    println!("status: reproduced");
-                    println!("mount state: disconnected");
-                    println!("import roots: unavailable");
-                    println!("recovery: reconnect drive or reselect root before retry");
-                }
+            let (status, mount_state, import_roots, recovery) = match drive_state {
+                FaultDriveState::Disconnected => (
+                    "reproduced",
+                    "disconnected",
+                    "unavailable",
+                    "reconnect drive or reselect root before retry",
+                ),
                 FaultDriveState::Mounted => {
-                    println!("status: not reproduced");
-                    println!("mount state: mounted");
-                    println!("import roots: available");
-                    println!("recovery: not required");
+                    ("not reproduced", "mounted", "available", "not required")
                 }
-            }
-            println!("real hardware drill: blocked");
-            println!("paths: <redacted>");
-            Ok(())
+            };
+            fault_report(
+                "external_drive_disconnect",
+                status,
+                serde_json::json!({
+                    "mount_state": mount_state,
+                    "import_roots": import_roots,
+                    "recovery": recovery,
+                    "real_hardware_drill": "blocked"
+                }),
+                vec![
+                    "fault: external_drive_disconnect".to_string(),
+                    format!("status: {status}"),
+                    format!("mount state: {mount_state}"),
+                    format!("import roots: {import_roots}"),
+                    format!("recovery: {recovery}"),
+                    "real hardware drill: blocked".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
+        }
+    };
+
+    print_fault_simulation_report(fault_args.json, report)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FaultSimulationReport {
+    fault: &'static str,
+    status: &'static str,
+    details: serde_json::Value,
+    text_lines: Vec<String>,
+}
+
+fn fault_report(
+    fault: &'static str,
+    status: &'static str,
+    details: serde_json::Value,
+    text_lines: Vec<String>,
+) -> FaultSimulationReport {
+    FaultSimulationReport {
+        fault,
+        status,
+        details,
+        text_lines,
+    }
+}
+
+fn print_fault_simulation_report(json: bool, report: FaultSimulationReport) -> Result<()> {
+    if json {
+        let body = serde_json::json!({
+            "schema_version": "fault-simulation.v1",
+            "redacted": true,
+            "fault": report.fault,
+            "status": report.status,
+            "paths": "<redacted>",
+            "details": report.details,
+            "evidence_level": "local_synthetic_fault_probe"
+        });
+        let output = serde_json::to_string_pretty(&body)
+            .map_err(|_| CliError::user("fault simulation report serialization failed"))?;
+        println!("{output}");
+    } else {
+        for line in report.text_lines {
+            println!("{line}");
         }
     }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5900,6 +6055,7 @@ enum FaultDriveState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FaultSimulationArgs {
     case: FaultSimulationCase,
+    json: bool,
     scratch_dir: Option<PathBuf>,
     required_bytes: Option<u64>,
     available_bytes: Option<u64>,
@@ -5913,6 +6069,7 @@ struct FaultSimulationArgs {
 
 fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
     let mut case = None;
+    let mut json = false;
     let mut scratch_dir = None;
     let mut required_bytes = None;
     let mut available_bytes = None;
@@ -5932,6 +6089,13 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 }
                 let value = take_fault_value(args, &mut index)?;
                 case = Some(parse_fault_case(value)?);
+            }
+            "--json" => {
+                if json {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                json = true;
+                index += 1;
             }
             "--scratch-dir" => {
                 if scratch_dir.is_some() {
@@ -6096,6 +6260,7 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
 
     Ok(FaultSimulationArgs {
         case,
+        json,
         scratch_dir,
         required_bytes,
         available_bytes,
@@ -6612,7 +6777,7 @@ fn simulate_ocr_crash_probe(scratch_dir: &Path, ocr_command: &Path) -> Result<Oc
 }
 
 fn fault_simulate_usage() -> &'static str {
-    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] OR resume-cli fault-simulate --case index-snapshot-corrupt [--scratch-dir <path>] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>] OR resume-cli fault-simulate --case battery-mode --battery-state <battery|ac> [--scratch-dir <path>] OR resume-cli fault-simulate --case external-drive-disconnect --drive-state <disconnected|mounted> [--scratch-dir <path>]"
+    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case index-snapshot-corrupt [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case battery-mode --battery-state <battery|ac> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case external-drive-disconnect --drive-state <disconnected|mounted> [--scratch-dir <path>] [--json]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
