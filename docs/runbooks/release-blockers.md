@@ -169,8 +169,12 @@ The output schema is `resume-ir.current-stage-handoff.v1` with privacy boundary
 `local_only_redacted_handoff`. It copies only structured status, preflight
 probe statuses, redacted aggregate observability counts, completed step names,
 must-not-upload categories, and not-complete/BLOCKED items. It fails closed if
-the input contains private markers or local path shapes. The handoff report is
-for operator continuity only: it is not release-readiness evidence, not a
+the input contains private markers or local path shapes, or if the input schema
+does not use its required source privacy boundary
+(`local_only_redacted_aggregate_summary` for smoke,
+`local_only_redacted_blocked_summary` for blocked handoff, and
+`local_only_redacted_evidence_manifest` for full evidence). The handoff report
+is for operator continuity only: it is not release-readiness evidence, not a
 substitute for the full current-stage validation evidence manifest, and not
 proof that the complete product is done. Pass the blocked summary itself, not
 the handoff report, to `--current-stage-blocked-summary` when release-readiness

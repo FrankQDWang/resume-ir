@@ -55,6 +55,8 @@ blocked_out="$tmpdir/blocked-handoff.json"
 full_out="$tmpdir/full-handoff.json"
 bad_summary="$tmpdir/PRIVATE-bad-summary.json"
 bad_out="$tmpdir/bad-handoff.json"
+bad_boundary_summary="$tmpdir/PRIVATE-bad-boundary-summary.json"
+bad_boundary_out="$tmpdir/bad-boundary-handoff.json"
 
 cat > "$smoke_summary" <<'JSON'
 {
@@ -122,6 +124,30 @@ require_text "$smoke_out" '"must_not_upload"'
 reject_text "$smoke_out" "$tmpdir"
 reject_text "$smoke_out" "PRIVATE-current-stage"
 reject_regex "$smoke_out" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"
+
+cat > "$bad_boundary_summary" <<'JSON'
+{
+  "schema_version": "resume-ir.current-stage-smoke-summary.v1",
+  "privacy_boundary": "unsafe_boundary",
+  "validation_profile": "smoke",
+  "current_stage_target": "local_real_corpus_smoke_chain",
+  "smoke_satisfied": true,
+  "full_baseline_satisfied": false,
+  "release_readiness_evidence": false,
+  "performance_optimization_deferred": true,
+  "preflight_probes": {
+    "ocr_runtime_probe": "passed",
+    "embedding_protocol": "passed"
+  },
+  "steps": [],
+  "must_not_upload": [
+    "raw resumes"
+  ]
+}
+JSON
+if python3 "$script" --input "$bad_boundary_summary" --out "$bad_boundary_out" 2>/dev/null; then
+  fail "current-stage handoff accepted an invalid source privacy_boundary"
+fi
 
 cat > "$blocked_summary" <<'JSON'
 {

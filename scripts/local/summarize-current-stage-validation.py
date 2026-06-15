@@ -18,6 +18,11 @@ SUPPORTED_SCHEMAS = {
     "resume-ir.current-stage-blocked-summary.v1",
     "resume-ir.current-stage-validation-evidence.v1",
 }
+EXPECTED_SOURCE_PRIVACY_BOUNDARIES = {
+    "resume-ir.current-stage-smoke-summary.v1": "local_only_redacted_aggregate_summary",
+    "resume-ir.current-stage-blocked-summary.v1": "local_only_redacted_blocked_summary",
+    "resume-ir.current-stage-validation-evidence.v1": "local_only_redacted_evidence_manifest",
+}
 PRIVATE_MARKER = re.compile(r"PRIVATE-|/Users/|/home/|[A-Za-z]:\\")
 
 
@@ -194,6 +199,11 @@ def build_handoff(document: dict[str, Any]) -> dict[str, Any]:
     schema = string_field(document, "schema_version")
     if schema not in SUPPORTED_SCHEMAS:
         fail("unsupported current-stage evidence schema")
+    if (
+        string_field(document, "privacy_boundary")
+        != EXPECTED_SOURCE_PRIVACY_BOUNDARIES[schema]
+    ):
+        fail("source privacy_boundary does not match schema")
     reject_private_markers(document)
 
     blocked = None
