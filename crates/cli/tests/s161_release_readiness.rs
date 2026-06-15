@@ -565,6 +565,70 @@ fn release_readiness_json_accepts_blocked_release_automation_evidence_without_cl
 }
 
 #[test]
+fn release_readiness_json_accepts_windows_service_lifecycle_plan_without_clearing_blockers() {
+    let data_dir = temp_path("release-readiness-service-lifecycle-plan-private-data");
+    let evidence_dir = temp_path("release-readiness-service-lifecycle-plan-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let lifecycle_plan = evidence_dir.join("windows-service-lifecycle-dry-run.json");
+    fs::write(&lifecycle_plan, blocked_windows_service_lifecycle_plan()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--windows-service-lifecycle-plan",
+            path_str(&lifecycle_plan),
+        ])
+        .output()
+        .expect("run release readiness with Windows service lifecycle plan evidence");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .expect("release readiness Windows service lifecycle plan json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let service_lifecycle_plan = provided
+        .iter()
+        .find(|evidence| evidence["label"] == "Windows service lifecycle plan evidence")
+        .expect("Windows service lifecycle plan evidence");
+    assert_eq!(service_lifecycle_plan["status"], "provided");
+    assert_eq!(
+        service_lifecycle_plan["privacy_boundary"],
+        "blocked_release_evidence_manifest"
+    );
+    assert!(service_lifecycle_plan["detail"]
+        .as_str()
+        .expect("provided detail")
+        .contains("release.windows_service_lifecycle_plan.v1"));
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(blocker_labels.contains(&"Windows service lifecycle"));
+    assert!(blocker_labels.contains(&"cross-platform release validation"));
+    assert!(blocker_labels.contains(&"signing certificates"));
+    assert!(!blocker_labels.contains(&"Windows service lifecycle plan evidence"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stdout.contains("resume-ir-v0.0.0"));
+    assert!(!stderr.contains("resume-ir-v0.0.0"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_release_artifact_and_sbom_evidence_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-release-manifest-private-data");
     let evidence_dir = temp_path("release-readiness-release-manifest-private-reports");
@@ -1951,6 +2015,39 @@ fn blocked_windows_service_evidence() -> String {
         "\"required_evidence\":[\"administrator-elevated install transcript\",\"service_install_validation\",\"service_start_validation\",\"service_status_validation\",\"service_stop_validation\",\"service_uninstall_validation\",\"service_recovery_validation\"],",
         "\"blocked_release_steps\":[\"windows_service_install\",\"windows_service_start\",\"windows_service_status\",\"windows_service_stop\",\"windows_service_uninstall\",\"windows_service_recovery\",\"windows_service_rollback\"],",
         "\"prohibited_public_material\":[\"service_tokens\",\"administrator_passwords\",\"local_paths\",\"raw_service_logs\",\"raw_resume_data\",\"diagnostic_packages\",\"model_artifact_caches\"]",
+        "}"
+    )
+    .to_string()
+}
+
+fn blocked_windows_service_lifecycle_plan() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.windows_service_lifecycle_plan.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"execution_mode\":\"dry_run\",",
+        "\"service_lifecycle_status\":\"blocked\",",
+        "\"evidence_boundary\":\"dry_run_no_windows_service_registration\",",
+        "\"windows_package_manifest_sha256\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",",
+        "\"service_manager\":\"sc.exe\",",
+        "\"admin_elevation\":\"required_not_observed\",",
+        "\"release_runner\":\"windows_required_not_observed\",",
+        "\"registration_status\":\"not_registered\",",
+        "\"recovery_validation_status\":\"blocked\",",
+        "\"rollback_validation_status\":\"blocked\",",
+        "\"service_artifacts\":[{\"kind\":\"msi\",\"file\":\"resume-ir-v0.0.0-windows.msi\",\"artifact_sha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"bytes\":606,\"service_validation_status\":\"not_executed\"}],",
+        "\"planned_actions\":[",
+        "{\"action\":\"install\",\"command\":\"sc.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"register Windows Service after administrator-elevated MSI install and verify binary binding\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"start\",\"command\":\"sc.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"start service and verify daemon IPC health\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"status\",\"command\":\"sc.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"query service status on release Windows runner\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"stop\",\"command\":\"sc.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"stop service and verify daemon shutdown\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"recovery\",\"command\":\"sc.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"configure and prove restart-after-kill recovery policy\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"uninstall\",\"command\":\"sc.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"delete service registration while preserving user data\",\"requires_approval\":true,\"action_status\":\"blocked\"},",
+        "{\"action\":\"rollback\",\"command\":\"sc.exe\",\"target_artifact\":\"resume-ir-v0.0.0-windows.msi\",\"dry_run_intent\":\"force service install/start failure and verify rollback state restoration\",\"requires_approval\":true,\"action_status\":\"blocked\"}",
+        "],",
+        "\"blocked_release_steps\":[\"windows_service_install\",\"windows_service_start\",\"windows_service_status\",\"windows_service_stop\",\"windows_service_recovery\",\"windows_service_uninstall\",\"windows_service_rollback\"],",
+        "\"prohibited_public_material\":[\"service_tokens\",\"administrator_passwords\",\"local_paths\",\"raw_service_logs\",\"raw_resume_data\",\"diagnostic_packages\",\"model_artifact_caches\"],",
+        "\"notes\":\"Dry-run operator plan only. It does not register, start, stop, query, recover, uninstall, or roll back a Windows service; release-runner transcripts are required before stable release.\"",
         "}"
     )
     .to_string()

@@ -151,6 +151,8 @@ const RELEASE_READINESS_WINDOWS_INSTALLER_AUTOMATION_LABEL: &str =
     "Windows installer automation evidence";
 const RELEASE_READINESS_WINDOWS_SERVICE_AUTOMATION_LABEL: &str =
     "Windows service automation evidence";
+const RELEASE_READINESS_WINDOWS_SERVICE_LIFECYCLE_PLAN_LABEL: &str =
+    "Windows service lifecycle plan evidence";
 const RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL: &str =
     "current-stage validation evidence manifest";
 const RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS: usize = 8_000;
@@ -461,7 +463,7 @@ fn release_readiness_goal_gap_matrix_json() -> serde_json::Value {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>] [--windows-service-lifecycle-plan <path>]"
 }
 
 #[derive(Default)]
@@ -484,6 +486,7 @@ struct ReleaseReadinessEvidenceArgs {
     macos_installer_evidence: Option<PathBuf>,
     windows_installer_evidence: Option<PathBuf>,
     windows_service_evidence: Option<PathBuf>,
+    windows_service_lifecycle_plan: Option<PathBuf>,
 }
 
 struct ReleaseReadinessArgs {
@@ -587,6 +590,10 @@ fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs>
             }
             "--windows-service-evidence" => {
                 parsed.evidence.windows_service_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--windows-service-lifecycle-plan" => {
+                parsed.evidence.windows_service_lifecycle_plan =
                     Some(take_release_readiness_path(args, &mut index)?);
             }
             _ => return Err(CliError::usage(release_readiness_usage())),
@@ -826,6 +833,20 @@ fn validate_release_readiness_evidence(
             label: RELEASE_READINESS_WINDOWS_SERVICE_AUTOMATION_LABEL,
             privacy_boundary: "blocked_release_evidence_manifest",
             detail: "release.windows_service_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.windows_service_lifecycle_plan {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_windows_service_lifecycle_plan_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_WINDOWS_SERVICE_LIFECYCLE_PLAN_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_WINDOWS_SERVICE_LIFECYCLE_PLAN_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.windows_service_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks",
         });
     }
     Ok(provided)
@@ -1332,6 +1353,168 @@ fn validate_windows_package_manifest_report(report: &str) -> Result<()> {
             step,
             CONTEXT,
         )?;
+    }
+
+    Ok(())
+}
+
+fn validate_windows_service_lifecycle_plan_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "Windows service lifecycle plan";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "Windows service lifecycle plan blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("Windows service lifecycle plan blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("Windows service lifecycle plan blocked: expected JSON object")
+    })?;
+
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.windows_service_lifecycle_plan.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "execution_mode", "dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "service_lifecycle_status", "blocked", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "evidence_boundary",
+        "dry_run_no_windows_service_registration",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "windows_package_manifest_sha256", CONTEXT)?;
+    require_release_evidence_string(object, "service_manager", "sc.exe", CONTEXT)?;
+    require_release_evidence_string(object, "admin_elevation", "required_not_observed", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "release_runner",
+        "windows_required_not_observed",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(object, "registration_status", "not_registered", CONTEXT)?;
+    require_release_evidence_string(object, "recovery_validation_status", "blocked", CONTEXT)?;
+    require_release_evidence_string(object, "rollback_validation_status", "blocked", CONTEXT)?;
+
+    let target_artifacts = validate_windows_service_lifecycle_artifacts(object)?;
+    validate_windows_service_lifecycle_actions(object, &target_artifacts)?;
+    for step in [
+        "windows_service_install",
+        "windows_service_start",
+        "windows_service_status",
+        "windows_service_stop",
+        "windows_service_recovery",
+        "windows_service_uninstall",
+        "windows_service_rollback",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+    for material in [
+        "service_tokens",
+        "administrator_passwords",
+        "local_paths",
+        "raw_service_logs",
+        "raw_resume_data",
+        "diagnostic_packages",
+        "model_artifact_caches",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "prohibited_public_material",
+            material,
+            CONTEXT,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_windows_service_lifecycle_artifacts(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<BTreeSet<String>> {
+    const CONTEXT: &str = "Windows service lifecycle plan";
+    let artifacts = require_release_evidence_array(object, "service_artifacts", CONTEXT)?;
+    let mut target_artifacts = BTreeSet::new();
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "service_artifacts"))?;
+        require_release_evidence_string(artifact, "kind", "msi", CONTEXT)?;
+        let file = require_release_evidence_string_value(artifact, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        require_release_evidence_sha256(artifact, "artifact_sha256", CONTEXT)?;
+        require_release_evidence_positive_u64(artifact, "bytes", CONTEXT)?;
+        require_release_evidence_string(
+            artifact,
+            "service_validation_status",
+            "not_executed",
+            CONTEXT,
+        )?;
+        target_artifacts.insert(file.to_string());
+    }
+    if target_artifacts.is_empty() {
+        Err(release_evidence_invalid(CONTEXT, "service_artifacts"))
+    } else {
+        Ok(target_artifacts)
+    }
+}
+
+fn validate_windows_service_lifecycle_actions(
+    object: &serde_json::Map<String, serde_json::Value>,
+    target_artifacts: &BTreeSet<String>,
+) -> Result<()> {
+    const CONTEXT: &str = "Windows service lifecycle plan";
+    let actions = require_release_evidence_array(object, "planned_actions", CONTEXT)?;
+    let expected_actions = [
+        "install",
+        "start",
+        "status",
+        "stop",
+        "recovery",
+        "uninstall",
+        "rollback",
+    ];
+    if actions.len() != expected_actions.len() {
+        return Err(release_evidence_invalid(CONTEXT, "planned_actions"));
+    }
+    let mut seen_actions = BTreeSet::new();
+    for (action, expected_action) in actions.iter().zip(expected_actions) {
+        let action = action
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "planned_actions"))?;
+        let action_name = require_release_evidence_string_value(action, "action", CONTEXT)?;
+        if action_name != expected_action || !seen_actions.insert(action_name.to_string()) {
+            return Err(release_evidence_invalid(CONTEXT, "planned_actions"));
+        }
+        require_release_evidence_string(action, "command", "sc.exe", CONTEXT)?;
+        let target_artifact =
+            require_release_evidence_string_value(action, "target_artifact", CONTEXT)?;
+        if !is_release_evidence_basename(target_artifact)
+            || !target_artifacts.contains(target_artifact)
+        {
+            return Err(release_evidence_invalid(CONTEXT, "target_artifact"));
+        }
+        if require_release_evidence_string_value(action, "dry_run_intent", CONTEXT)?
+            .trim()
+            .is_empty()
+        {
+            return Err(release_evidence_invalid(CONTEXT, "dry_run_intent"));
+        }
+        require_release_evidence_bool(action, "requires_approval", true, CONTEXT)?;
+        require_release_evidence_string(action, "action_status", "blocked", CONTEXT)?;
     }
 
     Ok(())

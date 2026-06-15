@@ -456,15 +456,16 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --notarization-evidence notarization-evidence.json \
   --macos-installer-evidence macos-installer-evidence.json \
   --windows-installer-evidence windows-installer-evidence.json \
-  --windows-service-evidence windows-service-evidence.json
+  --windows-service-evidence windows-service-evidence.json \
+  --windows-service-lifecycle-plan windows-service-lifecycle-dry-run.json
 ```
 
 Passing these local evidence inputs marks only the corresponding local evidence
 items as `provided_evidence`; aggregate reports and redacted diagnostics evidence
 are marked `redacted_local_aggregate`, and reviewed model/OCR manifests are marked
 `reviewed_local_manifest`. Blocked signing, notarization, macOS installer,
-Windows installer, Windows service, release artifact, release SBOM, macOS
-package, and Windows package dry-run manifests are marked
+Windows installer, Windows service, Windows Service lifecycle plan, release
+artifact, release SBOM, macOS package, and Windows package dry-run manifests are marked
 `blocked_release_evidence_manifest`. The current-stage validation evidence
 manifest is marked `local_only_redacted_evidence_manifest`; it records the
 local operator flow, input/output digests, step statuses, and privacy sentinels,
@@ -481,6 +482,7 @@ items. The labels are:
 - macOS installer automation evidence
 - Windows installer automation evidence
 - Windows service automation evidence
+- Windows service lifecycle plan evidence
 - current-stage validation evidence manifest
 
 Those automation and dry-run manifest evidence entries prove only that
