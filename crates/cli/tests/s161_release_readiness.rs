@@ -1763,6 +1763,59 @@ fn release_readiness_rejects_current_stage_evidence_with_duplicate_step_without_
 }
 
 #[test]
+fn release_readiness_rejects_current_stage_blocked_summary_with_mismatched_bundle_digests_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-blocked-bundle-digest-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-current-stage-blocked-bundle-digest-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let blocked_summary = evidence_dir.join("current-stage-blocked-summary.json");
+    let diagnostics_report = evidence_dir.join("redacted-diagnostics.json");
+    let model_artifact = evidence_dir.join("fixture-model.onnx");
+    let model_manifest = evidence_dir.join("local-model-manifest.json");
+    let ocr_engine = evidence_dir.join("fixture-tesseract");
+    let ocr_renderer = evidence_dir.join("fixture-pdftoppm");
+    let ocr_manifest = evidence_dir.join("local-ocr-runtime-manifest.json");
+    fs::write(&blocked_summary, current_stage_blocked_summary()).unwrap();
+    fs::write(&diagnostics_report, redacted_diagnostics_report()).unwrap();
+    write_reviewed_model_manifest(&model_artifact, &model_manifest);
+    write_reviewed_ocr_manifest(&ocr_engine, &ocr_renderer, &ocr_manifest);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--diagnostics-report",
+            path_str(&diagnostics_report),
+            "--model-manifest",
+            path_str(&model_manifest),
+            "--ocr-runtime-manifest",
+            path_str(&ocr_manifest),
+            "--current-stage-blocked-summary",
+            path_str(&blocked_summary),
+        ])
+        .output()
+        .expect("reject current-stage blocked summary with mismatched bundle digests");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage blocked handoff"));
+    assert!(stderr.contains("digest mismatch"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&blocked_summary)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_current_stage_evidence_with_unknown_step_without_path_leaks() {
     let data_dir = temp_path("release-readiness-current-stage-unknown-step-private-data");
     let evidence_dir = temp_path("release-readiness-current-stage-unknown-step-private-reports");
@@ -2390,6 +2443,7 @@ fn current_stage_blocked_summary() -> String {
         "{\"file\":\"model-manifest.local.json\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},",
         "{\"file\":\"model-preflight.json\",\"sha256\":\"1717171717171717171717171717171717171717171717171717171717171717\"},",
         "{\"file\":\"ocr-worker.stdout.txt\",\"sha256\":\"1919191919191919191919191919191919191919191919191919191919191919\"},",
+        "{\"file\":\"redacted-diagnostics.json\",\"sha256\":\"2020202020202020202020202020202020202020202020202020202020202020\"},",
         "{\"file\":\"private-query-set.local.jsonl\",\"sha256\":null}",
         "],",
         "\"privacy_sentinels\":{",

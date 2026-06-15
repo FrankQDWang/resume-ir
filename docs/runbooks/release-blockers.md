@@ -519,6 +519,11 @@ This records `current-stage blocked handoff` under `provided_evidence` with
 privacy boundary `local_only_redacted_blocked_summary`; it does not clear the
 private real-corpus baseline, OCR throughput, diagnostics, model, runtime,
 quality, platform, signing, or hardware fault-drill blockers.
+When a blocked handoff is supplied in the same `release-readiness` invocation
+as `--diagnostics-report`, `--model-manifest`, or `--ocr-runtime-manifest`,
+`release-readiness` recomputes those files' SHA-256 digests and requires them
+to match the blocked summary's redacted output or input digest entries. A
+mismatch is a fail-closed evidence-bundle error and must not print local paths.
 `--current-stage-blocked-summary` and `--current-stage-evidence` are mutually exclusive.
 Passing both is a release-readiness input error because one claims a blocked
 handoff while the other claims the full local validation evidence manifest

@@ -778,7 +778,14 @@ fn validate_release_readiness_evidence(
     }
     if let Some(path) = &args.current_stage_blocked_summary {
         let report = read_release_readiness_evidence_report(path)?;
-        validate_current_stage_blocked_summary_manifest(&report).map_err(|error| {
+        let digests =
+            validate_current_stage_blocked_summary_manifest(&report).map_err(|error| {
+                release_readiness_manifest_error(
+                    RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL,
+                    error,
+                )
+            })?;
+        validate_current_stage_blocked_summary_bundle_digests(args, &digests).map_err(|error| {
             release_readiness_manifest_error(
                 RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL,
                 error,
@@ -1313,6 +1320,35 @@ fn validate_current_stage_evidence_bundle_digests(
     Ok(())
 }
 
+fn validate_current_stage_blocked_summary_bundle_digests(
+    args: &ReleaseReadinessEvidenceArgs,
+    digests: &CurrentStageEvidenceDigests,
+) -> Result<()> {
+    if let Some(path) = &args.diagnostics_report {
+        require_current_stage_bundle_digest(
+            path,
+            digests.output_digest("redacted-diagnostics.json"),
+            "redacted-diagnostics.json",
+        )?;
+    }
+    if let Some(path) = &args.model_manifest {
+        require_current_stage_bundle_digest(
+            path,
+            digests.input_digest("model_manifest_sha256"),
+            "model_manifest_sha256",
+        )?;
+    }
+    if let Some(path) = &args.ocr_runtime_manifest {
+        require_current_stage_bundle_digest(
+            path,
+            digests.input_digest("ocr_runtime_manifest_sha256"),
+            "ocr_runtime_manifest_sha256",
+        )?;
+    }
+
+    Ok(())
+}
+
 fn require_current_stage_bundle_digest(
     path: &Path,
     expected_sha256: Option<&str>,
@@ -1337,7 +1373,9 @@ fn require_current_stage_bundle_digest(
     }
 }
 
-fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
+fn validate_current_stage_blocked_summary_manifest(
+    report: &str,
+) -> Result<CurrentStageEvidenceDigests> {
     const CONTEXT: &str = "current-stage blocked summary";
     if release_readiness_diagnostics_report_contains_private_marker(report)
         || release_evidence_report_contains_forbidden_marker(report)
@@ -1399,13 +1437,18 @@ fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
         require_release_evidence_positive_u64_value(object, "blocked_exit", CONTEXT)?;
 
     let input_digests = require_release_evidence_object(object, "input_digests", CONTEXT)?;
+    let mut expected_input_digests = BTreeMap::new();
     for key in [
         "dataset_manifest_sha256",
         "query_set_sha256",
         "model_manifest_sha256",
         "ocr_runtime_manifest_sha256",
     ] {
-        require_release_evidence_optional_sha256_value(input_digests, key, CONTEXT)?;
+        if let Some(sha256) =
+            require_release_evidence_optional_sha256_value(input_digests, key, CONTEXT)?
+        {
+            expected_input_digests.insert(key.to_string(), sha256.to_string());
+        }
     }
 
     let parameters = require_release_evidence_object(object, "parameters", CONTEXT)?;
@@ -1490,7 +1533,7 @@ fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
 
     let redacted_outputs = require_release_evidence_array(object, "redacted_outputs", CONTEXT)?;
     let mut seen_outputs = BTreeSet::new();
-    let mut saw_output_digest = false;
+    let mut output_digests = BTreeMap::new();
     for output in redacted_outputs {
         let output = output
             .as_object()
@@ -1499,11 +1542,13 @@ fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
         if !is_release_evidence_basename(file) || !seen_outputs.insert(file.to_string()) {
             return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
         }
-        if require_release_evidence_optional_sha256_value(output, "sha256", CONTEXT)?.is_some() {
-            saw_output_digest = true;
+        if let Some(sha256) =
+            require_release_evidence_optional_sha256_value(output, "sha256", CONTEXT)?
+        {
+            output_digests.insert(file.to_string(), sha256.to_string());
         }
     }
-    if !saw_output_digest {
+    if output_digests.is_empty() {
         return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
     }
 
@@ -1538,7 +1583,10 @@ fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {
         require_release_evidence_array_contains_string(object, "must_not_upload", item, CONTEXT)?;
     }
 
-    Ok(())
+    Ok(CurrentStageEvidenceDigests {
+        input_digests: expected_input_digests,
+        redacted_outputs: output_digests,
+    })
 }
 
 fn validate_current_stage_blocked_preflight_consistency(
