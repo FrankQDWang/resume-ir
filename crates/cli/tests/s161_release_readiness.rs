@@ -1050,6 +1050,50 @@ fn release_readiness_json_accepts_current_stage_evidence_without_clearing_blocke
 }
 
 #[test]
+fn release_readiness_rejects_current_stage_evidence_with_mismatched_diagnostics_report_digest_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-diagnostics-digest-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-current-stage-diagnostics-digest-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    let diagnostics_report = evidence_dir.join("redacted-diagnostics.json");
+    fs::write(&current_stage_evidence, current_stage_evidence_manifest()).unwrap();
+    fs::write(&diagnostics_report, redacted_diagnostics_report()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--diagnostics-report",
+            path_str(&diagnostics_report),
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence with mismatched diagnostics report digest");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence manifest"));
+    assert!(stderr.contains("redacted-diagnostics.json"));
+    assert!(stderr.contains("digest"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains(path_str(&diagnostics_report)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_current_stage_blocked_summary_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-current-stage-blocked-private-data");
     let evidence_dir = temp_path("release-readiness-current-stage-blocked-private-reports");

@@ -757,7 +757,10 @@ fn validate_release_readiness_evidence(
     }
     if let Some(path) = &args.current_stage_evidence {
         let report = read_release_readiness_evidence_report(path)?;
-        validate_current_stage_evidence_manifest(&report).map_err(|error| {
+        let digests = validate_current_stage_evidence_manifest(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL, error)
+        })?;
+        validate_current_stage_evidence_bundle_digests(args, &digests).map_err(|error| {
             release_readiness_manifest_error(RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL, error)
         })?;
         provided.push(ReleaseReadinessProvidedEvidence {
@@ -1006,7 +1009,22 @@ fn validate_release_automation_evidence_report(
     Ok(())
 }
 
-fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
+struct CurrentStageEvidenceDigests {
+    input_digests: BTreeMap<String, String>,
+    redacted_outputs: BTreeMap<String, String>,
+}
+
+impl CurrentStageEvidenceDigests {
+    fn input_digest(&self, key: &str) -> Option<&str> {
+        self.input_digests.get(key).map(String::as_str)
+    }
+
+    fn output_digest(&self, file: &str) -> Option<&str> {
+        self.redacted_outputs.get(file).map(String::as_str)
+    }
+}
+
+fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStageEvidenceDigests> {
     const CONTEXT: &str = "current-stage validation evidence";
     if release_readiness_diagnostics_report_contains_private_marker(report)
         || release_evidence_report_contains_forbidden_marker(report)
@@ -1057,6 +1075,21 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         "ocr_runtime_manifest_sha256",
         CONTEXT,
     )?;
+    let expected_input_digests = BTreeMap::from([
+        (
+            "dataset_manifest_sha256".to_string(),
+            dataset_manifest_sha256.to_string(),
+        ),
+        ("query_set_sha256".to_string(), query_set_sha256.to_string()),
+        (
+            "model_manifest_sha256".to_string(),
+            model_manifest_sha256.to_string(),
+        ),
+        (
+            "ocr_runtime_manifest_sha256".to_string(),
+            ocr_runtime_manifest_sha256.to_string(),
+        ),
+    ]);
 
     let parameters = require_release_evidence_object(object, "parameters", CONTEXT)?;
     require_release_evidence_min_u64(parameters, "max_files", 8000, CONTEXT)?;
@@ -1214,7 +1247,77 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<()> {
         require_release_evidence_array_contains_string(object, "must_not_upload", item, CONTEXT)?;
     }
 
+    Ok(CurrentStageEvidenceDigests {
+        input_digests: expected_input_digests,
+        redacted_outputs: output_digests,
+    })
+}
+
+fn validate_current_stage_evidence_bundle_digests(
+    args: &ReleaseReadinessEvidenceArgs,
+    digests: &CurrentStageEvidenceDigests,
+) -> Result<()> {
+    if let Some(path) = &args.benchmark_report {
+        require_current_stage_bundle_digest(
+            path,
+            digests.output_digest("private-benchmark-local.json"),
+            "private-benchmark-local.json",
+        )?;
+    }
+    if let Some(path) = &args.ocr_throughput_report {
+        require_current_stage_bundle_digest(
+            path,
+            digests.output_digest("private-ocr-throughput.json"),
+            "private-ocr-throughput.json",
+        )?;
+    }
+    if let Some(path) = &args.diagnostics_report {
+        require_current_stage_bundle_digest(
+            path,
+            digests.output_digest("redacted-diagnostics.json"),
+            "redacted-diagnostics.json",
+        )?;
+    }
+    if let Some(path) = &args.model_manifest {
+        require_current_stage_bundle_digest(
+            path,
+            digests.input_digest("model_manifest_sha256"),
+            "model_manifest_sha256",
+        )?;
+    }
+    if let Some(path) = &args.ocr_runtime_manifest {
+        require_current_stage_bundle_digest(
+            path,
+            digests.input_digest("ocr_runtime_manifest_sha256"),
+            "ocr_runtime_manifest_sha256",
+        )?;
+    }
+
     Ok(())
+}
+
+fn require_current_stage_bundle_digest(
+    path: &Path,
+    expected_sha256: Option<&str>,
+    artifact: &'static str,
+) -> Result<()> {
+    let expected_sha256 = expected_sha256.ok_or_else(|| {
+        CliError::user(format!(
+            "current-stage evidence bundle blocked: {artifact} digest is missing"
+        ))
+    })?;
+    let actual_sha256 = file_sha256_hex(path).map_err(|_| {
+        CliError::user(format!(
+            "current-stage evidence bundle blocked: {artifact} digest could not be verified"
+        ))
+    })?;
+    if actual_sha256 == expected_sha256 {
+        Ok(())
+    } else {
+        Err(CliError::user(format!(
+            "current-stage evidence bundle blocked: {artifact} digest mismatch"
+        )))
+    }
 }
 
 fn validate_current_stage_blocked_summary_manifest(report: &str) -> Result<()> {

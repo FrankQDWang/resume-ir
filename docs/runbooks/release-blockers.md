@@ -257,6 +257,13 @@ The manifest is accepted only when `max_files >= 8000`, `max_queries >= 500`,
 `preflight_probes.embedding_protocol == "passed"`, and the dataset, query-set,
 model-manifest, and OCR-runtime-manifest input digests match the corresponding
 basename-only output digests.
+When `--current-stage-evidence` is supplied in the same `release-readiness`
+invocation as `--benchmark-report`, `--ocr-throughput-report`,
+`--diagnostics-report`, `--model-manifest`, or `--ocr-runtime-manifest`,
+`release-readiness` recomputes the supplied file's SHA-256 and requires it to
+match the current-stage manifest entry for the corresponding local output or
+input digest. A mismatch is a fail-closed evidence-bundle error and must not
+print local paths.
 Add `--reviewed-model` and `--reviewed-ocr-runtime` only after the selected
 model weights, OCR engine, renderer, and language pack have actually been
 reviewed; otherwise validation must fail closed.
