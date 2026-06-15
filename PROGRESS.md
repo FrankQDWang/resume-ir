@@ -425,6 +425,12 @@ production-ready scope source.
   text, raw query text, vectors, generated private reports, local manifests,
   runtime binaries, model artifacts, indexes, SQLite databases, diagnostics,
   model caches, or hardware drill transcripts were committed or uploaded.
+  S357 performed a read-only product gap audit from repository source-of-truth
+  documents and current machine-readable readiness gates only. It read no real
+  resumes and generated no private query sets, benchmark reports, diagnostics,
+  local manifests, indexes, SQLite databases, model caches, runtime binaries,
+  signing material, notarization credentials, installer logs, or hardware drill
+  transcripts.
   S318, S319, S321, S322, S323, S324, S325, S326, S327, and S328 used
   synthetic/private-shaped corpus summary, query-set, benchmark-runner,
   diagnostics, release-readiness, runtime preflight, import/parser,
@@ -454,6 +460,53 @@ production-ready scope source.
 S42 included a read-only P0-P6 product gap audit using `GOAL.md`, the system
 design docs, the execution docs, and this evidence log as scope sources. Deleted
 obsolete preliminary files and checklists are not product scope.
+
+S357 refreshed the product gap audit on current HEAD after S356. Sources read
+were `GOAL.md`, `MANIFEST.md`, all system-design and execution-plan documents
+listed by their read-order files, `AGENTS.md`, current runbooks, current CI
+scripts, current crate/test inventories, `PROGRESS.md`, and fresh
+`release-readiness --json` output. The refresh deliberately did not treat the
+obsolete `S0-S13` long-running checklist as product truth.
+
+- Current-stage boundary confirmed: this stage is still a reproducible local
+  baseline/observability/validation-flow stage. It must not loop on P95/P99
+  reduction or million-real-resume validation. External 100k/1M validation and
+  strict latency reduction remain follow-up performance-goal work, while the
+  available private local corpus is the current real-corpus boundary.
+- Machine-readable readiness result on current HEAD: `stable_release:
+  "blocked"`, `goal_gap_matrix.complete_product: false`, and 15 blockers. P0
+  and P1 are marked implementation complete and covered by local/PR CI. P2,
+  P3, and P4 are marked implementation complete but release-blocked by missing
+  quality/runtime/baseline evidence. P5 is implementation-blocked by real
+  platform credentials/transcripts. P6 is not complete until current-stage
+  baseline evidence, quality datasets, hardware drills, and later external
+  scale validation exist.
+- Local implementation evidence that appears strongest: Rust workspace, CLI,
+  daemon, authenticated local IPC, SQLCipher metadata, durable task queues,
+  import cancellation/progress, persistent encrypted full-text/vector snapshots,
+  DOCX/PDF/TXT import, OCR-required routing, real local Tesseract/Poppler OCR
+  worker path, field extraction/persistence/filtering, soft dedupe/version
+  folding, local embedding protocol/vector snapshots, semantic/hybrid/RRF
+  search, redacted diagnostics, release dry-run manifests, package dry-runs,
+  benchmark runner gates, and safe synthetic fault probes.
+- Evidence still too weak for full product claims: current-stage smoke only
+  proves wiring, not the 10k/8000-document and 500-query full baseline; prior
+  full-profile private runs stopped at bounded OCR backlog; labeled
+  field/dedupe/vector datasets are absent; real platform installer/service
+  transcripts are absent; real signing/notarization credentials are absent; and
+  hardware fault drills are only synthetic simulations.
+- Do not hand-write sample-specific extraction rules to pass benchmarks.
+  Remaining product completeness should be driven by reproducible local
+  baseline evidence, generalized high-confidence extraction, hybrid retrieval,
+  diagnostics, recovery semantics, and release gates.
+- Next best local production slice from this audit: run or improve the
+  full-profile current-stage validation handoff path so a real local attempt
+  either produces release-readiness-acceptable redacted evidence or a precise
+  blocked summary. If a full real run is too slow, stop at the designed blocked
+  summary instead of optimizing latency. After that, the next local evidence
+  priorities are redacted diagnostics intake from the same data-dir, reviewed
+  OCR/model manifest intake, and runbook-aligned release dry-run evidence. The
+  external-only items remain labeled credentials/platform/dataset BLOCKED.
 
 - P0 architecture: Rust workspace, CLI/daemon entrypoints, SQLite metadata,
   task/status tables, loopback status IPC, an authenticated loopback import
@@ -1051,6 +1104,7 @@ obsolete preliminary files and checklists are not product scope.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S357 | Product gap audit refreshed on current HEAD | Read-only audit used `GOAL.md`, `MANIFEST.md`, all system-design and execution-plan documents from their read-order files, `AGENTS.md`, runbooks, CI scripts, crate/test inventories, `PROGRESS.md`, and fresh `release-readiness --json`. The current readiness matrix reports `stable_release: "blocked"`, `complete_product: false`, and 15 blockers. It marks P0/P1 as implementation complete and locally/CI covered; P2/P3/P4 as implementation complete but release-blocked by quality/runtime/baseline evidence; P5 as platform/credential/transcript blocked; and P6 as not complete. The audit confirms current-stage scope is reproducible local baseline/observability/validation flow, not P95/P99 optimization or million-real-resume validation. | Complete product remains not complete. Full current-stage baseline evidence, full hot-index coverage, 500-query private baseline, reviewed model/OCR evidence for release, redacted diagnostics evidence, labeled field/dedupe/vector quality datasets, real installer/service transcripts, signing/notarization credentials, actual hardware fault drills, and external 100k/1M validation remain missing or BLOCKED. |
 | S356 | Current-stage real local smoke chain revalidated with fault simulation on current HEAD | A smoke-profile real local current-stage validation witness against the user-authorized resume root used current `codex/fault-injection-diagnostics` HEAD, local Tesseract 5.5.2, Poppler/pdftoppm 26.04.0, `eng+chi_sim` tessdata, a local `sentence-transformers/all-MiniLM-L6-v2` model cache whose model card records Apache-2.0, and a temporary local Python runtime for `sentence-transformers` 5.5.1. Execute mode exited 0 after OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, local query-set draft, private query baseline, smoke baseline gate, redacted diagnostics, safe synthetic `fault_simulation_smoke`, smoke summary, and handoff summary. Redacted aggregate smoke evidence reported 50 bounded documents, 2 searchable documents, 48 OCR-required documents, 2 vector-indexed documents, one retryable OCR page-budget failure, OCR probe `passed`, embedding protocol `passed`, `fault-simulation.v1` status `reproduced`, `full_baseline_satisfied: false`, `release_readiness_evidence: false`, and `performance_optimization_deferred: true`. A precise privacy scan over committed-safe stdout/stderr, smoke summary, handoff, and fault output found no local paths, private markers, model-cache paths, or resume directory names. | This is current-HEAD smoke/wiring evidence only, not full current-stage baseline or product completion. Full 10k/8000-document current-stage baseline, 500-query private baseline gate, full hot-index coverage, full OCR backlog drain, OCR throughput baseline, release-readiness current-stage evidence, P95/P99 optimization, external 100k/1M validation, final model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets remain not complete or BLOCKED. |
 | S355 | Current-stage fault simulation evidence binding complete locally | Focused RED first failed because `run-current-stage-validation.sh --dry-run` did not include a `fault-simulate --case disk-space-low --json` step, and the fake execute harness/full and smoke evidence did not require a `fault_simulation_smoke` step or redacted fault output digest. After implementation, dry-run plans include the safe synthetic fault simulation step after redacted diagnostics, execute mode writes `fault-simulation-storage-low.json`, smoke summaries and full current-stage evidence include the `fault_simulation_smoke` step/output digest, fault-probe failure writes `current-stage-blocked-summary.json` with `blocked_category: "fault-injection"`, and release-readiness strictly requires the new step/output in `resume-ir.current-stage-validation-evidence.v1`. The output basename avoids token-leak false positives while the actual CLI probe remains `--case disk-space-low`. Verification passed: RED check, `check-current-stage-validation.sh`, `cargo test -p resume-cli --test s161_release_readiness --locked`, `check-release-readiness.sh`, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is current-stage evidence wiring only. It does not run a real private full-profile baseline, does not clear full 10k/8000-document current-stage evidence, does not perform actual ENOSPC or hardware drills, does not reduce P95/P99, does not approve model/runtime distribution, does not clear installer/signing/notarization/platform blockers, and does not make complete product readiness true. |
 | S354 | Fault-simulation structured evidence output complete locally | Focused RED first failed because `resume-cli fault-simulate --case disk-space-low ... --json` was rejected by usage and produced no machine-readable report. After implementation, every safe synthetic `fault-simulate` case accepts `--json` and emits `fault-simulation.v1` with `redacted: true`, `paths: <redacted>`, `evidence_level: "local_synthetic_fault_probe"`, canonical fault name, reproduced/not-reproduced status, and case-specific synthetic/aggregate details. Default human-readable output remains compatible. The fault runbook now documents `migration-failure`, JSON evidence output, and the no-upload boundary; the runbook guard requires those entries. Verification passed: focused RED/GREEN test, full `s71_fault_injection`, daemon kill integration test, `check-runbooks.sh`, `cargo fmt --check`, `git diff --check`, `guard-public-repo.sh`, and full `./scripts/ci/verify-local.sh`. | This is P6/diagnostics evidence plumbing only. It does not perform actual ENOSPC, real service-manager daemon kill, battery transition, or external-drive disconnect drills; does not clear release-readiness hardware fault blockers; does not run the full 10k current-stage baseline; does not optimize P95/P99; and does not make complete product readiness true. |
@@ -1408,6 +1462,80 @@ obsolete preliminary files and checklists are not product scope.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S357
+
+- Scope: read-only product gap audit before selecting the next production
+  slice. This audit updates the current P0-P6 state and next-action ordering;
+  it does not claim product completion and does not read private resume data.
+- Source-of-truth document audit:
+
+```bash
+sed -n '1,240p' GOAL.md
+sed -n '1,240p' MANIFEST.md
+sed -n '1,220p' 01_system_design_系统设计/00_阅读顺序.md
+sed -n '1,220p' 02_execution_plan_执行方案/00_阅读顺序.md
+sed -n '1,380p' 01_system_design_系统设计/08_安全性能与验收指标.md
+sed -n '1,420p' 02_execution_plan_执行方案/06_测试基准与验收.md
+sed -n '1,420p' 02_execution_plan_执行方案/08_依赖许可与参考资料.md
+```
+
+Output summary:
+
+- `GOAL.md` confirms the current-stage boundary: reproducible local baseline,
+  observability, real local validation flow, external OCR/runtime manifests,
+  installer dry-runs, and release automation evidence. It explicitly defers
+  P95/P99 latency reduction and external 100k/1M real-corpus validation to a
+  later performance goal.
+- System design still requires local-first privacy, async import/OCR/embedding,
+  read-only query hot path, layered full-text/field/vector indexes, snapshots,
+  deletion propagation, redacted diagnostics, and fault recovery.
+- Execution docs still require Windows/macOS packaging, release workflows,
+  benchmark and quality gates, labeled datasets, and dependency/license review
+  before stable release.
+
+- Current implementation and gate audit:
+
+```bash
+find crates -maxdepth 2 -type f -name Cargo.toml | sort
+find scripts -maxdepth 3 -type f | sort
+find .github/workflows -maxdepth 1 -type f -print | sort
+cargo run -p resume-cli -- release-readiness --json
+scripts/local/run-current-stage-validation.sh --help
+```
+
+Output summary:
+
+- The workspace currently contains production crates for CLI, daemon, metadata,
+  import, parsing, OCR, embedding, full-text/vector indexes, extraction,
+  ranking, privacy, and benchmark runner surfaces.
+- CI/local scripts cover local verification, public repository guard,
+  runbook/license/workflow checks, current-stage validation guards, release
+  artifact/SBOM/package dry-runs, installer/service lifecycle evidence, and
+  local embedding runtime checks.
+- `release-readiness --json` reported `stable_release: "blocked"`,
+  `goal_gap_matrix.complete_product: false`, and 15 blockers. P0 and P1 are
+  implementation complete and covered by local/PR CI; P2, P3, and P4 are
+  implementation complete but release-blocked by quality/runtime/baseline
+  evidence; P5 is implementation blocked by real platform credentials and
+  release-runner transcripts; P6 is not complete.
+- `run-current-stage-validation.sh --help` confirms full profile is the only
+  profile that can produce `current-stage-validation-evidence.json`; smoke is
+  wiring-only evidence. The full profile can stop with a redacted blocked
+  summary instead of looping indefinitely when OCR backlog, query-set,
+  benchmark, diagnostics, or release-readiness evidence fails.
+
+- Next-action conclusion:
+  - Do not start by adding more field-specific extraction rules.
+  - The next local production slice should target full-profile current-stage
+    evidence/handoff: either produce release-readiness-acceptable redacted
+    evidence, or produce a precise blocked summary from the real local corpus.
+  - If the real run is too slow or OCR-heavy, preserve the blocked summary and
+    move to the next local evidence item instead of doing performance tuning in
+    this goal.
+  - External blockers should remain explicit: real signing/notarization
+    credentials, administrator Windows/macOS release-runner transcripts,
+    labeled quality datasets, and external 100k/1M validation.
 
 ### S356
 
