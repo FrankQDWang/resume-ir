@@ -633,6 +633,11 @@ fn take_release_readiness_path(args: &[String], index: &mut usize) -> Result<Pat
 fn validate_release_readiness_evidence(
     args: &ReleaseReadinessEvidenceArgs,
 ) -> Result<Vec<ReleaseReadinessProvidedEvidence>> {
+    if args.current_stage_evidence.is_some() && args.current_stage_blocked_summary.is_some() {
+        return Err(CliError::user(
+            "current-stage evidence conflict: use either --current-stage-evidence or --current-stage-blocked-summary, not both",
+        ));
+    }
     let mut provided = Vec::new();
     if let Some(path) = &args.benchmark_report {
         let report = read_release_readiness_evidence_report(path)?;

@@ -194,6 +194,8 @@ current_stage_evidence="$tmpdir/current-stage-validation-evidence.json"
 current_stage_blocked_summary="$tmpdir/current-stage-blocked-summary.json"
 evidence_stdout_file="$tmpdir/evidence-stdout.txt"
 evidence_stderr_file="$tmpdir/evidence-stderr.txt"
+blocked_summary_stdout_file="$tmpdir/blocked-summary-stdout.txt"
+blocked_summary_stderr_file="$tmpdir/blocked-summary-stderr.txt"
 
 cat > "$signing_evidence" <<'JSON'
 {"schema_version":"release.signing_evidence.v1","version":"v0.0.0","signing_status":"blocked","evidence_boundary":"dry_run_no_signing_material","artifact_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","required_evidence":["certificate_chain"],"blocked_release_steps":["production_signing_certificates"]}
@@ -432,7 +434,6 @@ set +e
   --windows-installer-lifecycle-plan "$windows_installer_lifecycle_plan" \
   --windows-service-lifecycle-plan "$windows_service_lifecycle_plan" \
   --current-stage-evidence "$current_stage_evidence" \
-  --current-stage-blocked-summary "$current_stage_blocked_summary" \
   > "$evidence_stdout_file" 2> "$evidence_stderr_file"
 evidence_status=$?
 set -e
@@ -454,14 +455,10 @@ require_text "$evidence_stdout_file" '"label": "macOS installer lifecycle plan e
 require_text "$evidence_stdout_file" '"label": "Windows installer lifecycle plan evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows service lifecycle plan evidence"'
 require_text "$evidence_stdout_file" '"label": "current-stage validation evidence manifest"'
-require_text "$evidence_stdout_file" '"label": "current-stage blocked handoff"'
 require_text "$evidence_stdout_file" '"privacy_boundary": "blocked_release_evidence_manifest"'
 require_text "$evidence_stdout_file" '"privacy_boundary": "local_only_redacted_evidence_manifest"'
-require_text "$evidence_stdout_file" '"privacy_boundary": "local_only_redacted_blocked_summary"'
 require_text "$evidence_stdout_file" "blocked dry-run evidence passed schema and boundary checks"
 require_text "$evidence_stdout_file" "current-stage validation evidence manifest passed redacted schema and digest checks"
-require_text "$evidence_stdout_file" "current-stage blocked summary passed redacted handoff checks"
-require_text "$evidence_stdout_file" "does not clear full baseline evidence"
 require_text "$evidence_stdout_file" "release.artifacts.v1 dry-run manifest passed schema and artifact boundary checks"
 require_text "$evidence_stdout_file" "SPDX-2.3 release dry-run SBOM passed redaction and package boundary checks"
 require_text "$evidence_stdout_file" "release.macos_package.v1 unsigned dry-run manifest passed package boundary checks"
@@ -486,6 +483,36 @@ reject_text "$evidence_stdout_file" "resume-ir-v0.0.0"
 reject_text "$evidence_stderr_file" "resume-ir-v0.0.0"
 reject_text "$evidence_stdout_file" "local-data"
 reject_text "$evidence_stderr_file" "local-data"
+
+set +e
+"$CARGO_BIN" run --quiet -p resume-cli --locked -- \
+  --data-dir "$data_dir" release-readiness --json \
+  --current-stage-blocked-summary "$current_stage_blocked_summary" \
+  > "$blocked_summary_stdout_file" 2> "$blocked_summary_stderr_file"
+blocked_summary_status=$?
+set -e
+
+if [ "$blocked_summary_status" -eq 0 ]; then
+  fail "release-readiness command unexpectedly accepted blocked handoff as a stable release"
+fi
+
+require_text "$blocked_summary_stdout_file" '"label": "current-stage blocked handoff"'
+require_text "$blocked_summary_stdout_file" '"privacy_boundary": "local_only_redacted_blocked_summary"'
+require_text "$blocked_summary_stdout_file" "current-stage blocked summary passed redacted handoff checks"
+require_text "$blocked_summary_stdout_file" "does not clear full baseline evidence"
+require_text "$blocked_summary_stdout_file" '"label": "private real-corpus performance evidence"'
+require_text "$blocked_summary_stdout_file" '"label": "OCR throughput"'
+require_text "$blocked_summary_stdout_file" '"label": "redacted diagnostics evidence"'
+require_text "$blocked_summary_stdout_file" '"label": "embedding model license/distribution"'
+require_text "$blocked_summary_stderr_file" "release readiness blocked: stable release criteria are not met"
+reject_text "$blocked_summary_stdout_file" "$tmpdir"
+reject_text "$blocked_summary_stderr_file" "$tmpdir"
+reject_text "$blocked_summary_stdout_file" "PRIVATE-release-readiness-data"
+reject_text "$blocked_summary_stderr_file" "PRIVATE-release-readiness-data"
+reject_text "$blocked_summary_stdout_file" "/Users/"
+reject_text "$blocked_summary_stderr_file" "/Users/"
+reject_text "$blocked_summary_stdout_file" "local-data"
+reject_text "$blocked_summary_stderr_file" "local-data"
 
 require_text "$verify_script" "./scripts/ci/check-release-readiness.sh"
 require_text "$workflow_guard" "check-release-readiness.sh"
@@ -533,6 +560,7 @@ require_text "$runbook" "local_only_redacted_evidence_manifest"
 require_text "$runbook" "current-stage blocked handoff"
 require_text "$runbook" "local_only_redacted_blocked_summary"
 require_text "$runbook" "non-clearing handoff context"
+require_text "$runbook" "mutually exclusive"
 require_text "$runbook" "redacted diagnostics evidence"
 require_text "$runbook" "provided_evidence"
 require_text "$runbook" "hardware fault drills"

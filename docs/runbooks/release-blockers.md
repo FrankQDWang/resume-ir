@@ -511,6 +511,10 @@ This records `current-stage blocked handoff` under `provided_evidence` with
 privacy boundary `local_only_redacted_blocked_summary`; it does not clear the
 private real-corpus baseline, OCR throughput, diagnostics, model, runtime,
 quality, platform, signing, or hardware fault-drill blockers.
+`--current-stage-blocked-summary` and `--current-stage-evidence` are mutually exclusive.
+Passing both is a release-readiness input error because one claims a blocked
+handoff while the other claims the full local validation evidence manifest
+exists.
 
 Passing these local evidence inputs marks only the corresponding local evidence
 items as `provided_evidence`; aggregate reports and redacted diagnostics evidence

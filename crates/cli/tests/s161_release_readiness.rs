@@ -1117,6 +1117,53 @@ fn release_readiness_json_accepts_current_stage_blocked_summary_without_clearing
 }
 
 #[test]
+fn release_readiness_rejects_conflicting_current_stage_full_and_blocked_evidence_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-conflict-private-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-conflict-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    let blocked_summary = evidence_dir.join("current-stage-blocked-summary.json");
+    fs::write(&current_stage_evidence, current_stage_evidence_manifest()).unwrap();
+    fs::write(&blocked_summary, current_stage_blocked_summary()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+            "--current-stage-blocked-summary",
+            path_str(&blocked_summary),
+        ])
+        .output()
+        .expect("run release readiness with conflicting current-stage inputs");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("current-stage evidence conflict"));
+    assert!(stderr.contains("--current-stage-evidence"));
+    assert!(stderr.contains("--current-stage-blocked-summary"));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains(path_str(&blocked_summary)));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stdout.contains("/Users/"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_current_stage_blocked_summary_with_private_marker_without_path_leaks()
 {
     let data_dir = temp_path("release-readiness-current-stage-blocked-leak-private-data");

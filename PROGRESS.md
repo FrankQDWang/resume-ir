@@ -443,7 +443,7 @@ production-ready scope source.
   text, raw query text, vectors, generated private reports, local manifests,
   runtime binaries, model artifacts, indexes, SQLite databases, diagnostics,
   model caches, or hardware drill transcripts were committed or uploaded.
-  S359, S361, and S362 used fake local current-stage execute fixtures, CI
+  S359, S361, S362, and S363 used fake local current-stage execute fixtures, CI
   guards, release-readiness fixtures, and runbook text only; no real resume
   data, filenames, paths, raw text, raw
   queries, private query sets, generated private benchmark reports, generated
@@ -1135,6 +1135,7 @@ obsolete `S0-S13` long-running checklist as product truth.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S363 | Current-stage release-readiness evidence conflict rejection complete locally | Focused RED first failed because `release-readiness` accepted both `--current-stage-evidence` and `--current-stage-blocked-summary` in one invocation, producing JSON with contradictory full-evidence and blocked-handoff claims. After implementation, release-readiness fails closed before reading evidence bodies when both inputs are provided, returning a path-redacted `current-stage evidence conflict` error. The release-readiness guard now runs the full current-stage evidence fixture and blocked-summary fixture as separate invocations, and the runbook documents the flags as mutually exclusive. Verification passed the focused conflict test, full `s161_release_readiness`, `check-release-readiness.sh`, and `check-runbooks.sh`. | This is release-readiness input integrity only. It does not produce full current-stage validation evidence, rerun the private corpus, drain OCR backlog, generate a 500-query private benchmark, clear OCR throughput/diagnostics/model/runtime/quality/platform/signing/notarization/hardware blockers, improve P95/P99, validate external 100k/1M scale, or make complete product readiness true. |
 | S362 | Current-stage blocked summary release-readiness handoff complete locally | Focused RED first failed because `release-readiness` did not accept `--current-stage-blocked-summary`, so S360-style full-profile blocked summaries could not be attached to readiness output except by ignoring them or misusing `--current-stage-evidence`. After implementation, `release-readiness` validates `resume-ir.current-stage-blocked-summary.v1` for full-profile target, `local_only_redacted_blocked_summary`, `release_readiness_evidence: false`, deferred performance optimization, blocked step/category/reason/exit, optional SHA-256-or-null input/output digests, full baseline parameter floors, OCR/embedding preflight statuses, at least one matching blocked step, basename-only redacted outputs, false privacy sentinels, `stable release readiness` in `not_completed`, and the must-not-upload list. It emits `current-stage blocked handoff` with a non-blocker label, so existing release blockers remain blocked. CI and the release blocker runbook now document the non-clearing handoff path. Verification passed focused release-readiness tests, the full release-readiness test file, `check-release-readiness.sh`, `check-runbooks.sh`, and full `./scripts/ci/verify-local.sh`. | This is structured blocked-handoff intake only. It does not convert a blocked summary into full current-stage validation evidence, rerun the private corpus, drain OCR backlog, generate a 500-query private benchmark, clear OCR throughput/diagnostics/model/runtime/quality/platform/signing/notarization/hardware blockers, improve P95/P99, validate external 100k/1M scale, or make complete product readiness true. |
 | S361 | Current-stage embedding runtime PATH binding complete locally | Focused RED first failed because `run-current-stage-validation.sh` did not accept an explicit embedding runtime bin directory, leaving S360-style local embedding preflight reproduction dependent on an operator-modified shell `PATH`. After implementation, `--embedding-runtime-bin-dir DIR` prepends that directory to child-command `PATH` only in execute mode, fails before private corpus read if the directory is unavailable, and records only `embedding_runtime_bin_dir_configured: true|false` in dry-run plans plus redacted smoke, blocked, and full evidence summaries. The current-stage guard now proves the PATH prefix reaches fake model preflight, embedding worker, and private-query benchmark execution while rejecting temp path leakage, and the release blocker runbook documents the local-runtime boundary. Verification passed shell syntax checks, focused current-stage validation guard, and full `./scripts/ci/verify-local.sh`. | This is current-stage reproducibility plumbing only. It does not rerun the private corpus, drain OCR backlog, generate full current-stage evidence, clear the 500-query private benchmark, approve model distribution, improve P95/P99, clear installer/platform/signing/notarization/quality blockers, validate external 100k/1M scale, or make complete product readiness true. |
 | S360 | Full-profile current-stage real local OCR-backlog diagnostics handoff reproduced | A fresh private local-only full-profile current-stage validation witness used current `codex/fault-injection-diagnostics` HEAD, local Tesseract/Poppler, `eng+chi_sim` tessdata, a reviewed local `sentence-transformers/all-MiniLM-L6-v2` manifest, the existing local Python runtime with `sentence-transformers 5.5.1`, `--max-files 8000`, `--max-queries 500`, `--ocr-worker-ticks 2`, and `--embedding-worker-ticks 2`. An initial preflight-only attempt correctly stopped before private corpus read when the default system Python lacked `sentence-transformers`; the rerun with the local runtime completed OCR preflight, OCR manifest draft/validate, model manifest draft/validate, model preflight, dataset manifest, private corpus import, bounded OCR worker, bounded embedding worker, corpus summary, and redacted diagnostics, then stopped with `current-stage-blocked-summary.json` and `current-stage-handoff.json`. The redacted blocked summary reported `blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`, `private_corpus_read: true`, OCR runtime probe `passed`, embedding protocol `passed`, `redacted_diagnostics` success, 8000 documents, 86 searchable documents, 7899 OCR-required documents, 15 permanent failures, 16 vector-indexed documents, 7898 queued OCR jobs, one completed OCR document job, one retryable OCR page-budget failure, and `hot_index_fully_covered: false`. A privacy scan over committed-safe stdout/stderr, corpus summary, blocked summary, handoff, and diagnostics found no local paths, private markers, model-cache paths, model artifact names, private resume directory names, email-like tokens, or mainland mobile-like tokens. The local temporary private evidence/data directories were removed after extracting this aggregate summary. | This is a real full-profile current-stage blocked handoff with diagnostics, not current-stage completion or release-readiness evidence. It stops before private query-set generation, 500-query private baseline, OCR throughput baseline, release-readiness current-stage evidence, full OCR backlog drain, hot-index coverage, P95/P99 optimization, external 100k/1M validation, model/runtime distribution approval, installer/platform/signing/notarization blockers, hardware fault drills, and real labeled quality datasets. |
@@ -1498,6 +1499,64 @@ obsolete `S0-S13` long-running checklist as product truth.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S363
+
+- Scope: make `release-readiness` reject contradictory current-stage inputs.
+  A full current-stage validation evidence manifest and a blocked summary
+  represent mutually exclusive states, so they must not be accepted in the same
+  invocation.
+- TDD RED:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_conflicting_current_stage_full_and_blocked_evidence_without_path_leaks --locked -- --exact
+```
+
+Output summary:
+
+- Exit 101 before implementation. The test failed because stdout was not empty:
+  the command accepted both `--current-stage-evidence` and
+  `--current-stage-blocked-summary` and produced JSON.
+
+- Implementation:
+  - `validate_release_readiness_evidence` now fails closed when both current
+    stage inputs are present.
+  - The error names the conflicting flags but not either local evidence path.
+  - `check-release-readiness.sh` now validates full current-stage evidence and
+    blocked handoff evidence in separate invocations.
+  - The release blocker runbook now documents the two flags as mutually
+    exclusive.
+
+Verification:
+
+```bash
+/Users/frankqdwang/.cargo/bin/cargo fmt
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness release_readiness_rejects_conflicting_current_stage_full_and_blocked_evidence_without_path_leaks --locked -- --exact
+/Users/frankqdwang/.cargo/bin/cargo test -p resume-cli --test s161_release_readiness --locked
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- `cargo fmt`: exit 0.
+- Focused conflict test: exit 0; simultaneous full evidence plus blocked
+  summary is rejected without leaking the evidence paths, data directory,
+  private markers, or `/Users/` path shapes.
+- Full `s161_release_readiness`: exit 0; 28 tests passed.
+- `check-release-readiness.sh`: exit 0; full current-stage evidence and
+  blocked handoff evidence are validated separately while stable release stays
+  blocked.
+- `check-runbooks.sh`: exit 0.
+
+Scope note:
+
+- S363 is release-readiness input integrity only. It does not produce full
+  current-stage validation evidence, run private resumes, clear the OCR backlog,
+  generate a private query set, produce a 500-query benchmark, approve model or
+  OCR runtime distribution, clear quality/platform/signing/notarization/hardware
+  blockers, improve P95/P99, validate external 100k/1M scale, or make complete
+  product readiness true.
 
 ### S362
 
