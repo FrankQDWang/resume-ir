@@ -136,6 +136,25 @@ canonical fault name, reproduced/not-reproduced status, and only aggregate or
 synthetic probe details. Do not upload JSON reports generated from local
 operator runs.
 
+For reproducible local P6 smoke coverage, run the safe aggregate suite:
+
+```bash
+resume-cli --data-dir "$data_dir" fault-simulate \
+  --suite local-safe \
+  --scratch-dir "$scratch" \
+  --json
+```
+
+The suite emits `fault-simulation-suite.v1` with
+`evidence_level: local_synthetic_fault_suite`, `suite: "local_safe"`,
+`paths: "<redacted>"`, per-case redacted details, `failed_cases`, and
+`release_blockers_cleared: false`. Host-dependent probes may report
+`blocked_by_host` instead of `reproduced`; that is an operator signal, not a
+release pass. The suite is local smoke evidence only and explicitly keeps
+`release_hardware_drills: "blocked"` because actual ENOSPC, service-manager
+kill, battery transition, and external-drive disconnect drills require
+dedicated release platforms.
+
 ## Unsafe Faults
 
 The following remain not complete or BLOCKED for public release readiness:

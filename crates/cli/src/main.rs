@@ -78,6 +78,7 @@ const DEFAULT_SERVICE_LABEL: &str = "com.resume-ir.daemon";
 const DEFAULT_SERVICE_IPC_LISTEN: &str = "127.0.0.1:0";
 const FAULT_PROBE_MAX_BYTES: u64 = 1024 * 1024;
 const OCR_CRASH_PROBE_BYTES: &[u8] = b"SYNTHETIC OCR CRASH PROBE BYTES";
+const MODEL_CHECKSUM_PROBE_BYTES: &[u8] = b"SYNTHETIC MODEL CHECKSUM PROBE\n";
 const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
 const OCR_PAGE_BUDGET_REMEDIATION: &str =
     "raise OCR max pages per document or skip oversized scanned PDFs";
@@ -6430,9 +6431,25 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let fault_args = parse_fault_simulate_args(args)?;
     let scratch_dir = fault_args
         .scratch_dir
+        .clone()
         .unwrap_or_else(|| data_dir.join("fault-probes"));
 
-    let report = match fault_args.case {
+    if let Some(suite) = fault_args.suite {
+        return print_fault_simulation_suite_report(suite, data_dir, &scratch_dir, fault_args.json);
+    }
+
+    let report = fault_simulation_report_for_args(&scratch_dir, &fault_args)?;
+    print_fault_simulation_report(fault_args.json, report)
+}
+
+fn fault_simulation_report_for_args(
+    scratch_dir: &Path,
+    fault_args: &FaultSimulationArgs,
+) -> Result<FaultSimulationReport> {
+    let case = fault_args
+        .case
+        .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+    let report = match case {
         FaultSimulationCase::DiskSpaceLow => {
             let required = fault_args
                 .required_bytes
@@ -6461,7 +6478,7 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 )
             } else {
                 let probe_bytes = required.min(FAULT_PROBE_MAX_BYTES);
-                write_fault_probe(&scratch_dir, probe_bytes)
+                write_fault_probe(scratch_dir, probe_bytes)
                     .map_err(|_| CliError::user("fault simulation probe failed"))?;
                 fault_report(
                     "disk_space_low",
@@ -6484,7 +6501,7 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 )
             }
         }
-        FaultSimulationCase::PermissionDenied => match write_fault_probe(&scratch_dir, 1) {
+        FaultSimulationCase::PermissionDenied => match write_fault_probe(scratch_dir, 1) {
             Ok(()) => fault_report(
                 "permission_denied",
                 "not reproduced",
@@ -6509,7 +6526,7 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
             ),
             Err(_) => return Err(CliError::user("fault simulation probe failed")),
         },
-        FaultSimulationCase::FileLock => match contend_file_lock_probe(&scratch_dir) {
+        FaultSimulationCase::FileLock => match contend_file_lock_probe(scratch_dir) {
             Ok(FileLockProbeResult::Contended) => fault_report(
                 "file_lock",
                 "reproduced",
@@ -6543,7 +6560,7 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
             Err(_) => return Err(CliError::user("fault simulation probe failed")),
         },
         FaultSimulationCase::IndexSnapshotCorrupt => {
-            let result = simulate_index_snapshot_corrupt_probe(&scratch_dir)?;
+            let result = simulate_index_snapshot_corrupt_probe(scratch_dir)?;
             let status = if result.reproduced {
                 "reproduced"
             } else {
@@ -6583,7 +6600,7 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
             )
         }
         FaultSimulationCase::MetadataMigration => {
-            let result = simulate_metadata_migration_failure_probe(&scratch_dir)
+            let result = simulate_metadata_migration_failure_probe(scratch_dir)
                 .map_err(|_| CliError::user("fault simulation probe failed"))?;
             let (status, migration_check) = if result.reproduced {
                 ("reproduced", "failed")
@@ -6651,7 +6668,7 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 .as_deref()
                 .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
 
-            let result = simulate_daemon_kill_probe(&scratch_dir, daemon_binary)
+            let result = simulate_daemon_kill_probe(scratch_dir, daemon_binary)
                 .map_err(|_| CliError::user("fault simulation probe failed"))?;
             let status = if result.terminated && result.restart_succeeded {
                 "reproduced"
@@ -6688,7 +6705,7 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 .as_deref()
                 .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
 
-            let result = simulate_ocr_crash_probe(&scratch_dir, ocr_command)?;
+            let result = simulate_ocr_crash_probe(scratch_dir, ocr_command)?;
             let (status, ocr_command_status) = if result.reproduced {
                 ("reproduced", "failed")
             } else {
@@ -6779,7 +6796,7 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
         }
     };
 
-    print_fault_simulation_report(fault_args.json, report)
+    Ok(report)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6826,6 +6843,223 @@ fn print_fault_simulation_report(json: bool, report: FaultSimulationReport) -> R
     Ok(())
 }
 
+fn print_fault_simulation_suite_report(
+    suite: FaultSimulationSuite,
+    data_dir: &Path,
+    scratch_dir: &Path,
+    json: bool,
+) -> Result<()> {
+    if !json {
+        return Err(CliError::usage(fault_simulate_usage()));
+    }
+
+    match suite {
+        FaultSimulationSuite::LocalSafe => {
+            let cases = run_local_safe_fault_suite(data_dir, scratch_dir)?;
+            let total_cases = cases.len();
+            let failed_cases = cases.iter().filter(|case| case.status == "failed").count();
+            let reproduced_cases = cases
+                .iter()
+                .filter(|case| case.status == "reproduced")
+                .count();
+            let blocked_by_host_cases = cases
+                .iter()
+                .filter(|case| case.status == "blocked_by_host")
+                .count();
+            let body = serde_json::json!({
+                "schema_version": "fault-simulation-suite.v1",
+                "suite": "local_safe",
+                "redacted": true,
+                "paths": "<redacted>",
+                "evidence_level": "local_synthetic_fault_suite",
+                "release_hardware_drills": "blocked",
+                "summary": {
+                    "total_cases": total_cases,
+                    "reproduced_cases": reproduced_cases,
+                    "blocked_by_host_cases": blocked_by_host_cases,
+                    "failed_cases": failed_cases,
+                    "release_blockers_cleared": false
+                },
+                "cases": cases.into_iter().map(FaultSuiteCaseReport::into_json).collect::<Vec<_>>()
+            });
+            let output = serde_json::to_string_pretty(&body)
+                .map_err(|_| CliError::user("fault simulation report serialization failed"))?;
+            println!("{output}");
+            Ok(())
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FaultSuiteCaseReport {
+    fault: &'static str,
+    status: String,
+    details: serde_json::Value,
+}
+
+impl FaultSuiteCaseReport {
+    fn from_report(report: FaultSimulationReport) -> Self {
+        Self {
+            fault: report.fault,
+            status: report.status.to_string(),
+            details: report.details,
+        }
+    }
+
+    fn blocked_by_host(fault: &'static str, reason: &'static str) -> Self {
+        Self {
+            fault,
+            status: "blocked_by_host".to_string(),
+            details: serde_json::json!({ "reason": reason }),
+        }
+    }
+
+    fn failed(fault: &'static str) -> Self {
+        Self {
+            fault,
+            status: "failed".to_string(),
+            details: serde_json::json!({ "reason": "probe failed" }),
+        }
+    }
+
+    fn into_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "fault": self.fault,
+            "status": self.status,
+            "redacted": true,
+            "paths": "<redacted>",
+            "details": self.details
+        })
+    }
+}
+
+fn run_local_safe_fault_suite(
+    data_dir: &Path,
+    scratch_dir: &Path,
+) -> Result<Vec<FaultSuiteCaseReport>> {
+    let mut cases = vec![run_fault_suite_case(
+        scratch_dir,
+        "disk_space_low",
+        FaultSimulationArgs::suite_case(FaultSimulationCase::DiskSpaceLow)
+            .with_disk_space(4096, 1024),
+    )];
+
+    #[cfg(unix)]
+    cases.push(run_permission_denied_suite_case(scratch_dir));
+    #[cfg(not(unix))]
+    cases.push(FaultSuiteCaseReport::blocked_by_host(
+        "permission_denied",
+        "permission bit probe requires unix permissions",
+    ));
+
+    cases.extend([
+        run_fault_suite_case(
+            scratch_dir,
+            "file_lock",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::FileLock),
+        ),
+        run_fault_suite_case(
+            scratch_dir,
+            "index_snapshot_corrupt",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::IndexSnapshotCorrupt),
+        ),
+        run_fault_suite_case(
+            scratch_dir,
+            "metadata_migration",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::MetadataMigration),
+        ),
+        run_model_checksum_suite_case(scratch_dir),
+        FaultSuiteCaseReport::blocked_by_host(
+            "daemon_kill",
+            "suite requires explicit release daemon binary to avoid guessing host paths",
+        ),
+        FaultSuiteCaseReport::blocked_by_host(
+            "ocr_crash",
+            "suite requires explicit local OCR crash fixture to avoid shell-specific probes",
+        ),
+        run_fault_suite_case(
+            scratch_dir,
+            "battery_mode",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::BatteryMode)
+                .with_battery_state(FaultBatteryState::Battery),
+        ),
+        run_fault_suite_case(
+            scratch_dir,
+            "external_drive_disconnect",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::ExternalDriveDisconnect)
+                .with_drive_state(FaultDriveState::Disconnected),
+        ),
+    ]);
+
+    if !data_dir.as_os_str().is_empty() {
+        let _ = fs::create_dir_all(scratch_dir);
+    }
+
+    Ok(cases)
+}
+
+fn run_fault_suite_case(
+    scratch_dir: &Path,
+    fault: &'static str,
+    args: FaultSimulationArgs,
+) -> FaultSuiteCaseReport {
+    match fault_simulation_report_for_args(&scratch_dir.join(fault), &args) {
+        Ok(report) => FaultSuiteCaseReport::from_report(report),
+        Err(_) => FaultSuiteCaseReport::failed(fault),
+    }
+}
+
+#[cfg(unix)]
+fn run_permission_denied_suite_case(scratch_dir: &Path) -> FaultSuiteCaseReport {
+    let case_dir = scratch_dir.join("permission_denied");
+    if fs::create_dir_all(&case_dir).is_err() {
+        return FaultSuiteCaseReport::failed("permission_denied");
+    }
+    let original_permissions = match fs::metadata(&case_dir).map(|metadata| metadata.permissions())
+    {
+        Ok(permissions) => permissions,
+        Err(_) => return FaultSuiteCaseReport::failed("permission_denied"),
+    };
+    let mut denied = original_permissions.clone();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        denied.set_mode(0o500);
+    }
+    if fs::set_permissions(&case_dir, denied).is_err() {
+        return FaultSuiteCaseReport::failed("permission_denied");
+    }
+    let result = run_fault_suite_case(
+        scratch_dir,
+        "permission_denied",
+        FaultSimulationArgs::suite_case(FaultSimulationCase::PermissionDenied)
+            .with_scratch_dir(case_dir.clone()),
+    );
+    let _ = fs::set_permissions(&case_dir, original_permissions);
+    result
+}
+
+fn run_model_checksum_suite_case(scratch_dir: &Path) -> FaultSuiteCaseReport {
+    let case_dir = scratch_dir.join("model_checksum");
+    if fs::create_dir_all(&case_dir).is_err() {
+        return FaultSuiteCaseReport::failed("model_checksum");
+    }
+    let model_path = case_dir.join("model.bin");
+    if fs::write(&model_path, MODEL_CHECKSUM_PROBE_BYTES).is_err() {
+        return FaultSuiteCaseReport::failed("model_checksum");
+    }
+    let result = run_fault_suite_case(
+        scratch_dir,
+        "model_checksum",
+        FaultSimulationArgs::suite_case(FaultSimulationCase::ModelChecksum).with_model_file(
+            model_path.clone(),
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+    );
+    let _ = fs::remove_file(model_path);
+    result
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FaultSimulationCase {
     DiskSpaceLow,
@@ -6838,6 +7072,11 @@ enum FaultSimulationCase {
     OcrCrash,
     BatteryMode,
     ExternalDriveDisconnect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FaultSimulationSuite {
+    LocalSafe,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6854,7 +7093,8 @@ enum FaultDriveState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FaultSimulationArgs {
-    case: FaultSimulationCase,
+    case: Option<FaultSimulationCase>,
+    suite: Option<FaultSimulationSuite>,
     json: bool,
     scratch_dir: Option<PathBuf>,
     required_bytes: Option<u64>,
@@ -6867,8 +7107,55 @@ struct FaultSimulationArgs {
     drive_state: Option<FaultDriveState>,
 }
 
+impl FaultSimulationArgs {
+    fn suite_case(case: FaultSimulationCase) -> Self {
+        Self {
+            case: Some(case),
+            suite: None,
+            json: true,
+            scratch_dir: None,
+            required_bytes: None,
+            available_bytes: None,
+            daemon_binary: None,
+            ocr_command: None,
+            model_file: None,
+            expected_sha256: None,
+            battery_state: None,
+            drive_state: None,
+        }
+    }
+
+    fn with_scratch_dir(mut self, scratch_dir: PathBuf) -> Self {
+        self.scratch_dir = Some(scratch_dir);
+        self
+    }
+
+    fn with_disk_space(mut self, required_bytes: u64, available_bytes: u64) -> Self {
+        self.required_bytes = Some(required_bytes);
+        self.available_bytes = Some(available_bytes);
+        self
+    }
+
+    fn with_model_file(mut self, model_file: PathBuf, expected_sha256: &str) -> Self {
+        self.model_file = Some(model_file);
+        self.expected_sha256 = Some(expected_sha256.to_string());
+        self
+    }
+
+    fn with_battery_state(mut self, battery_state: FaultBatteryState) -> Self {
+        self.battery_state = Some(battery_state);
+        self
+    }
+
+    fn with_drive_state(mut self, drive_state: FaultDriveState) -> Self {
+        self.drive_state = Some(drive_state);
+        self
+    }
+}
+
 fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
     let mut case = None;
+    let mut suite = None;
     let mut json = false;
     let mut scratch_dir = None;
     let mut required_bytes = None;
@@ -6889,6 +7176,13 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
                 }
                 let value = take_fault_value(args, &mut index)?;
                 case = Some(parse_fault_case(value)?);
+            }
+            "--suite" => {
+                if suite.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                let value = take_fault_value(args, &mut index)?;
+                suite = Some(parse_fault_suite(value)?);
             }
             "--json" => {
                 if json {
@@ -6957,6 +7251,36 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
             }
             _ => return Err(CliError::usage(fault_simulate_usage())),
         }
+    }
+
+    if suite.is_some() {
+        if case.is_some()
+            || required_bytes.is_some()
+            || available_bytes.is_some()
+            || daemon_binary.is_some()
+            || ocr_command.is_some()
+            || model_file.is_some()
+            || expected_sha256.is_some()
+            || battery_state.is_some()
+            || drive_state.is_some()
+            || !json
+        {
+            return Err(CliError::usage(fault_simulate_usage()));
+        }
+        return Ok(FaultSimulationArgs {
+            case: None,
+            suite,
+            json,
+            scratch_dir,
+            required_bytes,
+            available_bytes,
+            daemon_binary,
+            ocr_command,
+            model_file,
+            expected_sha256,
+            battery_state,
+            drive_state,
+        });
     }
 
     let case = case.ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
@@ -7059,7 +7383,8 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
     }
 
     Ok(FaultSimulationArgs {
-        case,
+        case: Some(case),
+        suite: None,
         json,
         scratch_dir,
         required_bytes,
@@ -7071,6 +7396,13 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
         battery_state,
         drive_state,
     })
+}
+
+fn parse_fault_suite(value: &str) -> Result<FaultSimulationSuite> {
+    match value {
+        "local-safe" | "local_safe" => Ok(FaultSimulationSuite::LocalSafe),
+        _ => Err(CliError::usage(fault_simulate_usage())),
+    }
 }
 
 fn parse_fault_case(value: &str) -> Result<FaultSimulationCase> {
@@ -7577,7 +7909,7 @@ fn simulate_ocr_crash_probe(scratch_dir: &Path, ocr_command: &Path) -> Result<Oc
 }
 
 fn fault_simulate_usage() -> &'static str {
-    "usage: resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case index-snapshot-corrupt [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case battery-mode --battery-state <battery|ac> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case external-drive-disconnect --drive-state <disconnected|mounted> [--scratch-dir <path>] [--json]"
+    "usage: resume-cli fault-simulate --suite local-safe --json [--scratch-dir <path>] OR resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case index-snapshot-corrupt [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case battery-mode --battery-state <battery|ac> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case external-drive-disconnect --drive-state <disconnected|mounted> [--scratch-dir <path>] [--json]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {

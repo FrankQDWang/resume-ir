@@ -93,6 +93,74 @@ fn fault_simulate_json_outputs_structured_redacted_evidence() {
 }
 
 #[test]
+fn fault_simulate_local_safe_suite_json_runs_redacted_reproducible_probes() {
+    let data_dir = temp_path("fault-suite-private-data");
+    let scratch_dir = temp_path("fault-suite-private-scratch");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--suite",
+            "local-safe",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+            "--json",
+        ])
+        .output()
+        .expect("run local-safe fault simulation suite");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema_version"], "fault-simulation-suite.v1");
+    assert_eq!(report["suite"], "local_safe");
+    assert_eq!(report["redacted"], true);
+    assert_eq!(report["paths"], "<redacted>");
+    assert_eq!(report["evidence_level"], "local_synthetic_fault_suite");
+    assert_eq!(report["release_hardware_drills"], "blocked");
+    assert_eq!(report["summary"]["total_cases"], 10);
+    assert_eq!(report["summary"]["failed_cases"], 0);
+    assert_eq!(report["summary"]["release_blockers_cleared"], false);
+    let cases = report["cases"].as_array().expect("suite cases");
+    for expected in [
+        "disk_space_low",
+        "permission_denied",
+        "file_lock",
+        "index_snapshot_corrupt",
+        "metadata_migration",
+        "model_checksum",
+        "daemon_kill",
+        "ocr_crash",
+        "battery_mode",
+        "external_drive_disconnect",
+    ] {
+        let case = cases
+            .iter()
+            .find(|case| case["fault"] == expected)
+            .unwrap_or_else(|| panic!("missing suite case {expected}"));
+        assert!(case["status"].is_string());
+        assert_ne!(case["status"], "failed");
+        assert_eq!(case["paths"], "<redacted>");
+        assert_eq!(case["redacted"], true);
+    }
+    assert!(stdout.contains("\"real_hardware_drill\": \"blocked\""));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(!stdout.contains("SYNTHETIC MODEL CHECKSUM PROBE"));
+    assert!(!stdout.contains("SYNTHETIC OCR CRASH PROBE BYTES"));
+
+    remove_dir(&scratch_dir);
+}
+
+#[test]
 fn fault_simulate_disk_space_ok_writes_bounded_probe_and_cleans_up() {
     let data_dir = temp_path("fault-disk-ok-private-data");
     let scratch_dir = temp_path("fault-disk-ok-private-scratch");
