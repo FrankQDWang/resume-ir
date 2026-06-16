@@ -471,6 +471,15 @@ release criterion has current local evidence:
 resume-cli --data-dir <local-data-dir> release-readiness --json
 ```
 
+Every entry under `blockers[]` must be actionable, not just descriptive prose.
+Besides `label`, `status: "blocked"`, and `detail`, each blocker must include a
+`blocked_dependency` object with `kind`, `needed_from`, and `summary`, plus a
+`next_action` string. These fields are the machine-readable source for final
+reports and handoffs: they say whether the missing evidence is a human release
+credential, human release credentials, a release-platform transcript, a private labeled quality dataset, a
+reviewed runtime/model manifest, local current-stage evidence, redacted local
+diagnostics evidence, or actual hardware-drill evidence.
+
 The JSON report must include `goal_gap_matrix` with schema
 `resume-ir.goal-gap-matrix.v1`. That matrix is the product-level P0-P6 gap view:
 P0/P1 can show local implementation covered by CI, P2/P3/P4 can show local

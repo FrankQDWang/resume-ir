@@ -147,6 +147,37 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     for blocker in blockers {
         assert_eq!(blocker["status"], "blocked");
         assert!(blocker["detail"].as_str().expect("blocker detail").len() > 12);
+        let dependency = blocker["blocked_dependency"]
+            .as_object()
+            .expect("blocker blocked_dependency object");
+        assert!(
+            dependency["kind"]
+                .as_str()
+                .expect("blocked dependency kind")
+                .len()
+                > 4
+        );
+        assert!(
+            dependency["needed_from"]
+                .as_str()
+                .expect("blocked dependency needed_from")
+                .len()
+                > 4
+        );
+        assert!(
+            dependency["summary"]
+                .as_str()
+                .expect("blocked dependency summary")
+                .len()
+                > 12
+        );
+        assert!(
+            blocker["next_action"]
+                .as_str()
+                .expect("blocker next_action")
+                .len()
+                > 12
+        );
     }
     let fault_drill_blocker = blockers
         .iter()
@@ -168,6 +199,18 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(benchmark_detail.contains("observed P50/P95/P99 metrics"));
     assert!(benchmark_detail.contains("follow-up performance-optimization goal"));
     assert!(!benchmark_detail.contains("--require-million-scale"));
+    assert_eq!(
+        benchmark_blocker["blocked_dependency"]["kind"],
+        "local_current_stage_evidence"
+    );
+    assert_eq!(
+        benchmark_blocker["blocked_dependency"]["needed_from"],
+        "local_private_validation_run"
+    );
+    assert!(benchmark_blocker["next_action"]
+        .as_str()
+        .unwrap()
+        .contains("rerun current-stage validation"));
 
     let signing_blocker = blockers
         .iter()
@@ -178,6 +221,18 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(signing_detail.contains("certificate chain"));
     assert!(signing_detail.contains("private key custody"));
     assert!(signing_detail.contains("signature verification evidence"));
+    assert_eq!(
+        signing_blocker["blocked_dependency"]["kind"],
+        "release_credentials"
+    );
+    assert_eq!(
+        signing_blocker["blocked_dependency"]["needed_from"],
+        "human_release_owner"
+    );
+    assert!(signing_blocker["next_action"]
+        .as_str()
+        .unwrap()
+        .contains("provide signing certificate"));
 
     let notarization_blocker = blockers
         .iter()

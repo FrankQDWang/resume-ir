@@ -162,67 +162,136 @@ const RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL: &str =
 const RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL: &str = "current-stage blocked handoff";
 const RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL: &str = "hardware fault drills";
 const RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS: usize = 8_000;
-const RELEASE_READINESS_BLOCKERS: &[(&str, &str)] = &[
-    (
-        "signing certificates",
-        "production signing certificates are not available; release evidence requires certificate chain, private key custody, and signature verification evidence for every release artifact",
-    ),
-    (
-        "macOS notarization",
-        "Apple Developer ID notarization credentials and ticket evidence are not available; release evidence requires notarization ticket stapling plus Gatekeeper validation on fresh macOS release artifacts",
-    ),
-    (
-        "Windows installer lifecycle",
-        "Windows MSI install, upgrade, uninstall, and rollback dry-run automation exists, but actual lifecycle execution is not proven on an administrator-elevated release Windows runner with fresh release artifacts",
-    ),
-    (
-        "Windows service lifecycle",
-        "Windows service install/start/stop/status/uninstall/recovery dry-run automation exists, but actual lifecycle execution is not proven on an administrator-elevated release Windows runner with fresh release artifacts",
-    ),
-    (
-        "macOS installer lifecycle",
-        "macOS pkg/dmg install, upgrade, uninstall, rollback, and LaunchAgent dry-run automation exists, but signed pkg/dmg install/upgrade/uninstall/rollback and Gatekeeper validation are not proven on fresh macOS release artifacts",
-    ),
-    (
-        RELEASE_READINESS_PERFORMANCE_LABEL,
-        "reproducible local private real-corpus hot-index hybrid benchmark baseline is not available; current-stage evidence must cover the available private corpus with min-documents 8000, at least 500 query samples, and observed P50/P95/P99 metrics, while P95/P99 latency reduction and external 100k/1M scale validation move to a follow-up performance-optimization goal",
-    ),
-    (
-        RELEASE_READINESS_FIELD_QUALITY_LABEL,
-        "private business labeled field-quality evidence is not available; release evidence requires min-samples 1000 and precision/recall/F1 >= 0.93 across required production fields",
-    ),
-    (
-        RELEASE_READINESS_DEDUPE_QUALITY_LABEL,
-        "private business labeled dedupe-quality evidence is not available; release evidence requires min-pairs 1000, min-positive-pairs 100, and precision/recall/F1 >= 0.90",
-    ),
-    (
-        RELEASE_READINESS_VECTOR_QUALITY_LABEL,
-        "private business labeled vector-quality evidence is not available; release evidence requires min-samples 1000, recall@k >= 0.90, MRR >= 0.85, NDCG@k >= 0.90, and zero-recall queries blocked",
-    ),
-    (
-        RELEASE_READINESS_OCR_THROUGHPUT_LABEL,
-        "private real-corpus OCR baseline evidence is not available; current-stage evidence requires min-pages 500, observed OCR page latency P50/P95/P99 metrics, observed pages_per_second, no run-budget exhaustion, and reviewed OCR runtime/renderer/language-pack manifests; OCR P95/P99 and throughput reduction move to a follow-up performance-optimization goal",
-    ),
-    (
-        RELEASE_READINESS_OCR_LICENSE_LABEL,
-        "Tesseract/tessdata is the accepted Apache-2.0 external OCR runtime direction, and Poppler/pdftoppm is an external renderer dependency that is not bundled by default; release evidence requires a reviewed OCR runtime manifest with checksums/licenses, dependency detection, and fail-closed operator guidance",
-    ),
-    (
-        RELEASE_READINESS_MODEL_LICENSE_LABEL,
-        "reviewed licensed embedding model selection, model manifest, offline distribution, and license review evidence are not complete",
-    ),
-    (
-        "cross-platform release validation",
-        "hosted macOS/Windows build/test and dry-run packaging evidence exist, but Windows and macOS release platforms validation is not complete; release evidence requires fresh release artifacts, install/upgrade/uninstall, and service lifecycle proof",
-    ),
-    (
-        RELEASE_READINESS_DIAGNOSTICS_LABEL,
-        "redacted local aggregate diagnostics evidence is not available; release evidence requires export-diagnostics --redact output with diagnostics.v1 schema, local aggregate diagnostics scope, and redacted paths, queries, and resume text",
-    ),
-    (
-        RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL,
-        "actual ENOSPC, service-level daemon kill, battery-mode, and external-drive disconnect drills are not proven on release platforms",
-    ),
+struct ReleaseReadinessBlocker {
+    label: &'static str,
+    detail: &'static str,
+    dependency_kind: &'static str,
+    needed_from: &'static str,
+    dependency_summary: &'static str,
+    next_action: &'static str,
+}
+
+const RELEASE_READINESS_BLOCKERS: &[ReleaseReadinessBlocker] = &[
+    ReleaseReadinessBlocker {
+        label: "signing certificates",
+        detail: "production signing certificates are not available; release evidence requires certificate chain, private key custody, and signature verification evidence for every release artifact",
+        dependency_kind: "release_credentials",
+        needed_from: "human_release_owner",
+        dependency_summary: "production signing certificate chain, private-key custody policy, and artifact signature verification evidence",
+        next_action: "provide signing certificate material through the documented CI secret interface and rerun release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: "macOS notarization",
+        detail: "Apple Developer ID notarization credentials and ticket evidence are not available; release evidence requires notarization ticket stapling plus Gatekeeper validation on fresh macOS release artifacts",
+        dependency_kind: "release_credentials",
+        needed_from: "human_release_owner",
+        dependency_summary: "Apple Developer ID credentials plus notarization submission, stapled ticket, and Gatekeeper transcript evidence",
+        next_action: "provide Apple notarization credentials through CI secrets and run the macOS notarization release gate",
+    },
+    ReleaseReadinessBlocker {
+        label: "Windows installer lifecycle",
+        detail: "Windows MSI install, upgrade, uninstall, and rollback dry-run automation exists, but actual lifecycle execution is not proven on an administrator-elevated release Windows runner with fresh release artifacts",
+        dependency_kind: "release_platform_transcript",
+        needed_from: "windows_release_runner",
+        dependency_summary: "administrator-elevated Windows MSI install, upgrade, repair, uninstall, and rollback transcripts for fresh release artifacts",
+        next_action: "run the Windows installer lifecycle plan on an administrator-elevated release runner and attach redacted evidence",
+    },
+    ReleaseReadinessBlocker {
+        label: "Windows service lifecycle",
+        detail: "Windows service install/start/stop/status/uninstall/recovery dry-run automation exists, but actual lifecycle execution is not proven on an administrator-elevated release Windows runner with fresh release artifacts",
+        dependency_kind: "release_platform_transcript",
+        needed_from: "windows_release_runner",
+        dependency_summary: "administrator-elevated Windows Service install, start, status, stop, recovery, uninstall, and rollback transcripts",
+        next_action: "run the Windows service lifecycle plan on an administrator-elevated release runner and attach redacted evidence",
+    },
+    ReleaseReadinessBlocker {
+        label: "macOS installer lifecycle",
+        detail: "macOS pkg/dmg install, upgrade, uninstall, rollback, and LaunchAgent dry-run automation exists, but signed pkg/dmg install/upgrade/uninstall/rollback and Gatekeeper validation are not proven on fresh macOS release artifacts",
+        dependency_kind: "release_platform_transcript",
+        needed_from: "macos_release_runner",
+        dependency_summary: "fresh signed macOS pkg/dmg install, upgrade, uninstall, rollback, LaunchAgent, and Gatekeeper transcripts",
+        next_action: "run the macOS installer lifecycle plan on a release runner and attach redacted Gatekeeper/install evidence",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_PERFORMANCE_LABEL,
+        detail: "reproducible local private real-corpus hot-index hybrid benchmark baseline is not available; current-stage evidence must cover the available private corpus with min-documents 8000, at least 500 query samples, and observed P50/P95/P99 metrics, while P95/P99 latency reduction and external 100k/1M scale validation move to a follow-up performance-optimization goal",
+        dependency_kind: "local_current_stage_evidence",
+        needed_from: "local_private_validation_run",
+        dependency_summary: "redacted current-stage hot-index hybrid benchmark baseline over the available local private corpus",
+        next_action: "rerun current-stage validation with reviewed local OCR/model manifests and attach the redacted full evidence or blocked summary",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_FIELD_QUALITY_LABEL,
+        detail: "private business labeled field-quality evidence is not available; release evidence requires min-samples 1000 and precision/recall/F1 >= 0.93 across required production fields",
+        dependency_kind: "private_labeled_quality_dataset",
+        needed_from: "business_labeling_process",
+        dependency_summary: "private field-quality labeled dataset and aggregate precision/recall/F1 report for required production fields",
+        next_action: "produce the private field-quality report and run the field quality gate before release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_DEDUPE_QUALITY_LABEL,
+        detail: "private business labeled dedupe-quality evidence is not available; release evidence requires min-pairs 1000, min-positive-pairs 100, and precision/recall/F1 >= 0.90",
+        dependency_kind: "private_labeled_quality_dataset",
+        needed_from: "business_labeling_process",
+        dependency_summary: "private dedupe labeled pair dataset with enough positive pairs and aggregate precision/recall/F1 evidence",
+        next_action: "produce the private dedupe-quality report and run the dedupe quality gate before release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_VECTOR_QUALITY_LABEL,
+        detail: "private business labeled vector-quality evidence is not available; release evidence requires min-samples 1000, recall@k >= 0.90, MRR >= 0.85, NDCG@k >= 0.90, and zero-recall queries blocked",
+        dependency_kind: "private_labeled_quality_dataset",
+        needed_from: "business_labeling_process",
+        dependency_summary: "private vector-quality labeled query set with recall@k, MRR, NDCG@k, and zero-recall evidence",
+        next_action: "produce the private vector-quality report and run the vector quality gate before release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_OCR_THROUGHPUT_LABEL,
+        detail: "private real-corpus OCR baseline evidence is not available; current-stage evidence requires min-pages 500, observed OCR page latency P50/P95/P99 metrics, observed pages_per_second, no run-budget exhaustion, and reviewed OCR runtime/renderer/language-pack manifests; OCR P95/P99 and throughput reduction move to a follow-up performance-optimization goal",
+        dependency_kind: "local_current_stage_evidence",
+        needed_from: "local_private_validation_run",
+        dependency_summary: "redacted private real-corpus OCR baseline with observed page latency percentiles and throughput",
+        next_action: "run the current-stage OCR throughput baseline with reviewed OCR manifests and attach the redacted report",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_OCR_LICENSE_LABEL,
+        detail: "Tesseract/tessdata is the accepted Apache-2.0 external OCR runtime direction, and Poppler/pdftoppm is an external renderer dependency that is not bundled by default; release evidence requires a reviewed OCR runtime manifest with checksums/licenses, dependency detection, and fail-closed operator guidance",
+        dependency_kind: "reviewed_runtime_manifest",
+        needed_from: "local_runtime_review",
+        dependency_summary: "reviewed Tesseract/tessdata and Poppler/pdftoppm manifest with checksums, licenses, and dependency detection evidence",
+        next_action: "generate and review the OCR runtime manifest, then pass it to release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_MODEL_LICENSE_LABEL,
+        detail: "reviewed licensed embedding model selection, model manifest, offline distribution, and license review evidence are not complete",
+        dependency_kind: "reviewed_model_license",
+        needed_from: "legal_model_review",
+        dependency_summary: "approved local embedding model, artifact manifest, offline distribution plan, and license review evidence",
+        next_action: "complete model license/distribution review and attach the reviewed model manifest",
+    },
+    ReleaseReadinessBlocker {
+        label: "cross-platform release validation",
+        detail: "hosted macOS/Windows build/test and dry-run packaging evidence exist, but Windows and macOS release platforms validation is not complete; release evidence requires fresh release artifacts, install/upgrade/uninstall, and service lifecycle proof",
+        dependency_kind: "release_platform_transcript",
+        needed_from: "macos_windows_release_runners",
+        dependency_summary: "fresh Windows and macOS release artifact validation, install/upgrade/uninstall, and service lifecycle transcripts",
+        next_action: "run release-platform validation on fresh macOS and Windows runners and attach redacted lifecycle evidence",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_DIAGNOSTICS_LABEL,
+        detail: "redacted local aggregate diagnostics evidence is not available; release evidence requires export-diagnostics --redact output with diagnostics.v1 schema, local aggregate diagnostics scope, and redacted paths, queries, and resume text",
+        dependency_kind: "redacted_local_evidence",
+        needed_from: "local_validation_run",
+        dependency_summary: "redacted diagnostics.v1 aggregate output from the validation data directory",
+        next_action: "run export-diagnostics --redact on the validation data directory and pass the redacted report to release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL,
+        detail: "actual ENOSPC, service-level daemon kill, battery-mode, and external-drive disconnect drills are not proven on release platforms",
+        dependency_kind: "hardware_release_platform_drill",
+        needed_from: "dedicated_release_platforms",
+        dependency_summary: "actual ENOSPC, service kill, battery-mode, and external-drive disconnect drill transcripts from release platforms",
+        next_action: "run actual hardware fault drills on dedicated release platforms and attach redacted transcript digests",
+    },
 ];
 
 fn main() {
@@ -285,12 +354,18 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
             .collect::<BTreeSet<_>>();
         let blockers = RELEASE_READINESS_BLOCKERS
             .iter()
-            .filter(|(label, _)| !provided_labels.contains(label))
-            .map(|(label, detail)| {
+            .filter(|blocker| !provided_labels.contains(blocker.label))
+            .map(|blocker| {
                 serde_json::json!({
-                    "label": label,
+                    "label": blocker.label,
                     "status": "blocked",
-                    "detail": detail,
+                    "detail": blocker.detail,
+                    "blocked_dependency": {
+                        "kind": blocker.dependency_kind,
+                        "needed_from": blocker.needed_from,
+                        "summary": blocker.dependency_summary,
+                    },
+                    "next_action": blocker.next_action,
                 })
             })
             .collect::<Vec<_>>();
@@ -336,11 +411,16 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
         .iter()
         .map(|evidence| evidence.label)
         .collect::<BTreeSet<_>>();
-    for (label, detail) in RELEASE_READINESS_BLOCKERS {
-        if provided_labels.contains(label) {
+    for blocker in RELEASE_READINESS_BLOCKERS {
+        if provided_labels.contains(blocker.label) {
             continue;
         }
-        println!("- {label}: blocked ({detail})");
+        println!("- {}: blocked ({})", blocker.label, blocker.detail);
+        println!(
+            "  needs: {} from {} ({})",
+            blocker.dependency_kind, blocker.needed_from, blocker.dependency_summary
+        );
+        println!("  next action: {}", blocker.next_action);
     }
     println!("next gate: keep release blocked until every item has current local evidence");
 
