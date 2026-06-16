@@ -1236,6 +1236,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
             ("ocr_throughput_baseline_gate", "success"),
             ("redacted_diagnostics", "success"),
             ("fault_simulation_smoke", "success"),
+            ("fault_simulation_suite", "success"),
             ("release_readiness_intake", "expected_blocked"),
         ],
         CONTEXT,
@@ -1272,6 +1273,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
         "ocr-throughput-gate.stdout.txt",
         "redacted-diagnostics.json",
         "fault-simulation-storage-low.json",
+        "fault-simulation-suite-local-safe.json",
         "release-readiness.json",
         "release-readiness.stderr.txt",
     ];

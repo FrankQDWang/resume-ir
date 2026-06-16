@@ -185,6 +185,8 @@ require_text "$plan" 'resume-benchmark ocr-gate --report <local-evidence-dir>/pr
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> export-diagnostics --redact > <local-evidence-dir>/redacted-diagnostics.json'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> fault-simulate --case disk-space-low --scratch-dir <local-evidence-dir>/fault-simulation-scratch --required-bytes 4096 --available-bytes 1024 --json > <local-evidence-dir>/fault-simulation-storage-low.json'
 require_text "$plan" 'fault-simulation.v1'
+require_text "$plan" 'resume-cli --data-dir <local-data-dir> fault-simulate --suite local-safe --scratch-dir <local-evidence-dir>/fault-simulation-suite-scratch --json > <local-evidence-dir>/fault-simulation-suite-local-safe.json'
+require_text "$plan" 'fault-simulation-suite.v1'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> release-readiness --json'
 require_text "$plan" '--benchmark-report <local-evidence-dir>/private-benchmark-local.json'
 require_text "$plan" '--ocr-throughput-report <local-evidence-dir>/private-ocr-throughput.json'
@@ -258,6 +260,7 @@ require_text "$smoke_plan" 'benchmark-query-set draft --out <local-evidence-dir>
 require_text "$smoke_plan" '--corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json --allow-partial-hot-index-for-smoke --max-queries 3 --top-k 5'
 require_text "$smoke_plan" 'resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --allow-smoke-confidence --min-documents 1 --min-queries 1'
 require_text "$smoke_plan" 'resume-cli --data-dir <local-data-dir> fault-simulate --case disk-space-low --scratch-dir <local-evidence-dir>/fault-simulation-scratch --required-bytes 4096 --available-bytes 1024 --json > <local-evidence-dir>/fault-simulation-storage-low.json'
+require_text "$smoke_plan" 'resume-cli --data-dir <local-data-dir> fault-simulate --suite local-safe --scratch-dir <local-evidence-dir>/fault-simulation-suite-scratch --json > <local-evidence-dir>/fault-simulation-suite-local-safe.json'
 require_text "$smoke_plan" 'write <local-evidence-dir>/current-stage-smoke-summary.json'
 require_text "$smoke_plan" 'current-stage-handoff.json'
 require_text "$smoke_plan" 'resume-ir.current-stage-handoff.v1'
@@ -395,7 +398,14 @@ case "$cmd:$sub" in
       printf 'fault simulation blocked: fake fault probe failure\n' >&2
       exit 1
     fi
-    printf '{"schema_version":"fault-simulation.v1","redacted":true,"fault":"disk_space_low","status":"reproduced","paths":"<redacted>","details":{"required_bytes":4096,"available_bytes":1024,"probe_writes":"skipped"},"evidence_level":"local_synthetic_fault_probe"}\n'
+    case " $* " in
+      *" --suite local-safe "*)
+        printf '{"schema_version":"fault-simulation-suite.v1","redacted":true,"suite":"local_safe","paths":"<redacted>","evidence_level":"local_synthetic_fault_suite","release_hardware_drills":"blocked","summary":{"total_cases":10,"failed_cases":0,"release_blockers_cleared":false},"cases":[]}\n'
+        ;;
+      *)
+        printf '{"schema_version":"fault-simulation.v1","redacted":true,"fault":"disk_space_low","status":"reproduced","paths":"<redacted>","details":{"required_bytes":4096,"available_bytes":1024,"probe_writes":"skipped"},"evidence_level":"local_synthetic_fault_probe"}\n'
+        ;;
+    esac
     ;;
   release-readiness:*)
     printf '{"schema_version":"release-readiness.v1","stable_release":"blocked"}\n'
@@ -604,6 +614,8 @@ require_text "$evidence_manifest" '"ocr-throughput-gate.stdout.txt"'
 require_text "$evidence_manifest" '"redacted-diagnostics.json"'
 require_text "$evidence_manifest" '"fault_simulation_smoke"'
 require_text "$evidence_manifest" '"fault-simulation-storage-low.json"'
+require_text "$evidence_manifest" '"fault_simulation_suite"'
+require_text "$evidence_manifest" '"fault-simulation-suite-local-safe.json"'
 require_text "$evidence_manifest" '"release-readiness.json"'
 require_text "$evidence_manifest" '"local_paths_included": false'
 require_text "$evidence_manifest" '"raw_resume_text_included": false'
@@ -661,6 +673,8 @@ require_text "$smoke_summary" '"private_query_baseline"'
 require_text "$smoke_summary" '"redacted_diagnostics"'
 require_text "$smoke_summary" '"fault_simulation_smoke"'
 require_text "$smoke_summary" '"fault-simulation-storage-low.json"'
+require_text "$smoke_summary" '"fault_simulation_suite"'
+require_text "$smoke_summary" '"fault-simulation-suite-local-safe.json"'
 require_text "$smoke_summary" '"full 10k/8000-document current-stage baseline"'
 require_current_stage_handoff \
   "smoke_satisfied" \

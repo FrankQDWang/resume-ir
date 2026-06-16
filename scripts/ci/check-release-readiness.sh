@@ -295,6 +295,7 @@ cat > "$current_stage_evidence" <<'JSON'
     {"id": "ocr_throughput_baseline_gate", "status": "success"},
     {"id": "redacted_diagnostics", "status": "success"},
     {"id": "fault_simulation_smoke", "status": "success"},
+    {"id": "fault_simulation_suite", "status": "success"},
     {"id": "release_readiness_intake", "status": "expected_blocked", "exit_code": 1}
   ],
   "redacted_outputs": [
@@ -320,6 +321,7 @@ cat > "$current_stage_evidence" <<'JSON'
     {"file": "ocr-throughput-gate.stdout.txt", "sha256": "2727272727272727272727272727272727272727272727272727272727272727"},
     {"file": "redacted-diagnostics.json", "sha256": "2828282828282828282828282828282828282828282828282828282828282828"},
     {"file": "fault-simulation-storage-low.json", "sha256": "3131313131313131313131313131313131313131313131313131313131313131"},
+    {"file": "fault-simulation-suite-local-safe.json", "sha256": "3232323232323232323232323232323232323232323232323232323232323232"},
     {"file": "release-readiness.json", "sha256": "2929292929292929292929292929292929292929292929292929292929292929"},
     {"file": "release-readiness.stderr.txt", "sha256": "3030303030303030303030303030303030303030303030303030303030303030"}
   ],

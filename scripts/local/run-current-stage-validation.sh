@@ -1324,6 +1324,7 @@ write_release_readiness_blocked_summary() {
   ocr_throughput_gate_sha256=$(sha256_file "$out_dir/ocr-throughput-gate.stdout.txt")
   redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
   fault_simulation_sha256=$(sha256_file "$out_dir/fault-simulation-storage-low.json")
+  fault_simulation_suite_sha256=$(sha256_file "$out_dir/fault-simulation-suite-local-safe.json")
   release_readiness_sha256=$(sha256_file "$out_dir/release-readiness.json")
   release_readiness_stderr_sha256=$(sha256_file "$out_dir/release-readiness.stderr.txt")
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
@@ -1385,6 +1386,7 @@ write_release_readiness_blocked_summary() {
     {"id": "ocr_throughput_baseline_gate", "status": "success"},
     {"id": "redacted_diagnostics", "status": "success"},
     {"id": "fault_simulation_smoke", "status": "success"},
+    {"id": "fault_simulation_suite", "status": "success"},
     {"id": "release_readiness_intake", "status": "blocked", "exit_code": $blocked_exit}
   ],
   "redacted_outputs": [
@@ -1410,6 +1412,7 @@ write_release_readiness_blocked_summary() {
     {"file": "ocr-throughput-gate.stdout.txt", "sha256": "$ocr_throughput_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
     {"file": "fault-simulation-storage-low.json", "sha256": "$fault_simulation_sha256"},
+    {"file": "fault-simulation-suite-local-safe.json", "sha256": "$fault_simulation_suite_sha256"},
     {"file": "release-readiness.json", "sha256": "$release_readiness_sha256"},
     {"file": "release-readiness.stderr.txt", "sha256": "$release_readiness_stderr_sha256"}
   ],
@@ -1447,6 +1450,7 @@ write_fault_simulation_blocked_summary() {
   blocked_exit="$1"
   blocked_reason="$2"
   [ -e "$out_dir/fault-simulation-storage-low.json" ] || : > "$out_dir/fault-simulation-storage-low.json"
+  [ -e "$out_dir/fault-simulation-suite-local-safe.json" ] || : > "$out_dir/fault-simulation-suite-local-safe.json"
 
   ocr_preflight_sha256=$(sha256_file "$out_dir/ocr-preflight.json")
   ocr_draft_stdout_sha256=$(sha256_file "$out_dir/ocr-draft-manifest.stdout.txt")
@@ -1466,6 +1470,7 @@ write_fault_simulation_blocked_summary() {
   ocr_throughput_gate_sha256=$(sha256_file_json_or_null "$out_dir/ocr-throughput-gate.stdout.txt")
   redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
   fault_simulation_sha256=$(sha256_file "$out_dir/fault-simulation-storage-low.json")
+  fault_simulation_suite_sha256=$(sha256_file "$out_dir/fault-simulation-suite-local-safe.json")
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
   dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
 
@@ -1485,6 +1490,22 @@ EOF_OUTPUTS
     fault_full_baseline_satisfied="false"
     fault_prior_throughput_steps=""
     fault_prior_throughput_outputs=""
+  fi
+
+  if [ "$blocked_reason" = "fault_simulation_suite_failed" ]; then
+    fault_step_statuses=$(cat <<EOF_STEPS
+    {"id": "fault_simulation_smoke", "status": "success"},
+    {"id": "fault_simulation_suite", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+    fault_not_completed='"current-stage local-safe fault simulation suite",'
+  else
+    fault_step_statuses=$(cat <<EOF_STEPS
+    {"id": "fault_simulation_smoke", "status": "blocked", "exit_code": $blocked_exit},
+    {"id": "fault_simulation_suite", "status": "blocked", "exit_code": $blocked_exit}
+EOF_STEPS
+)
+    fault_not_completed='"current-stage fault simulation smoke",'
   fi
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
@@ -1541,7 +1562,7 @@ EOF_OUTPUTS
     {"id": "baseline_shape_gate", "status": "success"},
 $fault_prior_throughput_steps
     {"id": "redacted_diagnostics", "status": "success"},
-    {"id": "fault_simulation_smoke", "status": "blocked", "exit_code": $blocked_exit}
+$fault_step_statuses
   ],
   "redacted_outputs": [
     {"file": "dataset-manifest.local.json", "sha256": "$dataset_manifest_sha256_output"},
@@ -1564,7 +1585,8 @@ $fault_prior_throughput_steps
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
 $fault_prior_throughput_outputs
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
-    {"file": "fault-simulation-storage-low.json", "sha256": "$fault_simulation_sha256"}
+    {"file": "fault-simulation-storage-low.json", "sha256": "$fault_simulation_sha256"},
+    {"file": "fault-simulation-suite-local-safe.json", "sha256": "$fault_simulation_suite_sha256"}
   ],
   "privacy_sentinels": {
     "local_paths_included": false,
@@ -1575,7 +1597,7 @@ $fault_prior_throughput_outputs
     "report_bodies_included": false
   },
   "not_completed": [
-    "current-stage fault simulation smoke",
+    $fault_not_completed
     "release-readiness current-stage evidence",
     "P95/P99 latency reduction",
     "external 100k/1M validation",
@@ -2063,6 +2085,10 @@ $ocr_throughput_plan_steps
       "id": "fault_simulation_smoke",
       "command": "resume-cli --data-dir <local-data-dir> fault-simulate --case disk-space-low --scratch-dir <local-evidence-dir>/fault-simulation-scratch --required-bytes 4096 --available-bytes 1024 --json > <local-evidence-dir>/fault-simulation-storage-low.json"
     },
+    {
+      "id": "fault_simulation_suite",
+      "command": "resume-cli --data-dir <local-data-dir> fault-simulate --suite local-safe --scratch-dir <local-evidence-dir>/fault-simulation-suite-scratch --json > <local-evidence-dir>/fault-simulation-suite-local-safe.json"
+    },
 $terminal_plan_steps
   ],
   "must_not_upload": [
@@ -2082,7 +2108,7 @@ $terminal_plan_steps
     "After runtime preflight succeeds, execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
     "If --query-set is omitted, execute mode writes resume-ir.query-set.jsonl.v1 under <local-evidence-dir> with privacy boundary local_only_private_query_set, then uses its sha256 as the query-set digest.",
     "Execute mode writes resume-ir.current-stage-handoff.v1 under <local-evidence-dir> after writing a smoke summary, blocked summary, or full current-stage evidence manifest.",
-    "Execute mode runs a safe synthetic fault-simulation.v1 disk-space-low smoke after redacted diagnostics; this proves local diagnostic wiring only and does not clear hardware fault-drill release blockers.",
+    "Execute mode runs safe synthetic fault-simulation.v1 disk-space-low smoke plus fault-simulation-suite.v1 local-safe evidence after redacted diagnostics; this proves local diagnostic wiring only and does not clear hardware fault-drill release blockers.",
     "Execute mode keeps all evidence local under <local-evidence-dir>.",
     "The smoke validation profile proves local command wiring and never produces release-readiness evidence.",
     "The baseline shape gate deliberately uses --max-p95-ms 86400000; P95/P99 reduction is deferred.",
@@ -2650,6 +2676,22 @@ if [ "$fault_simulation_status" -ne 0 ]; then
   exit "$fault_simulation_status"
 fi
 
+printf '%s\n' "current-stage validation: fault simulation suite"
+set +e
+"$resume_cli" --data-dir "$data_dir" fault-simulate \
+  --suite local-safe \
+  --scratch-dir "$out_dir/fault-simulation-suite-scratch" \
+  --json \
+  > "$out_dir/fault-simulation-suite-local-safe.json"
+fault_simulation_suite_status=$?
+set -e
+rm -rf "$out_dir/fault-simulation-suite-scratch"
+if [ "$fault_simulation_suite_status" -ne 0 ]; then
+  write_fault_simulation_blocked_summary "$fault_simulation_suite_status" "fault_simulation_suite_failed"
+  printf '%s\n' "current-stage validation blocked: fault simulation suite failed" >&2
+  exit "$fault_simulation_suite_status"
+fi
+
 if [ "$validation_profile" = "smoke" ]; then
   ocr_preflight_sha256=$(sha256_file "$out_dir/ocr-preflight.json")
   ocr_draft_stdout_sha256=$(sha256_file "$out_dir/ocr-draft-manifest.stdout.txt")
@@ -2667,6 +2709,7 @@ if [ "$validation_profile" = "smoke" ]; then
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
   redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
   fault_simulation_sha256=$(sha256_file "$out_dir/fault-simulation-storage-low.json")
+  fault_simulation_suite_sha256=$(sha256_file "$out_dir/fault-simulation-suite-local-safe.json")
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
   dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
 
@@ -2719,7 +2762,8 @@ if [ "$validation_profile" = "smoke" ]; then
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "smoke_success"},
     {"id": "redacted_diagnostics", "status": "success"},
-    {"id": "fault_simulation_smoke", "status": "success"}
+    {"id": "fault_simulation_smoke", "status": "success"},
+    {"id": "fault_simulation_suite", "status": "success"}
   ],
   "redacted_outputs": [
     {"file": "dataset-manifest.local.json", "sha256": "$dataset_manifest_sha256_output"},
@@ -2741,7 +2785,8 @@ if [ "$validation_profile" = "smoke" ]; then
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
-    {"file": "fault-simulation-storage-low.json", "sha256": "$fault_simulation_sha256"}
+    {"file": "fault-simulation-storage-low.json", "sha256": "$fault_simulation_sha256"},
+    {"file": "fault-simulation-suite-local-safe.json", "sha256": "$fault_simulation_suite_sha256"}
   ],
   "privacy_sentinels": {
     "local_paths_included": false,
@@ -2831,6 +2876,7 @@ private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.jso
 ocr_throughput_gate_sha256=$(sha256_file "$out_dir/ocr-throughput-gate.stdout.txt")
 redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
 fault_simulation_sha256=$(sha256_file "$out_dir/fault-simulation-storage-low.json")
+fault_simulation_suite_sha256=$(sha256_file "$out_dir/fault-simulation-suite-local-safe.json")
 release_readiness_sha256=$(sha256_file "$out_dir/release-readiness.json")
 release_readiness_stderr_sha256=$(sha256_file "$out_dir/release-readiness.stderr.txt")
 dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
@@ -2884,6 +2930,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"id": "ocr_throughput_baseline_gate", "status": "success"},
     {"id": "redacted_diagnostics", "status": "success"},
     {"id": "fault_simulation_smoke", "status": "success"},
+    {"id": "fault_simulation_suite", "status": "success"},
     {"id": "release_readiness_intake", "status": "$release_readiness_step_status", "exit_code": $release_status}
   ],
   "redacted_outputs": [
@@ -2909,6 +2956,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"file": "ocr-throughput-gate.stdout.txt", "sha256": "$ocr_throughput_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
     {"file": "fault-simulation-storage-low.json", "sha256": "$fault_simulation_sha256"},
+    {"file": "fault-simulation-suite-local-safe.json", "sha256": "$fault_simulation_suite_sha256"},
     {"file": "release-readiness.json", "sha256": "$release_readiness_sha256"},
     {"file": "release-readiness.stderr.txt", "sha256": "$release_readiness_stderr_sha256"}
   ],

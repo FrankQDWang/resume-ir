@@ -328,18 +328,21 @@ mode writes `current-stage-blocked-summary.json` with
 release-readiness. That summary records aggregate corpus observability and file
 digests up to the failed diagnostics output, not diagnostic bodies, local
 paths, query text, indexes, or SQLite data.
-If the safe synthetic fault simulation smoke fails after redacted diagnostics,
+If the safe synthetic fault simulation smoke or local-safe suite fails after
+redacted diagnostics,
 execute mode writes `current-stage-blocked-summary.json` with
 `blocked_step: "fault_simulation_smoke"`, `blocked_category:
-"fault-injection"`, and `blocked_reason: "fault_simulation_smoke_failed"`, then
-stops before release-readiness. That summary records aggregate corpus
-observability plus basename-only digests through
-`fault-simulation-storage-low.json`; it does not include local paths,
-diagnostic bodies, query text, raw resume text, indexes, SQLite data, or scratch
-directory contents. A passing synthetic smoke remains a wiring check only and
-does not clear the separate hardware fault-drill blocker.
+"fault-injection"`, and either
+`blocked_reason: "fault_simulation_smoke_failed"` or
+`blocked_reason: "fault_simulation_suite_failed"`, then stops before
+release-readiness. That summary records aggregate corpus observability plus
+basename-only digests through `fault-simulation-storage-low.json` and
+`fault-simulation-suite-local-safe.json`; it does not include local paths,
+diagnostic bodies, query text, raw resume text, indexes, SQLite data, or
+scratch directory contents. Passing synthetic fault probes remain local wiring
+checks only and do not clear the separate hardware fault-drill blocker.
 If `release-readiness` rejects the local evidence inputs themselves after the
-baseline gate, redacted diagnostics, and fault simulation smoke pass, execute mode writes the same
+baseline gate, redacted diagnostics, and fault simulation probes pass, execute mode writes the same
 blocked summary schema with `blocked_step: "release_readiness_intake"`,
 `blocked_category: "release-readiness"`, and
 `blocked_reason: "release_readiness_evidence_failed_validation"`, then stops
