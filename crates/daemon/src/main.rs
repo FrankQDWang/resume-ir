@@ -1682,6 +1682,7 @@ struct ImportWatcher {
     watcher: RecommendedWatcher,
     receiver: Receiver<notify::Result<NotifyEvent>>,
     watched_roots: BTreeSet<String>,
+    watched_root_mtimes: BTreeMap<String, Option<u128>>,
     pending_roots: BTreeSet<String>,
 }
 
@@ -1700,6 +1701,7 @@ impl ImportWatcher {
             watcher,
             receiver,
             watched_roots: BTreeSet::new(),
+            watched_root_mtimes: BTreeMap::new(),
             pending_roots: BTreeSet::new(),
         })
     }
@@ -1719,6 +1721,7 @@ impl ImportWatcher {
         let roots = scopes_by_root.keys().cloned().collect::<BTreeSet<_>>();
         let mut summary = self.sync_watched_roots(&roots);
         self.drain_events(&scopes_by_root, &mut summary);
+        self.poll_changed_roots(&roots, &mut summary);
         let pending_roots = std::mem::take(&mut self.pending_roots);
 
         for (index, root) in pending_roots.into_iter().enumerate() {
@@ -1748,6 +1751,7 @@ impl ImportWatcher {
             if self.watcher.unwatch(Path::new(root)).is_err() {
                 event_errors += 1;
             }
+            self.watched_root_mtimes.remove(root);
         }
 
         for root in roots {
@@ -1764,6 +1768,8 @@ impl ImportWatcher {
                 .watch(Path::new(root), RecursiveMode::Recursive)
                 .is_ok()
             {
+                self.watched_root_mtimes
+                    .insert(root.clone(), import_watcher_root_mtime(root));
                 next_roots.insert(root.clone());
             } else {
                 event_errors += 1;
@@ -1808,6 +1814,21 @@ impl ImportWatcher {
             }
         }
     }
+
+    fn poll_changed_roots(&mut self, roots: &BTreeSet<String>, summary: &mut ImportWatcherSummary) {
+        for root in roots {
+            if !self.watched_roots.contains(root) {
+                continue;
+            }
+            let previous_mtime = self.watched_root_mtimes.get(root).copied().flatten();
+            let current_mtime = import_watcher_root_mtime(root);
+            self.watched_root_mtimes.insert(root.clone(), current_mtime);
+            if previous_mtime.is_some() && current_mtime != previous_mtime {
+                summary.events += 1;
+                self.pending_roots.insert(root.clone());
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1836,6 +1857,14 @@ fn import_watcher_root_for_path<'a>(
         .keys()
         .find(|root| event_path.starts_with(Path::new(root.as_str())))
         .map(String::as_str)
+}
+
+fn import_watcher_root_mtime(root: &str) -> Option<u128> {
+    fs::metadata(root)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
 }
 
 fn mark_import_task_failed_permanent(

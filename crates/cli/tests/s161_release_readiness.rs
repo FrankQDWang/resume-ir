@@ -1046,6 +1046,52 @@ fn release_readiness_rejects_dry_run_hardware_fault_drill_evidence_without_path_
 }
 
 #[test]
+fn release_readiness_rejects_hardware_fault_drill_unknown_payload_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-hardware-fault-extra-payload-data");
+    let evidence_dir = temp_path("release-readiness-hardware-fault-extra-payload-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let hardware_fault_evidence = evidence_dir.join("hardware-fault-drills-extra-payload.json");
+    fs::write(
+        &hardware_fault_evidence,
+        actual_hardware_fault_drills_evidence().replace(
+            "\"transcript_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
+            "\"transcript_path\":\"synthetic-transcript.log\",\"transcript_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--hardware-fault-evidence",
+            path_str(&hardware_fault_evidence),
+        ])
+        .output()
+        .expect("reject hardware fault drill evidence with unknown payload");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("hardware fault drills"));
+    assert!(stderr.contains("hardware fault drills blocked: transcript_path is not allowed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&hardware_fault_evidence)));
+    assert!(!stderr.contains(path_str(&hardware_fault_evidence)));
+    assert!(!stdout.contains("synthetic-transcript.log"));
+    assert!(!stderr.contains("synthetic-transcript.log"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_blockers() {
     let data_dir = temp_path("release-readiness-evidence-private-data");
     let evidence_dir = temp_path("release-readiness-evidence-private-reports");

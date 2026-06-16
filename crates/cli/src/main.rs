@@ -2289,6 +2289,26 @@ fn validate_hardware_fault_drill_evidence_report(report: &str) -> Result<()> {
         .as_object()
         .ok_or_else(|| CliError::user("hardware fault drills blocked: expected JSON object"))?;
 
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "evidence_boundary",
+            "execution_mode",
+            "artifact_manifest_sha256",
+            "build_sha",
+            "redacted",
+            "dedicated_test_environment",
+            "cleanup_verified",
+            "contains_local_paths",
+            "contains_raw_resume_text",
+            "contains_secrets",
+            "contains_diagnostics_package",
+            "drills",
+            "must_not_upload",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_string(
         object,
         "schema_version",
@@ -2371,6 +2391,18 @@ fn validate_release_hardware_fault_drills(
         let drill = drill
             .as_object()
             .ok_or_else(|| release_evidence_invalid(context, "drills"))?;
+        validate_release_evidence_allowed_keys(
+            drill,
+            &[
+                "drill",
+                "status",
+                "evidence_kind",
+                "platforms",
+                "transcript_sha256",
+                "diagnostics_sha256",
+            ],
+            context,
+        )?;
         let drill_id = require_release_evidence_string_value(drill, "drill", context)?;
         if drill_id != *expected_drill || !seen_drills.insert(drill_id.to_string()) {
             return Err(release_evidence_invalid(context, "drills"));
@@ -2383,6 +2415,7 @@ fn validate_release_hardware_fault_drills(
             context,
         )?;
         let platforms = require_release_evidence_object(drill, "platforms", context)?;
+        validate_release_evidence_allowed_keys(platforms, &["macos", "windows"], context)?;
         require_release_evidence_string(platforms, "macos", "passed", context)?;
         require_release_evidence_string(platforms, "windows", "passed", context)?;
         require_release_evidence_sha256(drill, "transcript_sha256", context)?;
@@ -2461,6 +2494,21 @@ fn release_evidence_report_contains_forbidden_marker(report: &str) -> bool {
     ]
     .iter()
     .any(|marker| report.contains(marker))
+}
+
+fn validate_release_evidence_allowed_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    allowed_keys: &[&str],
+    context: &'static str,
+) -> Result<()> {
+    for key in object.keys() {
+        if !allowed_keys.contains(&key.as_str()) {
+            return Err(CliError::user(format!(
+                "{context} blocked: {key} is not allowed"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn require_release_evidence_string(

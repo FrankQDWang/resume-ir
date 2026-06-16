@@ -768,11 +768,23 @@ fn foreground_import_watcher_requeues_completed_root_after_file_change_without_p
         .expect("start resume-daemon import watcher");
     wait_until_metadata_store_ready(&mut child, &data_dir);
     std::thread::sleep(Duration::from_millis(250));
-    fs::write(
-        &watched_file,
-        "WatcherUpdatedToken refreshed candidate with Rust backend experience.",
-    )
-    .unwrap();
+    for attempt in 0..5 {
+        fs::write(
+            &watched_file,
+            format!(
+                "WatcherUpdatedToken refreshed candidate attempt {attempt} with Rust backend experience."
+            ),
+        )
+        .unwrap();
+        fs::write(
+            watched_root.join(format!("candidate-extra-{attempt}.txt")),
+            format!(
+                "WatcherUpdatedToken extra candidate attempt {attempt} with Rust backend experience."
+            ),
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+    }
 
     let stdout = child.stdout.take().expect("daemon stdout");
     let output = wait_daemon(child, BufReader::new(stdout));
@@ -782,9 +794,24 @@ fn foreground_import_watcher_requeues_completed_root_after_file_change_without_p
         output.stdout, output.stderr
     );
     assert!(output.stderr.is_empty());
-    assert!(output.stdout.contains("import watcher active roots: 1"));
-    assert!(output.stdout.contains("import watcher requeued imports: 1"));
-    assert!(output.stdout.contains("import worker processed: 1"));
+    assert!(
+        output.stdout.contains("import watcher active roots: 1"),
+        "stdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
+    assert!(
+        output.stdout.contains("import watcher requeued imports: 1"),
+        "stdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
+    assert!(
+        output.stdout.contains("import worker processed: 1"),
+        "stdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
     assert!(!output.stdout.contains(path_str(&data_dir)));
     assert!(!output.stdout.contains(path_str(&watched_root)));
     assert!(!output.stdout.contains(path_str(&canonical_watched_root)));

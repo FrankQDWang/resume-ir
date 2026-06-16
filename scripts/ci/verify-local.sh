@@ -9,7 +9,10 @@ fi
 "$CARGO_BIN" metadata --no-deps --locked
 "$CARGO_BIN" fmt --check
 "$CARGO_BIN" clippy --workspace --all-targets --all-features --locked -- -D warnings
-"$CARGO_BIN" test --workspace --locked
+"$CARGO_BIN" test --workspace --exclude benchmark-runner --exclude embedder --exclude resume-cli --locked
+"$CARGO_BIN" test -p resume-cli --locked -- --test-threads=1
+"$CARGO_BIN" test -p embedder --locked -- --test-threads=1
+"$CARGO_BIN" test -p benchmark-runner --locked -- --test-threads=1
 ./scripts/ci/check-cli-closed-loop.sh
 ./scripts/ci/check-daemon-closed-loop.sh
 ./scripts/ci/check-benchmark-smoke.sh

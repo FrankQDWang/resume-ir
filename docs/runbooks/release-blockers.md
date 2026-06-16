@@ -586,10 +586,13 @@ after running actual ENOSPC, service-level daemon kill, battery-mode, and
 external-drive disconnect drills on dedicated release-platform test machines or
 VMs, with both macOS and Windows marked `passed` for each drill. It may contain
 only build/artifact digests, transcript/diagnostics SHA-256 digests, redaction
-booleans, cleanup confirmation, and the must-not-upload list. Do not pass
-`fault-simulate` output, dry-run operator plans, raw logs, local paths, raw
-resume text, diagnostic packages, tokens, indexes, SQLite databases, model
-caches, or release-runner machine paths as hardware fault evidence.
+booleans, cleanup confirmation, and the must-not-upload list. The top-level
+report, every drill entry, and nested platform status objects must contain only
+the defined schema fields; unknown payload fields such as transcript paths or
+ad hoc log pointers are rejected. Do not pass `fault-simulate` output, dry-run
+operator plans, raw logs, local paths, raw resume text, diagnostic packages,
+tokens, indexes, SQLite databases, model caches, or release-runner machine
+paths as hardware fault evidence.
 
 Generate the diagnostics report from the same local data directory used for the
 current validation run:
