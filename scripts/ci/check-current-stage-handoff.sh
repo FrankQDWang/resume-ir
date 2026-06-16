@@ -190,6 +190,10 @@ require_text "$blocked_out" '"blocked_step": "import_private_corpus"'
 require_text "$blocked_out" '"blocked_category": "import/parser"'
 require_text "$blocked_out" '"blocked_reason": "import_private_corpus_failed"'
 require_text "$blocked_out" '"private_corpus_read": true'
+require_text "$blocked_out" '"next_action"'
+require_text "$blocked_out" '"category": "import/parser"'
+require_text "$blocked_out" '"recommended_next_step": "fix import/parser blocker and rerun current-stage validation"'
+require_text "$blocked_out" '"do_not_do": "do not chase P95/P99 optimization or require million-resume validation in current stage"'
 reject_text "$blocked_out" "$tmpdir"
 reject_text "$blocked_out" "PRIVATE-current-stage"
 reject_regex "$blocked_out" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"

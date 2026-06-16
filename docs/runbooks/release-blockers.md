@@ -168,9 +168,12 @@ scripts/local/summarize-current-stage-validation.py \
 The output schema is `resume-ir.current-stage-handoff.v1` with privacy boundary
 `local_only_redacted_handoff`. It copies only structured status, preflight
 probe statuses, redacted aggregate observability counts, completed step names,
-must-not-upload categories, and not-complete/BLOCKED items. It fails closed if
-the input contains private markers or local path shapes, or if the input schema
-does not use its required source privacy boundary
+must-not-upload categories, not-complete/BLOCKED items, and a `next_action`
+object. For blocked summaries, `next_action` names the blocker category and the
+next rerun target, while explicitly preserving the current-stage boundary: do
+not chase P95/P99 optimization and do not require million-resume validation in
+this stage. It fails closed if the input contains private markers or local path
+shapes, or if the input schema does not use its required source privacy boundary
 (`local_only_redacted_aggregate_summary` for smoke,
 `local_only_redacted_blocked_summary` for blocked handoff, and
 `local_only_redacted_evidence_manifest` for full evidence). The handoff report

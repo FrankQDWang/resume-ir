@@ -195,6 +195,34 @@ def must_not_upload(document: dict[str, Any]) -> list[str]:
     return output
 
 
+def next_action(document: dict[str, Any], schema: str) -> dict[str, str]:
+    if schema == "resume-ir.current-stage-blocked-summary.v1":
+        category = string_field(document, "blocked_category")
+        return {
+            "status": "blocked",
+            "category": category,
+            "blocked_step": string_field(document, "blocked_step"),
+            "recommended_next_step": (
+                f"fix {category} blocker and rerun current-stage validation"
+            ),
+            "do_not_do": (
+                "do not chase P95/P99 optimization or require million-resume "
+                "validation in current stage"
+            ),
+        }
+    if schema == "resume-ir.current-stage-smoke-summary.v1":
+        return {
+            "status": "smoke_only",
+            "recommended_next_step": "run full current-stage validation when local runtime and corpus are ready",
+            "do_not_do": "do not treat smoke handoff as release-readiness evidence",
+        }
+    return {
+        "status": "full_evidence_ready",
+        "recommended_next_step": "feed current-stage evidence into release-readiness and continue remaining release blockers",
+        "do_not_do": "do not claim complete product while release-readiness remains blocked",
+    }
+
+
 def build_handoff(document: dict[str, Any]) -> dict[str, Any]:
     schema = string_field(document, "schema_version")
     if schema not in SUPPORTED_SCHEMAS:
@@ -231,6 +259,7 @@ def build_handoff(document: dict[str, Any]) -> dict[str, Any]:
         ),
         "preflight_probes": preflight_probes(document),
         "blocked": blocked,
+        "next_action": next_action(document, schema),
         "observability": observability(document),
         "completed_steps": completed_steps(document),
         "blocked_or_not_complete": not_complete_items(document),
