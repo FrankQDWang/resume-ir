@@ -1183,6 +1183,65 @@ fn retryable_queue_excludes_live_running_jobs() {
 }
 
 #[test]
+fn stale_running_ingest_jobs_are_recovered_to_interrupted_for_retry() {
+    let store = migrated_store();
+    let document = document(
+        "stale-ingest-recovery-document-placeholder",
+        false,
+        DocumentStatus::OcrRequired,
+    );
+    store.upsert_document(&document).unwrap();
+    let stale_started = UnixTimestamp::from_unix_seconds(1_800_000_010);
+    let fresh_started = UnixTimestamp::from_unix_seconds(1_800_000_090);
+    let recover_at = UnixTimestamp::from_unix_seconds(1_800_000_120);
+    let stale_before = UnixTimestamp::from_unix_seconds(1_800_000_060);
+    let claim_at = UnixTimestamp::from_unix_seconds(1_800_000_130);
+
+    let stale = job(
+        "stale-running-ingest-placeholder",
+        &document.id,
+        IngestJobStatus::Running,
+        1,
+        3,
+    )
+    .started_at(stale_started)
+    .updated_at(stale_started);
+    let fresh = job(
+        "fresh-running-ingest-placeholder",
+        &document.id,
+        IngestJobStatus::Running,
+        1,
+        3,
+    )
+    .started_at(fresh_started)
+    .updated_at(fresh_started);
+    store.insert_ingest_job(&stale).unwrap();
+    store.insert_ingest_job(&fresh).unwrap();
+
+    let recovered = store
+        .recover_stale_running_ingest_jobs(recover_at, stale_before)
+        .unwrap();
+    assert_eq!(recovered, 1);
+
+    let recovered_job = store.ingest_job_by_id(&stale.id).unwrap().unwrap();
+    assert_eq!(recovered_job.status, IngestJobStatus::Interrupted);
+    assert_eq!(recovered_job.started_at, Some(stale_started));
+    assert_eq!(recovered_job.updated_at, recover_at);
+    assert_eq!(recovered_job.attempt_count, 1);
+    assert_eq!(
+        store.ingest_job_by_id(&fresh.id).unwrap().unwrap().status,
+        IngestJobStatus::Running
+    );
+
+    let claimed = store.claim_next_job(claim_at).unwrap().unwrap();
+    assert_eq!(claimed.id, stale.id);
+    assert_eq!(claimed.status, IngestJobStatus::Running);
+    assert_eq!(claimed.attempt_count, 2);
+    assert_eq!(claimed.started_at, Some(claim_at));
+    assert_eq!(store.claim_next_job(claim_at).unwrap(), None);
+}
+
+#[test]
 fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
     let store = migrated_store();
     let document = document(
@@ -3505,6 +3564,7 @@ fn import_task(label: &str, root_path: &str, status: ImportTaskStatus) -> Import
 trait IngestJobTestExt {
     fn started_at(self, timestamp: UnixTimestamp) -> Self;
     fn finished_at(self, timestamp: UnixTimestamp) -> Self;
+    fn updated_at(self, timestamp: UnixTimestamp) -> Self;
     fn resume_version_id(self, id: ResumeVersionId) -> Self;
 }
 
@@ -3516,6 +3576,11 @@ impl IngestJobTestExt for IngestJob {
 
     fn finished_at(mut self, timestamp: UnixTimestamp) -> Self {
         self.finished_at = Some(timestamp);
+        self
+    }
+
+    fn updated_at(mut self, timestamp: UnixTimestamp) -> Self {
+        self.updated_at = timestamp;
         self
     }
 

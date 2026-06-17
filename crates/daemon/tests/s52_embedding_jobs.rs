@@ -163,6 +163,80 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
 
 #[cfg(unix)]
 #[test]
+fn daemon_embedding_worker_once_recovers_stale_running_job_after_restart() {
+    let data_dir = temp_dir("embedding-jobs-stale-running-recovery-data");
+    let (private_root, document_id, version_id) = seed_sectionized_resume_version(&data_dir);
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .enqueue_embedding_job_for_resume_version(
+            &document_id,
+            &version_id,
+            "fixture-local-model",
+            4,
+            UnixTimestamp::from_unix_seconds(1_700_052_000),
+        )
+        .unwrap();
+    let stale_claimed = store
+        .claim_next_embedding_job(
+            "fixture-local-model",
+            4,
+            UnixTimestamp::from_unix_seconds(1_700_052_010),
+        )
+        .unwrap()
+        .expect("seed stale running embedding job");
+    assert_eq!(stale_claimed.status, IngestJobStatus::Running);
+    drop(store);
+
+    let command = write_fixture_executable(
+        "fixture-daemon-embedding-jobs-stale-recovery",
+        r#"#!/bin/sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.75,0.25,0,0\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+
+    let output = run_embedding_worker_once(&data_dir, &command);
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ingest jobs recovered stale running: 1"));
+    assert!(stdout.contains("embedding worker processed: 1"), "{stdout}");
+    assert!(
+        stdout.contains("embedding worker vector writes: 3"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("embedding worker failed: 0"), "{stdout}");
+    assert!(!stdout.contains("S52PrivateMarker"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&command)));
+
+    assert_vector_snapshot(&data_dir, 4, 3);
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let recovered_job = store
+        .ingest_job_by_id(&stale_claimed.id)
+        .unwrap()
+        .expect("recovered embedding job remains persisted");
+    assert_eq!(recovered_job.status, IngestJobStatus::Completed);
+    assert_eq!(recovered_job.attempt_count, 2);
+    assert_eq!(store.status_summary().unwrap().embedding_queue_depth, 0);
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn daemon_embedding_worker_once_rebuilds_schema_mismatched_vector_snapshot_from_completed_jobs() {
     let data_dir = temp_dir("embedding-jobs-schema-mismatch-data");
     let (_private_root, _versions) = seed_searchable_resume_versions(&data_dir);

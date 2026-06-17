@@ -7,8 +7,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{FullTextIndex, SearchQuery};
 use meta_store::{
-    Document, DocumentId, DocumentStatus, FileExtension, IngestJobFailureKind, IngestJobStatus,
-    MetaStore, OcrPageCacheKey, OcrPageCacheStatus, UnixTimestamp, WorkerTaskKind,
+    Document, DocumentId, DocumentStatus, FileExtension, IngestJobFailureKind, IngestJobKind,
+    IngestJobStatus, MetaStore, OcrPageCacheKey, OcrPageCacheStatus, UnixTimestamp, WorkerTaskKind,
 };
 
 #[cfg(unix)]
@@ -88,6 +88,80 @@ printf 'OCRS50DaemonOnceToken worker bytes=%s page=%s\n' "$input_size" "$RESUME_
     let hits = search_fulltext(&data_dir, "OCRS50DaemonOnceToken");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].file_name, "synthetic-scanned-resume.pdf");
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_ocr_worker_once_recovers_stale_running_job_after_restart() {
+    let data_dir = temp_dir("ocr-worker-stale-running-recovery-data");
+    let private_document_path = seed_scanned_document(&data_dir);
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let stale_claimed = store
+        .claim_next_job_by_kind(
+            IngestJobKind::OcrDocument,
+            UnixTimestamp::from_unix_seconds(1_700_050_010),
+        )
+        .unwrap()
+        .expect("seed stale running OCR job");
+    assert_eq!(stale_claimed.status, IngestJobStatus::Running);
+    drop(store);
+
+    let command = write_fixture_executable(
+        "fixture-daemon-ocr-worker-stale-recovery",
+        r#"#!/bin/sh
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.77\n'
+printf 'text:\n'
+printf 'S50RecoveredStaleOcrJobToken page %s\n' "$RESUME_IR_OCR_PAGE_NO"
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--once",
+            "--work-ocr-once",
+            "--ocr-command",
+            path_str(&command),
+            "--ocr-engine-profile",
+            "fixture-daemon-recovery-engine",
+        ])
+        .output()
+        .expect("run daemon OCR worker once after stale running job");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ingest jobs recovered stale running: 1"));
+    assert!(stdout.contains("ocr worker processed: 1"));
+    assert!(stdout.contains("ocr worker failed: 0"));
+    assert!(!stdout.contains("S50RecoveredStaleOcrJobToken"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_document_path)));
+    assert!(!stdout.contains(path_str(&command)));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let recovered_job = store
+        .ingest_job_by_id(&stale_claimed.id)
+        .unwrap()
+        .expect("recovered OCR job remains persisted");
+    assert_eq!(recovered_job.status, IngestJobStatus::Completed);
+    assert_eq!(recovered_job.attempt_count, 2);
+    let scanned = scanned_document(&store);
+    assert_eq!(scanned.status, DocumentStatus::Searchable);
+    assert!(search_fulltext(&data_dir, "S50RecoveredStaleOcrJobToken").len() == 1);
 
     remove_dir(&data_dir);
 }

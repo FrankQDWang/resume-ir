@@ -60,6 +60,7 @@ const IMPORT_RETRY_BACKOFF_SECONDS: i64 = 60;
 const DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS: i64 = 300;
 const IMPORT_TASK_HEARTBEAT_SECONDS: u64 = 30;
 const STALE_IMPORT_TASK_SECONDS: i64 = 15 * 60;
+const STALE_INGEST_JOB_SECONDS: i64 = 15 * 60;
 const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
 const IPC_ENDPOINT_FILE: &str = "ipc.endpoints.json";
 const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
@@ -886,14 +887,20 @@ fn run_ocr_worker_once(
         ));
     }
 
+    let stale_recovered = recover_stale_ingest_jobs(store, now)?;
     let Some(job) = store
         .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
         .map_err(DaemonError::store)?
     else {
-        return Ok(OcrWorkerSummary::default());
+        return Ok(OcrWorkerSummary {
+            stale_recovered,
+            ..OcrWorkerSummary::default()
+        });
     };
 
-    run_claimed_ocr_job(data_dir, store, &job, options, now)
+    let mut summary = run_claimed_ocr_job(data_dir, store, &job, options, now)?;
+    summary.stale_recovered = stale_recovered;
+    Ok(summary)
 }
 
 fn run_claimed_ocr_job(
@@ -1271,6 +1278,7 @@ fn run_embedding_worker_once(
         .embedding_dimension
         .ok_or_else(|| DaemonError::usage(run_usage()))?;
     let now = current_timestamp()?;
+    let stale_recovered = recover_stale_ingest_jobs(store, now)?;
     let rebuild_vector_snapshot = vector_snapshot_requires_embedding_rebuild(data_dir);
     let completed_requeued = if rebuild_vector_snapshot {
         store
@@ -1294,6 +1302,7 @@ fn run_embedding_worker_once(
     let documents_considered = jobs.len();
     if jobs.is_empty() {
         return Ok(EmbeddingWorkerSummary {
+            stale_recovered,
             completed_requeued,
             ..EmbeddingWorkerSummary::default()
         });
@@ -1310,6 +1319,7 @@ fn run_embedding_worker_once(
     }
     if candidates.is_empty() {
         return Ok(EmbeddingWorkerSummary {
+            stale_recovered,
             completed_requeued,
             documents_considered,
             processed: 0,
@@ -1372,12 +1382,22 @@ fn run_embedding_worker_once(
     }
 
     Ok(EmbeddingWorkerSummary {
+        stale_recovered,
         completed_requeued,
         documents_considered,
         processed: candidates.len(),
         vector_writes,
         failed: 0,
     })
+}
+
+fn recover_stale_ingest_jobs(store: &MetaStore, now: UnixTimestamp) -> Result<usize> {
+    store
+        .recover_stale_running_ingest_jobs(
+            now,
+            timestamp_minus_seconds(now, STALE_INGEST_JOB_SECONDS),
+        )
+        .map_err(DaemonError::store)
 }
 
 fn vector_snapshot_requires_embedding_rebuild(data_dir: &Path) -> bool {
@@ -4861,6 +4881,7 @@ fn print_import_worker_summary(import_summary: &ImportWorkerSummary) -> Result<(
 
 #[derive(Default)]
 struct OcrWorkerSummary {
+    stale_recovered: usize,
     paused: bool,
     processed: usize,
     failed: usize,
@@ -4870,7 +4891,8 @@ struct OcrWorkerSummary {
 
 impl OcrWorkerSummary {
     fn has_activity(&self) -> bool {
-        self.paused
+        self.stale_recovered > 0
+            || self.paused
             || self.processed > 0
             || self.failed > 0
             || self.cache_writes > 0
@@ -4879,6 +4901,10 @@ impl OcrWorkerSummary {
 }
 
 fn print_ocr_worker_summary(summary: &OcrWorkerSummary) -> Result<()> {
+    println!(
+        "ingest jobs recovered stale running: {}",
+        summary.stale_recovered
+    );
     println!("ocr worker paused: {}", summary.paused);
     println!("ocr worker processed: {}", summary.processed);
     println!("ocr worker cache writes: {}", summary.cache_writes);
@@ -4910,6 +4936,7 @@ impl fmt::Debug for EmbeddingWorkerCandidate {
 
 #[derive(Default)]
 struct EmbeddingWorkerSummary {
+    stale_recovered: usize,
     completed_requeued: usize,
     documents_considered: usize,
     processed: usize,
@@ -4919,7 +4946,8 @@ struct EmbeddingWorkerSummary {
 
 impl EmbeddingWorkerSummary {
     fn has_activity(&self) -> bool {
-        self.completed_requeued > 0
+        self.stale_recovered > 0
+            || self.completed_requeued > 0
             || self.documents_considered > 0
             || self.processed > 0
             || self.vector_writes > 0
@@ -4928,6 +4956,10 @@ impl EmbeddingWorkerSummary {
 }
 
 fn print_embedding_worker_summary(summary: &EmbeddingWorkerSummary) -> Result<()> {
+    println!(
+        "ingest jobs recovered stale running: {}",
+        summary.stale_recovered
+    );
     if summary.completed_requeued > 0 {
         println!(
             "embedding worker requeued completed: {}",

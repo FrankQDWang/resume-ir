@@ -2751,6 +2751,35 @@ impl MetaStore {
         )
     }
 
+    pub fn recover_stale_running_ingest_jobs(
+        &self,
+        now: UnixTimestamp,
+        stale_before: UnixTimestamp,
+    ) -> Result<usize> {
+        let changed = self
+            .connection
+            .borrow()
+            .execute(
+                "\
+                UPDATE ingest_job
+                SET
+                    status = ?1,
+                    updated_at_seconds = ?2,
+                    finished_at_seconds = NULL,
+                    failure_kind = NULL
+                WHERE status = ?3
+                    AND updated_at_seconds <= ?4",
+                params![
+                    ingest_job_status_to_storage(IngestJobStatus::Interrupted),
+                    now.as_unix_seconds(),
+                    ingest_job_status_to_storage(IngestJobStatus::Running),
+                    stale_before.as_unix_seconds(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        Ok(changed)
+    }
+
     pub fn ingest_jobs(&self) -> Result<Vec<IngestJob>> {
         self.query_jobs("ORDER BY rowid", params![])
     }
