@@ -39,6 +39,16 @@ reject_regex() {
   fi
 }
 
+require_handoff_observability() {
+  file="$1"
+  min_documents="$2"
+  python3 scripts/ci/validate-current-stage-observability.py \
+    --summary "$file" \
+    --min-documents "$min_documents" \
+    --field observability \
+    || fail "$file current-stage handoff observability is invalid"
+}
+
 script="scripts/local/summarize-current-stage-validation.py"
 require_file "$script"
 
@@ -82,6 +92,18 @@ cat > "$smoke_summary" <<'JSON'
       "ocr_required": 11,
       "searchable": 1
     },
+    "ingest_job_status_counts": {
+      "completed": 1,
+      "queued": 11
+    },
+    "ingest_job_kind_status_counts": {
+      "ocr_document": {
+        "queued": 11
+      },
+      "update_index": {
+        "completed": 1
+      }
+    },
     "ingest_job_failure_counts": {
       "ocr_page_budget_exceeded": 1
     }
@@ -116,7 +138,7 @@ require_text "$smoke_out" '"full_baseline_satisfied": false'
 require_text "$smoke_out" '"release_readiness_evidence": false'
 require_text "$smoke_out" '"ocr_runtime_probe": "passed"'
 require_text "$smoke_out" '"embedding_protocol": "passed"'
-require_text "$smoke_out" '"document_count": 12'
+require_handoff_observability "$smoke_out" 1
 require_text "$smoke_out" '"ocr_page_budget_exceeded": 1'
 require_text "$smoke_out" '"blocked_or_not_complete"'
 require_text "$smoke_out" '"full 10k/8000-document current-stage baseline"'

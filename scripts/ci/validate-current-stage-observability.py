@@ -52,10 +52,15 @@ def require_int(value: Any, field: str) -> int:
     return value
 
 
-def validate_observability(document: dict[str, Any], require_hot_index: bool) -> None:
-    observability = document.get(OBSERVABILITY_FIELD)
+def validate_observability(
+    document: dict[str, Any],
+    require_hot_index: bool,
+    min_documents: int,
+    field: str,
+) -> None:
+    observability = document.get(field)
     if not isinstance(observability, dict):
-        fail(f"missing {OBSERVABILITY_FIELD}")
+        fail(f"missing {field}")
 
     if observability.get("privacy_boundary") != PRIVACY_BOUNDARY:
         fail("invalid privacy boundary")
@@ -70,7 +75,7 @@ def validate_observability(document: dict[str, Any], require_hot_index: bool) ->
         "vector_indexed_document_count",
     )
 
-    if document_count < CURRENT_STAGE_DOCUMENT_FLOOR:
+    if document_count < min_documents:
         fail("document_count below current-stage floor")
     if not 0 <= searchable_count <= document_count:
         fail("searchable_document_count is inconsistent")
@@ -106,15 +111,38 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Path to a current-stage smoke or blocked summary JSON.",
     )
+    parser.add_argument(
+        "--min-documents",
+        type=int,
+        default=CURRENT_STAGE_DOCUMENT_FLOOR,
+        help="Minimum document_count required for the observability payload.",
+    )
+    parser.add_argument(
+        "--field",
+        default=OBSERVABILITY_FIELD,
+        help="Top-level field containing the observability payload.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.min_documents < 1:
+        fail("min-documents must be positive")
     if args.full_evidence is not None:
-        validate_observability(read_json(args.full_evidence), require_hot_index=True)
+        validate_observability(
+            read_json(args.full_evidence),
+            require_hot_index=True,
+            min_documents=args.min_documents,
+            field=args.field,
+        )
     else:
-        validate_observability(read_json(args.summary), require_hot_index=False)
+        validate_observability(
+            read_json(args.summary),
+            require_hot_index=False,
+            min_documents=args.min_documents,
+            field=args.field,
+        )
     return 0
 
 
