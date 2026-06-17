@@ -139,9 +139,12 @@ wait_for_semantic_daemon_search() {
   fail "daemon closed-loop semantic search did not become ready"
 }
 
-CARGO_BIN="${CARGO:-cargo}"
-if ! command -v "$CARGO_BIN" >/dev/null 2>&1 && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
+CARGO_BIN="${CARGO:-}"
+if [ -z "$CARGO_BIN" ] && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
   CARGO_BIN=/Users/frankqdwang/.cargo/bin/cargo
+fi
+if [ -z "$CARGO_BIN" ]; then
+  CARGO_BIN=cargo
 fi
 
 fixture_root="tests/fixtures/resumes"
@@ -275,6 +278,29 @@ require_text "$detail_out" "snippet:"
 reject_text "$detail_out" "DaemonClosedLoopOCRToken" "OCR text"
 reject_paths "$detail_out"
 
+delete_out="$tmpdir/delete-ipc.out"
+run_cli "delete ipc" "$delete_out" delete --doc-id "$doc_id" --ipc auto
+require_text "$delete_out" "delete completed"
+require_text "$delete_out" "doc_id: $doc_id"
+require_text "$delete_out" "status: deleted"
+require_text "$delete_out" "index rebuilt: true"
+require_text "$delete_out" "indexed documents: 2"
+reject_paths "$delete_out"
+
+post_delete_search_out="$tmpdir/search-ipc-after-delete.out"
+run_cli "search ipc after delete" "$post_delete_search_out" search Java --ipc auto --top-k 20
+require_text "$post_delete_search_out" "results: 1"
+reject_text "$post_delete_search_out" "$doc_id" "deleted doc id"
+reject_paths "$post_delete_search_out"
+
+post_delete_detail_out="$tmpdir/detail-ipc-after-delete.out"
+if "$CARGO_BIN" run --quiet -p resume-cli --locked -- --data-dir "$data_dir" detail --doc-id "$doc_id" --ipc auto >"$post_delete_detail_out" 2>&1; then
+  fail "daemon closed-loop detail returned deleted document"
+fi
+require_text "$post_delete_detail_out" "daemon detail ipc returned an error"
+reject_text "$post_delete_detail_out" "$doc_id" "deleted doc id"
+reject_paths "$post_delete_detail_out"
+
 stop_daemon
 
 if [ -s "$daemon_stderr" ]; then
@@ -283,7 +309,7 @@ fi
 
 local_status_out="$tmpdir/status-local-after-workers.out"
 run_cli "local status after daemon workers" "$local_status_out" status
-require_text "$local_status_out" "searchable documents: 3"
+require_text "$local_status_out" "searchable documents: 2"
 require_text "$local_status_out" "ocr queue: 0"
 require_text "$local_status_out" "search index: available (full-text snapshot)"
 require_text "$local_status_out" "vector index: available (hnsw ann vector snapshot)"

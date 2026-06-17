@@ -2000,6 +2000,7 @@ fn write_ipc_endpoint_manifest(data_dir: &Path, addr: SocketAddr) -> Result<()> 
         "import_progress": format!("http://{addr}/imports/progress"),
         "search": format!("http://{addr}/search"),
         "details": format!("http://{addr}/details"),
+        "delete": format!("http://{addr}/delete"),
     })
     .to_string();
     let path = data_dir.join(IPC_ENDPOINT_FILE);
@@ -2189,6 +2190,13 @@ fn handle_ipc_stream(
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
         return handle_detail_command_ipc(data_dir, &request, &mut stream);
+    }
+
+    if request.method == "POST"
+        && request.path == "/delete"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_delete_command_ipc(data_dir, &request, &mut stream);
     }
 
     write_http_response(&mut stream, 404, "text/plain", "not found")
@@ -2493,6 +2501,52 @@ fn handle_detail_command_ipc(
     }
 
     match execute_detail_command(data_dir, &request.body) {
+        Ok(body) => write_http_response(stream, 200, "application/json", &body),
+        Err(IpcCommandError::BadRequest(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "bad_request",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 400, "application/json", &body)
+        }
+        Err(IpcCommandError::Conflict(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "conflict",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 409, "application/json", &body)
+        }
+        Err(IpcCommandError::NotFound(_message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "not_found",
+            })
+            .to_string();
+            write_http_response(stream, 404, "application/json", &body)
+        }
+        Err(IpcCommandError::Internal(error)) => Err(error),
+    }
+}
+
+fn handle_delete_command_ipc(
+    data_dir: &Path,
+    request: &IpcRequest,
+    stream: &mut TcpStream,
+) -> Result<()> {
+    if !ipc_command_authorized(data_dir, &request.headers)? {
+        let body = serde_json::json!({
+            "schema_version": "daemon.error.v1",
+            "status": "unauthorized",
+        })
+        .to_string();
+        return write_http_response(stream, 401, "application/json", &body);
+    }
+
+    match execute_delete_command(data_dir, &request.body) {
         Ok(body) => write_http_response(stream, 200, "application/json", &body),
         Err(IpcCommandError::BadRequest(message)) => {
             let body = serde_json::json!({
@@ -3809,6 +3863,45 @@ fn execute_detail_command(
         }
     });
     Ok(body.to_string())
+}
+
+fn execute_delete_command(
+    data_dir: &Path,
+    body: &[u8],
+) -> std::result::Result<String, IpcCommandError> {
+    let payload = serde_json::from_slice::<serde_json::Value>(body)
+        .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
+    let document_id = parse_delete_command(&payload)?;
+    let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
+    let now = current_timestamp().map_err(IpcCommandError::Internal)?;
+    let Some(deleted_document) = store
+        .mark_document_deleted(&document_id, now)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Err(IpcCommandError::NotFound("delete document was not found"));
+    };
+    let rebuild = rebuild_full_text_index(data_dir, &store, now)
+        .map_err(DaemonError::import)
+        .map_err(IpcCommandError::Internal)?;
+    Ok(serde_json::json!({
+        "schema_version": "daemon.delete.v1",
+        "status": "ok",
+        "doc_id": deleted_document.id.as_str(),
+        "index_rebuilt": true,
+        "indexed_documents": rebuild.indexed_documents,
+    })
+    .to_string())
+}
+
+fn parse_delete_command(
+    payload: &serde_json::Value,
+) -> std::result::Result<DocumentId, IpcCommandError> {
+    let value = payload
+        .get("doc_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(IpcCommandError::BadRequest("doc_id is required"))?;
+    DocumentId::from_str(value).map_err(|_| IpcCommandError::BadRequest("doc_id is invalid"))
 }
 
 fn cancel_import_command(

@@ -117,6 +117,7 @@ require_text "$daemon_closed_loop_script" "search DaemonClosedLoopOCRToken --ipc
 require_text "$daemon_closed_loop_script" "--mode semantic"
 require_text "$daemon_closed_loop_script" "--mode hybrid"
 require_text "$daemon_closed_loop_script" "detail --doc-id"
+require_text "$daemon_closed_loop_script" "delete --doc-id"
 require_text "$daemon_closed_loop_script" "daemon closed-loop check passed"
 
 require_text "$benchmark_smoke_script" "resume-benchmark --locked -- synthetic-query"

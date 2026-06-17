@@ -8862,6 +8862,11 @@ struct IpcDetailEndpoint {
     addr: SocketAddr,
 }
 
+#[derive(Clone)]
+struct IpcDeleteEndpoint {
+    addr: SocketAddr,
+}
+
 fn auto_ipc_token_file(data_dir: &Path) -> PathBuf {
     data_dir.join(IPC_AUTH_TOKEN_FILE)
 }
@@ -8888,6 +8893,10 @@ fn discover_search_ipc_endpoint(data_dir: &Path) -> Result<IpcSearchEndpoint> {
 
 fn discover_detail_ipc_endpoint(data_dir: &Path) -> Result<IpcDetailEndpoint> {
     parse_detail_ipc_endpoint(&discover_ipc_url(data_dir, "details")?)
+}
+
+fn discover_delete_ipc_endpoint(data_dir: &Path) -> Result<IpcDeleteEndpoint> {
+    parse_delete_ipc_endpoint(&discover_ipc_url(data_dir, "delete")?)
 }
 
 fn ensure_auto_ipc_same_daemon(status_addr: SocketAddr, command_addr: SocketAddr) -> Result<()> {
@@ -12464,14 +12473,21 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 }
 
 fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    if args.len() != 2 || args.first().map(String::as_str) != Some("--doc-id") {
-        return Err(CliError::usage(
-            "usage: resume-cli delete --doc-id <doc_id>",
-        ));
+    let delete_args = parse_delete_args(args)?;
+    if delete_args.ipc_auto {
+        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
+        let endpoint = discover_delete_ipc_endpoint(data_dir)?;
+        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
+        verify_auto_ipc_status(&status_endpoint)?;
+        let token_file = auto_ipc_token_file(data_dir);
+        return delete_ipc_command_with_token_file(&endpoint, &token_file, &delete_args);
+    }
+    if let Some(endpoint) = &delete_args.ipc_endpoint {
+        return delete_ipc_command(endpoint, &delete_args);
     }
 
-    let document_id =
-        DocumentId::from_str(&args[1]).map_err(|_| CliError::user("delete doc id is invalid"))?;
+    let document_id = DocumentId::from_str(&delete_args.doc_id)
+        .map_err(|_| CliError::user("delete doc id is invalid"))?;
     let store = open_store(data_dir)?;
     let now = current_timestamp()?;
     let Some(deleted_document) = store
@@ -12490,6 +12506,191 @@ fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("index rebuilt: true");
     println!("indexed documents: {}", rebuild.indexed_documents);
 
+    Ok(())
+}
+
+struct DeleteArgs {
+    doc_id: String,
+    ipc_auto: bool,
+    ipc_endpoint: Option<IpcDeleteEndpoint>,
+    ipc_token_file: Option<PathBuf>,
+}
+
+fn parse_delete_args(args: &[String]) -> Result<DeleteArgs> {
+    let mut doc_id = None;
+    let mut ipc_auto = false;
+    let mut ipc_endpoint = None;
+    let mut ipc_token_file = None;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--doc-id" => {
+                if doc_id.is_some() {
+                    return Err(CliError::usage(delete_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(delete_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(delete_usage()));
+                }
+                doc_id = Some(value.clone());
+                index += 2;
+            }
+            "--ipc" => {
+                if ipc_auto || ipc_endpoint.is_some() {
+                    return Err(CliError::usage(delete_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(delete_usage()));
+                };
+                if value == "auto" {
+                    ipc_auto = true;
+                } else {
+                    ipc_endpoint = Some(parse_delete_ipc_endpoint(value)?);
+                }
+                index += 2;
+            }
+            "--ipc-token-file" => {
+                if ipc_token_file.is_some() {
+                    return Err(CliError::usage(delete_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(delete_usage()));
+                };
+                ipc_token_file = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(delete_usage())),
+        }
+    }
+
+    if ipc_auto && ipc_token_file.is_some() {
+        return Err(CliError::usage(delete_usage()));
+    }
+    if !ipc_auto && ipc_endpoint.is_some() != ipc_token_file.is_some() {
+        return Err(CliError::usage(delete_usage()));
+    }
+
+    Ok(DeleteArgs {
+        doc_id: doc_id.ok_or_else(|| CliError::usage(delete_usage()))?,
+        ipc_auto,
+        ipc_endpoint,
+        ipc_token_file,
+    })
+}
+
+fn delete_usage() -> &'static str {
+    "usage: resume-cli delete --doc-id <doc_id> [--ipc auto|<http://127.0.0.1:port/delete|/status> --ipc-token-file <path>]"
+}
+
+fn parse_delete_ipc_endpoint(value: &str) -> Result<IpcDeleteEndpoint> {
+    let rest = value
+        .strip_prefix("http://")
+        .ok_or_else(|| CliError::usage(delete_usage()))?;
+    let (authority, path) = rest
+        .split_once('/')
+        .ok_or_else(|| CliError::usage(delete_usage()))?;
+    if path != "delete" && path != "status" {
+        return Err(CliError::usage(delete_usage()));
+    }
+
+    let addr = SocketAddr::from_str(authority).map_err(|_| CliError::usage(delete_usage()))?;
+    if !addr.ip().is_loopback() {
+        return Err(CliError::usage("delete ipc endpoint must be loopback"));
+    }
+
+    Ok(IpcDeleteEndpoint { addr })
+}
+
+fn delete_ipc_command(endpoint: &IpcDeleteEndpoint, delete_args: &DeleteArgs) -> Result<()> {
+    let token_file = delete_args
+        .ipc_token_file
+        .as_ref()
+        .ok_or_else(|| CliError::usage(delete_usage()))?;
+    delete_ipc_command_with_token_file(endpoint, token_file, delete_args)
+}
+
+fn delete_ipc_command_with_token_file(
+    endpoint: &IpcDeleteEndpoint,
+    token_file: &Path,
+    delete_args: &DeleteArgs,
+) -> Result<()> {
+    let token = fs::read_to_string(token_file)
+        .map_err(|_| CliError::user("unable to read daemon delete ipc token"))?;
+    let token = validate_daemon_ipc_token(&token, "daemon delete ipc token is invalid")?;
+    let body = serde_json::json!({
+        "doc_id": delete_args.doc_id.as_str(),
+    })
+    .to_string();
+
+    let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
+        .map_err(|_| CliError::user("unable to connect to daemon delete ipc"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon delete ipc"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon delete ipc"))?;
+    let request = format!(
+        "POST /delete HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        endpoint.addr,
+        token,
+        body.len(),
+        body
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|_| CliError::user("unable to request daemon delete ipc"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|_| CliError::user("unable to read daemon delete ipc"))?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| CliError::user("daemon delete ipc response is invalid"))?;
+    let status_line = headers.lines().next().unwrap_or_default();
+    if !status_line.starts_with("HTTP/1.1 200 ") && !status_line.starts_with("HTTP/1.0 200 ") {
+        return Err(CliError::user("daemon delete ipc returned an error"));
+    }
+
+    let body: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| CliError::user("daemon delete ipc returned invalid json"))?;
+    render_delete_ipc_result(&body, delete_args.doc_id.as_str())?;
+    Ok(())
+}
+
+fn render_delete_ipc_result(body: &serde_json::Value, expected_doc_id: &str) -> Result<()> {
+    if json_str(body, "schema_version") != Some("daemon.delete.v1")
+        || json_str(body, "status") != Some("ok")
+    {
+        return Err(CliError::user(
+            "daemon delete ipc returned invalid protocol",
+        ));
+    }
+    let doc_id = json_str(body, "doc_id")
+        .ok_or_else(|| CliError::user("daemon delete ipc returned invalid protocol"))?;
+    if doc_id != expected_doc_id || DocumentId::from_str(doc_id).is_err() {
+        return Err(CliError::user(
+            "daemon delete ipc returned invalid protocol",
+        ));
+    }
+    let index_rebuilt = body
+        .get("index_rebuilt")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| CliError::user("daemon delete ipc returned invalid protocol"))?;
+    let indexed_documents = body
+        .get("indexed_documents")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| CliError::user("daemon delete ipc returned invalid protocol"))?;
+
+    println!("delete completed");
+    println!("doc_id: {doc_id}");
+    println!("status: deleted");
+    println!("index rebuilt: {index_rebuilt}");
+    println!("indexed documents: {indexed_documents}");
     Ok(())
 }
 
