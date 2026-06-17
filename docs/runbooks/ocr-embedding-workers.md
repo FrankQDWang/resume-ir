@@ -95,6 +95,28 @@ After dependency preflight, create a local-only manifest draft from the selected
 external commands and language pack:
 
 ```bash
+scripts/local/prepare-local-ocr-runtime-manifest.sh \
+  --out <local-ocr-runtime-manifest.json> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --language eng \
+  --language-pack <local-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --reviewed
+```
+
+When `--tesseract-command` or `--pdftoppm-command` is omitted, the preparation
+script discovers the external commands with `command -v tesseract` and
+`command -v pdftoppm`. It does not install, download, bundle, upload, or print
+runtime paths or OCR artifacts. Omit `--reviewed` when legal review is not
+complete; the script exits nonzero and reports the OCR runtime as
+external/legal/runtime BLOCKED.
+
+The lower-level manifest command remains available when an operator needs to
+pin explicit command paths:
+
+```bash
 resume-cli --data-dir <local-data-dir> ocr draft-manifest \
   --out <local-ocr-runtime-manifest.json> \
   --runtime-pack-id <reviewed-runtime-pack-id> \
@@ -118,6 +140,21 @@ redacted.
 
 For a Tesseract combined language such as `eng+chi_sim`, provide one
 `--language-pack <lang>=<local-tessdata-file>` argument for each language:
+
+```bash
+scripts/local/prepare-local-ocr-runtime-manifest.sh \
+  --out <local-ocr-runtime-manifest.json> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --language eng+chi_sim \
+  --language-pack eng=<local-eng-tessdata-file> \
+  --language-pack chi_sim=<local-chi-sim-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --reviewed
+```
+
+Equivalent lower-level command:
 
 ```bash
 resume-cli --data-dir <local-data-dir> ocr draft-manifest \
