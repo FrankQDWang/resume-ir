@@ -108,6 +108,14 @@ resume-cli --data-dir <local-data-dir> ocr draft-manifest \
   --reviewed
 ```
 
+`resume-cli ocr draft-manifest` intentionally receives explicit command paths
+because the manifest records checksums for exact local artifacts. The
+current-stage orchestration script may discover those paths with
+`command -v tesseract` and `command -v pdftoppm` when its own
+`--tesseract-command` or `--pdftoppm-command` flags are omitted, but the draft
+manifest output and all current-stage summaries must keep runtime paths
+redacted.
+
 For a Tesseract combined language such as `eng+chi_sim`, provide one
 `--language-pack <lang>=<local-tessdata-file>` argument for each language:
 

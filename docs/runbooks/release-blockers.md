@@ -201,8 +201,8 @@ scripts/local/run-current-stage-validation.sh --dry-run \
   --dimension <dimension> \
   --model-license <model-license-id> \
   --runtime-pack-id <reviewed-runtime-pack-id> \
-  --tesseract-command <local-tesseract-command> \
-  --pdftoppm-command <local-pdftoppm-command> \
+  [--tesseract-command <local-tesseract-command>] \
+  [--pdftoppm-command <local-pdftoppm-command>] \
   --language eng \
   --language-pack <local-tessdata-file> \
   --engine-license Apache-2.0 \
@@ -216,6 +216,11 @@ scripts/local/run-current-stage-validation.sh --dry-run \
 For Tesseract combined languages such as `eng+chi_sim`, pass repeated
 `--language-pack <lang>=<local-tessdata-file>` entries so the local OCR runtime
 manifest records every tessdata checksum and reviewed license separately.
+When `--tesseract-command` or `--pdftoppm-command` is omitted,
+`run-current-stage-validation.sh` uses `command -v tesseract` and
+`command -v pdftoppm` on the operator machine, then still records only redacted
+command templates in plan, summary, and handoff outputs. Pass explicit command
+paths only when pinning a non-`PATH` runtime or reviewing an exact local binary.
 If the embedding command depends on a local Python or tool runtime that is not
 the default shell runtime, pass `--embedding-runtime-bin-dir
 <local-runtime-bin-dir>` instead of relying on an operator-modified `PATH`.
@@ -370,8 +375,8 @@ scripts/local/run-current-stage-validation.sh --execute \
   --dimension <dimension> \
   --model-license <model-license-id> \
   --runtime-pack-id <reviewed-runtime-pack-id> \
-  --tesseract-command <local-tesseract-command> \
-  --pdftoppm-command <local-pdftoppm-command> \
+  [--tesseract-command <local-tesseract-command>] \
+  [--pdftoppm-command <local-pdftoppm-command>] \
   --language eng \
   --language-pack <local-tessdata-file> \
   --engine-license Apache-2.0 \
@@ -408,8 +413,8 @@ scripts/local/run-current-stage-validation.sh --execute \
   --dimension <dimension> \
   --model-license <model-license-id> \
   --runtime-pack-id <reviewed-runtime-pack-id> \
-  --tesseract-command <local-tesseract-command> \
-  --pdftoppm-command <local-pdftoppm-command> \
+  [--tesseract-command <local-tesseract-command>] \
+  [--pdftoppm-command <local-pdftoppm-command>] \
   --language eng \
   --language-pack <local-tessdata-file> \
   --engine-license Apache-2.0 \
