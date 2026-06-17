@@ -98,6 +98,7 @@ require_text "$gate" '"approval_gate": "human_release_approval_required"'
 require_text "$gate" '"secret_interface": "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute"'
 require_text "$gate" '"gh_release_create"'
 require_text "$gate" '"gh_release_upload"'
+require_text "$gate" '"gh_release_download_verify"'
 if grep -Fq "$tmpdir" "$gate"; then
   fail "GitHub Release publication gate leaked an absolute temp path"
 fi

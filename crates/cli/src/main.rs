@@ -1342,7 +1342,11 @@ fn validate_github_release_publication_gate_report(report: &str) -> Result<()> {
     )?;
     require_release_evidence_sha256(object, "artifact_manifest_sha256", CONTEXT)?;
     require_release_evidence_sha256(object, "publication_evidence_sha256", CONTEXT)?;
-    for expected in ["gh_release_create", "gh_release_upload"] {
+    for expected in [
+        "gh_release_create",
+        "gh_release_upload",
+        "gh_release_download_verify",
+    ] {
         require_release_evidence_array_contains_string(object, "planned_steps", expected, CONTEXT)?;
     }
     for expected in ["github_token", "local_paths"] {

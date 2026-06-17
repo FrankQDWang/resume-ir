@@ -693,8 +693,11 @@ point. Dry-run mode writes `release.github_publication_gate.v1` to
 create releases, or upload artifacts. Execute mode requires all of the following
 before it can publish: `--execute`, `--approve-release`, an `--artifact-dir`,
 `gh`, and either `GITHUB_TOKEN` or `GH_TOKEN`. The release workflow runs only
-dry-run mode by default; real publication remains blocked until a human approves
-the release and supplies the CI secret interface.
+dry-run mode by default. The gate's planned steps must include release creation,
+artifact upload, and `gh_release_download_verify` so uploaded artifacts are
+proved retrievable before publication can count as evidence. Real publication
+remains blocked until a human approves the release and supplies the CI secret
+interface.
 
 macOS package dry-runs must also produce a blocked notarization evidence
 manifest. The manifest schema is `release.notarization_evidence.v1` and must
