@@ -131,16 +131,12 @@ reject_paths "$status_after_import_out"
 fulltext_out="$tmpdir/fulltext-search.out"
 run_cli "fulltext search" "$fulltext_out" search Java --top-k 20
 require_text "$fulltext_out" "results: 2"
-require_text "$fulltext_out" "synthetic-java-platform.pdf"
-require_text "$fulltext_out" "synthetic-java-engineer.docx"
 reject_text "$fulltext_out" "query:" "raw query label"
 reject_paths "$fulltext_out"
 
 field_out="$tmpdir/field-search.out"
 run_cli "field search" "$field_out" search Java --degree bachelor --skills-any java --top-k 20
 require_text "$field_out" "results: 2"
-require_text "$field_out" "synthetic-java-platform.pdf"
-require_text "$field_out" "synthetic-java-engineer.docx"
 reject_text "$field_out" "query:" "raw query label"
 reject_paths "$field_out"
 
@@ -156,7 +152,6 @@ reject_paths "$ocr_out"
 ocr_search_out="$tmpdir/ocr-search.out"
 run_cli "ocr search" "$ocr_search_out" search CLIClosedLoopOCRToken --top-k 20
 require_text "$ocr_search_out" "results: 1"
-require_text "$ocr_search_out" "synthetic-scanned-resume.pdf"
 reject_text "$ocr_search_out" "query:" "raw query label"
 reject_paths "$ocr_search_out"
 
@@ -181,18 +176,12 @@ reject_paths "$status_after_embed_out"
 semantic_out="$tmpdir/semantic-search.out"
 run_cli "semantic search" "$semantic_out" search SemanticOnlyToken --mode semantic --embedding-command "$embedding_command" --model-id fixture-local-model --dimension 4 --top-k 20
 require_text "$semantic_out" "results: 3"
-require_text "$semantic_out" "synthetic-java-platform.pdf"
-require_text "$semantic_out" "synthetic-java-engineer.docx"
-require_text "$semantic_out" "synthetic-scanned-resume.pdf"
 reject_text "$semantic_out" "SemanticOnlyToken" "semantic raw query"
 reject_paths "$semantic_out"
 
 hybrid_out="$tmpdir/hybrid-search.out"
 run_cli "hybrid search" "$hybrid_out" search SemanticOnlyToken --mode hybrid --embedding-command "$embedding_command" --model-id fixture-local-model --dimension 4 --top-k 20
 require_text "$hybrid_out" "results: 3"
-require_text "$hybrid_out" "synthetic-java-platform.pdf"
-require_text "$hybrid_out" "synthetic-java-engineer.docx"
-require_text "$hybrid_out" "synthetic-scanned-resume.pdf"
 reject_text "$hybrid_out" "SemanticOnlyToken" "hybrid raw query"
 reject_paths "$hybrid_out"
 

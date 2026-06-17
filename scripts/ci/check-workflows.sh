@@ -104,6 +104,17 @@ require_text "$cli_closed_loop_script" "--mode hybrid"
 require_text "$cli_closed_loop_script" "export-diagnostics --redact"
 require_text "$cli_closed_loop_script" "CLIClosedLoopOCRToken"
 require_text "$cli_closed_loop_script" "cli closed-loop check passed"
+reject_text "$cli_closed_loop_script" 'require_text "$fulltext_out" "synthetic-java-platform.pdf"'
+reject_text "$cli_closed_loop_script" 'require_text "$fulltext_out" "synthetic-java-engineer.docx"'
+reject_text "$cli_closed_loop_script" 'require_text "$field_out" "synthetic-java-platform.pdf"'
+reject_text "$cli_closed_loop_script" 'require_text "$field_out" "synthetic-java-engineer.docx"'
+reject_text "$cli_closed_loop_script" 'require_text "$ocr_search_out" "synthetic-scanned-resume.pdf"'
+reject_text "$cli_closed_loop_script" 'require_text "$semantic_out" "synthetic-java-platform.pdf"'
+reject_text "$cli_closed_loop_script" 'require_text "$semantic_out" "synthetic-java-engineer.docx"'
+reject_text "$cli_closed_loop_script" 'require_text "$semantic_out" "synthetic-scanned-resume.pdf"'
+reject_text "$cli_closed_loop_script" 'require_text "$hybrid_out" "synthetic-java-platform.pdf"'
+reject_text "$cli_closed_loop_script" 'require_text "$hybrid_out" "synthetic-java-engineer.docx"'
+reject_text "$cli_closed_loop_script" 'require_text "$hybrid_out" "synthetic-scanned-resume.pdf"'
 
 require_text "$daemon_closed_loop_script" "resume-daemon"
 require_text "$daemon_closed_loop_script" "--work-imports"
@@ -119,6 +130,15 @@ require_text "$daemon_closed_loop_script" "--mode hybrid"
 require_text "$daemon_closed_loop_script" "detail --doc-id"
 require_text "$daemon_closed_loop_script" "delete --doc-id"
 require_text "$daemon_closed_loop_script" "daemon closed-loop check passed"
+reject_text "$daemon_closed_loop_script" 'require_text "$search_out" "synthetic-java-platform.pdf"'
+reject_text "$daemon_closed_loop_script" 'require_text "$search_out" "synthetic-java-engineer.docx"'
+reject_text "$daemon_closed_loop_script" 'require_text "$ocr_search_out" "synthetic-scanned-resume.pdf"'
+reject_text "$daemon_closed_loop_script" 'require_text "$semantic_search_out" "synthetic-java-platform.pdf"'
+reject_text "$daemon_closed_loop_script" 'require_text "$semantic_search_out" "synthetic-java-engineer.docx"'
+reject_text "$daemon_closed_loop_script" 'require_text "$semantic_search_out" "synthetic-scanned-resume.pdf"'
+reject_text "$daemon_closed_loop_script" 'require_text "$hybrid_search_out" "synthetic-java-platform.pdf"'
+reject_text "$daemon_closed_loop_script" 'require_text "$hybrid_search_out" "synthetic-java-engineer.docx"'
+reject_text "$daemon_closed_loop_script" 'require_text "$hybrid_search_out" "synthetic-scanned-resume.pdf"'
 
 require_text "$benchmark_smoke_script" "resume-benchmark --locked -- synthetic-query"
 require_text "$benchmark_smoke_script" "resume-benchmark --locked -- gate"

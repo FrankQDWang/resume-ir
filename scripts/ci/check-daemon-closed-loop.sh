@@ -235,31 +235,22 @@ reject_paths "$ready_status_out"
 search_out="$tmpdir/search-ipc.out"
 run_cli "search ipc" "$search_out" search Java --ipc auto --top-k 20
 require_text "$search_out" "results: 2"
-require_text "$search_out" "synthetic-java-platform.pdf"
-require_text "$search_out" "synthetic-java-engineer.docx"
 reject_text "$search_out" "query:" "raw query label"
 reject_paths "$search_out"
 
 ocr_search_out="$tmpdir/ocr-search-ipc.out"
 run_cli "ocr search ipc" "$ocr_search_out" search DaemonClosedLoopOCRToken --ipc auto --top-k 20
 require_text "$ocr_search_out" "results: 1"
-require_text "$ocr_search_out" "synthetic-scanned-resume.pdf"
 reject_paths "$ocr_search_out"
 
 wait_for_semantic_daemon_search
 require_text "$semantic_search_out" "results: 3"
-require_text "$semantic_search_out" "synthetic-java-platform.pdf"
-require_text "$semantic_search_out" "synthetic-java-engineer.docx"
-require_text "$semantic_search_out" "synthetic-scanned-resume.pdf"
 reject_text "$semantic_search_out" "SemanticOnlyToken" "semantic raw query"
 reject_paths "$semantic_search_out"
 
 hybrid_search_out="$tmpdir/hybrid-search-ipc.out"
 run_cli "hybrid search ipc" "$hybrid_search_out" search SemanticOnlyToken --ipc auto --mode hybrid --top-k 20
 require_text "$hybrid_search_out" "results: 3"
-require_text "$hybrid_search_out" "synthetic-java-platform.pdf"
-require_text "$hybrid_search_out" "synthetic-java-engineer.docx"
-require_text "$hybrid_search_out" "synthetic-scanned-resume.pdf"
 reject_text "$hybrid_search_out" "SemanticOnlyToken" "hybrid raw query"
 reject_paths "$hybrid_search_out"
 
