@@ -6739,7 +6739,13 @@ fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .unwrap_or_else(|| data_dir.join("fault-probes"));
 
     if let Some(suite) = fault_args.suite {
-        return print_fault_simulation_suite_report(suite, data_dir, &scratch_dir, fault_args.json);
+        return print_fault_simulation_suite_report(
+            suite,
+            data_dir,
+            &scratch_dir,
+            fault_args.json,
+            fault_args.daemon_binary.as_deref(),
+        );
     }
 
     let report = fault_simulation_report_for_args(&scratch_dir, &fault_args)?;
@@ -7152,6 +7158,7 @@ fn print_fault_simulation_suite_report(
     data_dir: &Path,
     scratch_dir: &Path,
     json: bool,
+    daemon_binary: Option<&Path>,
 ) -> Result<()> {
     if !json {
         return Err(CliError::usage(fault_simulate_usage()));
@@ -7159,7 +7166,7 @@ fn print_fault_simulation_suite_report(
 
     match suite {
         FaultSimulationSuite::LocalSafe => {
-            let cases = run_local_safe_fault_suite(data_dir, scratch_dir)?;
+            let cases = run_local_safe_fault_suite(data_dir, scratch_dir, daemon_binary)?;
             let total_cases = cases.len();
             let failed_cases = cases.iter().filter(|case| case.status == "failed").count();
             let reproduced_cases = cases
@@ -7240,6 +7247,7 @@ impl FaultSuiteCaseReport {
 fn run_local_safe_fault_suite(
     data_dir: &Path,
     scratch_dir: &Path,
+    daemon_binary: Option<&Path>,
 ) -> Result<Vec<FaultSuiteCaseReport>> {
     let mut cases = vec![run_fault_suite_case(
         scratch_dir,
@@ -7273,10 +7281,20 @@ fn run_local_safe_fault_suite(
             FaultSimulationArgs::suite_case(FaultSimulationCase::MetadataMigration),
         ),
         run_model_checksum_suite_case(scratch_dir),
-        FaultSuiteCaseReport::blocked_by_host(
+    ]);
+    cases.push(match daemon_binary {
+        Some(path) => run_fault_suite_case(
+            scratch_dir,
             "daemon_kill",
-            "suite requires explicit release daemon binary to avoid guessing host paths",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::DaemonKill)
+                .with_daemon_binary(path.to_path_buf()),
         ),
+        None => FaultSuiteCaseReport::blocked_by_host(
+            "daemon_kill",
+            "suite requires explicit daemon binary to avoid guessing host paths",
+        ),
+    });
+    cases.extend([
         FaultSuiteCaseReport::blocked_by_host(
             "ocr_crash",
             "suite requires explicit local OCR crash fixture to avoid shell-specific probes",
@@ -7446,6 +7464,11 @@ impl FaultSimulationArgs {
         self
     }
 
+    fn with_daemon_binary(mut self, daemon_binary: PathBuf) -> Self {
+        self.daemon_binary = Some(daemon_binary);
+        self
+    }
+
     fn with_battery_state(mut self, battery_state: FaultBatteryState) -> Self {
         self.battery_state = Some(battery_state);
         self
@@ -7561,7 +7584,6 @@ fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
         if case.is_some()
             || required_bytes.is_some()
             || available_bytes.is_some()
-            || daemon_binary.is_some()
             || ocr_command.is_some()
             || model_file.is_some()
             || expected_sha256.is_some()
@@ -8213,7 +8235,7 @@ fn simulate_ocr_crash_probe(scratch_dir: &Path, ocr_command: &Path) -> Result<Oc
 }
 
 fn fault_simulate_usage() -> &'static str {
-    "usage: resume-cli fault-simulate --suite local-safe --json [--scratch-dir <path>] OR resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case index-snapshot-corrupt [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case battery-mode --battery-state <battery|ac> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case external-drive-disconnect --drive-state <disconnected|mounted> [--scratch-dir <path>] [--json]"
+    "usage: resume-cli fault-simulate --suite local-safe --json [--scratch-dir <path>] [--daemon-binary <path>] OR resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case index-snapshot-corrupt [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case battery-mode --battery-state <battery|ac> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case external-drive-disconnect --drive-state <disconnected|mounted> [--scratch-dir <path>] [--json]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {

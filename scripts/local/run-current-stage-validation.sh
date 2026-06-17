@@ -2108,7 +2108,7 @@ $ocr_throughput_plan_steps
     },
     {
       "id": "fault_simulation_suite",
-      "command": "resume-cli --data-dir <local-data-dir> fault-simulate --suite local-safe --scratch-dir <local-evidence-dir>/fault-simulation-suite-scratch --json > <local-evidence-dir>/fault-simulation-suite-local-safe.json"
+      "command": "resume-cli --data-dir <local-data-dir> fault-simulate --suite local-safe --scratch-dir <local-evidence-dir>/fault-simulation-suite-scratch --daemon-binary <local-resume-daemon> --json > <local-evidence-dir>/fault-simulation-suite-local-safe.json"
     },
 $terminal_plan_steps
   ],
@@ -2725,6 +2725,7 @@ set +e
 "$resume_cli" --data-dir "$data_dir" fault-simulate \
   --suite local-safe \
   --scratch-dir "$out_dir/fault-simulation-suite-scratch" \
+  --daemon-binary "$resume_daemon" \
   --json \
   > "$out_dir/fault-simulation-suite-local-safe.json"
 fault_simulation_suite_status=$?
