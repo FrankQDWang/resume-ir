@@ -57,6 +57,13 @@ require_full_evidence_observability() {
     || fail "current-stage full evidence observability is invalid"
 }
 
+require_fault_suite_evidence() {
+  file="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for current-stage fault-suite validation"
+  python3 scripts/ci/validate-current-stage-fault-suite.py --local-safe-suite "$file" \
+    || fail "current-stage local-safe fault-suite evidence is invalid"
+}
+
 sha256_file() {
   path="$1"
   if command -v shasum >/dev/null 2>&1; then
@@ -454,7 +461,9 @@ case "$cmd:$sub" in
     fi
     case " $* " in
       *" --suite local-safe "*)
-        printf '{"schema_version":"fault-simulation-suite.v1","redacted":true,"suite":"local_safe","paths":"<redacted>","evidence_level":"local_synthetic_fault_suite","release_hardware_drills":"blocked","summary":{"total_cases":10,"reproduced_cases":10,"blocked_by_host_cases":0,"failed_cases":0,"release_blockers_cleared":false},"cases":[{"fault":"daemon_kill","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"daemon_ready":"yes","terminated_daemon":"yes","restart_check":"passed"}},{"fault":"ocr_crash","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"ocr_command":"failed","probe_bytes":31}}]}\n'
+        cat <<'EOF_FAULT_SUITE'
+{"schema_version":"fault-simulation-suite.v1","redacted":true,"suite":"local_safe","paths":"<redacted>","evidence_level":"local_synthetic_fault_suite","release_hardware_drills":"blocked","summary":{"total_cases":10,"reproduced_cases":10,"blocked_by_host_cases":0,"failed_cases":0,"release_blockers_cleared":false},"cases":[{"fault":"disk_space_low","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"required_bytes":4096,"available_bytes":1024,"probe_writes":"skipped"}},{"fault":"permission_denied","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"write_check":"denied"}},{"fault":"file_lock","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"lock_conflict":"detected"}},{"fault":"index_snapshot_corrupt","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"snapshot_validation":"failed"}},{"fault":"metadata_migration","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"rollback_check":"passed"}},{"fault":"model_checksum","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"checksum":"mismatch"}},{"fault":"daemon_kill","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"daemon_ready":"yes","terminated_daemon":"yes","restart_check":"passed"}},{"fault":"ocr_crash","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"ocr_command":"failed","probe_bytes":31}},{"fault":"battery_mode","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"battery_state":"battery"}},{"fault":"external_drive_disconnect","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"drive_state":"disconnected"}}]}
+EOF_FAULT_SUITE
         ;;
       *)
         printf '{"schema_version":"fault-simulation.v1","redacted":true,"fault":"disk_space_low","status":"reproduced","paths":"<redacted>","details":{"required_bytes":4096,"available_bytes":1024,"probe_writes":"skipped"},"evidence_level":"local_synthetic_fault_probe"}\n'
@@ -674,11 +683,7 @@ require_text "$evidence_manifest" '"fault_simulation_smoke"'
 require_text "$evidence_manifest" '"fault-simulation-storage-low.json"'
 require_text "$evidence_manifest" '"fault_simulation_suite"'
 require_text "$evidence_manifest" '"fault-simulation-suite-local-safe.json"'
-require_text "$execute_out_dir/fault-simulation-suite-local-safe.json" '"fault":"daemon_kill"'
-require_text "$execute_out_dir/fault-simulation-suite-local-safe.json" '"status":"reproduced"'
-require_text "$execute_out_dir/fault-simulation-suite-local-safe.json" '"restart_check":"passed"'
-require_text "$execute_out_dir/fault-simulation-suite-local-safe.json" '"fault":"ocr_crash"'
-require_text "$execute_out_dir/fault-simulation-suite-local-safe.json" '"ocr_command":"failed"'
+require_fault_suite_evidence "$execute_out_dir/fault-simulation-suite-local-safe.json"
 require_text "$evidence_manifest" '"release-readiness.json"'
 require_text "$evidence_manifest" '"local_paths_included": false'
 require_text "$evidence_manifest" '"raw_resume_text_included": false'
@@ -740,11 +745,7 @@ require_text "$smoke_summary" '"fault_simulation_smoke"'
 require_text "$smoke_summary" '"fault-simulation-storage-low.json"'
 require_text "$smoke_summary" '"fault_simulation_suite"'
 require_text "$smoke_summary" '"fault-simulation-suite-local-safe.json"'
-require_text "$execute_out_dir/fault-simulation-suite-local-safe.json" '"fault":"daemon_kill"'
-require_text "$execute_out_dir/fault-simulation-suite-local-safe.json" '"status":"reproduced"'
-require_text "$execute_out_dir/fault-simulation-suite-local-safe.json" '"restart_check":"passed"'
-require_text "$execute_out_dir/fault-simulation-suite-local-safe.json" '"fault":"ocr_crash"'
-require_text "$execute_out_dir/fault-simulation-suite-local-safe.json" '"ocr_command":"failed"'
+require_fault_suite_evidence "$execute_out_dir/fault-simulation-suite-local-safe.json"
 require_text "$smoke_summary" '"full 10k/8000-document current-stage baseline"'
 require_current_stage_handoff \
   "smoke_satisfied" \
