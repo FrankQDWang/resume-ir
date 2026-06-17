@@ -1058,16 +1058,21 @@ write_ocr_backlog_blocked_summary() {
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
   dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
   redacted_diagnostics_sha256_json=$(sha256_file_json_or_null "$out_dir/redacted-diagnostics.json")
+  doctor_sha256_json=$(sha256_file_json_or_null "$out_dir/doctor.out")
 
   if [ "$redacted_diagnostics_exit" -eq 0 ]; then
     redacted_diagnostics_step_json='    {"id": "redacted_diagnostics", "status": "success"}'
     redacted_diagnostics_not_completed=''
+    doctor_step_json='    {"id": "doctor", "status": "success"}'
+    doctor_not_completed=''
   else
     redacted_diagnostics_step_json=$(cat <<EOF_DIAGNOSTICS_STEP
     {"id": "redacted_diagnostics", "status": "blocked", "exit_code": $redacted_diagnostics_exit}
 EOF_DIAGNOSTICS_STEP
 )
     redacted_diagnostics_not_completed='    "redacted diagnostics for this blocked run",'
+    doctor_step_json='    {"id": "doctor", "status": "not_run"}'
+    doctor_not_completed='    "doctor diagnostics for this blocked run",'
   fi
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
@@ -1119,7 +1124,8 @@ EOF_DIAGNOSTICS_STEP
     {"id": "ocr_worker_bounded_loop", "status": "blocked", "exit_code": $blocked_exit},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-$redacted_diagnostics_step_json
+$redacted_diagnostics_step_json,
+$doctor_step_json
   ],
   "redacted_outputs": [
     {"file": "dataset-manifest.local.json", "sha256": "$dataset_manifest_sha256_output"},
@@ -1136,7 +1142,8 @@ $redacted_diagnostics_step_json
     {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
-    {"file": "redacted-diagnostics.json", "sha256": $redacted_diagnostics_sha256_json}
+    {"file": "redacted-diagnostics.json", "sha256": $redacted_diagnostics_sha256_json},
+    {"file": "doctor.out", "sha256": $doctor_sha256_json}
   ],
   "privacy_sentinels": {
     "local_paths_included": false,
@@ -1153,6 +1160,7 @@ $redacted_diagnostics_step_json
     "500-query private baseline gate",
     "private real-corpus OCR throughput baseline",
 $redacted_diagnostics_not_completed
+$doctor_not_completed
     "release-readiness current-stage evidence",
     "P95/P99 latency reduction",
     "external 100k/1M validation",
@@ -1333,6 +1341,7 @@ write_release_readiness_blocked_summary() {
   private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.json")
   ocr_throughput_gate_sha256=$(sha256_file "$out_dir/ocr-throughput-gate.stdout.txt")
   redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
+  doctor_sha256=$(sha256_file "$out_dir/doctor.out")
   fault_simulation_sha256=$(sha256_file "$out_dir/fault-simulation-storage-low.json")
   fault_simulation_suite_sha256=$(sha256_file "$out_dir/fault-simulation-suite-local-safe.json")
   release_readiness_sha256=$(sha256_file "$out_dir/release-readiness.json")
@@ -1395,6 +1404,7 @@ write_release_readiness_blocked_summary() {
     {"id": "private_ocr_throughput_baseline", "status": "success"},
     {"id": "ocr_throughput_baseline_gate", "status": "success"},
     {"id": "redacted_diagnostics", "status": "success"},
+    {"id": "doctor", "status": "success"},
     {"id": "fault_simulation_smoke", "status": "success"},
     {"id": "fault_simulation_suite", "status": "success"},
     {"id": "release_readiness_intake", "status": "blocked", "exit_code": $blocked_exit}
@@ -1421,6 +1431,7 @@ write_release_readiness_blocked_summary() {
     {"file": "private-ocr-throughput.json", "sha256": "$private_ocr_throughput_sha256"},
     {"file": "ocr-throughput-gate.stdout.txt", "sha256": "$ocr_throughput_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
+    {"file": "doctor.out", "sha256": "$doctor_sha256"},
     {"file": "fault-simulation-storage-low.json", "sha256": "$fault_simulation_sha256"},
     {"file": "fault-simulation-suite-local-safe.json", "sha256": "$fault_simulation_suite_sha256"},
     {"file": "release-readiness.json", "sha256": "$release_readiness_sha256"},
@@ -2385,6 +2396,17 @@ if [ "$validation_profile" = "full" ] && corpus_summary_has_bounded_ocr_backlog 
     fi
     exit "$redacted_diagnostics_status"
   fi
+  printf '%s\n' "current-stage validation: doctor"
+  set +e
+  "$resume_cli" --data-dir "$data_dir" doctor \
+    > "$out_dir/doctor.out"
+  doctor_status=$?
+  set -e
+  if [ "$doctor_status" -ne 0 ]; then
+    write_ocr_backlog_blocked_summary 1
+    printf '%s\n' "current-stage validation blocked: bounded OCR backlog remains; doctor failed" >&2
+    exit "$doctor_status"
+  fi
   printf '%s\n' "current-stage validation blocked: bounded OCR backlog remains" >&2
   exit 1
 fi
@@ -2668,6 +2690,18 @@ if ! validate_redacted_diagnostics_report "$out_dir/redacted-diagnostics.json"; 
   exit 1
 fi
 
+printf '%s\n' "current-stage validation: doctor"
+set +e
+"$resume_cli" --data-dir "$data_dir" doctor \
+  > "$out_dir/doctor.out"
+doctor_status=$?
+set -e
+if [ "$doctor_status" -ne 0 ]; then
+  write_redacted_diagnostics_blocked_summary "$doctor_status" "doctor_failed"
+  printf '%s\n' "current-stage validation blocked: doctor failed" >&2
+  exit "$doctor_status"
+fi
+
 printf '%s\n' "current-stage validation: fault simulation smoke"
 set +e
 "$resume_cli" --data-dir "$data_dir" fault-simulate \
@@ -2718,6 +2752,7 @@ if [ "$validation_profile" = "smoke" ]; then
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
   redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
+  doctor_sha256=$(sha256_file "$out_dir/doctor.out")
   fault_simulation_sha256=$(sha256_file "$out_dir/fault-simulation-storage-low.json")
   fault_simulation_suite_sha256=$(sha256_file "$out_dir/fault-simulation-suite-local-safe.json")
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
@@ -2772,6 +2807,7 @@ if [ "$validation_profile" = "smoke" ]; then
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "smoke_success"},
     {"id": "redacted_diagnostics", "status": "success"},
+    {"id": "doctor", "status": "success"},
     {"id": "fault_simulation_smoke", "status": "success"},
     {"id": "fault_simulation_suite", "status": "success"}
   ],
@@ -2795,6 +2831,7 @@ if [ "$validation_profile" = "smoke" ]; then
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
+    {"file": "doctor.out", "sha256": "$doctor_sha256"},
     {"file": "fault-simulation-storage-low.json", "sha256": "$fault_simulation_sha256"},
     {"file": "fault-simulation-suite-local-safe.json", "sha256": "$fault_simulation_suite_sha256"}
   ],
@@ -2885,6 +2922,7 @@ private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.std
 private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.json")
 ocr_throughput_gate_sha256=$(sha256_file "$out_dir/ocr-throughput-gate.stdout.txt")
 redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
+doctor_sha256=$(sha256_file "$out_dir/doctor.out")
 fault_simulation_sha256=$(sha256_file "$out_dir/fault-simulation-storage-low.json")
 fault_simulation_suite_sha256=$(sha256_file "$out_dir/fault-simulation-suite-local-safe.json")
 release_readiness_sha256=$(sha256_file "$out_dir/release-readiness.json")
@@ -2939,6 +2977,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"id": "private_ocr_throughput_baseline", "status": "success"},
     {"id": "ocr_throughput_baseline_gate", "status": "success"},
     {"id": "redacted_diagnostics", "status": "success"},
+    {"id": "doctor", "status": "success"},
     {"id": "fault_simulation_smoke", "status": "success"},
     {"id": "fault_simulation_suite", "status": "success"},
     {"id": "release_readiness_intake", "status": "$release_readiness_step_status", "exit_code": $release_status}
@@ -2965,6 +3004,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"file": "private-ocr-throughput.json", "sha256": "$private_ocr_throughput_sha256"},
     {"file": "ocr-throughput-gate.stdout.txt", "sha256": "$ocr_throughput_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
+    {"file": "doctor.out", "sha256": "$doctor_sha256"},
     {"file": "fault-simulation-storage-low.json", "sha256": "$fault_simulation_sha256"},
     {"file": "fault-simulation-suite-local-safe.json", "sha256": "$fault_simulation_suite_sha256"},
     {"file": "release-readiness.json", "sha256": "$release_readiness_sha256"},

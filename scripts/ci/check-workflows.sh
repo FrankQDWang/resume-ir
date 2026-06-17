@@ -138,6 +138,10 @@ require_text "$current_stage_handoff_script" "resume-ir.current-stage-handoff.v1
 require_text "$current_stage_handoff_script" "current-stage handoff check passed"
 require_text "$current_stage_handoff_script" "PRIVATE-current-stage"
 
+require_text "scripts/ci/check-current-stage-validation.sh" '"doctor", "status": "success"'
+require_text "scripts/ci/check-current-stage-validation.sh" '"doctor.out"'
+require_text "scripts/local/run-current-stage-validation.sh" 'current-stage validation: doctor'
+
 require_text "$release_workflow" "scripts/release/create-artifact-manifest.sh"
 require_text "$release_workflow" "scripts/release/create-signing-evidence.sh"
 require_text "$release_workflow" "scripts/release/create-sbom.sh"

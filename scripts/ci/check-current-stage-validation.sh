@@ -433,6 +433,13 @@ case "$cmd:$sub" in
     fi
     printf '{"schema_version":"diagnostics.v1","redacted":true,"raw_paths":"<redacted>","raw_queries":"<redacted>","raw_resume_text":"<redacted>","metadata":{"indexed_documents":8720,"searchable_documents":8720},"search_index_state":"available","vector_index_state":"available","query_latency":{"sample_count":500,"raw_queries":"<redacted>"},"resource_telemetry":{"status":"available","paths":"<redacted>"},"ocr_runtime":{"paths":"<redacted>","pdftoppm":"available","tesseract":"available","requested_language":"eng","requested_language_status":"available"},"diagnostic_scope":{"metadata":"aggregate_counts","search_index":"state_and_snapshot_health","vector_index":"state_backend_and_counts","query_latency":"aggregate_observations","runtime_dependencies":"presence_only","fault_simulations":"available_cases_only"},"evidence_level":"local_aggregate_only"}\n'
     ;;
+  doctor:*)
+    printf 'resume-ir doctor\n'
+    printf 'search index: available (full-text snapshot)\n'
+    printf 'vector index: available (hnsw ann vector snapshot)\n'
+    printf 'metadata encryption: sqlcipher\n'
+    printf 'paths: <redacted>\n'
+    ;;
   fault-simulate:*)
     if [ "${FAKE_FAULT_SIMULATION_MODE:-ready}" = "failed" ]; then
       printf 'fault simulation blocked: fake fault probe failure\n' >&2
@@ -652,6 +659,8 @@ require_text "$evidence_manifest" '"private-benchmark-local.json"'
 require_text "$evidence_manifest" '"private-ocr-throughput.json"'
 require_text "$evidence_manifest" '"ocr-throughput-gate.stdout.txt"'
 require_text "$evidence_manifest" '"redacted-diagnostics.json"'
+require_text "$evidence_manifest" '"doctor", "status": "success"'
+require_text "$evidence_manifest" '"doctor.out"'
 require_text "$evidence_manifest" '"fault_simulation_smoke"'
 require_text "$evidence_manifest" '"fault-simulation-storage-low.json"'
 require_text "$evidence_manifest" '"fault_simulation_suite"'
@@ -711,6 +720,8 @@ require_text "$smoke_summary" '"document_status_counts": {'
 require_text "$smoke_summary" '"ingest_job_kind_status_counts": {'
 require_text "$smoke_summary" '"private_query_baseline"'
 require_text "$smoke_summary" '"redacted_diagnostics"'
+require_text "$smoke_summary" '"doctor", "status": "success"'
+require_text "$smoke_summary" '"doctor.out"'
 require_text "$smoke_summary" '"fault_simulation_smoke"'
 require_text "$smoke_summary" '"fault-simulation-storage-low.json"'
 require_text "$smoke_summary" '"fault_simulation_suite"'
@@ -773,8 +784,10 @@ require_text "$ocr_backlog_summary" '"ocr_required": 8538'
 require_text "$ocr_backlog_summary" '"vector_indexed_document_count": 0'
 require_text "$ocr_backlog_summary" '"hot_index_fully_covered": false'
 require_text "$ocr_backlog_summary" '"redacted_diagnostics", "status": "success"'
+require_text "$ocr_backlog_summary" '"doctor", "status": "success"'
 require_text "$ocr_backlog_summary" '"benchmark-corpus-summary.local.json"'
 require_text "$ocr_backlog_summary" '"redacted-diagnostics.json"'
+require_text "$ocr_backlog_summary" '"doctor.out"'
 require_text "$ocr_backlog_summary" '"full 10k/8000-document current-stage baseline"'
 require_current_stage_handoff \
   "blocked" \

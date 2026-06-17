@@ -139,12 +139,13 @@ document IDs, query text, raw resume text, report bodies, indexes, SQLite data,
 or diagnostics.
 In full-profile execute mode, if the bounded OCR worker leaves OCR-required
 documents and the hot index is still not fully covered, the script writes
-`redacted-diagnostics.json` with `export-diagnostics --redact`, then stops
-before query-set generation and writes `current-stage-blocked-summary.json` with
+`redacted-diagnostics.json` with `export-diagnostics --redact`, runs `doctor`
+against the same local data directory, then stops before query-set generation
+and writes `current-stage-blocked-summary.json` with
 `blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, and
 `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`. The blocked
-summary records the diagnostics output only by basename and SHA-256 digest. This
-is the expected current-stage handoff for an OCR-heavy private corpus; it is not
+summary records the diagnostics and doctor outputs only by basename and SHA-256
+digest. This is the expected current-stage handoff for an OCR-heavy private corpus; it is not
 release-clearing evidence and must not be passed to `--current-stage-evidence`
 or used to claim the 10k/8000-document baseline is complete. It may be passed to
 `release-readiness --current-stage-blocked-summary` only as non-clearing
@@ -235,9 +236,9 @@ reviewed manifests, imports the selected root, runs bounded OCR and embedding
 worker loops, writes `benchmark-corpus-summary.local.json`, writes the private
 query baseline report, runs the current-stage baseline shape gate, writes the
 private OCR throughput baseline report, runs the current-stage OCR throughput
-baseline gate, exports redacted diagnostics, and feeds the local evidence into
-the local safe synthetic fault probe before feeding the redacted local evidence
-into `release-readiness`.
+baseline gate, exports redacted diagnostics, runs `doctor` against the same
+local data directory, and feeds the local evidence into the local safe synthetic
+fault probe before feeding the redacted local evidence into `release-readiness`.
 At the end it also writes
 `current-stage-validation-evidence.json` with schema
 `resume-ir.current-stage-validation-evidence.v1` and privacy boundary
@@ -258,8 +259,8 @@ exposing the local evidence directory or report bodies. The required output
 inventory includes the dataset manifest, query set, OCR/model preflight logs,
 bounded worker stdout, corpus summary, private benchmark report, benchmark gate
 stdout, private OCR throughput report, OCR throughput gate stdout, redacted
-diagnostics, `fault-simulation-storage-low.json`, and release-readiness
-stdout/stderr digests.
+diagnostics, `doctor.out`, `fault-simulation-storage-low.json`, and
+release-readiness stdout/stderr digests.
 The `redacted_outputs` inventory must contain exactly those expected basenames;
 unknown extra files are rejected even when their names are basename-only.
 The `steps` array must exactly match the ordered local validation flow; duplicate
