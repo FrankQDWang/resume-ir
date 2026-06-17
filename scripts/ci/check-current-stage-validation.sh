@@ -53,53 +53,8 @@ require_current_stage_handoff() {
 require_full_evidence_observability() {
   file="$1"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required for current-stage observability validation"
-  python3 - "$file" <<'PY' || fail "current-stage full evidence observability is invalid"
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, encoding="utf-8") as handle:
-    document = json.load(handle)
-
-observability = document.get("corpus_summary_observability")
-if not isinstance(observability, dict):
-    raise SystemExit("missing corpus_summary_observability")
-
-if observability.get("privacy_boundary") != "redacted_local_aggregate":
-    raise SystemExit("invalid privacy boundary")
-
-document_count = observability.get("document_count")
-searchable_count = observability.get("searchable_document_count")
-vector_count = observability.get("vector_indexed_document_count")
-if not isinstance(document_count, int) or document_count < 8000:
-    raise SystemExit("document_count below current-stage floor")
-if not isinstance(searchable_count, int) or not 0 <= searchable_count <= document_count:
-    raise SystemExit("searchable_document_count is inconsistent")
-if not isinstance(vector_count, int) or not 0 <= vector_count <= searchable_count:
-    raise SystemExit("vector_indexed_document_count is inconsistent")
-if observability.get("hot_index_fully_covered") is not True:
-    raise SystemExit("hot index coverage must be true for full evidence")
-
-for key in (
-    "document_status_counts",
-    "ingest_job_status_counts",
-    "ingest_job_kind_status_counts",
-    "ingest_job_failure_counts",
-):
-    if not isinstance(observability.get(key), dict):
-        raise SystemExit(f"{key} must be an object")
-
-for forbidden in (
-    "resume_root",
-    "data_dir",
-    "out_dir",
-    "raw_resume_text",
-    "raw_query_text",
-    "sample_ids",
-):
-    if forbidden in observability:
-        raise SystemExit(f"forbidden observability field: {forbidden}")
-PY
+  python3 scripts/ci/validate-current-stage-observability.py --full-evidence "$file" \
+    || fail "current-stage full evidence observability is invalid"
 }
 
 sha256_file() {
