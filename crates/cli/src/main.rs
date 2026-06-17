@@ -1508,6 +1508,11 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
     require_release_evidence_string(preflight_probes, "ocr_runtime_probe", "passed", CONTEXT)?;
     require_release_evidence_string(preflight_probes, "embedding_protocol", "passed", CONTEXT)?;
 
+    let observability = object
+        .get("corpus_summary_observability")
+        .ok_or_else(|| release_evidence_invalid(CONTEXT, "corpus_summary_observability"))?;
+    validate_current_stage_aggregate_observability(observability, CONTEXT)?;
+
     let steps = require_release_evidence_array(object, "steps", CONTEXT)?;
     require_release_evidence_exact_steps(
         steps,
@@ -1866,9 +1871,10 @@ fn validate_current_stage_blocked_summary_manifest(
         }
     }
 
-    if let Some(observability) = object.get("corpus_summary_observability") {
-        validate_current_stage_aggregate_observability(observability, CONTEXT)?;
-    }
+    let observability = object
+        .get("corpus_summary_observability")
+        .ok_or_else(|| release_evidence_invalid(CONTEXT, "corpus_summary_observability"))?;
+    validate_current_stage_aggregate_observability(observability, CONTEXT)?;
 
     let steps = require_release_evidence_array(object, "steps", CONTEXT)?;
     let mut step_statuses = BTreeMap::new();

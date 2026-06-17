@@ -1603,6 +1603,52 @@ fn release_readiness_rejects_current_stage_evidence_with_mismatched_diagnostics_
 }
 
 #[test]
+fn release_readiness_rejects_current_stage_evidence_missing_observability_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-current-stage-no-observability-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-no-observability-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    let mut evidence: serde_json::Value =
+        serde_json::from_str(&current_stage_evidence_manifest()).unwrap();
+    evidence
+        .as_object_mut()
+        .unwrap()
+        .remove("corpus_summary_observability");
+    fs::write(
+        &current_stage_evidence,
+        serde_json::to_string(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence missing observability");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_current_stage_blocked_summary_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-current-stage-blocked-private-data");
     let evidence_dir = temp_path("release-readiness-current-stage-blocked-private-reports");
@@ -2698,6 +2744,17 @@ fn current_stage_evidence_manifest() -> String {
         "\"preflight_probes\":{",
         "\"ocr_runtime_probe\":\"passed\",",
         "\"embedding_protocol\":\"passed\"",
+        "},",
+        "\"corpus_summary_observability\":{",
+        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"document_count\":8720,",
+        "\"searchable_document_count\":8720,",
+        "\"vector_indexed_document_count\":8720,",
+        "\"hot_index_fully_covered\":true,",
+        "\"document_status_counts\":{\"searchable\":8720},",
+        "\"ingest_job_status_counts\":{\"completed\":8720},",
+        "\"ingest_job_kind_status_counts\":{\"update_index\":{\"completed\":8720}},",
+        "\"ingest_job_failure_counts\":{}",
         "},",
         "\"steps\":[",
         "{\"id\":\"ocr_preflight\",\"status\":\"success\"},",

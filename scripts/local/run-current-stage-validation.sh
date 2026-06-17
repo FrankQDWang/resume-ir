@@ -2929,6 +2929,7 @@ release_readiness_sha256=$(sha256_file "$out_dir/release-readiness.json")
 release_readiness_stderr_sha256=$(sha256_file "$out_dir/release-readiness.stderr.txt")
 dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
 dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
+corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
 
 cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
 {
@@ -2959,6 +2960,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     "ocr_runtime_probe": "passed",
     "embedding_protocol": "passed"
   },
+  "corpus_summary_observability": $corpus_summary_observability,
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
     {"id": "ocr_manifest_draft", "status": "success"},
