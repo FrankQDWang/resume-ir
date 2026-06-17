@@ -529,13 +529,46 @@ case "${1:-}" in
       printf 'private query baseline blocked: query protocol failed\n' >&2
       exit 1
     fi
-    printf '{"schema_version":"benchmark.private-query.v1","dataset_kind":"private-real-corpus","target_claim":"benchmark_baseline_observed"}\n'
+    if [ "${FAKE_BENCHMARK_MODE:-pass}" = "private-query-invalid" ]; then
+      printf '{"schema_version":"benchmark.private-query.v1","dataset_kind":"private-real-corpus","target_claim":"benchmark_baseline_observed"}\n'
+      exit 0
+    fi
+    printf '{"schema_version":"benchmark.v1","run_id":"current_stage_fake","platform":"ci/fake","dataset_kind":"private-real-corpus","document_count":8720,"searchable_document_count":8720,"vector_indexed_document_count":8720,"query_count":500,"top_k":10,"build_ms":1.0,"query_total_ms":5000.0,"qps":100.0,"index_size_bytes":1000,"query_latency_ms":{"samples":500,"min":1.0,"mean":5.0,"p50":5.0,"p95":42.0,"p99":84.0,"max":100.0},"zero_result_queries":0,"total_hits":5000,"million_scale_verified":false,"percentile_confidence":"sampled","target_claim":"benchmark_baseline_observed","scope":"private local real-corpus query benchmark; aggregate redacted report only","corpus_origin":"private_local","privacy_boundary":"redacted_local_aggregate","query_protocol":"resume-ir-query-v1","query_mode":"hybrid","retrieval_layers":"fulltext+field+vector+rrf","hot_index":true,"hot_path_ocr":false,"hot_path_parsing":false,"hot_path_heavy_model_inference":false,"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"dataset_manifest_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","query_set_sha256":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","model_manifest_sha256":"1111111111111111111111111111111111111111111111111111111111111111","corpus_summary_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}\n'
     ;;
   gate)
     if [ "${FAKE_BENCHMARK_MODE:-pass}" = "gate-failed" ]; then
       printf 'benchmark gate blocked: private real-corpus hot-index coverage floor not met\n' >&2
       exit 1
     fi
+    report_path=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --report)
+          shift
+          report_path="${1:-}"
+          ;;
+      esac
+      shift || true
+    done
+    if [ -z "$report_path" ] || [ ! -s "$report_path" ]; then
+      printf 'benchmark gate blocked: missing benchmark report\n' >&2
+      exit 1
+    fi
+    for required in \
+      '"schema_version":"benchmark.v1"' \
+      '"dataset_kind":"private-real-corpus"' \
+      '"privacy_boundary":"redacted_local_aggregate"' \
+      '"contains_raw_resume_text":false' \
+      '"contains_resume_paths":false' \
+      '"contains_queries":false' \
+      '"query_latency_ms":' \
+      '"samples":500'
+    do
+      if ! grep -Fq "$required" "$report_path"; then
+        printf 'benchmark gate blocked: invalid private benchmark report\n' >&2
+        exit 1
+      fi
+    done
     printf 'benchmark gate passed\n'
     ;;
   private-ocr-throughput)
@@ -574,6 +607,9 @@ run_execute_smoke() {
   fi
   if [ "$mode" = "private-query-failed" ]; then
     benchmark_mode="private-query-failed"
+  fi
+  if [ "$mode" = "private-query-invalid" ]; then
+    benchmark_mode="private-query-invalid"
   fi
   if [ "$mode" = "private-ocr-throughput-failed" ]; then
     benchmark_mode="private-ocr-throughput-failed"
@@ -1029,6 +1065,45 @@ reject_text "$tmpdir/execute-private-query-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-private-query-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-private-query-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-private-query-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke private-query-invalid
+private_query_invalid_status=$(cat "$tmpdir/execute-private-query-invalid-status.txt")
+if [ "$private_query_invalid_status" -eq 0 ]; then
+  fail "current-stage full profile accepted invalid private query benchmark report"
+fi
+private_query_invalid_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$private_query_invalid_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on invalid private query benchmark report"
+fi
+if [ -e "$execute_out_dir/redacted-diagnostics.json" ]; then
+  fail "current-stage execute ran diagnostics after invalid private query benchmark report"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage execute ran release-readiness after invalid private query benchmark report"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage execute wrote full evidence after invalid private query benchmark report"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$private_query_invalid_summary" >/dev/null
+fi
+require_text "$private_query_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$private_query_invalid_summary" '"blocked_step": "baseline_shape_gate"'
+require_text "$private_query_invalid_summary" '"blocked_category": "benchmark"'
+require_text "$private_query_invalid_summary" '"blocked_reason": "baseline_shape_gate_failed"'
+require_text "$private_query_invalid_summary" '"private-benchmark-local.json"'
+require_text "$private_query_invalid_summary" '"private-benchmark-gate.stdout.txt"'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
+reject_text "$private_query_invalid_summary" "$tmpdir"
+reject_text "$private_query_invalid_summary" "PRIVATE-current-stage"
+reject_text "$private_query_invalid_summary" "private fake query"
+require_text "$tmpdir/execute-private-query-invalid-stderr.txt" "current-stage validation blocked: baseline shape gate failed"
+reject_text "$tmpdir/execute-private-query-invalid-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-private-query-invalid-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-private-query-invalid-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-private-query-invalid-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke diagnostics-failed
 diagnostics_failed_status=$(cat "$tmpdir/execute-diagnostics-failed-status.txt")
