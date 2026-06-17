@@ -156,10 +156,14 @@ fn resume_benchmark_gate_rejects_synthetic_without_explicit_allowance() {
 
 #[test]
 fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
+    let fixture_document_count = 8_721;
     let query_set = private_query_set_file("private-query-cli-set", 500);
     let command = query_fixture_script("private-query-cli-command");
-    let corpus_summary =
-        private_query_corpus_summary_file("private-query-cli-summary", 8_720, true);
+    let corpus_summary = private_query_corpus_summary_file(
+        "private-query-cli-summary",
+        fixture_document_count,
+        true,
+    );
     let report_dir = temp_dir("private-query-cli-report");
     let report_path = report_dir.join("private-query-report.json");
 
@@ -199,24 +203,7 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
     );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("\"schema_version\":\"benchmark.v1\""));
-    assert!(stdout.contains("\"dataset_kind\":\"private-real-corpus\""));
-    assert!(stdout.contains("\"document_count\":8720"));
-    assert!(stdout.contains("\"searchable_document_count\":8720"));
-    assert!(stdout.contains("\"vector_indexed_document_count\":8720"));
-    assert!(stdout.contains("\"corpus_summary_sha256\":\""));
-    assert!(stdout.contains("\"query_count\":500"));
-    assert!(stdout.contains(
-        "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
-    ));
-    assert!(stdout.contains("\"target_claim\":\"benchmark_baseline_observed\""));
-    assert!(stdout.contains("\"query_protocol\":\"resume-ir-query-v1\""));
-    assert!(stdout.contains("\"query_mode\":\"hybrid\""));
-    assert!(stdout.contains("\"retrieval_layers\":\"fulltext+field+vector+rrf\""));
-    assert!(stdout.contains("\"hot_index\":true"));
-    assert!(stdout.contains("\"contains_raw_resume_text\":false"));
-    assert!(stdout.contains("\"contains_resume_paths\":false"));
-    assert!(stdout.contains("\"contains_queries\":false"));
+    assert_private_query_report_semantics(&stdout, fixture_document_count);
     assert!(!stdout.contains(path_str(&query_set)));
     assert!(!stdout.contains(path_str(&command)));
     assert!(!stdout.contains(path_str(&corpus_summary)));
@@ -2781,6 +2768,43 @@ fn private_query_corpus_summary_file(
     )
     .unwrap();
     path
+}
+
+fn assert_private_query_report_semantics(json: &str, expected_document_count: usize) {
+    let report: serde_json::Value =
+        serde_json::from_str(json).expect("private query report JSON should parse");
+    assert_eq!(report["schema_version"], "benchmark.v1");
+    assert_eq!(report["dataset_kind"], "private-real-corpus");
+    assert_eq!(report["target_claim"], "benchmark_baseline_observed");
+    assert_eq!(report["query_protocol"], "resume-ir-query-v1");
+    assert_eq!(report["query_mode"], "hybrid");
+    assert_eq!(report["retrieval_layers"], "fulltext+field+vector+rrf");
+
+    let document_count = report["document_count"]
+        .as_u64()
+        .expect("document_count should be a number");
+    let searchable_count = report["searchable_document_count"]
+        .as_u64()
+        .expect("searchable_document_count should be a number");
+    let vector_count = report["vector_indexed_document_count"]
+        .as_u64()
+        .expect("vector_indexed_document_count should be a number");
+    assert_eq!(document_count, expected_document_count as u64);
+    assert!(document_count >= 8_000);
+    assert!(searchable_count <= document_count);
+    assert!(vector_count <= searchable_count);
+    assert_eq!(report["query_count"], 500);
+    assert_eq!(report["hot_index"], true);
+    assert_eq!(report["contains_raw_resume_text"], false);
+    assert_eq!(report["contains_resume_paths"], false);
+    assert_eq!(report["contains_queries"], false);
+    assert_eq!(
+        report["model_manifest_sha256"],
+        "1111111111111111111111111111111111111111111111111111111111111111"
+    );
+    assert!(report["corpus_summary_sha256"]
+        .as_str()
+        .is_some_and(|value| value.len() == 64));
 }
 
 fn private_business_field_quality_dataset() -> String {

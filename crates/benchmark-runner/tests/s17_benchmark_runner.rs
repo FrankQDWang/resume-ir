@@ -62,10 +62,11 @@ fn synthetic_query_benchmark_rejects_empty_workloads() {
 
 #[test]
 fn private_query_benchmark_outputs_redacted_gateable_report() {
+    let fixture_document_count = 8_721;
     let query_set = private_query_set_file("private-query-benchmark-set", 500);
     let command = query_fixture_script("private-query-benchmark-command");
     let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
-        private_query_corpus_summary_json(8_720, true),
+        private_query_corpus_summary_json(fixture_document_count, true),
     )
     .unwrap();
     let manifests = PrivateQueryManifestDigests::new(
@@ -91,39 +92,19 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
 
     let report = run_private_query_benchmark(config).unwrap();
 
-    assert_eq!(report.document_count(), 8_720);
-    assert_eq!(report.searchable_document_count(), 8_720);
-    assert_eq!(report.vector_indexed_document_count(), 8_720);
+    assert_eq!(report.document_count(), fixture_document_count);
+    assert_eq!(report.searchable_document_count(), fixture_document_count);
+    assert_eq!(
+        report.vector_indexed_document_count(),
+        fixture_document_count
+    );
     assert_eq!(report.query_count(), 500);
     assert_eq!(report.top_k(), 10);
     assert_eq!(report.zero_result_queries(), 0);
     assert_eq!(report.latency().samples(), 500);
     assert!(report.qps() > 0.0);
     let json = report.to_redacted_json();
-    assert!(json.contains("\"schema_version\":\"benchmark.v1\""));
-    assert!(json.contains("\"dataset_kind\":\"private-real-corpus\""));
-    assert!(json.contains("\"document_count\":8720"));
-    assert!(json.contains("\"searchable_document_count\":8720"));
-    assert!(json.contains("\"vector_indexed_document_count\":8720"));
-    assert!(json.contains("\"corpus_summary_sha256\":\""));
-    assert!(json.contains("\"query_count\":500"));
-    assert!(json.contains(
-        "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
-    ));
-    assert!(json.contains("\"target_claim\":\"benchmark_baseline_observed\""));
-    assert!(json.contains("\"query_protocol\":\"resume-ir-query-v1\""));
-    assert!(json.contains("\"query_mode\":\"hybrid\""));
-    assert!(json.contains("\"retrieval_layers\":\"fulltext+field+vector+rrf\""));
-    assert!(json.contains("\"hot_index\":true"));
-    assert!(json.contains("\"hot_path_ocr\":false"));
-    assert!(json.contains("\"hot_path_parsing\":false"));
-    assert!(json.contains("\"hot_path_heavy_model_inference\":false"));
-    assert!(json.contains("\"contains_raw_resume_text\":false"));
-    assert!(json.contains("\"contains_resume_paths\":false"));
-    assert!(json.contains("\"contains_queries\":false"));
-    assert!(json.contains(
-        "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\""
-    ));
+    assert_private_query_report_semantics(&json, fixture_document_count);
     assert!(!json.contains(path_str(&query_set)));
     assert!(!json.contains(path_str(&command)));
     assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
@@ -132,7 +113,7 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
     let gate = BenchmarkGateConfig::new(8_000, 500, 10_000.0).require_private_real_corpus();
     let evaluation = evaluate_benchmark_gate_json(&json, gate).unwrap();
     assert_eq!(evaluation.dataset_kind(), "private-real-corpus");
-    assert_eq!(evaluation.document_count(), 8_720);
+    assert_eq!(evaluation.document_count(), fixture_document_count);
     assert_eq!(evaluation.query_count(), 500);
 
     remove_dir(query_set.parent().unwrap());
@@ -2441,6 +2422,50 @@ fn private_query_corpus_summary_json(document_count: usize, hot_index: bool) -> 
         document_count, searchable_count, vector_count, vector_count, vector_count, hot_index
     )
     .into_bytes()
+}
+
+fn assert_private_query_report_semantics(json: &str, expected_document_count: usize) {
+    let report: serde_json::Value =
+        serde_json::from_str(json).expect("private query report JSON should parse");
+    assert_eq!(report["schema_version"], "benchmark.v1");
+    assert_eq!(report["dataset_kind"], "private-real-corpus");
+    assert_eq!(report["target_claim"], "benchmark_baseline_observed");
+    assert_eq!(report["query_protocol"], "resume-ir-query-v1");
+    assert_eq!(report["query_mode"], "hybrid");
+    assert_eq!(report["retrieval_layers"], "fulltext+field+vector+rrf");
+    assert_eq!(
+        report["scope"],
+        "private local real-corpus query benchmark; aggregate redacted report only"
+    );
+
+    let document_count = report["document_count"]
+        .as_u64()
+        .expect("document_count should be a number");
+    let searchable_count = report["searchable_document_count"]
+        .as_u64()
+        .expect("searchable_document_count should be a number");
+    let vector_count = report["vector_indexed_document_count"]
+        .as_u64()
+        .expect("vector_indexed_document_count should be a number");
+    assert_eq!(document_count, expected_document_count as u64);
+    assert!(document_count >= 8_000);
+    assert!(searchable_count <= document_count);
+    assert!(vector_count <= searchable_count);
+    assert_eq!(report["query_count"], 500);
+    assert_eq!(report["hot_index"], true);
+    assert_eq!(report["hot_path_ocr"], false);
+    assert_eq!(report["hot_path_parsing"], false);
+    assert_eq!(report["hot_path_heavy_model_inference"], false);
+    assert_eq!(report["contains_raw_resume_text"], false);
+    assert_eq!(report["contains_resume_paths"], false);
+    assert_eq!(report["contains_queries"], false);
+    assert_eq!(
+        report["model_manifest_sha256"],
+        "1111111111111111111111111111111111111111111111111111111111111111"
+    );
+    assert!(report["corpus_summary_sha256"]
+        .as_str()
+        .is_some_and(|value| value.len() == 64));
 }
 
 fn private_business_field_quality_dataset() -> String {
