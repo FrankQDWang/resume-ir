@@ -67,6 +67,8 @@ bad_summary="$tmpdir/PRIVATE-bad-summary.json"
 bad_out="$tmpdir/bad-handoff.json"
 bad_boundary_summary="$tmpdir/PRIVATE-bad-boundary-summary.json"
 bad_boundary_out="$tmpdir/bad-boundary-handoff.json"
+bad_missing_blocked_observability="$tmpdir/PRIVATE-bad-missing-blocked-observability.json"
+bad_missing_full_observability="$tmpdir/PRIVATE-bad-missing-full-observability.json"
 
 cat > "$smoke_summary" <<'JSON'
 {
@@ -161,7 +163,9 @@ cat > "$bad_boundary_summary" <<'JSON'
     "ocr_runtime_probe": "passed",
     "embedding_protocol": "passed"
   },
-  "steps": [],
+  "steps": [
+    {"id": "corpus_summary", "status": "success"}
+  ],
   "must_not_upload": [
     "raw resumes"
   ]
@@ -169,6 +173,36 @@ cat > "$bad_boundary_summary" <<'JSON'
 JSON
 if python3 "$script" --input "$bad_boundary_summary" --out "$bad_boundary_out" 2>/dev/null; then
   fail "current-stage handoff accepted an invalid source privacy_boundary"
+fi
+
+cat > "$bad_missing_blocked_observability" <<'JSON'
+{
+  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "privacy_boundary": "local_only_redacted_blocked_summary",
+  "validation_profile": "full",
+  "current_stage_target": "reproducible_local_10k_baseline",
+  "full_baseline_satisfied": false,
+  "release_readiness_evidence": false,
+  "performance_optimization_deferred": true,
+  "blocked_step": "import_private_corpus",
+  "blocked_category": "import/parser",
+  "blocked_reason": "import_private_corpus_failed",
+  "blocked_exit": 7,
+  "private_corpus_read": true,
+  "preflight_probes": {
+    "ocr_runtime_probe": "passed",
+    "embedding_protocol": "passed"
+  },
+  "steps": [
+    {"id": "corpus_summary", "status": "success"}
+  ],
+  "must_not_upload": [
+    "raw resumes"
+  ]
+}
+JSON
+if python3 "$script" --input "$bad_missing_blocked_observability" --out "$bad_out" 2>/dev/null; then
+  fail "current-stage handoff accepted a private-corpus blocked summary without observability"
 fi
 
 cat > "$blocked_summary" <<'JSON'
@@ -188,6 +222,30 @@ cat > "$blocked_summary" <<'JSON'
   "preflight_probes": {
     "ocr_runtime_probe": "passed",
     "embedding_protocol": "passed"
+  },
+  "corpus_summary_observability": {
+    "privacy_boundary": "redacted_local_aggregate",
+    "document_count": 8000,
+    "searchable_document_count": 200,
+    "vector_indexed_document_count": 200,
+    "hot_index_fully_covered": false,
+    "document_status_counts": {
+      "ocr_required": 7800,
+      "searchable": 200
+    },
+    "ingest_job_status_counts": {
+      "completed": 200,
+      "queued": 7800
+    },
+    "ingest_job_kind_status_counts": {
+      "ocr_document": {
+        "queued": 7800
+      },
+      "update_index": {
+        "completed": 200
+      }
+    },
+    "ingest_job_failure_counts": {}
   },
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
@@ -216,9 +274,32 @@ require_text "$blocked_out" '"next_action"'
 require_text "$blocked_out" '"category": "import/parser"'
 require_text "$blocked_out" '"recommended_next_step": "fix import/parser blocker and rerun current-stage validation"'
 require_text "$blocked_out" '"do_not_do": "do not chase P95/P99 optimization or require million-resume validation in current stage"'
+require_handoff_observability "$blocked_out" 8000
 reject_text "$blocked_out" "$tmpdir"
 reject_text "$blocked_out" "PRIVATE-current-stage"
 reject_regex "$blocked_out" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"
+
+cat > "$bad_missing_full_observability" <<'JSON'
+{
+  "schema_version": "resume-ir.current-stage-validation-evidence.v1",
+  "privacy_boundary": "local_only_redacted_evidence_manifest",
+  "current_stage_target": "reproducible_local_10k_baseline",
+  "full_baseline_satisfied": true,
+  "release_readiness_evidence": true,
+  "performance_optimization_deferred": true,
+  "preflight_probes": {
+    "ocr_runtime_probe": "passed",
+    "embedding_protocol": "passed"
+  },
+  "steps": [],
+  "must_not_upload": [
+    "raw resumes"
+  ]
+}
+JSON
+if python3 "$script" --input "$bad_missing_full_observability" --out "$bad_out" 2>/dev/null; then
+  fail "current-stage handoff accepted full evidence without observability"
+fi
 
 cat > "$full_evidence" <<'JSON'
 {
@@ -231,6 +312,25 @@ cat > "$full_evidence" <<'JSON'
   "preflight_probes": {
     "ocr_runtime_probe": "passed",
     "embedding_protocol": "passed"
+  },
+  "corpus_summary_observability": {
+    "privacy_boundary": "redacted_local_aggregate",
+    "document_count": 8000,
+    "searchable_document_count": 8000,
+    "vector_indexed_document_count": 8000,
+    "hot_index_fully_covered": true,
+    "document_status_counts": {
+      "searchable": 8000
+    },
+    "ingest_job_status_counts": {
+      "completed": 8000
+    },
+    "ingest_job_kind_status_counts": {
+      "update_index": {
+        "completed": 8000
+      }
+    },
+    "ingest_job_failure_counts": {}
   },
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
@@ -254,6 +354,7 @@ require_text "$full_out" '"complete_product": false'
 require_text "$full_out" '"full_baseline_satisfied": true'
 require_text "$full_out" '"release_readiness_evidence": true'
 require_text "$full_out" '"release_readiness_intake"'
+require_handoff_observability "$full_out" 8000
 reject_text "$full_out" "$tmpdir"
 reject_text "$full_out" "PRIVATE-current-stage"
 reject_regex "$full_out" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"

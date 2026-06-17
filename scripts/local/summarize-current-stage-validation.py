@@ -150,9 +150,30 @@ def not_complete_items(document: dict[str, Any]) -> list[dict[str, str]]:
     return output
 
 
-def observability(document: dict[str, Any]) -> dict[str, Any]:
-    value = document.get("corpus_summary_observability", {})
+def source_requires_observability(document: dict[str, Any], schema: str) -> bool:
+    if schema in {
+        "resume-ir.current-stage-smoke-summary.v1",
+        "resume-ir.current-stage-validation-evidence.v1",
+    }:
+        return True
+    if schema == "resume-ir.current-stage-blocked-summary.v1":
+        steps = document.get("steps", [])
+        if not isinstance(steps, list):
+            fail("steps must be an array")
+        return any(
+            isinstance(step, dict)
+            and step.get("id") == "corpus_summary"
+            and step.get("status") == "success"
+            for step in steps
+        )
+    return False
+
+
+def observability(document: dict[str, Any], schema: str) -> dict[str, Any]:
+    value = document.get("corpus_summary_observability")
     if value is None:
+        if source_requires_observability(document, schema):
+            fail("corpus_summary_observability is required for this handoff source")
         value = {}
     if not isinstance(value, dict):
         fail("corpus_summary_observability must be an object")
@@ -260,7 +281,7 @@ def build_handoff(document: dict[str, Any]) -> dict[str, Any]:
         "preflight_probes": preflight_probes(document),
         "blocked": blocked,
         "next_action": next_action(document, schema),
-        "observability": observability(document),
+        "observability": observability(document, schema),
         "completed_steps": completed_steps(document),
         "blocked_or_not_complete": not_complete_items(document),
         "must_not_upload": must_not_upload(document),
