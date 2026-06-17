@@ -24,6 +24,7 @@ fi
 ./scripts/ci/check-workflows.sh
 ./scripts/ci/check-release-readiness.sh
 ./scripts/ci/check-release-artifacts.sh
+./scripts/ci/check-release-publication-evidence.sh
 ./scripts/ci/check-signing-evidence.sh
 ./scripts/ci/check-notarization-evidence.sh
 ./scripts/ci/check-release-sbom.sh

@@ -200,6 +200,7 @@ signing_evidence="$tmpdir/signing-evidence.json"
 notarization_evidence="$tmpdir/notarization-evidence.json"
 release_artifacts="$tmpdir/release-artifacts.json"
 release_sbom="$tmpdir/release-sbom.json"
+release_publication_evidence="$tmpdir/release-publication-evidence.json"
 macos_package="$tmpdir/macos-package.json"
 windows_package="$tmpdir/windows-package.json"
 macos_installer_evidence="$tmpdir/macos-installer-evidence.json"
@@ -227,6 +228,9 @@ cat > "$release_artifacts" <<'JSON'
 JSON
 cat > "$release_sbom" <<'JSON'
 {"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"resume-ir-v0.0.0","documentNamespace":"https://github.com/FrankQDWang/resume-ir/sbom/v0.0.0","creationInfo":{"created":"2026-06-10T00:00:00Z","creators":["Tool: resume-ir-release-sbom"]},"packages":[{"SPDXID":"SPDXRef-Package-resume-cli","name":"resume-cli","versionInfo":"0.1.0","filesAnalyzed":false,"licenseDeclared":"MIT","externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":"pkg:cargo/resume-cli@0.1.0"}]},{"SPDXID":"SPDXRef-Package-resume-daemon","name":"resume-daemon","versionInfo":"0.1.0","filesAnalyzed":false,"licenseDeclared":"MIT","externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":"pkg:cargo/resume-daemon@0.1.0"}]},{"SPDXID":"SPDXRef-Package-benchmark-runner","name":"benchmark-runner","versionInfo":"0.1.0","filesAnalyzed":false,"licenseDeclared":"MIT","externalRefs":[{"referenceCategory":"PACKAGE-MANAGER","referenceType":"purl","referenceLocator":"pkg:cargo/benchmark-runner@0.1.0"}]}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-Package-resume-cli"},{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-Package-resume-daemon"},{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-Package-benchmark-runner"}]}
+JSON
+cat > "$release_publication_evidence" <<'JSON'
+{"schema_version":"release.publication_evidence.v1","version":"v0.0.0","publication_status":"blocked","evidence_boundary":"dry_run_no_release_publication","artifact_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifacts":[{"name":"resume-cli","file":"resume-cli","artifact_sha256":"1111111111111111111111111111111111111111111111111111111111111111","bytes":101,"upload_status":"blocked"},{"name":"resume-daemon","file":"resume-daemon","artifact_sha256":"2222222222222222222222222222222222222222222222222222222222222222","bytes":202,"upload_status":"blocked"},{"name":"resume-benchmark","file":"resume-benchmark","artifact_sha256":"3333333333333333333333333333333333333333333333333333333333333333","bytes":303,"upload_status":"blocked"}],"required_evidence":["human_release_approval","github_actions_release_token","github_release_upload_evidence"],"blocked_release_steps":["github_release_approval","github_release_create","github_release_upload","release_artifact_download_verification"],"prohibited_public_material":["github_token","release_pat","local_paths","raw_resume_data","diagnostic_packages","model_caches"],"notes":"Blocked GitHub Release publication dry run only; no GitHub API call, release creation, token access, or artifact upload was performed."}
 JSON
 cat > "$macos_package" <<'JSON'
 {"schema_version":"release.macos_package.v1","version":"v0.0.0","packaging_status":"unsigned_dry_run","install_location":"/usr/local/bin","signing_status":"unsigned","notarization_status":"not_requested","artifacts":[{"kind":"pkg","file":"resume-ir-v0.0.0-macos.pkg","sha256":"4444444444444444444444444444444444444444444444444444444444444444","bytes":404},{"kind":"dmg","file":"resume-ir-v0.0.0-macos.dmg","sha256":"5555555555555555555555555555555555555555555555555555555555555555","bytes":505}],"blocked_release_steps":["signing","notarization","github_release_upload","installer_lifecycle_validation","windows_msi"],"notes":"Unsigned local macOS package dry run only; no signing, notarization, installer lifecycle validation, GitHub Release upload, local data, or runtime data is included."}
@@ -447,6 +451,7 @@ set +e
   --data-dir "$data_dir" release-readiness --json \
   --release-artifact-manifest "$release_artifacts" \
   --release-sbom "$release_sbom" \
+  --release-publication-evidence "$release_publication_evidence" \
   --macos-package-manifest "$macos_package" \
   --windows-package-manifest "$windows_package" \
   --signing-evidence "$signing_evidence" \
@@ -471,6 +476,7 @@ require_text "$evidence_stdout_file" '"label": "signing automation evidence"'
 require_text "$evidence_stdout_file" '"label": "notarization automation evidence"'
 require_text "$evidence_stdout_file" '"label": "release artifact manifest evidence"'
 require_text "$evidence_stdout_file" '"label": "release SBOM evidence"'
+require_text "$evidence_stdout_file" '"label": "GitHub Release publication automation evidence"'
 require_text "$evidence_stdout_file" '"label": "macOS package manifest evidence"'
 require_text "$evidence_stdout_file" '"label": "Windows package manifest evidence"'
 require_text "$evidence_stdout_file" '"label": "macOS installer automation evidence"'
@@ -488,6 +494,7 @@ require_text "$evidence_stdout_file" "blocked dry-run evidence passed schema and
 require_text "$evidence_stdout_file" "current-stage validation evidence manifest passed redacted schema and digest checks"
 require_text "$evidence_stdout_file" "release.artifacts.v1 dry-run manifest passed schema and artifact boundary checks"
 require_text "$evidence_stdout_file" "SPDX-2.3 release dry-run SBOM passed redaction and package boundary checks"
+require_text "$evidence_stdout_file" "release.publication_evidence.v1 blocked dry-run evidence passed schema and publication boundary checks"
 require_text "$evidence_stdout_file" "release.macos_package.v1 unsigned dry-run manifest passed package boundary checks"
 require_text "$evidence_stdout_file" "release.windows_package.v1 unsigned dry-run manifest passed package boundary checks"
 require_text "$evidence_stdout_file" "release.macos_installer_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks"
@@ -560,6 +567,7 @@ require_text "$runbook" "--current-stage-evidence current-stage-validation-evide
 require_text "$runbook" "--current-stage-blocked-summary current-stage-blocked-summary.json"
 require_text "$runbook" "--release-artifact-manifest release-artifacts.json"
 require_text "$runbook" "--release-sbom release-sbom.json"
+require_text "$runbook" "--release-publication-evidence release-publication-evidence.json"
 require_text "$runbook" "--macos-package-manifest macos-package.json"
 require_text "$runbook" "--windows-package-manifest windows-package.json"
 require_text "$runbook" "--signing-evidence signing-evidence.json"
@@ -574,6 +582,8 @@ require_text "$runbook" "--hardware-fault-evidence hardware-fault-drills.json"
 require_text "$runbook" "blocked_release_evidence_manifest"
 require_text "$runbook" "release artifact manifest evidence"
 require_text "$runbook" "release SBOM evidence"
+require_text "$runbook" "GitHub Release publication automation evidence"
+require_text "$runbook" "release.publication_evidence.v1"
 require_text "$runbook" "macOS package manifest evidence"
 require_text "$runbook" "Windows package manifest evidence"
 require_text "$runbook" "signing automation evidence"

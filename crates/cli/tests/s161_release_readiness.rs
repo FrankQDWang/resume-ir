@@ -914,6 +914,78 @@ fn release_readiness_json_accepts_release_artifact_and_sbom_evidence_without_cle
 }
 
 #[test]
+fn release_readiness_json_accepts_release_publication_evidence_without_clearing_blockers() {
+    let data_dir = temp_path("release-readiness-release-publication-private-data");
+    let evidence_dir = temp_path("release-readiness-release-publication-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let release_publication = evidence_dir.join("release-publication-evidence.json");
+    fs::write(
+        &release_publication,
+        release_publication_evidence_manifest(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--release-publication-evidence",
+            path_str(&release_publication),
+        ])
+        .output()
+        .expect("run release readiness with GitHub Release publication evidence");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("release readiness publication evidence json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let provided_labels = provided
+        .iter()
+        .map(|evidence| evidence["label"].as_str().expect("provided label"))
+        .collect::<Vec<_>>();
+    assert!(provided_labels.contains(&"GitHub Release publication automation evidence"));
+    for evidence in provided {
+        assert_eq!(evidence["status"], "provided");
+        assert_eq!(
+            evidence["privacy_boundary"],
+            "blocked_release_evidence_manifest"
+        );
+        assert!(evidence["detail"]
+            .as_str()
+            .expect("provided detail")
+            .contains("publication boundary"));
+    }
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(blocker_labels.contains(&"GitHub Release publication"));
+    assert!(blocker_labels.contains(&"signing certificates"));
+    assert!(blocker_labels.contains(&"macOS notarization"));
+    assert!(blocker_labels.contains(&"cross-platform release validation"));
+    assert!(!blocker_labels.contains(&"GitHub Release publication automation evidence"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stdout.contains("github_token"));
+    assert!(!stderr.contains("github_token"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_platform_package_manifest_evidence_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-package-manifest-private-data");
     let evidence_dir = temp_path("release-readiness-package-manifest-private-reports");
@@ -3011,6 +3083,28 @@ fn release_sbom_manifest() -> String {
         "{\"spdxElementId\":\"SPDXRef-DOCUMENT\",\"relationshipType\":\"DESCRIBES\",\"relatedSpdxElement\":\"SPDXRef-Package-resume-daemon\"},",
         "{\"spdxElementId\":\"SPDXRef-DOCUMENT\",\"relationshipType\":\"DESCRIBES\",\"relatedSpdxElement\":\"SPDXRef-Package-benchmark-runner\"}",
         "]",
+        "}"
+    )
+    .to_string()
+}
+
+fn release_publication_evidence_manifest() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.publication_evidence.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"publication_status\":\"blocked\",",
+        "\"evidence_boundary\":\"dry_run_no_release_publication\",",
+        "\"artifact_manifest_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",",
+        "\"artifacts\":[",
+        "{\"name\":\"resume-cli\",\"file\":\"resume-cli\",\"artifact_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"bytes\":101,\"upload_status\":\"blocked\"},",
+        "{\"name\":\"resume-daemon\",\"file\":\"resume-daemon\",\"artifact_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"bytes\":202,\"upload_status\":\"blocked\"},",
+        "{\"name\":\"resume-benchmark\",\"file\":\"resume-benchmark\",\"artifact_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"bytes\":303,\"upload_status\":\"blocked\"}",
+        "],",
+        "\"required_evidence\":[\"human_release_approval\",\"github_actions_release_token\",\"github_release_upload_evidence\"],",
+        "\"blocked_release_steps\":[\"github_release_approval\",\"github_release_create\",\"github_release_upload\",\"release_artifact_download_verification\"],",
+        "\"prohibited_public_material\":[\"github_token\",\"release_pat\",\"local_paths\",\"raw_resume_data\",\"diagnostic_packages\",\"model_caches\"],",
+        "\"notes\":\"Blocked GitHub Release publication dry run only; no GitHub API call, release creation, token access, or artifact upload was performed.\"",
         "}"
     )
     .to_string()

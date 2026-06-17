@@ -521,6 +521,7 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --current-stage-evidence current-stage-validation-evidence.json \
   --release-artifact-manifest release-artifacts.json \
   --release-sbom release-sbom.json \
+  --release-publication-evidence release-publication-evidence.json \
   --macos-package-manifest macos-package.json \
   --windows-package-manifest windows-package.json \
   --signing-evidence signing-evidence.json \
@@ -653,6 +654,11 @@ scripts/release/create-signing-evidence.sh \
   --version v0.0.0 \
   --artifact-manifest release-dry-run/release-artifacts.json \
   --out-dir release-dry-run
+
+scripts/release/create-release-publication-evidence.sh \
+  --version v0.0.0 \
+  --artifact-manifest release-dry-run/release-artifacts.json \
+  --out-dir release-dry-run
 ```
 
 This signing evidence manifest is a fail-closed release evidence validator. It
@@ -660,6 +666,15 @@ does not sign artifacts, does not validate a certificate chain, does not prove
 private key custody, and cannot clear the signing certificates blocker until
 production signing certificates and per-artifact signature verification evidence
 exist.
+
+The GitHub Release publication evidence manifest is also fail-closed. Its schema
+is `release.publication_evidence.v1`; release-readiness records it as
+`GitHub Release publication automation evidence` with
+`blocked_release_evidence_manifest`. It proves only that the dry-run has a
+structured blocker for human release approval, GitHub Actions release-token
+availability, release creation, and artifact upload evidence. It must not call
+GitHub APIs, read tokens, create a release, upload artifacts, include local
+paths, or clear the `GitHub Release publication` blocker.
 
 macOS package dry-runs must also produce a blocked notarization evidence
 manifest. The manifest schema is `release.notarization_evidence.v1` and must
