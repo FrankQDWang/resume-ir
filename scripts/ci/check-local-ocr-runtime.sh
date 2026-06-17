@@ -27,6 +27,16 @@ manifest_script="scripts/local/prepare-local-ocr-runtime-manifest.sh"
 if [ ! -f "$manifest_script" ]; then
   fail "missing local OCR runtime manifest preparation script"
 fi
+CARGO_BIN="${CARGO:-}"
+if [ -z "$CARGO_BIN" ] && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
+  CARGO_BIN=/Users/frankqdwang/.cargo/bin/cargo
+fi
+if [ -z "$CARGO_BIN" ]; then
+  CARGO_BIN=cargo
+fi
+if ! command -v "$CARGO_BIN" >/dev/null 2>&1; then
+  fail "local OCR runtime check requires cargo"
+fi
 
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-local-ocr-runtime.XXXXXX")"
 cleanup() {
@@ -167,4 +177,56 @@ require_text "$unreviewed_stderr" "ocr runtime manifest blocked: legal review is
 reject_text "$unreviewed_stdout" "$tmpdir" "temporary local path"
 reject_text "$unreviewed_stderr" "$tmpdir" "temporary local path"
 
+actual_resume_cli="$tmpdir/actual-resume-cli"
+cat > "$actual_resume_cli" <<SH
+#!/usr/bin/env sh
+exec "$CARGO_BIN" run --quiet -p resume-cli --locked -- "\$@"
+SH
+chmod 700 "$actual_resume_cli"
+
+actual_manifest_out="$tmpdir/actual-ocr-runtime-manifest.json"
+actual_stdout="$tmpdir/actual-manifest-stdout.txt"
+actual_stderr="$tmpdir/actual-manifest-stderr.txt"
+set +e
+"$manifest_script" \
+  --resume-cli "$actual_resume_cli" \
+  --out "$actual_manifest_out" \
+  --runtime-pack-id reviewed-local-ocr-pack \
+  --tesseract-command "$tesseract" \
+  --pdftoppm-command "$pdftoppm" \
+  --language eng \
+  --language-pack "$language_pack" \
+  --engine-license Apache-2.0 \
+  --renderer-license GPL-2.0-or-later \
+  --language-license Apache-2.0 \
+  --reviewed \
+  > "$actual_stdout" 2> "$actual_stderr"
+actual_status=$?
+set -e
+if [ "$actual_status" -ne 0 ]; then
+  fail "real resume-cli OCR manifest preparation failed"
+fi
+
+if [ -s "$actual_stderr" ]; then
+  fail "real resume-cli OCR manifest preparation wrote stderr on success"
+fi
+require_text "$actual_stdout" "ocr runtime manifest: written"
+require_text "$actual_stdout" "schema: resume-ir.ocr-runtime-manifest.v1"
+require_text "$actual_stdout" "runtime pack: reviewed-local-ocr-pack"
+require_text "$actual_stdout" "engine: tesseract"
+require_text "$actual_stdout" "renderer: poppler-pdftoppm"
+require_text "$actual_stdout" "language: eng"
+require_text "$actual_stdout" "license reviewed: yes"
+require_text "$actual_stdout" "paths: <redacted>"
+require_text "$actual_manifest_out" "\"schema_version\": \"resume-ir.ocr-runtime-manifest.v1\""
+require_text "$actual_manifest_out" "\"engine\": \"tesseract\""
+require_text "$actual_manifest_out" "\"engine\": \"poppler-pdftoppm\""
+require_text "$actual_manifest_out" "\"id\": \"eng\""
+reject_text "$actual_stdout" "$tmpdir" "temporary local path"
+reject_text "$actual_stderr" "$tmpdir" "temporary local path"
+reject_text "$actual_stdout" "PRIVATE-ocr-bin" "private OCR bin marker"
+reject_text "$actual_stderr" "PRIVATE-ocr-bin" "private OCR bin marker"
+reject_text "$actual_stdout" "SYNTHETIC TESSDATA" "language pack bytes"
+
+printf '%s\n' "real resume-cli OCR manifest check passed"
 printf '%s\n' "local OCR runtime check passed"

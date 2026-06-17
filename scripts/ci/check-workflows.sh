@@ -160,6 +160,7 @@ require_text "$local_ocr_runtime_script" "--pdftoppm-command"
 require_text "$local_ocr_runtime_script" "--language-pack"
 require_text "$local_ocr_runtime_script" "--reviewed"
 require_text "$local_ocr_runtime_script" "legal review is incomplete"
+require_text "$local_ocr_runtime_script" "real resume-cli OCR manifest check passed"
 require_text "$local_ocr_runtime_script" "local OCR runtime check passed"
 
 require_text "$current_stage_handoff_script" "scripts/local/summarize-current-stage-validation.py"
