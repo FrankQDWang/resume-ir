@@ -334,6 +334,12 @@ for text in walk_strings(report):
 PY
 }
 
+validate_fault_suite_report() {
+  path="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for fault-suite evidence validation"
+  python3 scripts/ci/validate-current-stage-fault-suite.py --local-safe-suite "$path"
+}
+
 write_runtime_preflight_blocked_summary() {
   blocked_step="$1"
   blocked_category="$2"
@@ -1513,7 +1519,8 @@ EOF_OUTPUTS
     fault_prior_throughput_outputs=""
   fi
 
-  if [ "$blocked_reason" = "fault_simulation_suite_failed" ]; then
+  if [ "$blocked_reason" = "fault_simulation_suite_failed" ] || [ "$blocked_reason" = "fault_simulation_suite_invalid" ]; then
+    fault_blocked_step="fault_simulation_suite"
     fault_step_statuses=$(cat <<EOF_STEPS
     {"id": "fault_simulation_smoke", "status": "success"},
     {"id": "fault_simulation_suite", "status": "blocked", "exit_code": $blocked_exit}
@@ -1521,6 +1528,7 @@ EOF_STEPS
 )
     fault_not_completed='"current-stage local-safe fault simulation suite",'
   else
+    fault_blocked_step="fault_simulation_smoke"
     fault_step_statuses=$(cat <<EOF_STEPS
     {"id": "fault_simulation_smoke", "status": "blocked", "exit_code": $blocked_exit},
     {"id": "fault_simulation_suite", "status": "blocked", "exit_code": $blocked_exit}
@@ -1539,7 +1547,7 @@ EOF_STEPS
   "full_baseline_satisfied": $fault_full_baseline_satisfied,
   "release_readiness_evidence": false,
   "performance_optimization_deferred": true,
-  "blocked_step": "fault_simulation_smoke",
+  "blocked_step": "$fault_blocked_step",
   "blocked_category": "fault-injection",
   "blocked_reason": "$blocked_reason",
   "blocked_exit": $blocked_exit,
@@ -2745,6 +2753,11 @@ if [ "$fault_simulation_suite_status" -ne 0 ]; then
   write_fault_simulation_blocked_summary "$fault_simulation_suite_status" "fault_simulation_suite_failed"
   printf '%s\n' "current-stage validation blocked: fault simulation suite failed" >&2
   exit "$fault_simulation_suite_status"
+fi
+if ! validate_fault_suite_report "$out_dir/fault-simulation-suite-local-safe.json"; then
+  write_fault_simulation_blocked_summary 1 "fault_simulation_suite_invalid"
+  printf '%s\n' "current-stage validation blocked: fault simulation suite evidence failed validation" >&2
+  exit 1
 fi
 
 if [ "$validation_profile" = "smoke" ]; then

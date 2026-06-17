@@ -461,6 +461,10 @@ case "$cmd:$sub" in
     fi
     case " $* " in
       *" --suite local-safe "*)
+        if [ "${FAKE_FAULT_SIMULATION_MODE:-ready}" = "invalid-suite" ]; then
+          printf '{"schema_version":"fault-simulation-suite.v1","redacted":true,"suite":"local_safe","paths":"<redacted>","evidence_level":"local_synthetic_fault_suite","release_hardware_drills":"blocked","summary":{"total_cases":10,"reproduced_cases":2,"blocked_by_host_cases":0,"failed_cases":0,"release_blockers_cleared":false},"cases":[{"fault":"daemon_kill","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"restart_check":"passed"}},{"fault":"ocr_crash","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"ocr_command":"failed"}}]}\n'
+          exit 0
+        fi
         cat <<'EOF_FAULT_SUITE'
 {"schema_version":"fault-simulation-suite.v1","redacted":true,"suite":"local_safe","paths":"<redacted>","evidence_level":"local_synthetic_fault_suite","release_hardware_drills":"blocked","summary":{"total_cases":10,"reproduced_cases":10,"blocked_by_host_cases":0,"failed_cases":0,"release_blockers_cleared":false},"cases":[{"fault":"disk_space_low","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"required_bytes":4096,"available_bytes":1024,"probe_writes":"skipped"}},{"fault":"permission_denied","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"write_check":"denied"}},{"fault":"file_lock","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"lock_conflict":"detected"}},{"fault":"index_snapshot_corrupt","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"snapshot_validation":"failed"}},{"fault":"metadata_migration","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"rollback_check":"passed"}},{"fault":"model_checksum","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"checksum":"mismatch"}},{"fault":"daemon_kill","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"daemon_ready":"yes","terminated_daemon":"yes","restart_check":"passed"}},{"fault":"ocr_crash","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"ocr_command":"failed","probe_bytes":31}},{"fault":"battery_mode","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"battery_state":"battery"}},{"fault":"external_drive_disconnect","status":"reproduced","redacted":true,"paths":"<redacted>","details":{"drive_state":"disconnected"}}]}
 EOF_FAULT_SUITE
@@ -587,6 +591,9 @@ run_execute_smoke() {
   fault_simulation_mode="ready"
   if [ "$mode" = "fault-simulation-failed" ]; then
     fault_simulation_mode="failed"
+  fi
+  if [ "$mode" = "fault-simulation-invalid" ]; then
+    fault_simulation_mode="invalid-suite"
   fi
   import_mode="ready"
   if [ "$mode" = "import-failed" ]; then
@@ -1133,6 +1140,41 @@ reject_text "$tmpdir/execute-fault-simulation-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-fault-simulation-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-fault-simulation-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-fault-simulation-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke fault-simulation-invalid
+fault_simulation_invalid_status=$(cat "$tmpdir/execute-fault-simulation-invalid-status.txt")
+if [ "$fault_simulation_invalid_status" -eq 0 ]; then
+  fail "current-stage full profile accepted invalid fault simulation suite evidence"
+fi
+fault_simulation_invalid_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$fault_simulation_invalid_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on invalid fault simulation suite"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage execute ran release-readiness after invalid fault simulation suite"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage execute wrote full evidence after invalid fault simulation suite"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$fault_simulation_invalid_summary" >/dev/null
+fi
+require_text "$fault_simulation_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$fault_simulation_invalid_summary" '"blocked_step": "fault_simulation_suite"'
+require_text "$fault_simulation_invalid_summary" '"blocked_category": "fault-injection"'
+require_text "$fault_simulation_invalid_summary" '"blocked_reason": "fault_simulation_suite_invalid"'
+require_text "$fault_simulation_invalid_summary" '"fault-simulation-suite-local-safe.json"'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
+reject_text "$fault_simulation_invalid_summary" "$tmpdir"
+reject_text "$fault_simulation_invalid_summary" "PRIVATE-current-stage"
+reject_text "$fault_simulation_invalid_summary" "private fake query"
+require_text "$tmpdir/execute-fault-simulation-invalid-stderr.txt" "current-stage validation blocked: fault simulation suite evidence failed validation"
+reject_text "$tmpdir/execute-fault-simulation-invalid-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-fault-simulation-invalid-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-fault-simulation-invalid-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-fault-simulation-invalid-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke ocr-digest-mismatch \
   --ocr-runtime-manifest-sha256 0000000000000000000000000000000000000000000000000000000000000000
