@@ -346,6 +346,12 @@ validate_private_benchmark_report() {
   python3 scripts/ci/validate-current-stage-private-benchmark.py --private-benchmark "$path"
 }
 
+validate_ocr_throughput_report() {
+  path="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for OCR throughput evidence validation"
+  python3 scripts/ci/validate-current-stage-ocr-throughput.py --ocr-throughput "$path"
+}
+
 write_runtime_preflight_blocked_summary() {
   blocked_step="$1"
   blocked_category="$2"
@@ -2670,6 +2676,14 @@ if [ "$validation_profile" = "full" ]; then
       "$private_ocr_throughput_status"
     printf '%s\n' "current-stage validation blocked: private OCR throughput baseline failed" >&2
     exit "$private_ocr_throughput_status"
+  fi
+  if ! validate_ocr_throughput_report "$out_dir/private-ocr-throughput.json"; then
+    write_ocr_throughput_blocked_summary \
+      "private_ocr_throughput_baseline" \
+      "private_ocr_throughput_invalid" \
+      1
+    printf '%s\n' "current-stage validation blocked: private OCR throughput evidence failed validation" >&2
+    exit 1
   fi
 
   printf '%s\n' "current-stage validation: ocr throughput baseline gate"

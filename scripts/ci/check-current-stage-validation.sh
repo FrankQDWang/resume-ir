@@ -576,7 +576,11 @@ case "${1:-}" in
       printf 'private OCR throughput baseline blocked: fake OCR runtime failure\n' >&2
       exit 1
     fi
-    printf '{"schema_version":"ocr-throughput.v1","dataset_kind":"private-real-corpus","target_claim":"ocr_throughput_baseline_observed","corpus_origin":"private_local","privacy_boundary":"redacted_local_aggregate","contains_raw_ocr_text":false,"contains_page_images":false,"contains_resume_paths":false,"contains_document_ids":false,"contains_page_ids":false,"contains_command_paths":false,"document_count":8720,"scanned_document_count":500,"page_count":500,"failed_document_count":0,"render_failure_count":0,"ocr_failure_count":0,"total_ms":1000,"pages_per_second":500.0,"run_budget_exhausted":false,"page_latency_ms":{"samples":500}}\n'
+    if [ "${FAKE_BENCHMARK_MODE:-pass}" = "private-ocr-throughput-invalid" ]; then
+      printf '{"schema_version":"ocr-throughput.v1","dataset_kind":"private-real-corpus","target_claim":"ocr_throughput_baseline_observed"}\n'
+      exit 0
+    fi
+    printf '{"schema_version":"ocr-throughput.v1","run_id":"current_stage_ocr_fake","platform":"ci/fake","engine_kind":"tesseract","dataset_kind":"private-real-corpus","target_claim":"ocr_throughput_baseline_observed","scope":"private real-corpus OCR throughput benchmark; aggregate redacted report only","corpus_origin":"private_local","privacy_boundary":"redacted_local_aggregate","contains_raw_ocr_text":false,"contains_page_images":false,"contains_resume_paths":false,"contains_document_ids":false,"contains_page_ids":false,"contains_command_paths":false,"document_count":8720,"scanned_document_count":500,"page_count":500,"failed_document_count":0,"render_failure_count":0,"ocr_failure_count":0,"total_ms":1000,"pages_per_second":500.0,"run_budget_exhausted":false,"page_latency_ms":{"samples":500,"p50":250.0,"p95":450.0,"p99":800.0},"dataset_manifest_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ocr_runtime_manifest_sha256":"3333333333333333333333333333333333333333333333333333333333333333","renderer_manifest_sha256":"4444444444444444444444444444444444444444444444444444444444444444","language_pack_manifest_sha256":"5555555555555555555555555555555555555555555555555555555555555555"}\n'
     ;;
   ocr-gate)
     if [ "${FAKE_BENCHMARK_MODE:-pass}" = "ocr-gate-failed" ]; then
@@ -613,6 +617,9 @@ run_execute_smoke() {
   fi
   if [ "$mode" = "private-ocr-throughput-failed" ]; then
     benchmark_mode="private-ocr-throughput-failed"
+  fi
+  if [ "$mode" = "private-ocr-throughput-invalid" ]; then
+    benchmark_mode="private-ocr-throughput-invalid"
   fi
   if [ "$mode" = "ocr-gate-failed" ]; then
     benchmark_mode="ocr-gate-failed"
@@ -956,6 +963,47 @@ reject_text "$tmpdir/execute-private-ocr-throughput-failed-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-private-ocr-throughput-failed-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-private-ocr-throughput-failed-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-private-ocr-throughput-failed-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke private-ocr-throughput-invalid
+private_ocr_throughput_invalid_status=$(cat "$tmpdir/execute-private-ocr-throughput-invalid-status.txt")
+if [ "$private_ocr_throughput_invalid_status" -eq 0 ]; then
+  fail "current-stage full profile accepted invalid private OCR throughput report"
+fi
+private_ocr_invalid_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$private_ocr_invalid_summary" ]; then
+  fail "current-stage full profile did not write redacted blocked summary on invalid private OCR throughput report"
+fi
+if [ -s "$execute_out_dir/ocr-throughput-gate.stdout.txt" ]; then
+  fail "current-stage execute ran OCR throughput gate after invalid private OCR throughput report"
+fi
+if [ -e "$execute_out_dir/redacted-diagnostics.json" ]; then
+  fail "current-stage execute ran diagnostics after invalid private OCR throughput report"
+fi
+if [ -e "$execute_out_dir/release-readiness.json" ]; then
+  fail "current-stage execute ran release-readiness after invalid private OCR throughput report"
+fi
+if [ -e "$execute_out_dir/current-stage-validation-evidence.json" ]; then
+  fail "current-stage execute wrote full evidence after invalid private OCR throughput report"
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$private_ocr_invalid_summary" >/dev/null
+fi
+require_text "$private_ocr_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$private_ocr_invalid_summary" '"blocked_step": "private_ocr_throughput_baseline"'
+require_text "$private_ocr_invalid_summary" '"blocked_category": "ocr"'
+require_text "$private_ocr_invalid_summary" '"blocked_reason": "private_ocr_throughput_invalid"'
+require_text "$private_ocr_invalid_summary" '"private-ocr-throughput.json"'
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
+reject_text "$private_ocr_invalid_summary" "$tmpdir"
+reject_text "$private_ocr_invalid_summary" "PRIVATE-current-stage"
+reject_text "$private_ocr_invalid_summary" "private fake query"
+require_text "$tmpdir/execute-private-ocr-throughput-invalid-stderr.txt" "current-stage validation blocked: private OCR throughput evidence failed validation"
+reject_text "$tmpdir/execute-private-ocr-throughput-invalid-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-private-ocr-throughput-invalid-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-private-ocr-throughput-invalid-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-private-ocr-throughput-invalid-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke ocr-gate-failed
 ocr_gate_failed_status=$(cat "$tmpdir/execute-ocr-gate-failed-status.txt")
