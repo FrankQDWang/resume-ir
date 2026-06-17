@@ -659,6 +659,14 @@ scripts/release/create-release-publication-evidence.sh \
   --version v0.0.0 \
   --artifact-manifest release-dry-run/release-artifacts.json \
   --out-dir release-dry-run
+
+scripts/release/publish-github-release.sh \
+  --dry-run \
+  --version v0.0.0 \
+  --repo FrankQDWang/resume-ir \
+  --artifact-manifest release-dry-run/release-artifacts.json \
+  --publication-evidence release-dry-run/release-publication-evidence.json \
+  --out-dir release-dry-run
 ```
 
 This signing evidence manifest is a fail-closed release evidence validator. It
@@ -675,6 +683,15 @@ structured blocker for human release approval, GitHub Actions release-token
 availability, release creation, and artifact upload evidence. It must not call
 GitHub APIs, read tokens, create a release, upload artifacts, include local
 paths, or clear the `GitHub Release publication` blocker.
+
+`scripts/release/publish-github-release.sh` is the fail-closed publication entry
+point. Dry-run mode writes `release.github_publication_gate.v1` to
+`github-release-publication-gate.json` and must not call GitHub, read tokens,
+create releases, or upload artifacts. Execute mode requires all of the
+following before it can publish: `--execute`, `--approve-release`, an
+`--artifact-dir`, `gh`, and either `GITHUB_TOKEN` or `GH_TOKEN`. The release
+workflow runs only dry-run mode by default; real publication remains blocked
+until a human approves the release and supplies the CI secret interface.
 
 macOS package dry-runs must also produce a blocked notarization evidence
 manifest. The manifest schema is `release.notarization_evidence.v1` and must

@@ -71,6 +71,16 @@ jobs:
             --artifact-manifest release-dry-run/release-artifacts.json \
             --out-dir release-dry-run
 
+      - name: Validate GitHub Release publication gate
+        run: |
+          scripts/release/publish-github-release.sh \
+            --dry-run \
+            --version "${{ inputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --artifact-manifest release-dry-run/release-artifacts.json \
+            --publication-evidence release-dry-run/release-publication-evidence.json \
+            --out-dir release-dry-run
+
       - name: Check public artifact boundary
         run: |
           test ! -d local-data
@@ -80,10 +90,13 @@ jobs:
           test -f release-dry-run/signing-evidence.json
           test -f release-dry-run/release-sbom.json
           test -f release-dry-run/release-publication-evidence.json
+          test -f release-dry-run/github-release-publication-gate.json
           grep -F '"signing_status": "blocked"' release-dry-run/signing-evidence.json
           grep -F '"evidence_boundary": "dry_run_no_signing_material"' release-dry-run/signing-evidence.json
           grep -F '"publication_status": "blocked"' release-dry-run/release-publication-evidence.json
           grep -F '"evidence_boundary": "dry_run_no_release_publication"' release-dry-run/release-publication-evidence.json
+          grep -F '"execution_mode": "dry_run"' release-dry-run/github-release-publication-gate.json
+          grep -F '"secret_interface": "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute"' release-dry-run/github-release-publication-gate.json
           if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/release-artifacts.json; then
             echo "release artifact manifest leaked a local path or runtime-data marker" >&2
             exit 1
@@ -98,6 +111,10 @@ jobs:
           fi
           if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/release-publication-evidence.json; then
             echo "release publication evidence manifest leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/github-release-publication-gate.json; then
+            echo "GitHub Release publication gate leaked a local path or runtime-data marker" >&2
             exit 1
           fi
 

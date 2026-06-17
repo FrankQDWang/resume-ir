@@ -21,15 +21,20 @@ require_text() {
 }
 
 script="scripts/release/create-release-publication-evidence.sh"
+publish_script="scripts/release/publish-github-release.sh"
 workflow=".github/workflows/release.yml"
 verify_script="scripts/ci/verify-local.sh"
 
 require_file "$script"
+require_file "$publish_script"
 require_file "$workflow"
 require_file "$verify_script"
 
 if [ ! -x "$script" ]; then
   fail "release publication evidence script is not executable"
+fi
+if [ ! -x "$publish_script" ]; then
+  fail "GitHub Release publication script is not executable"
 fi
 
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-release-publication-check.XXXXXX")
@@ -77,9 +82,35 @@ if "$script" --version 0.0.0 --artifact-manifest "$artifact_manifest" --out-dir 
   fail "release publication evidence accepted an invalid version"
 fi
 
+"$publish_script" \
+  --dry-run \
+  --version v0.0.0 \
+  --repo FrankQDWang/resume-ir \
+  --artifact-manifest "$artifact_manifest" \
+  --publication-evidence "$manifest" \
+  --out-dir "$out_dir"
+gate="$out_dir/github-release-publication-gate.json"
+require_file "$gate"
+require_text "$gate" '"schema_version": "release.github_publication_gate.v1"'
+require_text "$gate" '"execution_mode": "dry_run"'
+require_text "$gate" '"publication_status": "blocked"'
+require_text "$gate" '"approval_gate": "human_release_approval_required"'
+require_text "$gate" '"secret_interface": "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute"'
+require_text "$gate" '"gh_release_create"'
+require_text "$gate" '"gh_release_upload"'
+if grep -Fq "$tmpdir" "$gate"; then
+  fail "GitHub Release publication gate leaked an absolute temp path"
+fi
+if "$publish_script" --execute --version v0.0.0 --repo FrankQDWang/resume-ir --artifact-manifest "$artifact_manifest" --publication-evidence "$manifest" --out-dir "$out_dir/execute" >/dev/null 2>&1; then
+  fail "GitHub Release publication execute mode passed without explicit approval"
+fi
+
 require_text "$workflow" "scripts/release/create-release-publication-evidence.sh"
+require_text "$workflow" "scripts/release/publish-github-release.sh"
 require_text "$workflow" "release-publication-evidence.json"
+require_text "$workflow" "github-release-publication-gate.json"
 require_text "$workflow" "release publication evidence manifest leaked a local path or runtime-data marker"
+require_text "$workflow" "GitHub Release publication gate leaked a local path or runtime-data marker"
 require_text "$verify_script" "./scripts/ci/check-release-publication-evidence.sh"
 
 printf '%s\n' "release publication evidence check passed"
