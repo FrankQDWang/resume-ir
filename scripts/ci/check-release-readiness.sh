@@ -70,6 +70,7 @@ require_text "$stdout_file" '"blockers": ['
 require_text "$stdout_file" '"blocked_dependency": {'
 require_text "$stdout_file" '"kind": "release_credentials"'
 require_text "$stdout_file" '"needed_from": "human_release_owner"'
+require_text "$stdout_file" '"kind": "release_publication_approval"'
 require_text "$stdout_file" '"kind": "local_current_stage_evidence"'
 require_text "$stdout_file" '"needed_from": "local_private_validation_run"'
 require_text "$stdout_file" '"kind": "private_labeled_quality_dataset"'
@@ -107,6 +108,10 @@ require_text "$stdout_file" "Apple Developer ID"
 require_text "$stdout_file" "notarization credentials"
 require_text "$stdout_file" "notarization ticket"
 require_text "$stdout_file" "Gatekeeper validation"
+require_text "$stdout_file" '"label": "GitHub Release publication"'
+require_text "$stdout_file" "human release approval"
+require_text "$stdout_file" "GitHub Actions release token"
+require_text "$stdout_file" "artifact upload evidence"
 require_text "$stdout_file" '"label": "Windows installer lifecycle"'
 require_text "$stdout_file" "dry-run automation exists"
 require_text "$stdout_file" "MSI install"

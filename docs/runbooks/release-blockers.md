@@ -447,6 +447,8 @@ SQLite databases, model caches, runtime binaries, or raw resumes.
 - Windows service install, start, stop, status, uninstall, rollback, and recovery
   are not proven
 - macOS signed pkg/dmg install, upgrade, uninstall, and rollback are not proven
+- GitHub Release publication is not approved or proven with a working GitHub
+  Actions release token, Git credential path, and artifact upload evidence
 - private real-corpus hot-index hybrid benchmark baseline over the available
   local corpus is not available
 - private business labeled field-quality evidence is not available
@@ -484,9 +486,10 @@ Besides `label`, `status: "blocked"`, and `detail`, each blocker must include a
 `blocked_dependency` object with `kind`, `needed_from`, and `summary`, plus a
 `next_action` string. These fields are the machine-readable source for final
 reports and handoffs: they say whether the missing evidence is a human release
-credential, human release credentials, a release-platform transcript, a private labeled quality dataset, a
-reviewed runtime/model manifest, local current-stage evidence, redacted local
-diagnostics evidence, or actual hardware-drill evidence.
+credential, release publication approval, a release-platform transcript, a
+private labeled quality dataset, a reviewed runtime/model manifest, local
+current-stage evidence, redacted local diagnostics evidence, or actual
+hardware-drill evidence.
 
 The JSON report must include `goal_gap_matrix` with schema
 `resume-ir.goal-gap-matrix.v1`. That matrix is the product-level P0-P6 gap view:

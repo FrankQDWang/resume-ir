@@ -40,6 +40,10 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("signed pkg/dmg"));
     assert!(stdout.contains("install/upgrade/uninstall/rollback"));
     assert!(stdout.contains("Gatekeeper validation"));
+    assert!(stdout.contains("GitHub Release publication: blocked"));
+    assert!(stdout.contains("release approval"));
+    assert!(stdout.contains("GitHub Actions release token"));
+    assert!(stdout.contains("artifact upload evidence"));
     assert!(stdout.contains("private real-corpus performance evidence: blocked"));
     assert!(stdout.contains("hot-index hybrid"));
     assert!(stdout.contains("available private corpus"));
@@ -124,7 +128,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     );
 
     let blockers = report["blockers"].as_array().expect("blockers array");
-    assert_eq!(blockers.len(), 15);
+    assert_eq!(blockers.len(), 16);
     let labels = blockers
         .iter()
         .map(|blocker| blocker["label"].as_str().expect("blocker label"))
@@ -134,6 +138,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(labels.contains(&"Windows installer lifecycle"));
     assert!(labels.contains(&"Windows service lifecycle"));
     assert!(labels.contains(&"macOS installer lifecycle"));
+    assert!(labels.contains(&"GitHub Release publication"));
     assert!(labels.contains(&"private real-corpus performance evidence"));
     assert!(labels.contains(&"field extraction quality"));
     assert!(labels.contains(&"dedupe quality"));

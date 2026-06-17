@@ -214,6 +214,14 @@ const RELEASE_READINESS_BLOCKERS: &[ReleaseReadinessBlocker] = &[
         next_action: "run the macOS installer lifecycle plan on a release runner and attach redacted Gatekeeper/install evidence",
     },
     ReleaseReadinessBlocker {
+        label: "GitHub Release publication",
+        detail: "GitHub Release publication is not approved or proven; release evidence requires human release approval, a working GitHub Actions release token or Git credential path, and artifact upload evidence for fresh signed/notarized release artifacts",
+        dependency_kind: "release_publication_approval",
+        needed_from: "human_release_owner",
+        dependency_summary: "human release approval, GitHub Actions release token or Git credential readiness, and GitHub Release artifact upload evidence",
+        next_action: "approve the release publication gate, provide a working GitHub release token through CI secrets or repair Git credential access, then run the GitHub Release upload workflow and attach redacted upload evidence",
+    },
+    ReleaseReadinessBlocker {
         label: RELEASE_READINESS_PERFORMANCE_LABEL,
         detail: "reproducible local private real-corpus hot-index hybrid benchmark baseline is not available; current-stage evidence must cover the available private corpus with min-documents 8000, at least 500 query samples, and observed P50/P95/P99 metrics, while P95/P99 latency reduction and external 100k/1M scale validation move to a follow-up performance-optimization goal",
         dependency_kind: "local_current_stage_evidence",
