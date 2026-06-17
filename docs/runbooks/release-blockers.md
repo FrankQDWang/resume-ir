@@ -348,9 +348,11 @@ basename-only digests through `fault-simulation-storage-low.json` and
 diagnostic bodies, query text, raw resume text, indexes, SQLite data, or
 scratch directory contents. The local-safe suite is passed the explicit
 `resume-daemon` binary path so it can run the redacted synthetic daemon
-kill/restart probe instead of guessing host paths. Passing synthetic fault
-probes remain local wiring and crash-recovery checks only; they do not clear the
-separate release-platform hardware fault-drill blocker.
+kill/restart probe instead of guessing host paths, and execute mode creates a
+local scratch-only OCR crash fixture so the aggregate suite can prove the
+redacted OCR engine-failure path. Passing synthetic fault probes remain local
+wiring and crash-recovery checks only; they do not clear the separate
+release-platform hardware fault-drill blocker.
 If `release-readiness` rejects the local evidence inputs themselves after the
 baseline gate, redacted diagnostics, and fault simulation probes pass, execute mode writes the same
 blocked summary schema with `blocked_step: "release_readiness_intake"`,

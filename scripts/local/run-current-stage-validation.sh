@@ -2108,7 +2108,7 @@ $ocr_throughput_plan_steps
     },
     {
       "id": "fault_simulation_suite",
-      "command": "resume-cli --data-dir <local-data-dir> fault-simulate --suite local-safe --scratch-dir <local-evidence-dir>/fault-simulation-suite-scratch --daemon-binary <local-resume-daemon> --json > <local-evidence-dir>/fault-simulation-suite-local-safe.json"
+      "command": "resume-cli --data-dir <local-data-dir> fault-simulate --suite local-safe --scratch-dir <local-evidence-dir>/fault-simulation-suite-scratch --daemon-binary <local-resume-daemon> --ocr-command <local-ocr-crash-fixture> --json > <local-evidence-dir>/fault-simulation-suite-local-safe.json"
     },
 $terminal_plan_steps
   ],
@@ -2721,11 +2721,21 @@ if [ "$fault_simulation_status" -ne 0 ]; then
 fi
 
 printf '%s\n' "current-stage validation: fault simulation suite"
+mkdir -p "$out_dir/fault-simulation-suite-scratch"
+ocr_crash_fixture="$out_dir/fault-simulation-suite-scratch/ocr-crash-fixture.sh"
+cat > "$ocr_crash_fixture" <<'EOF'
+#!/bin/sh
+printf 'PRIVATE_CURRENT_STAGE_OCR_CRASH_STDOUT\n'
+printf 'PRIVATE_CURRENT_STAGE_OCR_CRASH_STDERR\n' >&2
+exit 17
+EOF
+chmod 700 "$ocr_crash_fixture"
 set +e
 "$resume_cli" --data-dir "$data_dir" fault-simulate \
   --suite local-safe \
   --scratch-dir "$out_dir/fault-simulation-suite-scratch" \
   --daemon-binary "$resume_daemon" \
+  --ocr-command "$ocr_crash_fixture" \
   --json \
   > "$out_dir/fault-simulation-suite-local-safe.json"
 fault_simulation_suite_status=$?

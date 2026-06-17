@@ -214,6 +214,61 @@ fn fault_simulate_local_safe_suite_runs_daemon_kill_when_binary_is_explicit() {
     let _ = fs::remove_file(&daemon_binary);
 }
 
+#[cfg(unix)]
+#[test]
+fn fault_simulate_local_safe_suite_runs_ocr_crash_when_command_is_explicit() {
+    let data_dir = temp_path("fault-suite-ocr-private-data");
+    let scratch_dir = temp_path("fault-suite-ocr-private-scratch");
+    let ocr_command = ocr_crash_fixture_script("fault-suite-ocr-private-helper");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "fault-simulate",
+            "--suite",
+            "local-safe",
+            "--scratch-dir",
+            path_str(&scratch_dir),
+            "--ocr-command",
+            path_str(&ocr_command),
+            "--json",
+        ])
+        .output()
+        .expect("run local-safe fault simulation suite with OCR crash fixture");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema_version"], "fault-simulation-suite.v1");
+    assert_eq!(report["summary"]["total_cases"], 10);
+    assert_eq!(report["summary"]["failed_cases"], 0);
+    let cases = report["cases"].as_array().expect("suite cases");
+    let ocr_case = cases
+        .iter()
+        .find(|case| case["fault"] == "ocr_crash")
+        .expect("ocr crash suite case");
+    assert_eq!(ocr_case["status"], "reproduced");
+    assert_eq!(ocr_case["details"]["ocr_command"], "failed");
+    assert_eq!(ocr_case["details"]["probe_bytes"], 31);
+    assert_eq!(ocr_case["paths"], "<redacted>");
+    assert!(!stdout.contains("PRIVATE_OCR_CRASH_STDOUT"));
+    assert!(!stdout.contains("PRIVATE_OCR_CRASH_STDERR"));
+    assert!(!stdout.contains("SYNTHETIC OCR CRASH PROBE BYTES"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&scratch_dir)));
+    assert!(!stdout.contains(path_str(&ocr_command)));
+
+    remove_dir(&scratch_dir);
+    let _ = fs::remove_file(&ocr_command);
+}
+
 #[test]
 fn fault_simulate_disk_space_ok_writes_bounded_probe_and_cleans_up() {
     let data_dir = temp_path("fault-disk-ok-private-data");
