@@ -52,7 +52,7 @@ def require_int(value: Any, field: str) -> int:
     return value
 
 
-def validate_full_evidence_observability(document: dict[str, Any]) -> None:
+def validate_observability(document: dict[str, Any], require_hot_index: bool) -> None:
     observability = document.get(OBSERVABILITY_FIELD)
     if not isinstance(observability, dict):
         fail(f"missing {OBSERVABILITY_FIELD}")
@@ -76,7 +76,10 @@ def validate_full_evidence_observability(document: dict[str, Any]) -> None:
         fail("searchable_document_count is inconsistent")
     if not 0 <= vector_count <= searchable_count:
         fail("vector_indexed_document_count is inconsistent")
-    if observability.get("hot_index_fully_covered") is not True:
+    hot_index_fully_covered = observability.get("hot_index_fully_covered")
+    if not isinstance(hot_index_fully_covered, bool):
+        fail("hot_index_fully_covered must be a boolean")
+    if require_hot_index and hot_index_fully_covered is not True:
         fail("hot index coverage must be true for full evidence")
 
     for field in REQUIRED_MAP_FIELDS:
@@ -92,18 +95,26 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Validate redacted current-stage corpus observability evidence."
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
         "--full-evidence",
         type=Path,
-        required=True,
         help="Path to current-stage-validation-evidence.json.",
+    )
+    mode.add_argument(
+        "--summary",
+        type=Path,
+        help="Path to a current-stage smoke or blocked summary JSON.",
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    validate_full_evidence_observability(read_json(args.full_evidence))
+    if args.full_evidence is not None:
+        validate_observability(read_json(args.full_evidence), require_hot_index=True)
+    else:
+        validate_observability(read_json(args.summary), require_hot_index=False)
     return 0
 
 

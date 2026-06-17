@@ -57,6 +57,13 @@ require_full_evidence_observability() {
     || fail "current-stage full evidence observability is invalid"
 }
 
+require_summary_observability() {
+  file="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for current-stage observability validation"
+  python3 scripts/ci/validate-current-stage-observability.py --summary "$file" \
+    || fail "$file current-stage summary observability is invalid"
+}
+
 require_fault_suite_evidence() {
   file="$1"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required for current-stage fault-suite validation"
@@ -714,7 +721,6 @@ require_text "$evidence_manifest" "\"ocr_runtime_manifest_sha256\": \"$expected_
 require_text "$evidence_manifest" '"preflight_probes": {'
 require_text "$evidence_manifest" '"ocr_runtime_probe": "passed"'
 require_text "$evidence_manifest" '"embedding_protocol": "passed"'
-require_text "$evidence_manifest" '"corpus_summary_observability": {'
 require_full_evidence_observability "$evidence_manifest"
 require_text "$evidence_manifest" '"dataset-manifest.local.json"'
 require_text "$evidence_manifest" '"dataset-manifest.stdout.txt"'
@@ -784,7 +790,7 @@ require_text "$smoke_summary" '"full_baseline_satisfied": false'
 require_text "$smoke_summary" '"release_readiness_evidence": false'
 require_text "$smoke_summary" '"ocr_runtime_probe": "passed"'
 require_text "$smoke_summary" '"embedding_protocol": "passed"'
-require_text "$smoke_summary" '"corpus_summary_observability": {'
+require_summary_observability "$smoke_summary"
 require_text "$smoke_summary" '"document_status_counts": {'
 require_text "$smoke_summary" '"ingest_job_kind_status_counts": {'
 require_text "$smoke_summary" '"private_query_baseline"'
@@ -849,7 +855,7 @@ require_text "$ocr_backlog_summary" '"blocked_category": "ocr"'
 require_text "$ocr_backlog_summary" '"blocked_reason": "ocr_backlog_exceeds_current_stage_budget"'
 require_text "$ocr_backlog_summary" '"ocr_runtime_probe": "passed"'
 require_text "$ocr_backlog_summary" '"embedding_protocol": "passed"'
-require_text "$ocr_backlog_summary" '"corpus_summary_observability": {'
+require_summary_observability "$ocr_backlog_summary"
 require_text "$ocr_backlog_summary" '"ocr_required": 8538'
 require_text "$ocr_backlog_summary" '"vector_indexed_document_count": 0'
 require_text "$ocr_backlog_summary" '"hot_index_fully_covered": false'
@@ -905,7 +911,7 @@ require_text "$blocked_summary" '"blocked_category": "benchmark"'
 require_text "$blocked_summary" '"blocked_reason": "baseline_shape_gate_failed"'
 require_text "$blocked_summary" '"ocr_runtime_probe": "passed"'
 require_text "$blocked_summary" '"embedding_protocol": "passed"'
-require_text "$blocked_summary" '"corpus_summary_observability": {'
+require_summary_observability "$blocked_summary"
 require_text "$blocked_summary" '"document_status_counts": {'
 require_text "$blocked_summary" '"ingest_job_kind_status_counts": {'
 require_text "$blocked_summary" '"private-benchmark-local.json"'
@@ -951,7 +957,7 @@ require_text "$private_ocr_blocked_summary" '"blocked_reason": "private_ocr_thro
 require_text "$private_ocr_blocked_summary" '"ocr_throughput_min_pages": 500'
 require_text "$private_ocr_blocked_summary" '"private-ocr-throughput.json"'
 require_text "$private_ocr_blocked_summary" '"ocr-throughput-gate.stdout.txt"'
-require_text "$private_ocr_blocked_summary" '"corpus_summary_observability": {'
+require_summary_observability "$private_ocr_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
   "resume-ir.current-stage-blocked-summary.v1"
@@ -1032,7 +1038,7 @@ require_text "$ocr_gate_blocked_summary" '"blocked_category": "ocr"'
 require_text "$ocr_gate_blocked_summary" '"blocked_reason": "ocr_throughput_baseline_gate_failed"'
 require_text "$ocr_gate_blocked_summary" '"private-ocr-throughput.json"'
 require_text "$ocr_gate_blocked_summary" '"ocr-throughput-gate.stdout.txt"'
-require_text "$ocr_gate_blocked_summary" '"corpus_summary_observability": {'
+require_summary_observability "$ocr_gate_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
   "resume-ir.current-stage-blocked-summary.v1"
@@ -1065,7 +1071,7 @@ require_text "$query_set_blocked_summary" '"blocked_step": "query_set_draft"'
 require_text "$query_set_blocked_summary" '"blocked_category": "query-set"'
 require_text "$query_set_blocked_summary" '"blocked_reason": "query_set_draft_failed"'
 require_text "$query_set_blocked_summary" '"query-set-draft.stdout.txt"'
-require_text "$query_set_blocked_summary" '"corpus_summary_observability": {'
+require_summary_observability "$query_set_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
   "resume-ir.current-stage-blocked-summary.v1"
@@ -1101,7 +1107,7 @@ require_text "$private_query_blocked_summary" '"blocked_step": "private_query_ba
 require_text "$private_query_blocked_summary" '"blocked_category": "benchmark"'
 require_text "$private_query_blocked_summary" '"blocked_reason": "private_query_baseline_failed"'
 require_text "$private_query_blocked_summary" '"private-benchmark-local.json"'
-require_text "$private_query_blocked_summary" '"corpus_summary_observability": {'
+require_summary_observability "$private_query_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
   "resume-ir.current-stage-blocked-summary.v1"
@@ -1179,7 +1185,7 @@ require_text "$diagnostics_blocked_summary" '"blocked_category": "diagnostics"'
 require_text "$diagnostics_blocked_summary" '"blocked_reason": "redacted_diagnostics_failed"'
 require_text "$diagnostics_blocked_summary" '"redacted-diagnostics.json"'
 require_text "$diagnostics_blocked_summary" '"private-benchmark-gate.stdout.txt"'
-require_text "$diagnostics_blocked_summary" '"corpus_summary_observability": {'
+require_summary_observability "$diagnostics_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
   "resume-ir.current-stage-blocked-summary.v1"
@@ -1216,7 +1222,7 @@ require_text "$diagnostics_invalid_summary" '"blocked_category": "diagnostics"'
 require_text "$diagnostics_invalid_summary" '"blocked_reason": "redacted_diagnostics_invalid"'
 require_text "$diagnostics_invalid_summary" '"redacted-diagnostics.json"'
 require_text "$diagnostics_invalid_summary" '"private-benchmark-gate.stdout.txt"'
-require_text "$diagnostics_invalid_summary" '"corpus_summary_observability": {'
+require_summary_observability "$diagnostics_invalid_summary"
 require_current_stage_handoff \
   "blocked" \
   "resume-ir.current-stage-blocked-summary.v1"
@@ -1253,7 +1259,7 @@ require_text "$fault_simulation_blocked_summary" '"blocked_category": "fault-inj
 require_text "$fault_simulation_blocked_summary" '"blocked_reason": "fault_simulation_smoke_failed"'
 require_text "$fault_simulation_blocked_summary" '"redacted-diagnostics.json"'
 require_text "$fault_simulation_blocked_summary" '"fault-simulation-storage-low.json"'
-require_text "$fault_simulation_blocked_summary" '"corpus_summary_observability": {'
+require_summary_observability "$fault_simulation_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
   "resume-ir.current-stage-blocked-summary.v1"
@@ -1461,7 +1467,7 @@ require_text "$release_readiness_blocked_summary" '"blocked_reason": "release_re
 require_text "$release_readiness_blocked_summary" '"release-readiness.json"'
 require_text "$release_readiness_blocked_summary" '"release-readiness.stderr.txt"'
 require_text "$release_readiness_blocked_summary" '"redacted-diagnostics.json"'
-require_text "$release_readiness_blocked_summary" '"corpus_summary_observability": {'
+require_summary_observability "$release_readiness_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
   "resume-ir.current-stage-blocked-summary.v1"
