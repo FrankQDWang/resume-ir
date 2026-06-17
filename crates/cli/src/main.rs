@@ -144,6 +144,8 @@ const RELEASE_READINESS_RELEASE_ARTIFACT_MANIFEST_LABEL: &str =
 const RELEASE_READINESS_RELEASE_SBOM_LABEL: &str = "release SBOM evidence";
 const RELEASE_READINESS_RELEASE_PUBLICATION_AUTOMATION_LABEL: &str =
     "GitHub Release publication automation evidence";
+const RELEASE_READINESS_GITHUB_PUBLICATION_GATE_LABEL: &str =
+    "GitHub Release publication gate evidence";
 const RELEASE_READINESS_MACOS_PACKAGE_MANIFEST_LABEL: &str = "macOS package manifest evidence";
 const RELEASE_READINESS_WINDOWS_PACKAGE_MANIFEST_LABEL: &str = "Windows package manifest evidence";
 const RELEASE_READINESS_SIGNING_AUTOMATION_LABEL: &str = "signing automation evidence";
@@ -562,7 +564,7 @@ fn release_readiness_goal_gap_matrix_json() -> serde_json::Value {
 }
 
 fn release_readiness_usage() -> &'static str {
-    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--current-stage-blocked-summary <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--release-publication-evidence <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>] [--macos-installer-lifecycle-plan <path>] [--windows-installer-lifecycle-plan <path>] [--windows-service-lifecycle-plan <path>] [--hardware-fault-evidence <path>]"
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--current-stage-blocked-summary <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--release-publication-evidence <path>] [--github-release-publication-gate <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>] [--macos-installer-lifecycle-plan <path>] [--windows-installer-lifecycle-plan <path>] [--windows-service-lifecycle-plan <path>] [--hardware-fault-evidence <path>]"
 }
 
 #[derive(Default)]
@@ -580,6 +582,7 @@ struct ReleaseReadinessEvidenceArgs {
     release_artifact_manifest: Option<PathBuf>,
     release_sbom: Option<PathBuf>,
     release_publication_evidence: Option<PathBuf>,
+    github_release_publication_gate: Option<PathBuf>,
     macos_package_manifest: Option<PathBuf>,
     windows_package_manifest: Option<PathBuf>,
     signing_evidence: Option<PathBuf>,
@@ -674,6 +677,10 @@ fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs>
             }
             "--release-publication-evidence" => {
                 parsed.evidence.release_publication_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--github-release-publication-gate" => {
+                parsed.evidence.github_release_publication_gate =
                     Some(take_release_readiness_path(args, &mut index)?);
             }
             "--macos-package-manifest" => {
@@ -933,6 +940,17 @@ fn validate_release_readiness_evidence(
             label: RELEASE_READINESS_RELEASE_PUBLICATION_AUTOMATION_LABEL,
             privacy_boundary: "blocked_release_evidence_manifest",
             detail: "release.publication_evidence.v1 blocked dry-run evidence passed schema and publication boundary checks",
+        });
+    }
+    if let Some(path) = &args.github_release_publication_gate {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_github_release_publication_gate_report(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_GITHUB_PUBLICATION_GATE_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_GITHUB_PUBLICATION_GATE_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.github_publication_gate.v1 fail-closed dry-run gate passed schema and publication boundary checks",
         });
     }
     if let Some(path) = &args.macos_package_manifest {
@@ -1260,6 +1278,132 @@ fn validate_release_publication_artifacts(
         }
     }
     Ok(())
+}
+
+fn validate_github_release_publication_gate_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "GitHub Release publication gate";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "GitHub Release publication gate blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("GitHub Release publication gate blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("GitHub Release publication gate blocked: expected JSON object")
+    })?;
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "repo",
+            "execution_mode",
+            "publication_status",
+            "approval_gate",
+            "secret_interface",
+            "artifact_manifest_sha256",
+            "publication_evidence_sha256",
+            "planned_steps",
+            "artifacts",
+            "prohibited_public_material",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
+
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.github_publication_gate.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_non_empty_string(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    let repo = require_release_evidence_non_empty_string(object, "repo", CONTEXT)?;
+    if !is_github_repo_slug(repo) {
+        return Err(release_evidence_invalid(CONTEXT, "repo"));
+    }
+    require_release_evidence_string(object, "execution_mode", "dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "publication_status", "blocked", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "approval_gate",
+        "human_release_approval_required",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "secret_interface",
+        "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "artifact_manifest_sha256", CONTEXT)?;
+    require_release_evidence_sha256(object, "publication_evidence_sha256", CONTEXT)?;
+    for expected in ["gh_release_create", "gh_release_upload"] {
+        require_release_evidence_array_contains_string(object, "planned_steps", expected, CONTEXT)?;
+    }
+    for expected in ["github_token", "local_paths"] {
+        require_release_evidence_array_contains_string(
+            object,
+            "prohibited_public_material",
+            expected,
+            CONTEXT,
+        )?;
+    }
+    require_release_evidence_non_empty_string(object, "notes", CONTEXT)?;
+    validate_github_release_publication_gate_artifacts(object)?;
+    Ok(())
+}
+
+fn validate_github_release_publication_gate_artifacts(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    const CONTEXT: &str = "GitHub Release publication gate";
+    let artifacts = require_release_evidence_array(object, "artifacts", CONTEXT)?;
+    let mut seen = BTreeSet::new();
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &["name", "file", "artifact_sha256", "bytes", "publish_status"],
+            CONTEXT,
+        )?;
+        let name = require_release_evidence_non_empty_string(artifact, "name", CONTEXT)?;
+        if !matches!(name, "resume-cli" | "resume-daemon" | "resume-benchmark")
+            || !seen.insert(name.to_string())
+        {
+            return Err(release_evidence_invalid(CONTEXT, "artifacts"));
+        }
+        let file = require_release_evidence_non_empty_string(artifact, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        require_release_evidence_sha256(artifact, "artifact_sha256", CONTEXT)?;
+        require_release_evidence_positive_u64(artifact, "bytes", CONTEXT)?;
+        require_release_evidence_string(artifact, "publish_status", "blocked", CONTEXT)?;
+    }
+    for required in ["resume-cli", "resume-daemon", "resume-benchmark"] {
+        if !seen.contains(required) {
+            return Err(release_evidence_invalid(CONTEXT, "artifacts"));
+        }
+    }
+    Ok(())
+}
+
+fn is_github_repo_slug(value: &str) -> bool {
+    let parts = value.split('/').collect::<Vec<_>>();
+    parts.len() == 2
+        && parts.iter().all(|part| {
+            !part.is_empty()
+            && part.bytes().all(
+                |byte| matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'.' | b'-'),
+            )
+        })
 }
 
 struct CurrentStageEvidenceDigests {

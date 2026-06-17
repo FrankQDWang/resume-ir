@@ -986,6 +986,75 @@ fn release_readiness_json_accepts_release_publication_evidence_without_clearing_
 }
 
 #[test]
+fn release_readiness_json_accepts_github_publication_gate_without_clearing_blockers() {
+    let data_dir = temp_path("release-readiness-github-publication-gate-private-data");
+    let evidence_dir = temp_path("release-readiness-github-publication-gate-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let publication_gate = evidence_dir.join("github-release-publication-gate.json");
+    fs::write(
+        &publication_gate,
+        github_release_publication_gate_manifest(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--github-release-publication-gate",
+            path_str(&publication_gate),
+        ])
+        .output()
+        .expect("run release readiness with GitHub Release publication gate evidence");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("release readiness publication gate json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let provided_labels = provided
+        .iter()
+        .map(|evidence| evidence["label"].as_str().expect("provided label"))
+        .collect::<Vec<_>>();
+    assert!(provided_labels.contains(&"GitHub Release publication gate evidence"));
+    for evidence in provided {
+        assert_eq!(evidence["status"], "provided");
+        assert_eq!(
+            evidence["privacy_boundary"],
+            "blocked_release_evidence_manifest"
+        );
+        assert!(evidence["detail"]
+            .as_str()
+            .expect("provided detail")
+            .contains("fail-closed"));
+    }
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(blocker_labels.contains(&"GitHub Release publication"));
+    assert!(!blocker_labels.contains(&"GitHub Release publication gate evidence"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stdout.contains("github_token"));
+    assert!(!stderr.contains("github_token"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_platform_package_manifest_evidence_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-package-manifest-private-data");
     let evidence_dir = temp_path("release-readiness-package-manifest-private-reports");
@@ -3105,6 +3174,31 @@ fn release_publication_evidence_manifest() -> String {
         "\"blocked_release_steps\":[\"github_release_approval\",\"github_release_create\",\"github_release_upload\",\"release_artifact_download_verification\"],",
         "\"prohibited_public_material\":[\"github_token\",\"release_pat\",\"local_paths\",\"raw_resume_data\",\"diagnostic_packages\",\"model_caches\"],",
         "\"notes\":\"Blocked GitHub Release publication dry run only; no GitHub API call, release creation, token access, or artifact upload was performed.\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn github_release_publication_gate_manifest() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.github_publication_gate.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"repo\":\"FrankQDWang/resume-ir\",",
+        "\"execution_mode\":\"dry_run\",",
+        "\"publication_status\":\"blocked\",",
+        "\"approval_gate\":\"human_release_approval_required\",",
+        "\"secret_interface\":\"GITHUB_TOKEN_or_GH_TOKEN_required_for_execute\",",
+        "\"artifact_manifest_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",",
+        "\"publication_evidence_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",",
+        "\"planned_steps\":[\"validate_release_artifact_manifest\",\"validate_publication_evidence_manifest\",\"gh_release_create\",\"gh_release_upload\",\"gh_release_download_verify\"],",
+        "\"artifacts\":[",
+        "{\"name\":\"resume-cli\",\"file\":\"resume-cli\",\"artifact_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"bytes\":101,\"publish_status\":\"blocked\"},",
+        "{\"name\":\"resume-daemon\",\"file\":\"resume-daemon\",\"artifact_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"bytes\":202,\"publish_status\":\"blocked\"},",
+        "{\"name\":\"resume-benchmark\",\"file\":\"resume-benchmark\",\"artifact_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"bytes\":303,\"publish_status\":\"blocked\"}",
+        "],",
+        "\"prohibited_public_material\":[\"github_token\",\"release_pat\",\"local_paths\",\"raw_resume_data\",\"diagnostic_packages\",\"model_caches\"],",
+        "\"notes\":\"Dry-run mode does not call GitHub, read tokens, create releases, or upload artifacts. Execute mode is fail-closed behind explicit approval and token checks.\"",
         "}"
     )
     .to_string()

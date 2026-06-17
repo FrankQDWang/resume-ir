@@ -522,6 +522,7 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --release-artifact-manifest release-artifacts.json \
   --release-sbom release-sbom.json \
   --release-publication-evidence release-publication-evidence.json \
+  --github-release-publication-gate github-release-publication-gate.json \
   --macos-package-manifest macos-package.json \
   --windows-package-manifest windows-package.json \
   --signing-evidence signing-evidence.json \
@@ -686,12 +687,14 @@ paths, or clear the `GitHub Release publication` blocker.
 
 `scripts/release/publish-github-release.sh` is the fail-closed publication entry
 point. Dry-run mode writes `release.github_publication_gate.v1` to
-`github-release-publication-gate.json` and must not call GitHub, read tokens,
-create releases, or upload artifacts. Execute mode requires all of the
-following before it can publish: `--execute`, `--approve-release`, an
-`--artifact-dir`, `gh`, and either `GITHUB_TOKEN` or `GH_TOKEN`. The release
-workflow runs only dry-run mode by default; real publication remains blocked
-until a human approves the release and supplies the CI secret interface.
+`github-release-publication-gate.json`; release-readiness records it as
+`GitHub Release publication gate evidence` with
+`blocked_release_evidence_manifest`. It must not call GitHub, read tokens,
+create releases, or upload artifacts. Execute mode requires all of the following
+before it can publish: `--execute`, `--approve-release`, an `--artifact-dir`,
+`gh`, and either `GITHUB_TOKEN` or `GH_TOKEN`. The release workflow runs only
+dry-run mode by default; real publication remains blocked until a human approves
+the release and supplies the CI secret interface.
 
 macOS package dry-runs must also produce a blocked notarization evidence
 manifest. The manifest schema is `release.notarization_evidence.v1` and must
