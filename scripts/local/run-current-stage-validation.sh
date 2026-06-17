@@ -340,6 +340,12 @@ validate_fault_suite_report() {
   python3 scripts/ci/validate-current-stage-fault-suite.py --local-safe-suite "$path"
 }
 
+validate_private_benchmark_report() {
+  path="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for private benchmark evidence validation"
+  python3 scripts/ci/validate-current-stage-private-benchmark.py --private-benchmark "$path"
+}
+
 write_runtime_preflight_blocked_summary() {
   blocked_step="$1"
   blocked_category="$2"
@@ -2479,6 +2485,11 @@ if [ "$private_query_status" -ne 0 ]; then
   write_private_query_blocked_summary "$private_query_status" "private_query_baseline_failed"
   printf '%s\n' "current-stage validation blocked: private query baseline failed" >&2
   exit "$private_query_status"
+fi
+if ! validate_private_benchmark_report "$out_dir/private-benchmark-local.json"; then
+  write_private_query_blocked_summary 1 "private_query_baseline_invalid"
+  printf '%s\n' "current-stage validation blocked: private query baseline evidence failed validation" >&2
+  exit 1
 fi
 
 printf '%s\n' "current-stage validation: baseline shape gate"

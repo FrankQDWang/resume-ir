@@ -1075,6 +1075,9 @@ private_query_invalid_summary="$execute_out_dir/current-stage-blocked-summary.js
 if [ ! -s "$private_query_invalid_summary" ]; then
   fail "current-stage full profile did not write redacted blocked summary on invalid private query benchmark report"
 fi
+if [ -e "$execute_out_dir/private-benchmark-gate.stdout.txt" ]; then
+  fail "current-stage execute ran benchmark gate after invalid private query benchmark report"
+fi
 if [ -e "$execute_out_dir/redacted-diagnostics.json" ]; then
   fail "current-stage execute ran diagnostics after invalid private query benchmark report"
 fi
@@ -1088,18 +1091,17 @@ if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$private_query_invalid_summary" >/dev/null
 fi
 require_text "$private_query_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
-require_text "$private_query_invalid_summary" '"blocked_step": "baseline_shape_gate"'
+require_text "$private_query_invalid_summary" '"blocked_step": "private_query_baseline"'
 require_text "$private_query_invalid_summary" '"blocked_category": "benchmark"'
-require_text "$private_query_invalid_summary" '"blocked_reason": "baseline_shape_gate_failed"'
+require_text "$private_query_invalid_summary" '"blocked_reason": "private_query_baseline_invalid"'
 require_text "$private_query_invalid_summary" '"private-benchmark-local.json"'
-require_text "$private_query_invalid_summary" '"private-benchmark-gate.stdout.txt"'
 require_current_stage_handoff \
   "blocked" \
   "resume-ir.current-stage-blocked-summary.v1"
 reject_text "$private_query_invalid_summary" "$tmpdir"
 reject_text "$private_query_invalid_summary" "PRIVATE-current-stage"
 reject_text "$private_query_invalid_summary" "private fake query"
-require_text "$tmpdir/execute-private-query-invalid-stderr.txt" "current-stage validation blocked: baseline shape gate failed"
+require_text "$tmpdir/execute-private-query-invalid-stderr.txt" "current-stage validation blocked: private query baseline evidence failed validation"
 reject_text "$tmpdir/execute-private-query-invalid-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-private-query-invalid-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-private-query-invalid-stdout.txt" "PRIVATE-current-stage"
