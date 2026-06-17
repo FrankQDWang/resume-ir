@@ -220,6 +220,46 @@ reject_text "$plan" "/Users/"
 reject_text "$plan" "--allow-keyword-fallback"
 reject_text "$plan" "--allow-partial-hot-index-for-smoke"
 
+auto_ocr_bin_dir="$tmpdir/PRIVATE-current-stage-auto-ocr-bin"
+auto_ocr_plan="$tmpdir/current-stage-validation-auto-ocr-plan.json"
+mkdir -p "$auto_ocr_bin_dir"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$auto_ocr_bin_dir/tesseract"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$auto_ocr_bin_dir/pdftoppm"
+chmod 700 "$auto_ocr_bin_dir/tesseract" "$auto_ocr_bin_dir/pdftoppm"
+
+PATH="$auto_ocr_bin_dir:$PATH" "$script" --dry-run \
+  --resume-root "$resume_root" \
+  --data-dir "$data_dir" \
+  --out-dir "$out_dir" \
+  --model-manifest "$model_manifest" \
+  --ocr-runtime-manifest "$ocr_manifest" \
+  --model-artifact "$model_artifact" \
+  --embedding-command "$embedding_command" \
+  --embedding-runtime-bin-dir "$embedding_runtime_bin_dir" \
+  --model-pack-id reviewed-local-model-pack \
+  --model-id reviewed-local-embedding-model \
+  --model-format onnx \
+  --dimension 384 \
+  --model-license Apache-2.0 \
+  --runtime-pack-id reviewed-local-ocr-pack \
+  --language eng \
+  --language-pack "$language_pack" \
+  --engine-license Apache-2.0 \
+  --renderer-license GPL-2.0-or-later \
+  --language-license Apache-2.0 \
+  --max-files 10000 \
+  --max-queries 500 \
+  --top-k 10 \
+  > "$auto_ocr_plan"
+
+require_text "$auto_ocr_plan" '"schema_version": "resume-ir.current-stage-validation-plan.v1"'
+require_text "$auto_ocr_plan" 'resume-cli --data-dir <local-data-dir> ocr preflight --json'
+require_text "$auto_ocr_plan" '--tesseract-command <local-tesseract-command>'
+require_text "$auto_ocr_plan" '--pdftoppm-command <local-pdftoppm-command>'
+reject_text "$auto_ocr_plan" "$auto_ocr_bin_dir"
+reject_text "$auto_ocr_plan" "PRIVATE-current-stage"
+reject_text "$auto_ocr_plan" "/Users/"
+
 smoke_plan="$tmpdir/current-stage-validation-smoke-plan.json"
 "$script" --dry-run \
   --validation-profile smoke \

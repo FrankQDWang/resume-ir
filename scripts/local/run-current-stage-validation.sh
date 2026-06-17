@@ -10,7 +10,7 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   --model-artifact FILE --embedding-command FILE
   [--embedding-runtime-bin-dir DIR]
   --model-pack-id ID --model-id ID --model-format ID --dimension N --model-license ID
-  --runtime-pack-id ID --tesseract-command FILE --pdftoppm-command FILE
+  --runtime-pack-id ID [--tesseract-command FILE] [--pdftoppm-command FILE]
   --language LANG --language-pack FILE|LANG=FILE [--language-pack LANG=FILE ...]
   --engine-license ID --renderer-license ID --language-license ID
   [--dataset-manifest-sha256 SHA256] [--query-set-sha256 SHA256]
@@ -71,6 +71,16 @@ require_sha256() {
       [ "${#value}" -eq 64 ] || fail "$name must be a 64-character sha256 digest"
       ;;
   esac
+}
+
+detect_command_path() {
+  name="$1"
+  value="$2"
+  if [ -n "$value" ]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  command -v "$name" 2>/dev/null || fail "missing required runtime command: $name; install it or pass --${name}-command"
 }
 
 sha256_file() {
@@ -1878,8 +1888,8 @@ require_arg "--model-format" "$model_format"
 require_arg "--dimension" "$dimension"
 require_arg "--model-license" "$model_license"
 require_arg "--runtime-pack-id" "$runtime_pack_id"
-require_arg "--tesseract-command" "$tesseract_command"
-require_arg "--pdftoppm-command" "$pdftoppm_command"
+tesseract_command=$(detect_command_path "tesseract" "$tesseract_command")
+pdftoppm_command=$(detect_command_path "pdftoppm" "$pdftoppm_command")
 require_arg "--language" "$language"
 [ "$language_pack_count" -gt 0 ] || fail "missing required argument: --language-pack"
 require_arg "--engine-license" "$engine_license"
