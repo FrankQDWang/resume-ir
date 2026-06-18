@@ -44,12 +44,32 @@ jobs:
       - name: Build release binaries
         run: cargo build --workspace --release --locked
 
+      - name: Create synthetic reviewed runtime bundle dry run
+        run: |
+          runtime_dir="${RUNNER_TEMP}/ci-synthetic-runtime-bundle"
+          mkdir -p "$runtime_dir" release-dry-run
+          printf '%s\n' "synthetic tesseract runtime binary" > "$runtime_dir/tesseract"
+          printf '%s\n' "synthetic English tessdata payload" > "$runtime_dir/eng.traineddata"
+          printf '%s\n' "synthetic PDF renderer runtime binary" > "$runtime_dir/pdftoppm"
+          printf '%s\n' "synthetic source offer archive" > "$runtime_dir/source-offer.tar.gz"
+          scripts/release/create-runtime-bundle-manifest.sh \
+            --version "${{ inputs.version }}" \
+            --runtime-pack-id ci-synthetic-runtime-bundle \
+            --distribution-license GPL-3.0-or-later \
+            --source-offer "$runtime_dir/source-offer.tar.gz" \
+            --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$runtime_dir/tesseract" \
+            --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$runtime_dir/eng.traineddata" \
+            --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$runtime_dir/pdftoppm" \
+            --out-dir release-dry-run \
+            --reviewed
+
       - name: Create release artifact manifest
         run: |
           scripts/release/create-artifact-manifest.sh \
             --version "${{ inputs.version }}" \
             --target-dir target/release \
-            --out-dir release-dry-run
+            --out-dir release-dry-run \
+            --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json
 
       - name: Create blocked signing evidence manifest
         run: |
@@ -62,7 +82,8 @@ jobs:
         run: |
           scripts/release/create-sbom.sh \
             --version "${{ inputs.version }}" \
-            --out-dir release-dry-run
+            --out-dir release-dry-run \
+            --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json
 
       - name: Create blocked GitHub Release publication evidence manifest
         run: |
@@ -87,11 +108,15 @@ jobs:
           test ! -d diagnostics
           test ! -d model-cache
           test -f release-dry-run/release-artifacts.json
+          test -f release-dry-run/runtime-bundle-manifest.json
           test -f release-dry-run/signing-evidence.json
           test -f release-dry-run/release-sbom.json
           test -f release-dry-run/release-publication-evidence.json
           test -f release-dry-run/github-release-publication-gate.json
           grep -F '"signing_status": "blocked"' release-dry-run/signing-evidence.json
+          grep -F '"runtime_bundle_manifests"' release-dry-run/release-artifacts.json
+          grep -F '"runtime_distribution_mode": "bundled"' release-dry-run/runtime-bundle-manifest.json
+          grep -F '"runtime_distribution_mode=bundled"' release-dry-run/release-sbom.json
           grep -F '"evidence_boundary": "dry_run_no_signing_material"' release-dry-run/signing-evidence.json
           grep -F '"publication_status": "blocked"' release-dry-run/release-publication-evidence.json
           grep -F '"evidence_boundary": "dry_run_no_release_publication"' release-dry-run/release-publication-evidence.json
@@ -99,6 +124,10 @@ jobs:
           grep -F '"secret_interface": "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute"' release-dry-run/github-release-publication-gate.json
           if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/release-artifacts.json; then
             echo "release artifact manifest leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/runtime-bundle-manifest.json; then
+            echo "runtime bundle manifest leaked a local path or runtime-data marker" >&2
             exit 1
           fi
           if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/signing-evidence.json; then
@@ -149,12 +178,34 @@ jobs:
       - name: Build release binaries
         run: cargo build --workspace --release --locked
 
+      - name: Create synthetic reviewed runtime bundle dry run
+        run: |
+          runtime_dir="${RUNNER_TEMP}/ci-synthetic-runtime-bundle"
+          mkdir -p "$runtime_dir" macos-package-dry-run
+          printf '%s\n' "synthetic tesseract runtime binary" > "$runtime_dir/tesseract"
+          printf '%s\n' "synthetic English tessdata payload" > "$runtime_dir/eng.traineddata"
+          printf '%s\n' "synthetic PDF renderer runtime binary" > "$runtime_dir/pdftoppm"
+          printf '%s\n' "synthetic source offer archive" > "$runtime_dir/source-offer.tar.gz"
+          scripts/release/create-runtime-bundle-manifest.sh \
+            --version "${{ inputs.version }}" \
+            --runtime-pack-id ci-synthetic-runtime-bundle \
+            --distribution-license GPL-3.0-or-later \
+            --source-offer "$runtime_dir/source-offer.tar.gz" \
+            --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$runtime_dir/tesseract" \
+            --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$runtime_dir/eng.traineddata" \
+            --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$runtime_dir/pdftoppm" \
+            --out-dir macos-package-dry-run \
+            --reviewed
+
       - name: Create unsigned macOS package dry run
         run: |
+          runtime_dir="${RUNNER_TEMP}/ci-synthetic-runtime-bundle"
           scripts/release/create-macos-package.sh \
             --version "${{ inputs.version }}" \
             --target-dir target/release \
-            --out-dir macos-package-dry-run
+            --out-dir macos-package-dry-run \
+            --runtime-bundle-manifest macos-package-dry-run/runtime-bundle-manifest.json \
+            --runtime-bundle-dir "$runtime_dir"
 
       - name: Create blocked macOS installer evidence manifest
         run: |
@@ -184,6 +235,7 @@ jobs:
           test ! -d diagnostics
           test ! -d model-cache
           test -f macos-package-dry-run/macos-package.json
+          test -f macos-package-dry-run/runtime-bundle-manifest.json
           test -f macos-package-dry-run/macos-installer-evidence.json
           test -f macos-package-dry-run/macos-installer-lifecycle-dry-run.json
           test -f macos-package-dry-run/notarization-evidence.json
@@ -191,6 +243,8 @@ jobs:
           test -f macos-package-dry-run/resume-ir-${{ inputs.version }}-macos.dmg
           scripts/release/verify-macos-dmg.sh macos-package-dry-run/resume-ir-${{ inputs.version }}-macos.dmg
           grep -F '"packaging_status": "unsigned_dry_run"' macos-package-dry-run/macos-package.json
+          grep -F '"schema_version": "release.runtime_package_payload.v1"' macos-package-dry-run/macos-package.json
+          grep -F '"runtime_distribution_mode": "bundled"' macos-package-dry-run/runtime-bundle-manifest.json
           grep -F '"signing_status": "unsigned"' macos-package-dry-run/macos-package.json
           grep -F '"notarization_status": "not_requested"' macos-package-dry-run/macos-package.json
           grep -F '"installer_lifecycle_status": "blocked"' macos-package-dry-run/macos-installer-evidence.json
@@ -203,6 +257,10 @@ jobs:
           grep -F '"evidence_boundary": "dry_run_no_notarization_credentials"' macos-package-dry-run/notarization-evidence.json
           if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' macos-package-dry-run/macos-package.json; then
             echo "macOS package manifest leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' macos-package-dry-run/runtime-bundle-manifest.json; then
+            echo "macOS runtime bundle manifest leaked a local path or runtime-data marker" >&2
             exit 1
           fi
           if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' macos-package-dry-run/macos-installer-evidence.json; then
@@ -259,13 +317,36 @@ jobs:
       - name: Build release binaries
         run: cargo build --workspace --release --locked
 
+      - name: Create synthetic reviewed runtime bundle dry run
+        shell: bash
+        run: |
+          runtime_dir="ci-synthetic-runtime-bundle"
+          mkdir -p "$runtime_dir" windows-package-dry-run
+          printf '%s\n' "synthetic tesseract runtime binary" > "$runtime_dir/tesseract"
+          printf '%s\n' "synthetic English tessdata payload" > "$runtime_dir/eng.traineddata"
+          printf '%s\n' "synthetic PDF renderer runtime binary" > "$runtime_dir/pdftoppm"
+          printf '%s\n' "synthetic source offer archive" > "$runtime_dir/source-offer.tar.gz"
+          scripts/release/create-runtime-bundle-manifest.sh \
+            --version "${{ inputs.version }}" \
+            --runtime-pack-id ci-synthetic-runtime-bundle \
+            --distribution-license GPL-3.0-or-later \
+            --source-offer "$runtime_dir/source-offer.tar.gz" \
+            --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$runtime_dir/tesseract" \
+            --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$runtime_dir/eng.traineddata" \
+            --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$runtime_dir/pdftoppm" \
+            --out-dir windows-package-dry-run \
+            --reviewed
+
       - name: Create unsigned Windows MSI dry run
         shell: pwsh
         run: |
+          $runtimeDir = "ci-synthetic-runtime-bundle"
           scripts/release/create-windows-package.ps1 `
             -Version "${{ inputs.version }}" `
             -TargetDir target/release `
-            -OutDir windows-package-dry-run
+            -OutDir windows-package-dry-run `
+            -RuntimeBundleManifest windows-package-dry-run/runtime-bundle-manifest.json `
+            -RuntimeBundleDir $runtimeDir
 
       - name: Create blocked Windows installer evidence manifest
         shell: bash
@@ -311,18 +392,22 @@ jobs:
             }
           }
           $manifest = "windows-package-dry-run/windows-package.json"
+          $runtimeBundleManifest = "windows-package-dry-run/runtime-bundle-manifest.json"
           $installerEvidence = "windows-package-dry-run/windows-installer-evidence.json"
           $installerLifecycle = "windows-package-dry-run/windows-installer-lifecycle-dry-run.json"
           $serviceEvidence = "windows-package-dry-run/windows-service-evidence.json"
           $serviceLifecycle = "windows-package-dry-run/windows-service-lifecycle-dry-run.json"
           $msi = "windows-package-dry-run/resume-ir-${{ inputs.version }}-windows.msi"
           if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) { exit 1 }
+          if (-not (Test-Path -LiteralPath $runtimeBundleManifest -PathType Leaf)) { exit 1 }
           if (-not (Test-Path -LiteralPath $installerEvidence -PathType Leaf)) { exit 1 }
           if (-not (Test-Path -LiteralPath $installerLifecycle -PathType Leaf)) { exit 1 }
           if (-not (Test-Path -LiteralPath $serviceEvidence -PathType Leaf)) { exit 1 }
           if (-not (Test-Path -LiteralPath $serviceLifecycle -PathType Leaf)) { exit 1 }
           if (-not (Test-Path -LiteralPath $msi -PathType Leaf)) { exit 1 }
           Select-String -LiteralPath $manifest -SimpleMatch '"packaging_status": "unsigned_dry_run"'
+          Select-String -LiteralPath $manifest -SimpleMatch 'release.runtime_package_payload.v1'
+          Select-String -LiteralPath $runtimeBundleManifest -SimpleMatch '"runtime_distribution_mode": "bundled"'
           Select-String -LiteralPath $manifest -SimpleMatch '"installer_kind": "msi"'
           Select-String -LiteralPath $manifest -SimpleMatch '"signing_status": "unsigned"'
           Select-String -LiteralPath $installerEvidence -SimpleMatch '"installer_lifecycle_status": "blocked"'
@@ -337,6 +422,10 @@ jobs:
           Select-String -LiteralPath $serviceLifecycle -SimpleMatch '"service_lifecycle_status": "blocked"'
           if (Select-String -LiteralPath $manifest -Pattern 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' -Quiet) {
             Write-Error "Windows package manifest leaked a local path or runtime-data marker"
+            exit 1
+          }
+          if (Select-String -LiteralPath $runtimeBundleManifest -Pattern 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' -Quiet) {
+            Write-Error "Windows runtime bundle manifest leaked a local path or runtime-data marker"
             exit 1
           }
           if (Select-String -LiteralPath $installerEvidence -Pattern 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' -Quiet) {
