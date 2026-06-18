@@ -1,6 +1,8 @@
 # License Governance
 
 The current source license is MIT, but MIT is not a product packaging constraint.
+This repository may change the source or release distribution license before
+stable release when the reviewed bundled runtime distribution requires it.
 Release licensing is selected by the reviewed runtime distribution.
 Bundled runtime releases may move the release distribution to GPL-3.0-or-later or
 another compatible license when the selected OCR, PDF renderer, model, or tool

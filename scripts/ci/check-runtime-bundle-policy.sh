@@ -30,14 +30,28 @@ release_runbook="docs/runbooks/release-blockers.md"
 current_stage_script="scripts/local/run-current-stage-validation.sh"
 current_stage_guard="scripts/ci/check-current-stage-validation.sh"
 license_check="scripts/ci/check-licenses.sh"
+goal_doc="GOAL.md"
+readme_doc="README.md"
 
-for file in "$license_doc" "$dependency_doc" "$tech_stack_doc" "$worker_runbook" "$release_runbook" "$current_stage_script" "$current_stage_guard" "$license_check"; do
+for file in "$license_doc" "$dependency_doc" "$tech_stack_doc" "$worker_runbook" "$release_runbook" "$current_stage_script" "$current_stage_guard" "$license_check" "$goal_doc" "$readme_doc"; do
   [ -f "$file" ] || fail "missing runtime bundle policy file: $file"
 done
 
 require_text "$license_doc" "The current source license is MIT, but MIT is not a product packaging constraint."
+require_text "$license_doc" "may change the source or release distribution license"
 require_text "$license_doc" "Bundled runtime releases may move the release distribution to GPL-3.0-or-later"
 require_text "$license_doc" "source-offer"
+
+require_text "$readme_doc" "not a product packaging constraint"
+require_text "$readme_doc" "source or release distribution license"
+
+require_text "$goal_doc" "bundled-first"
+require_text "$goal_doc" "external override"
+require_text "$goal_doc" "Poppler/pdftoppm"
+require_text "$goal_doc" "GPL-compatible license"
+require_text "$goal_doc" "source-offer"
+reject_text "$goal_doc" "不默认打包"
+reject_text "$goal_doc" "只作为用户本机外部 PDF"
 
 require_text "$dependency_doc" "bundled-first"
 require_text "$dependency_doc" "external override"

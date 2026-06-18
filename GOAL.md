@@ -17,9 +17,12 @@
 
 1. 生成可复现 benchmark baseline、观测指标和真实本机 1 万份本地验证流程。
 2. 保留指定目录扫描；全盘扫描视为用户把根目录或磁盘作为扫描根的同一能力。
-3. OCR runtime 采用本机外部 runtime 方向：Tesseract/tessdata 可作为
-   Apache-2.0 开源 OCR 方案，Poppler/pdftoppm 只作为用户本机外部 PDF
-   renderer 调用，不默认打包。
+3. OCR/PDF/model runtime 采用 bundled-first 方向：默认产品体验应尽量随
+   安装包提供可审查 runtime，并保留 external override。Tesseract/tessdata
+   可作为 Apache-2.0 OCR 方案；PDF renderer 优先评估可宽松分发的
+   bundled 方案，Poppler/pdftoppm 可在 GPL-compatible license、
+   source-offer、notice、checksum、SBOM 和 installer composition 审查完成后
+   进入打包方案。
 4. 完成 runtime manifest、checksum/license 记录、依赖检测、失败提示和
    runbook；不要把“未选择 OCR runtime”作为本阶段未知 blocker。
 5. 完成 macOS/Windows install、upgrade、uninstall、rollback 的脚本、
