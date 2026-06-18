@@ -856,8 +856,6 @@ require_text "$ocr_backlog_summary" '"blocked_reason": "ocr_backlog_exceeds_curr
 require_text "$ocr_backlog_summary" '"ocr_runtime_probe": "passed"'
 require_text "$ocr_backlog_summary" '"embedding_protocol": "passed"'
 require_summary_observability "$ocr_backlog_summary"
-require_text "$ocr_backlog_summary" '"ocr_required": 8538'
-require_text "$ocr_backlog_summary" '"vector_indexed_document_count": 0'
 require_text "$ocr_backlog_summary" '"hot_index_fully_covered": false'
 require_text "$ocr_backlog_summary" '"redacted_diagnostics", "status": "success"'
 require_text "$ocr_backlog_summary" '"doctor", "status": "success"'

@@ -37,10 +37,12 @@ cli_closed_loop_script="scripts/ci/check-cli-closed-loop.sh"
 daemon_closed_loop_script="scripts/ci/check-daemon-closed-loop.sh"
 benchmark_smoke_script="scripts/ci/check-benchmark-smoke.sh"
 current_stage_handoff_script="scripts/ci/check-current-stage-handoff.sh"
+current_stage_validation_script="scripts/ci/check-current-stage-validation.sh"
+current_stage_observability_script="scripts/ci/check-current-stage-observability.sh"
 local_ocr_runtime_script="scripts/ci/check-local-ocr-runtime.sh"
 local_diagnostics_evidence_script="scripts/ci/check-local-diagnostics-release-evidence.sh"
 
-for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$benchmark_smoke_script" "$current_stage_handoff_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script"; do
+for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$benchmark_smoke_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script"; do
   require_file "$file"
 done
 
@@ -83,6 +85,7 @@ require_text "$verify_script" "./scripts/ci/check-cli-closed-loop.sh"
 require_text "$verify_script" "./scripts/ci/check-daemon-closed-loop.sh"
 require_text "$verify_script" "./scripts/ci/check-benchmark-smoke.sh"
 require_text "$verify_script" "./scripts/ci/check-current-stage-handoff.sh"
+require_text "$verify_script" "./scripts/ci/check-current-stage-observability.sh"
 require_text "$verify_script" "./scripts/ci/check-local-ocr-runtime.sh"
 require_text "$verify_script" "./scripts/ci/check-local-diagnostics-release-evidence.sh"
 require_text "$verify_script" "./scripts/ci/check-release-readiness.sh"
@@ -177,8 +180,17 @@ require_text "$current_stage_handoff_script" "resume-ir.current-stage-handoff.v1
 require_text "$current_stage_handoff_script" "current-stage handoff check passed"
 require_text "$current_stage_handoff_script" "PRIVATE-current-stage"
 
-require_text "scripts/ci/check-current-stage-validation.sh" '"doctor", "status": "success"'
-require_text "scripts/ci/check-current-stage-validation.sh" '"doctor.out"'
+require_text "$current_stage_validation_script" '"doctor", "status": "success"'
+require_text "$current_stage_validation_script" '"doctor.out"'
+require_text "$current_stage_validation_script" "validate-current-stage-observability.py --full-evidence"
+require_text "$current_stage_validation_script" "validate-current-stage-observability.py --summary"
+reject_text "$current_stage_validation_script" 'require_text "$ocr_backlog_summary" '"'"'"ocr_required": 8538'"'"
+reject_text "$current_stage_validation_script" 'require_text "$ocr_backlog_summary" '"'"'"vector_indexed_document_count": 0'"'"
+require_text "$current_stage_observability_script" "validate-current-stage-observability.py --summary"
+require_text "$current_stage_observability_script" "document_count below current-stage floor"
+require_text "$current_stage_observability_script" "vector_indexed_document_count is inconsistent"
+require_text "$current_stage_observability_script" "forbidden observability field"
+require_text "$current_stage_observability_script" "current-stage observability check passed"
 require_text "scripts/local/run-current-stage-validation.sh" 'current-stage validation: doctor'
 
 require_text "$release_workflow" "scripts/release/create-artifact-manifest.sh"
