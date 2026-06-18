@@ -73,6 +73,17 @@ This marks only the `redacted diagnostics evidence` item as provided. It does
 not clear signing, notarization, installer lifecycle, private benchmark,
 quality, OCR/model license, cross-platform, or hardware-drill blockers.
 
+The CI reproduction for this release-readiness evidence path is:
+
+```bash
+./scripts/ci/check-local-diagnostics-release-evidence.sh
+```
+
+That check uses only Synthetic fixtures, runs the real CLI
+`export-diagnostics --redact`, passes the resulting local aggregate JSON through
+`release-readiness --diagnostics-report`, and verifies the diagnostics evidence
+is accepted while stable release remains blocked by the other release gates.
+
 ## Escalation
 
 Escalate as a privacy incident if redacted output contains complete paths,

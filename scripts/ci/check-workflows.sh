@@ -38,8 +38,9 @@ daemon_closed_loop_script="scripts/ci/check-daemon-closed-loop.sh"
 benchmark_smoke_script="scripts/ci/check-benchmark-smoke.sh"
 current_stage_handoff_script="scripts/ci/check-current-stage-handoff.sh"
 local_ocr_runtime_script="scripts/ci/check-local-ocr-runtime.sh"
+local_diagnostics_evidence_script="scripts/ci/check-local-diagnostics-release-evidence.sh"
 
-for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$benchmark_smoke_script" "$current_stage_handoff_script" "$local_ocr_runtime_script"; do
+for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$benchmark_smoke_script" "$current_stage_handoff_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script"; do
   require_file "$file"
 done
 
@@ -83,6 +84,7 @@ require_text "$verify_script" "./scripts/ci/check-daemon-closed-loop.sh"
 require_text "$verify_script" "./scripts/ci/check-benchmark-smoke.sh"
 require_text "$verify_script" "./scripts/ci/check-current-stage-handoff.sh"
 require_text "$verify_script" "./scripts/ci/check-local-ocr-runtime.sh"
+require_text "$verify_script" "./scripts/ci/check-local-diagnostics-release-evidence.sh"
 require_text "$verify_script" "./scripts/ci/check-release-readiness.sh"
 require_text "$verify_script" "./scripts/ci/check-release-artifacts.sh"
 require_text "$verify_script" "./scripts/ci/check-release-publication-evidence.sh"
@@ -162,6 +164,11 @@ require_text "$local_ocr_runtime_script" "--reviewed"
 require_text "$local_ocr_runtime_script" "legal review is incomplete"
 require_text "$local_ocr_runtime_script" "real resume-cli OCR manifest check passed"
 require_text "$local_ocr_runtime_script" "local OCR runtime check passed"
+
+require_text "$local_diagnostics_evidence_script" "export-diagnostics --redact"
+require_text "$local_diagnostics_evidence_script" "--diagnostics-report"
+require_text "$local_diagnostics_evidence_script" "redacted diagnostics evidence"
+require_text "$local_diagnostics_evidence_script" "local diagnostics release-evidence check passed"
 
 require_text "$current_stage_handoff_script" "scripts/local/summarize-current-stage-validation.py"
 require_text "$current_stage_handoff_script" "resume-ir.current-stage-smoke-summary.v1"
