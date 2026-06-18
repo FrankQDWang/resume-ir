@@ -241,6 +241,52 @@ fn private_query_benchmark_rejects_mismatched_top_k_protocol_attestation() {
 }
 
 #[test]
+fn private_query_benchmark_reports_query_embedding_runtime_attestation() {
+    let query_set = private_query_set_file("private-query-query-embedding-set", 2);
+    let command = query_fixture_script_with_body(
+        "private-query-query-embedding-command",
+        query_embedding_attestation_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(2)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    assert_eq!(report["query_embedding_runtime"], "local-command");
+    assert_eq!(report["query_embedding_command_invocations"], 2);
+    assert!(!json.contains(path_str(&query_set)));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
 fn private_query_corpus_summary_rejects_partial_hot_index_coverage() {
     let error = PrivateQueryCorpusSummary::from_redacted_json_bytes(
         private_query_corpus_summary_json(8_720, false),
@@ -2023,6 +2069,12 @@ fn minimal_private_real_benchmark_json_without_hot_coverage(
         ",\"query_protocol\":\"resume-ir-query-v1\"",
         ",\"query_mode\":\"hybrid\"",
         ",\"retrieval_layers\":\"fulltext+field+vector+rrf\"",
+        ",\"query_embedding_runtime\":\"local-command\"",
+    ));
+    report.push_str(&format!(
+        ",\"query_embedding_command_invocations\":{query_count}"
+    ));
+    report.push_str(concat!(
         ",\"hot_index\":true",
         ",\"hot_path_ocr\":false",
         ",\"hot_path_parsing\":false",
@@ -2433,6 +2485,7 @@ fn assert_private_query_report_semantics(json: &str, expected_document_count: us
     assert_eq!(report["query_protocol"], "resume-ir-query-v1");
     assert_eq!(report["query_mode"], "hybrid");
     assert_eq!(report["retrieval_layers"], "fulltext+field+vector+rrf");
+    assert_eq!(report["query_embedding_runtime"], "local-command");
     assert_eq!(
         report["scope"],
         "private local real-corpus query benchmark; aggregate redacted report only"
@@ -2452,6 +2505,7 @@ fn assert_private_query_report_semantics(json: &str, expected_document_count: us
     assert!(searchable_count <= document_count);
     assert!(vector_count <= searchable_count);
     assert_eq!(report["query_count"], 500);
+    assert_eq!(report["query_embedding_command_invocations"], 500);
     assert_eq!(report["hot_index"], true);
     assert_eq!(report["hot_path_ocr"], false);
     assert_eq!(report["hot_path_parsing"], false);
@@ -2607,9 +2661,9 @@ fn query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
         "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
         "else\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
         "fi\n",
     )
 }
@@ -2634,6 +2688,18 @@ fn mismatched_top_k_query_fixture_script_body() -> &'static str {
         "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=5\\nhits=5\\n'\n",
         "else\n",
         "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=5\\nhits=0\\n'\n",
+        "fi\n",
+    )
+}
+
+#[cfg(unix)]
+fn query_embedding_attestation_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "else\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
         "fi\n",
     )
 }
@@ -2705,12 +2771,16 @@ fn query_fixture_script_body() -> &'static str {
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
         "  echo hits=0\r\n",
         ") else (\r\n",
         "  echo resume-ir-query-v1\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
         "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
         ")\r\n",
         "exit /b 0\r\n",
@@ -2754,6 +2824,32 @@ fn mismatched_top_k_query_fixture_script_body() -> &'static str {
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=5\r\n",
         "  echo hits=5\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn query_embedding_attestation_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
+        "if errorlevel 1 (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
+        "  echo hits=0\r\n",
+        ") else (\r\n",
+        "  echo resume-ir-query-v1\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
+        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
         ")\r\n",
         "exit /b 0\r\n",
     )

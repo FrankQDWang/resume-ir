@@ -102,12 +102,16 @@ def validate_private_benchmark(document: dict[str, Any], validation_profile: str
     require_string(document, "query_protocol", "resume-ir-query-v1")
     require_string(document, "query_mode", "hybrid")
     require_string(document, "retrieval_layers", "fulltext+field+vector+rrf")
+    require_string(document, "query_embedding_runtime", "local-command")
     require_string(document, "scope", SCOPE)
 
     document_count = require_int(document, "document_count")
     searchable_count = require_int(document, "searchable_document_count")
     vector_count = require_int(document, "vector_indexed_document_count")
     query_count = require_int(document, "query_count")
+    query_embedding_invocations = require_int(
+        document, "query_embedding_command_invocations"
+    )
     zero_result_queries = require_int(document, "zero_result_queries")
 
     if validation_profile == "full":
@@ -139,6 +143,8 @@ def validate_private_benchmark(document: dict[str, Any], validation_profile: str
             fail("vector_indexed_document_count is inconsistent")
     if query_count < min_queries:
         fail("query_count below current-stage floor")
+    if query_embedding_invocations != query_count:
+        fail("query_embedding_command_invocations is inconsistent")
     if zero_result_queries > query_count:
         fail("zero_result_queries is inconsistent")
 

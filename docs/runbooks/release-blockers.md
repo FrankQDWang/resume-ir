@@ -147,6 +147,14 @@ The benchmark report still carries redacted aggregate `document_count`,
 `searchable_document_count`, and `vector_indexed_document_count`; the full
 profile does not use the flag and remains blocked until the required hot-index
 coverage floor is met.
+Private-query reports must also carry
+`query_embedding_runtime: "local-command"` and
+`query_embedding_command_invocations` equal to the redacted query sample count.
+This is evidence honesty for the hybrid query hot path: it records that each
+query invoked the local embedding command to produce a query vector without
+recording the command path, query text, vectors, model bytes, or local runtime
+paths. It is not a latency optimization claim and it does not clear embedding
+model license/distribution review.
 The private benchmark evidence validator follows the selected validation
 profile: full profile still requires the 8000-document searchable/vector floors
 and 500 latency samples, while smoke profile requires non-zero searchable,

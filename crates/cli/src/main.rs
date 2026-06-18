@@ -11336,6 +11336,14 @@ fn benchmark_query_protocol_command(data_dir: &Path, args: &[String]) -> Result<
     println!("mode={}", search_args.mode.label());
     println!("layers={}", search_args.mode.benchmark_layers_label());
     println!("top_k={}", search_args.top_k);
+    println!(
+        "query_embedding_runtime={}",
+        search_args.mode.benchmark_query_embedding_runtime_label()
+    );
+    println!(
+        "query_embedding_invocations={}",
+        search_args.mode.benchmark_query_embedding_invocations()
+    );
     println!("hits={}", hits.len());
     Ok(())
 }
@@ -16288,6 +16296,20 @@ impl SearchMode {
             Self::FullText => "fulltext",
             Self::Semantic => "vector",
             Self::Hybrid => "fulltext+field+vector+rrf",
+        }
+    }
+
+    fn benchmark_query_embedding_runtime_label(self) -> &'static str {
+        match self {
+            Self::FullText => "none",
+            Self::Semantic | Self::Hybrid => "local-command",
+        }
+    }
+
+    fn benchmark_query_embedding_invocations(self) -> usize {
+        match self {
+            Self::FullText => 0,
+            Self::Semantic | Self::Hybrid => 1,
         }
     }
 }

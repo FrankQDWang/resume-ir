@@ -3401,6 +3401,8 @@ fn private_real_benchmark_report() -> String {
         "\"query_protocol\":\"resume-ir-query-v1\",",
         "\"query_mode\":\"hybrid\",",
         "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+        "\"query_embedding_runtime\":\"local-command\",",
+        "\"query_embedding_command_invocations\":500,",
         "\"hot_index\":true,",
         "\"hot_path_ocr\":false,",
         "\"hot_path_parsing\":false,",

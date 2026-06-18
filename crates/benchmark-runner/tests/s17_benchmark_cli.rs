@@ -468,6 +468,8 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
             "\"query_protocol\":\"resume-ir-query-v1\",",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+            "\"query_embedding_runtime\":\"local-command\",",
+            "\"query_embedding_command_invocations\":500,",
             "\"hot_index\":true,",
             "\"hot_path_ocr\":false,",
             "\"hot_path_parsing\":false,",
@@ -556,6 +558,8 @@ fn resume_benchmark_gate_accepts_private_real_smoke_report_with_explicit_allowan
             "\"query_protocol\":\"resume-ir-query-v1\",",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+            "\"query_embedding_runtime\":\"local-command\",",
+            "\"query_embedding_command_invocations\":1,",
             "\"hot_index\":true,",
             "\"hot_path_ocr\":false,",
             "\"hot_path_parsing\":false,",
@@ -644,6 +648,8 @@ fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
             "\"query_protocol\":\"resume-ir-query-v1\",",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+            "\"query_embedding_runtime\":\"local-command\",",
+            "\"query_embedding_command_invocations\":500,",
             "\"hot_index\":true,",
             "\"hot_path_ocr\":false,",
             "\"hot_path_parsing\":false,",
@@ -724,6 +730,8 @@ fn resume_benchmark_gate_rejects_million_release_sampled_confidence() {
             "\"query_protocol\":\"resume-ir-query-v1\",",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+            "\"query_embedding_runtime\":\"local-command\",",
+            "\"query_embedding_command_invocations\":500,",
             "\"hot_index\":true,",
             "\"hot_path_ocr\":false,",
             "\"hot_path_parsing\":false,",
@@ -804,6 +812,8 @@ fn resume_benchmark_gate_rejects_private_real_too_few_query_samples() {
             "\"query_protocol\":\"resume-ir-query-v1\",",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+            "\"query_embedding_runtime\":\"local-command\",",
+            "\"query_embedding_command_invocations\":200,",
             "\"hot_index\":true,",
             "\"hot_path_ocr\":false,",
             "\"hot_path_parsing\":false,",
@@ -2779,6 +2789,7 @@ fn assert_private_query_report_semantics(json: &str, expected_document_count: us
     assert_eq!(report["query_protocol"], "resume-ir-query-v1");
     assert_eq!(report["query_mode"], "hybrid");
     assert_eq!(report["retrieval_layers"], "fulltext+field+vector+rrf");
+    assert_eq!(report["query_embedding_runtime"], "local-command");
 
     let document_count = report["document_count"]
         .as_u64()
@@ -2794,6 +2805,7 @@ fn assert_private_query_report_semantics(json: &str, expected_document_count: us
     assert!(searchable_count <= document_count);
     assert!(vector_count <= searchable_count);
     assert_eq!(report["query_count"], 500);
+    assert_eq!(report["query_embedding_command_invocations"], 500);
     assert_eq!(report["hot_index"], true);
     assert_eq!(report["contains_raw_resume_text"], false);
     assert_eq!(report["contains_resume_paths"], false);
@@ -2935,9 +2947,9 @@ fn query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
         "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
         "else\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
         "fi\n",
     )
 }
@@ -2950,9 +2962,9 @@ fn query_fixture_script_requiring_args_body() -> &'static str {
         "  exit 7\n",
         "fi\n",
         "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
         "else\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
         "fi\n",
     )
 }
@@ -3001,12 +3013,16 @@ fn query_fixture_script_body() -> &'static str {
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
         "  echo hits=0\r\n",
         ") else (\r\n",
         "  echo resume-ir-query-v1\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
         "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
         ")\r\n",
         "exit /b 0\r\n",
@@ -3175,12 +3191,16 @@ fn query_fixture_script_requiring_args_body() -> &'static str {
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
         "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
         ") else (\r\n",
         "  echo resume-ir-query-v1\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
         "  echo hits=0\r\n",
         ")\r\n",
         "exit /b 0\r\n",

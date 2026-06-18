@@ -974,6 +974,7 @@ pub struct PrivateQueryBenchmarkReport {
     latency: LatencySummary,
     million_scale_verified: bool,
     percentile_confidence: &'static str,
+    query_embedding_command_invocations: usize,
     manifests: PrivateQueryManifestDigests,
 }
 
@@ -1051,6 +1052,8 @@ impl PrivateQueryBenchmarkReport {
                 "\"query_protocol\":\"resume-ir-query-v1\",",
                 "\"query_mode\":\"hybrid\",",
                 "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+                "\"query_embedding_runtime\":\"local-command\",",
+                "\"query_embedding_command_invocations\":{},",
                 "\"hot_index\":true,",
                 "\"hot_path_ocr\":false,",
                 "\"hot_path_parsing\":false,",
@@ -1086,6 +1089,7 @@ impl PrivateQueryBenchmarkReport {
             self.total_hits,
             self.million_scale_verified,
             self.percentile_confidence,
+            self.query_embedding_command_invocations,
             self.manifests.dataset_manifest_sha256,
             self.manifests.query_set_sha256,
             self.manifests.model_manifest_sha256,
@@ -1116,6 +1120,10 @@ impl fmt::Debug for PrivateQueryBenchmarkReport {
             .field("latency", &self.latency)
             .field("million_scale_verified", &self.million_scale_verified)
             .field("percentile_confidence", &self.percentile_confidence)
+            .field(
+                "query_embedding_command_invocations",
+                &self.query_embedding_command_invocations,
+            )
             .finish()
     }
 }
@@ -1670,20 +1678,24 @@ pub fn run_private_query_benchmark(
     let query_batch_started = Instant::now();
     let mut total_hits = 0_usize;
     let mut zero_result_queries = 0_usize;
+    let mut query_embedding_command_invocations = 0_usize;
     for query in &queries {
         write_private_query_file(&query_file, query)?;
         let query_started = Instant::now();
-        let hits = run_private_query_command(
+        let command_output = run_private_query_command(
             &config.command,
             &query_file,
             config.top_k,
             config.timeout_ms,
         )?;
         latencies.push(elapsed_ms(query_started));
+        let hits = command_output.hits;
         if hits == 0 {
             zero_result_queries += 1;
         }
         total_hits = total_hits.saturating_add(hits);
+        query_embedding_command_invocations = query_embedding_command_invocations
+            .saturating_add(command_output.query_embedding_invocations);
     }
     let query_total_ms = elapsed_ms(query_batch_started);
 
@@ -1706,6 +1718,7 @@ pub fn run_private_query_benchmark(
             config.corpus_summary.document_count(),
             queries.len(),
         ),
+        query_embedding_command_invocations,
         manifests: config.manifests,
     })
 }
@@ -4254,6 +4267,8 @@ fn validate_private_real_benchmark_consistency(
     let qps = private_real_number(report, "qps")?;
     let zero_result_queries = private_real_usize(report, "zero_result_queries")?;
     let total_hits = private_real_usize(report, "total_hits")?;
+    let query_embedding_command_invocations =
+        private_real_usize(report, "query_embedding_command_invocations")?;
     let latency = report
         .get("query_latency_ms")
         .ok_or_else(private_real_boundary_error)?;
@@ -4274,6 +4289,7 @@ fn validate_private_real_benchmark_consistency(
         || samples != query_count
         || zero_result_queries > query_count
         || total_hits > max_hits
+        || query_embedding_command_invocations != query_count
         || query_total_ms <= 0.0
         || !latency_summary_is_ordered(min, mean, p50, p95, p99, max)
     {
@@ -4335,6 +4351,8 @@ fn validate_private_real_report_shape(
         BenchmarkGateError::failed("private real-corpus benchmark requires model manifest digest")
     })?;
     private_real_str(report, "corpus_summary_sha256")?;
+    private_real_str(report, "query_embedding_runtime")?;
+    private_real_usize(report, "query_embedding_command_invocations")?;
     private_real_str(report, "scope")?;
     validate_private_real_hot_hybrid_evidence(report)?;
     Ok(())
@@ -4380,6 +4398,14 @@ fn validate_private_real_hot_hybrid_evidence(
         .get("hot_path_heavy_model_inference")
         .and_then(serde_json::Value::as_bool)
         .ok_or_else(error)?;
+    let query_embedding_runtime = report
+        .get("query_embedding_runtime")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(error)?;
+    let query_embedding_command_invocations = report
+        .get("query_embedding_command_invocations")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(error)?;
 
     if query_protocol != "resume-ir-query-v1" {
         return Err(BenchmarkGateError::failed(
@@ -4393,6 +4419,8 @@ fn validate_private_real_hot_hybrid_evidence(
         || hot_path_ocr
         || hot_path_parsing
         || hot_path_heavy_model_inference
+        || query_embedding_runtime != "local-command"
+        || query_embedding_command_invocations == 0
     {
         return Err(error());
     }
@@ -5127,6 +5155,8 @@ fn is_allowed_private_real_report_key(key: &str) -> bool {
             | "query_protocol"
             | "query_mode"
             | "retrieval_layers"
+            | "query_embedding_runtime"
+            | "query_embedding_command_invocations"
             | "hot_index"
             | "hot_path_ocr"
             | "hot_path_parsing"
@@ -5468,7 +5498,7 @@ fn run_private_query_command(
     query_file: &Path,
     top_k: usize,
     timeout_ms: u64,
-) -> Result<usize> {
+) -> Result<PrivateQueryCommandOutput> {
     let started = Instant::now();
     let mut child = Command::new(&command.command)
         .args(&command.args)
@@ -5502,13 +5532,23 @@ fn run_private_query_command(
     }
 }
 
-fn parse_private_query_command_stdout(stdout: &[u8], top_k: usize) -> Result<usize> {
+struct PrivateQueryCommandOutput {
+    hits: usize,
+    query_embedding_invocations: usize,
+}
+
+fn parse_private_query_command_stdout(
+    stdout: &[u8],
+    top_k: usize,
+) -> Result<PrivateQueryCommandOutput> {
     let stdout = std::str::from_utf8(stdout)
         .map_err(|_| BenchmarkError::invalid_config("private_query_command_stdout"))?;
     let mut saw_header = false;
     let mut saw_hybrid_mode = false;
     let mut saw_hybrid_layers = false;
     let mut attested_top_k = None;
+    let mut saw_query_embedding_runtime = false;
+    let mut query_embedding_invocations = None;
     let mut hits = None;
     for line in stdout
         .lines()
@@ -5559,6 +5599,32 @@ fn parse_private_query_command_stdout(stdout: &[u8], top_k: usize) -> Result<usi
             attested_top_k = Some(parsed);
             continue;
         }
+        if let Some(value) = line.strip_prefix("query_embedding_runtime=") {
+            if saw_query_embedding_runtime || value != "local-command" {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_embedding_attestation",
+                ));
+            }
+            saw_query_embedding_runtime = true;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("query_embedding_invocations=") {
+            if query_embedding_invocations.is_some() {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_embedding_attestation",
+                ));
+            }
+            let parsed = value.parse::<usize>().map_err(|_| {
+                BenchmarkError::invalid_config("private_query_embedding_attestation")
+            })?;
+            if parsed != 1 {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_embedding_attestation",
+                ));
+            }
+            query_embedding_invocations = Some(parsed);
+            continue;
+        }
         if let Some(value) = line.strip_prefix("hits=") {
             if hits.is_some() {
                 return Err(BenchmarkError::invalid_config(
@@ -5593,7 +5659,16 @@ fn parse_private_query_command_stdout(stdout: &[u8], top_k: usize) -> Result<usi
             "private_query_top_k_attestation",
         ));
     }
-    hits.ok_or_else(|| BenchmarkError::invalid_config("private_query_hits"))
+    if !saw_query_embedding_runtime || query_embedding_invocations != Some(1) {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_embedding_attestation",
+        ));
+    }
+    let hits = hits.ok_or_else(|| BenchmarkError::invalid_config("private_query_hits"))?;
+    Ok(PrivateQueryCommandOutput {
+        hits,
+        query_embedding_invocations: 1,
+    })
 }
 
 fn directory_size_bytes(path: &Path) -> Result<u64> {
