@@ -38,7 +38,23 @@ tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-sbom-check.XXXXXX")
 trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
 
 out_dir="$tmpdir/out"
-"$script" --version v0.0.0 --out-dir "$out_dir"
+private_component_dir="$tmpdir/PRIVATE-runtime-components"
+mkdir -p "$private_component_dir"
+printf 'synthetic tesseract bytes\n' > "$private_component_dir/tesseract"
+printf 'source offer text\n' > "$private_component_dir/source-offer.txt"
+scripts/release/create-runtime-bundle-manifest.sh \
+  --version v0.0.0 \
+  --runtime-pack-id reviewed-runtime-pack \
+  --distribution-license GPL-3.0-or-later \
+  --source-offer "$private_component_dir/source-offer.txt" \
+  --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
+  --out-dir "$out_dir/runtime" \
+  --reviewed \
+  > "$tmpdir/runtime-bundle.stdout"
+"$script" \
+  --version v0.0.0 \
+  --out-dir "$out_dir" \
+  --runtime-bundle-manifest "$out_dir/runtime/runtime-bundle-manifest.json"
 sbom="$out_dir/release-sbom.json"
 require_file "$sbom"
 require_text "$sbom" '"spdxVersion": "SPDX-2.3"'
@@ -49,14 +65,20 @@ require_text "$sbom" '"referenceType": "purl"'
 require_text "$sbom" '"referenceLocator": "pkg:cargo/resume-cli@0.1.0"'
 require_text "$sbom" '"referenceLocator": "pkg:cargo/resume-daemon@0.1.0"'
 require_text "$sbom" '"referenceLocator": "pkg:cargo/benchmark-runner@0.1.0"'
+require_text "$sbom" '"name": "tesseract"'
+require_text "$sbom" '"runtime_distribution_mode=bundled"'
+require_text "$sbom" '"runtime_package_binaries_included=true"'
+require_text "$sbom" '"runtime_binaries_included=false"'
+require_text "$sbom" '"source_offer_sha256='
 require_text "$sbom" '"licenseDeclared": "MIT"'
+require_text "$sbom" '"licenseDeclared": "Apache-2.0"'
 require_text "$sbom" '"source_kind=workspace"'
 require_text "$sbom" '"source_kind=registry"'
 
 if grep -Fq "$tmpdir" "$sbom"; then
   fail "release SBOM leaked an absolute temp path"
 fi
-if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' "$sbom"; then
+if grep -Eq 'PRIVATE-runtime-components|manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' "$sbom"; then
   fail "release SBOM leaked a local path or runtime-data marker"
 fi
 
@@ -72,6 +94,8 @@ if not isinstance(packages, list) or not packages:
     raise SystemExit("SBOM package list is empty")
 if not any(package.get("name") == "resume-cli" for package in packages):
     raise SystemExit("SBOM does not include resume-cli")
+if not any(package.get("name") == "tesseract" for package in packages):
+    raise SystemExit("SBOM does not include runtime package")
 if not all("manifest_path" not in package for package in packages):
     raise SystemExit("SBOM contains manifest_path")
 PY

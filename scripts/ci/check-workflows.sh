@@ -38,6 +38,7 @@ daemon_closed_loop_script="scripts/ci/check-daemon-closed-loop.sh"
 benchmark_smoke_script="scripts/ci/check-benchmark-smoke.sh"
 runtime_bundle_policy_script="scripts/ci/check-runtime-bundle-policy.sh"
 runtime_bundle_manifest_script="scripts/ci/check-runtime-bundle-manifest.sh"
+runtime_bundle_sbom_script="scripts/ci/check-runtime-bundle-sbom.sh"
 current_stage_handoff_script="scripts/ci/check-current-stage-handoff.sh"
 current_stage_validation_script="scripts/ci/check-current-stage-validation.sh"
 current_stage_observability_script="scripts/ci/check-current-stage-observability.sh"
@@ -45,7 +46,7 @@ local_ocr_runtime_script="scripts/ci/check-local-ocr-runtime.sh"
 local_diagnostics_evidence_script="scripts/ci/check-local-diagnostics-release-evidence.sh"
 local_quality_evidence_script="scripts/ci/check-local-quality-release-evidence.sh"
 
-for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
+for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_sbom_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
   require_file "$file"
 done
 
@@ -100,6 +101,7 @@ require_text "$verify_script" "./scripts/ci/check-release-publication-evidence.s
 require_text "$verify_script" "./scripts/ci/check-signing-evidence.sh"
 require_text "$verify_script" "./scripts/ci/check-notarization-evidence.sh"
 require_text "$verify_script" "./scripts/ci/check-release-sbom.sh"
+require_text "$verify_script" "./scripts/ci/check-runtime-bundle-sbom.sh"
 require_text "$verify_script" "./scripts/ci/check-macos-package.sh"
 require_text "$verify_script" "./scripts/ci/check-macos-installer-evidence.sh"
 require_text "$verify_script" "./scripts/ci/check-windows-package.sh"
@@ -178,6 +180,11 @@ require_text "$runtime_bundle_manifest_script" "release.runtime_bundle.v1"
 require_text "$runtime_bundle_manifest_script" "--runtime-bundle-manifest"
 require_text "$runtime_bundle_manifest_script" "runtime_bundle_manifests"
 require_text "$runtime_bundle_manifest_script" "runtime bundle manifest check passed"
+
+require_text "$runtime_bundle_sbom_script" "scripts/release/create-sbom.sh"
+require_text "$runtime_bundle_sbom_script" "--runtime-bundle-manifest"
+require_text "$runtime_bundle_sbom_script" "runtime_distribution_mode=bundled"
+require_text "$runtime_bundle_sbom_script" "runtime bundle SBOM check passed"
 
 require_text "$local_ocr_runtime_script" "scripts/local/prepare-local-ocr-runtime-manifest.sh"
 require_text "$local_ocr_runtime_script" "--tesseract-command"

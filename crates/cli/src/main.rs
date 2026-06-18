@@ -2916,6 +2916,10 @@ fn validate_release_package_artifacts(
 fn validate_release_sbom_external_refs(
     package: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<()> {
+    if release_sbom_package_has_annotation(package, "runtime_distribution_mode=bundled") {
+        return validate_release_sbom_runtime_package(package);
+    }
+
     let external_refs = package
         .get("externalRefs")
         .and_then(serde_json::Value::as_array)
@@ -2939,6 +2943,117 @@ fn validate_release_sbom_external_refs(
     } else {
         Err(release_evidence_invalid("release SBOM", "externalRefs"))
     }
+}
+
+fn validate_release_sbom_runtime_package(
+    package: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    let download_location =
+        require_release_evidence_string_value(package, "downloadLocation", "release SBOM")?;
+    if download_location == "NOASSERTION" || download_location.starts_with('/') {
+        return Err(release_evidence_invalid("release SBOM", "downloadLocation"));
+    }
+    if release_readiness_diagnostics_report_contains_private_marker(download_location)
+        || download_location.contains("PRIVATE-")
+    {
+        return Err(release_evidence_invalid("release SBOM", "downloadLocation"));
+    }
+
+    let checksums = require_release_evidence_array(package, "checksums", "release SBOM")?;
+    let has_sha256 = checksums.iter().any(|checksum| {
+        let Some(checksum) = checksum.as_object() else {
+            return false;
+        };
+        checksum
+            .get("algorithm")
+            .and_then(serde_json::Value::as_str)
+            == Some("SHA256")
+            && checksum
+                .get("checksumValue")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| {
+                    value.len() == 64
+                        && value
+                            .bytes()
+                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                })
+    });
+    if !has_sha256 {
+        return Err(release_evidence_invalid("release SBOM", "checksums"));
+    }
+
+    for expected in [
+        "runtime_package_binaries_included=true",
+        "runtime_binaries_included=false",
+    ] {
+        if !release_sbom_package_has_annotation(package, expected) {
+            return Err(release_evidence_invalid("release SBOM", "annotations"));
+        }
+    }
+    if !release_sbom_package_has_annotation_prefix(package, "runtime_component_kind=")
+        || !release_sbom_package_has_annotation_prefix(package, "runtime_component_file=")
+        || !release_sbom_package_has_annotation_prefix(package, "source_offer_sha256=")
+    {
+        return Err(release_evidence_invalid("release SBOM", "annotations"));
+    }
+
+    let external_refs = package
+        .get("externalRefs")
+        .and_then(serde_json::Value::as_array)
+        .filter(|external_refs| !external_refs.is_empty())
+        .ok_or_else(|| release_evidence_invalid("release SBOM", "externalRefs"))?;
+    let has_runtime_ref = external_refs.iter().any(|external_ref| {
+        let Some(external_ref) = external_ref.as_object() else {
+            return false;
+        };
+        external_ref
+            .get("referenceType")
+            .and_then(serde_json::Value::as_str)
+            == Some("persistent-id")
+            && external_ref
+                .get("referenceLocator")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|locator| locator.starts_with("runtime-bundle:"))
+    });
+    if has_runtime_ref {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid("release SBOM", "externalRefs"))
+    }
+}
+
+fn release_sbom_package_has_annotation(
+    package: &serde_json::Map<String, serde_json::Value>,
+    expected: &str,
+) -> bool {
+    release_sbom_package_has_annotation_matching(package, |comment| comment == expected)
+}
+
+fn release_sbom_package_has_annotation_prefix(
+    package: &serde_json::Map<String, serde_json::Value>,
+    expected_prefix: &str,
+) -> bool {
+    release_sbom_package_has_annotation_matching(package, |comment| {
+        comment.starts_with(expected_prefix)
+    })
+}
+
+fn release_sbom_package_has_annotation_matching(
+    package: &serde_json::Map<String, serde_json::Value>,
+    predicate: impl Fn(&str) -> bool,
+) -> bool {
+    package
+        .get("annotations")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|annotations| {
+            annotations.iter().any(|annotation| {
+                annotation
+                    .as_object()
+                    .and_then(|annotation| annotation.get("comment"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(&predicate)
+            })
+        })
 }
 
 fn release_evidence_report_contains_forbidden_marker(report: &str) -> bool {

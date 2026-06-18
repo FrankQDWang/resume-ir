@@ -8,22 +8,32 @@ fail() {
 
 usage() {
   cat <<'EOF'
-usage: scripts/release/create-sbom.sh --version vX.Y.Z --out-dir DIR [--metadata-file FILE]
+usage: scripts/release/create-sbom.sh --version vX.Y.Z --out-dir DIR
+  [--metadata-file FILE] [--runtime-bundle-manifest FILE]
 
 Create a redacted SPDX 2.3 release dry-run SBOM from locked Cargo metadata.
-The SBOM omits local manifest paths, source paths, license-file paths, target
-directories, runtime data, diagnostics, model caches, and resume data.
+The SBOM can include reviewed runtime bundle components from a redacted runtime
+bundle manifest. It omits local manifest paths, source paths, license-file
+paths, target directories, runtime data, diagnostics, model caches, and resume
+data.
 EOF
 }
 
-CARGO_BIN="${CARGO:-cargo}"
-if ! command -v "$CARGO_BIN" >/dev/null 2>&1 && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
+CARGO_BIN="${CARGO:-}"
+if [ -z "$CARGO_BIN" ]; then
+  CARGO_BIN=cargo
+fi
+if ! "$CARGO_BIN" --version >/dev/null 2>&1 && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
   CARGO_BIN=/Users/frankqdwang/.cargo/bin/cargo
+fi
+if ! "$CARGO_BIN" --version >/dev/null 2>&1; then
+  fail "cargo is required"
 fi
 
 version=""
 out_dir=""
 metadata_file=""
+runtime_bundle_manifest=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,6 +50,11 @@ while [ $# -gt 0 ]; do
     --metadata-file)
       [ $# -ge 2 ] || fail "--metadata-file requires a value"
       metadata_file="$2"
+      shift 2
+      ;;
+    --runtime-bundle-manifest)
+      [ $# -ge 2 ] || fail "--runtime-bundle-manifest requires a value"
+      runtime_bundle_manifest="$2"
       shift 2
       ;;
     -h | --help)
@@ -70,19 +85,22 @@ if [ -n "$cleanup_metadata" ]; then
 fi
 
 [ -f "$metadata_file" ] || fail "metadata file does not exist"
+if [ -n "$runtime_bundle_manifest" ]; then
+  [ -f "$runtime_bundle_manifest" ] || fail "runtime bundle manifest does not exist"
+fi
 mkdir -p "$out_dir"
 
 sbom="$out_dir/release-sbom.json"
 tmp_sbom="$sbom.tmp"
 
-python3 - "$metadata_file" "$version" "$tmp_sbom" <<'PY'
+python3 - "$metadata_file" "$version" "$tmp_sbom" "${runtime_bundle_manifest:-}" <<'PY'
 import datetime
 import json
 import re
 import sys
 import urllib.parse
 
-metadata_path, version, output_path = sys.argv[1:4]
+metadata_path, version, output_path, runtime_bundle_manifest_path = sys.argv[1:5]
 
 with open(metadata_path, "r", encoding="utf-8") as handle:
     metadata = json.load(handle)
@@ -124,6 +142,148 @@ def dependency_entry(dependency):
     if dependency.get("target"):
         entry["target"] = dependency["target"]
     return entry
+
+
+def fail(message):
+    raise SystemExit(message)
+
+
+def require_runtime_string(mapping, key):
+    value = mapping.get(key)
+    if not isinstance(value, str) or not value:
+        fail(f"runtime bundle manifest missing {key}")
+    return value
+
+
+def require_runtime_bool(mapping, key, expected):
+    value = mapping.get(key)
+    if value is not expected:
+        fail(f"runtime bundle manifest invalid {key}")
+
+
+def require_runtime_int(mapping, key):
+    value = mapping.get(key)
+    if not isinstance(value, int) or value <= 0:
+        fail(f"runtime bundle manifest invalid {key}")
+    return value
+
+
+def require_runtime_sha256(mapping, key):
+    value = require_runtime_string(mapping, key)
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        fail(f"runtime bundle manifest invalid {key}")
+    return value.lower()
+
+
+def runtime_package(component, runtime_document, created, index):
+    component_id = require_runtime_string(component, "id")
+    kind = require_runtime_string(component, "kind")
+    file_name = require_runtime_string(component, "file")
+    if "/" in file_name or "\\" in file_name or file_name in {"", ".", ".."}:
+        fail("runtime component file must be a basename")
+    bytes_value = require_runtime_int(component, "bytes")
+    sha256 = require_runtime_sha256(component, "sha256")
+    license_obj = component.get("license")
+    if not isinstance(license_obj, dict):
+        fail("runtime component license is missing")
+    license_id = require_runtime_string(license_obj, "id")
+    require_runtime_bool(license_obj, "reviewed", True)
+    source = require_runtime_string(component, "source")
+    if source.startswith("/") or "PRIVATE-" in source:
+        fail("runtime component source is private")
+    source_offer = runtime_document.get("source_offer")
+    if not isinstance(source_offer, dict):
+        fail("runtime bundle source_offer is missing")
+    source_offer_file = require_runtime_string(source_offer, "file")
+    if "/" in source_offer_file or "\\" in source_offer_file:
+        fail("runtime source_offer file must be a basename")
+    source_offer_sha256 = require_runtime_sha256(source_offer, "sha256")
+    distribution_license = require_runtime_string(runtime_document, "distribution_license")
+    require_runtime_bool(runtime_document, "runtime_package_binaries_included", True)
+    require_runtime_bool(runtime_document, "runtime_binaries_included", False)
+    runtime_mode = require_runtime_string(runtime_document, "runtime_distribution_mode")
+    if runtime_mode != "bundled":
+        fail("runtime bundle mode must be bundled")
+
+    spdx_id = (
+        "SPDXRef-Runtime-"
+        + sanitize_spdx_id(f"{component_id}-{index}")
+    )
+    return {
+        "SPDXID": spdx_id,
+        "name": component_id,
+        "versionInfo": runtime_document.get("version") or version,
+        "supplier": "NOASSERTION",
+        "downloadLocation": source,
+        "filesAnalyzed": False,
+        "licenseConcluded": license_id,
+        "licenseDeclared": license_id,
+        "copyrightText": "NOASSERTION",
+        "checksums": [{"algorithm": "SHA256", "checksumValue": sha256}],
+        "annotations": [
+            {
+                "annotationType": "OTHER",
+                "annotator": "Tool: resume-ir-release-sbom",
+                "annotationDate": created,
+                "comment": f"runtime_distribution_mode={runtime_mode}",
+            },
+            {
+                "annotationType": "OTHER",
+                "annotator": "Tool: resume-ir-release-sbom",
+                "annotationDate": created,
+                "comment": "runtime_package_binaries_included=true",
+            },
+            {
+                "annotationType": "OTHER",
+                "annotator": "Tool: resume-ir-release-sbom",
+                "annotationDate": created,
+                "comment": "runtime_binaries_included=false",
+            },
+            {
+                "annotationType": "OTHER",
+                "annotator": "Tool: resume-ir-release-sbom",
+                "annotationDate": created,
+                "comment": f"runtime_component_kind={kind}",
+            },
+            {
+                "annotationType": "OTHER",
+                "annotator": "Tool: resume-ir-release-sbom",
+                "annotationDate": created,
+                "comment": f"runtime_component_file={file_name}",
+            },
+            {
+                "annotationType": "OTHER",
+                "annotator": "Tool: resume-ir-release-sbom",
+                "annotationDate": created,
+                "comment": f"runtime_component_bytes={bytes_value}",
+            },
+            {
+                "annotationType": "OTHER",
+                "annotator": "Tool: resume-ir-release-sbom",
+                "annotationDate": created,
+                "comment": f"runtime_distribution_license={distribution_license}",
+            },
+            {
+                "annotationType": "OTHER",
+                "annotator": "Tool: resume-ir-release-sbom",
+                "annotationDate": created,
+                "comment": f"source_offer_file={source_offer_file}",
+            },
+            {
+                "annotationType": "OTHER",
+                "annotator": "Tool: resume-ir-release-sbom",
+                "annotationDate": created,
+                "comment": f"source_offer_sha256={source_offer_sha256}",
+            },
+        ],
+        "externalRefs": [
+            {
+                "referenceCategory": "OTHER",
+                "referenceType": "persistent-id",
+                "referenceLocator": f"runtime-bundle:{runtime_document['runtime_pack_id']}:{component_id}",
+            }
+        ],
+    }
 
 
 packages = []
@@ -195,6 +355,32 @@ for index, package in enumerate(
             "relatedSpdxElement": spdx_id,
         }
     )
+
+if runtime_bundle_manifest_path:
+    with open(runtime_bundle_manifest_path, "r", encoding="utf-8") as handle:
+        runtime_document = json.load(handle)
+    if runtime_document.get("schema_version") != "release.runtime_bundle.v1":
+        fail("runtime bundle manifest schema_version is invalid")
+    components = runtime_document.get("components")
+    if not isinstance(components, list) or not components:
+        fail("runtime bundle manifest components are missing")
+    seen_runtime_ids = set()
+    for index, component in enumerate(components, start=1):
+        if not isinstance(component, dict):
+            fail("runtime bundle manifest component is invalid")
+        component_id = component.get("id")
+        if component_id in seen_runtime_ids:
+            fail("runtime bundle manifest duplicate component")
+        seen_runtime_ids.add(component_id)
+        package_record = runtime_package(component, runtime_document, created, index)
+        packages.append(package_record)
+        relationships.append(
+            {
+                "spdxElementId": "SPDXRef-DOCUMENT",
+                "relationshipType": "DESCRIBES",
+                "relatedSpdxElement": package_record["SPDXID"],
+            }
+        )
 
 document = {
     "spdxVersion": "SPDX-2.3",

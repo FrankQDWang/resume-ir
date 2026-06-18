@@ -1126,7 +1126,8 @@ scripts/release/create-artifact-manifest.sh \
   --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json
 scripts/release/create-sbom.sh \
   --version v0.1.0 \
-  --out-dir release-dry-run
+  --out-dir release-dry-run \
+  --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json
 ```
 
 The generated `runtime-bundle-manifest.json` uses schema
@@ -1136,7 +1137,10 @@ It does not copy runtime binaries into the repository. The generated
 `release-artifacts.json` records binary names, byte counts, sha256 hashes, and
 the runtime bundle manifest digest under `runtime_bundle_manifests`. The
 generated `release-sbom.json` is a redacted SPDX 2.3 package inventory derived
-from locked Cargo metadata. These dry-run files are not an installer,
+from locked Cargo metadata plus reviewed runtime packages from
+`runtime-bundle-manifest.json`. Runtime packages record component names,
+checksums, reviewed licenses, sources, and source-offer digests without local
+paths or raw runtime binary contents. These dry-run files are not an installer,
 signature, notarization ticket, or GitHub Release upload, and they must not
 contain local paths, raw runtime binary contents, local data, diagnostics,
 model caches, or resume data.
