@@ -114,6 +114,10 @@ require_text "$release_runbook" "resume-benchmark gate"
 require_text "$release_runbook" 'generation_mode: "streaming"'
 require_text "$release_runbook" "field-gate"
 require_text "$release_runbook" "--require-private-business-labeled"
+require_text "$release_runbook" "scripts/local/prepare-local-quality-release-evidence.sh"
+require_text "$release_runbook" "local quality evidence preparation"
+require_text "$release_runbook" "quality review is incomplete"
+require_text "$release_runbook" "--reviewed"
 require_text "$release_runbook" 'target_claim: "field_quality_target_met"'
 require_text "$release_runbook" 'field_taxonomy:'
 require_text "$release_runbook" 'expected_mentions`, and `predicted_mentions` must also'

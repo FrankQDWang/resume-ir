@@ -28,9 +28,15 @@ reject_text() {
   fi
 }
 
-CARGO_BIN="${CARGO:-cargo}"
-if ! command -v "$CARGO_BIN" >/dev/null 2>&1 && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
+CARGO_BIN="${CARGO:-}"
+if [ -z "$CARGO_BIN" ] && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
   CARGO_BIN=/Users/frankqdwang/.cargo/bin/cargo
+fi
+if [ -z "$CARGO_BIN" ]; then
+  CARGO_BIN=cargo
+fi
+if ! "$CARGO_BIN" --version >/dev/null 2>&1; then
+  fail "release-readiness check requires cargo"
 fi
 
 verify_script="scripts/ci/verify-local.sh"
@@ -340,6 +346,17 @@ cat > "$current_stage_evidence" <<'JSON'
     {"file": "release-readiness.json", "sha256": "2929292929292929292929292929292929292929292929292929292929292929"},
     {"file": "release-readiness.stderr.txt", "sha256": "3030303030303030303030303030303030303030303030303030303030303030"}
   ],
+  "corpus_summary_observability": {
+    "privacy_boundary": "redacted_local_aggregate",
+    "document_count": 9000,
+    "searchable_document_count": 9000,
+    "vector_indexed_document_count": 9000,
+    "hot_index_fully_covered": true,
+    "document_status_counts": {"searchable": 9000},
+    "ingest_job_status_counts": {"completed": 9000},
+    "ingest_job_kind_status_counts": {"update_index": {"completed": 9000}},
+    "ingest_job_failure_counts": {}
+  },
   "privacy_sentinels": {
     "local_paths_included": false,
     "raw_resume_text_included": false,
@@ -398,6 +415,11 @@ cat > "$current_stage_blocked_summary" <<'JSON'
     "embedding_protocol": "passed"
   },
   "corpus_summary_observability": {
+    "privacy_boundary": "redacted_local_aggregate",
+    "document_count": 9000,
+    "searchable_document_count": 7800,
+    "vector_indexed_document_count": 7800,
+    "hot_index_fully_covered": false,
     "document_status_counts": {"imported": 9000, "ocr_required": 1200},
     "ingest_job_status_counts": {"queued": 1200, "completed": 7800},
     "ingest_job_kind_status_counts": {"ocr": {"queued": 1200, "completed": 7800}},

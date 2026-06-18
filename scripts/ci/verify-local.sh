@@ -1,9 +1,16 @@
 #!/usr/bin/env sh
 set -eu
 
-CARGO_BIN="${CARGO:-cargo}"
-if ! command -v "$CARGO_BIN" >/dev/null 2>&1 && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
+CARGO_BIN="${CARGO:-}"
+if [ -z "$CARGO_BIN" ] && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
   CARGO_BIN=/Users/frankqdwang/.cargo/bin/cargo
+fi
+if [ -z "$CARGO_BIN" ]; then
+  CARGO_BIN=cargo
+fi
+if ! "$CARGO_BIN" --version >/dev/null 2>&1; then
+  printf '%s\n' "verify-local requires cargo" >&2
+  exit 1
 fi
 
 "$CARGO_BIN" metadata --no-deps --locked
@@ -22,6 +29,7 @@ fi
 ./scripts/ci/check-local-embedding-runtime.sh
 ./scripts/ci/check-local-ocr-runtime.sh
 ./scripts/ci/check-local-diagnostics-release-evidence.sh
+./scripts/ci/check-local-quality-release-evidence.sh
 ./scripts/ci/check-current-stage-validation.sh
 ./scripts/ci/check-current-stage-handoff.sh
 ./scripts/ci/check-workflows.sh

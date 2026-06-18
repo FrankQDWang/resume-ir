@@ -543,6 +543,31 @@ resume-cli --data-dir <local-data-dir> release-readiness --json \
   --hardware-fault-evidence hardware-fault-drills.json
 ```
 
+For local quality evidence preparation, use the operator helper below only with
+reviewed private business labeled datasets that remain on the local machine.
+The helper is fail-closed: without `--reviewed` it exits with
+`quality review is incomplete`, and it prints only redacted status output.
+
+```bash
+scripts/local/prepare-local-quality-release-evidence.sh --reviewed \
+  --out-dir <local-evidence-dir> \
+  --field-dataset private-field-quality.jsonl \
+  --field-dataset-manifest-sha256 <sha256> \
+  --field-annotation-manifest-sha256 <sha256> \
+  --dedupe-dataset private-dedupe-quality.jsonl \
+  --dedupe-dataset-manifest-sha256 <sha256> \
+  --dedupe-annotation-manifest-sha256 <sha256> \
+  --vector-dataset private-vector-quality.jsonl \
+  --vector-dataset-manifest-sha256 <sha256> \
+  --vector-annotation-manifest-sha256 <sha256> \
+  --embedding-command <reviewed-local-embedding-command> \
+  --model-id <reviewed-local-model-id> \
+  --dimension <n> \
+  --model-manifest-sha256 <sha256> \
+  --resume-cli resume-cli \
+  --data-dir <local-data-dir>
+```
+
 If the full current-stage execute flow stops before producing
 `current-stage-validation-evidence.json`, validate the redacted blocked summary
 as non-clearing handoff context instead:
