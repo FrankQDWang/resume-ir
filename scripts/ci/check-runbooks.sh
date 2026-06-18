@@ -20,6 +20,14 @@ require_text() {
   fi
 }
 
+reject_text() {
+  file="$1"
+  text="$2"
+  if grep -Fq -- "$text" "$file"; then
+    fail "runbook $file still contains obsolete text: $text"
+  fi
+}
+
 diagnostics_runbook="docs/runbooks/diagnostics-redaction.md"
 fault_runbook="docs/runbooks/fault-injection.md"
 worker_runbook="docs/runbooks/ocr-embedding-workers.md"
@@ -155,6 +163,9 @@ require_text "$release_runbook" 'embedding_protocol: "passed"'
 require_text "$release_runbook" "Tesseract plus tessdata"
 require_text "$release_runbook" "bundled-first runtime packaging"
 require_text "$release_runbook" "external override"
+reject_text "$release_runbook" "selected external OCR direction"
+reject_text "$release_runbook" "selected external"
+reject_text "$release_runbook" "external OCR direction"
 require_text "$release_runbook" "runtime_distribution_mode"
 require_text "$release_runbook" "runtime_package_binaries_included"
 require_text "$release_runbook" "GPL-3.0-or-later"

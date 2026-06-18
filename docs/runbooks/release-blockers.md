@@ -465,8 +465,8 @@ SQLite databases, model caches, runtime binaries, or raw resumes.
 - private business labeled dedupe-quality evidence is not available
 - private business labeled vector-quality evidence is not available
 - private real-corpus OCR baseline evidence is not available
-- reviewed OCR runtime manifest/dependency evidence for the selected external
-  OCR direction is not available
+- reviewed OCR/PDF runtime manifest/dependency evidence for the selected
+  bundled-first distribution mode is not available
 - a reviewed licensed embedding model is not selected or distributed
 - Windows and macOS cross-platform validation are not complete
 - redacted diagnostics evidence from `export-diagnostics --redact` has not been
