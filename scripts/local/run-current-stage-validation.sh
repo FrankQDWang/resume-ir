@@ -11,6 +11,7 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   [--embedding-runtime-bin-dir DIR]
   --model-pack-id ID --model-id ID --model-format ID --dimension N --model-license ID
   --runtime-pack-id ID [--tesseract-command FILE] [--pdftoppm-command FILE]
+  [--runtime-distribution-mode bundled|external]
   --language LANG --language-pack FILE|LANG=FILE [--language-pack LANG=FILE ...]
   --engine-license ID --renderer-license ID --language-license ID
   [--dataset-manifest-sha256 SHA256] [--query-set-sha256 SHA256]
@@ -449,6 +450,8 @@ EOF_STEPS
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "private_corpus_read": false,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
@@ -575,6 +578,8 @@ EOF_STEPS
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "private_corpus_read": $private_corpus_read,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
@@ -688,6 +693,8 @@ write_query_set_blocked_summary() {
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
@@ -812,6 +819,8 @@ write_private_query_blocked_summary() {
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
@@ -956,6 +965,8 @@ EOF_STEPS
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
@@ -1099,6 +1110,8 @@ EOF_DIAGNOSTICS_STEP
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
@@ -1231,6 +1244,8 @@ write_redacted_diagnostics_blocked_summary() {
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
@@ -1373,6 +1388,8 @@ write_release_readiness_blocked_summary() {
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "private_corpus_read": true,
   "full_baseline_satisfied": true,
   "release_readiness_evidence": false,
@@ -1555,6 +1572,8 @@ EOF_STEPS
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "private_corpus_read": true,
   "full_baseline_satisfied": $fault_full_baseline_satisfied,
   "release_readiness_evidence": false,
@@ -1690,6 +1709,8 @@ model_format=""
 dimension=""
 model_license=""
 runtime_pack_id=""
+runtime_distribution_mode="bundled"
+runtime_package_binaries_included="true"
 tesseract_command=""
 pdftoppm_command=""
 language=""
@@ -1790,6 +1811,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --runtime-pack-id)
       need_value "$@"; runtime_pack_id="$2"; shift 2
+      ;;
+    --runtime-distribution-mode)
+      need_value "$@"; runtime_distribution_mode="$2"; shift 2
       ;;
     --tesseract-command)
       need_value "$@"; tesseract_command="$2"; shift 2
@@ -2020,6 +2044,18 @@ EOF_STEPS
     ;;
 esac
 
+case "$runtime_distribution_mode" in
+  bundled)
+    runtime_package_binaries_included="true"
+    ;;
+  external)
+    runtime_package_binaries_included="false"
+    ;;
+  *)
+    fail "--runtime-distribution-mode must be bundled or external"
+    ;;
+esac
+
 if [ "$mode" = "dry-run" ]; then
   cat <<EOF
 {
@@ -2031,6 +2067,8 @@ if [ "$mode" = "dry-run" ]; then
   "data_dir": "<local-data-dir>",
   "out_dir": "<local-evidence-dir>",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "full_baseline_satisfied": $full_baseline_satisfied,
   "release_readiness_evidence": $release_readiness_evidence,
   "performance_optimization_deferred": true,
@@ -2535,6 +2573,8 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
@@ -2813,6 +2853,8 @@ if [ "$validation_profile" = "smoke" ]; then
   "privacy_boundary": "local_only_redacted_aggregate_summary",
   "validation_profile": "smoke",
   "current_stage_target": "local_real_corpus_smoke_chain",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "smoke_satisfied": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
@@ -2985,6 +3027,8 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
   "schema_version": "resume-ir.current-stage-validation-evidence.v1",
   "privacy_boundary": "local_only_redacted_evidence_manifest",
   "current_stage_target": "reproducible_local_10k_baseline",
+  "runtime_distribution_mode": "$runtime_distribution_mode",
+  "runtime_package_binaries_included": $runtime_package_binaries_included,
   "full_baseline_satisfied": true,
   "release_readiness_evidence": true,
   "performance_optimization_deferred": true,

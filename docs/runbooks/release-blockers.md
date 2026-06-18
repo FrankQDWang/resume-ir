@@ -17,11 +17,14 @@ available private corpus, observable aggregate metrics, and a repeatable
 operator workflow. P95/P99 reduction, stricter latency targets, and external
 100k/1M real-corpus validation belong to the deferred performance-optimization goal.
 
-OCR runtime selection is no longer an open product blocker for this stage:
-Tesseract/tessdata is the accepted external OCR engine direction, and
-Poppler/pdftoppm is accepted only as a user-installed external PDF renderer.
-The current-stage work is runtime manifests, checksum/license records,
-dependency detection, fail-closed errors, and runbooks.
+OCR runtime direction is bundled-first with external override. Tesseract/
+tessdata is the accepted OCR engine/language-pack direction. PDFium is the
+preferred bundled PDF renderer candidate when quality is sufficient; Poppler/
+pdftoppm is acceptable for bundled-first runtime packaging when the release
+distribution records GPL-compatible license evidence, source-offer obligations,
+notices, checksums, and installer composition. The current-stage work is
+runtime manifests, checksum/license records, dependency detection, fail-closed
+errors, and runbooks.
 
 Signing and notarization are release-credential blockers. This repository must
 provide scripts, CI secret interfaces, fail-closed gates, and documentation, but
@@ -1320,26 +1323,27 @@ resume-cli --data-dir <local-data-dir> ocr validate-manifest \
   --manifest <local-ocr-runtime-manifest.json>
 ```
 
-This command is governance evidence only. The current OCR direction is
-Tesseract plus tessdata as an accepted Apache-2.0 external OCR runtime, with
-Poppler `pdftoppm` called as a user-installed external PDF renderer and not bundled by default. A valid OCR runtime manifest must record checksums and
-reviewed licenses for the local OCR engine, tessdata language packs, and
-renderer dependency, and the product must keep dependency detection plus
-fail-closed operator guidance in place. A valid manifest does not by itself
-complete non-English OCR quality validation, platform installer validation, or
-production OCR throughput proof.
+This command is governance evidence only. The OCR direction is bundled-first
+runtime packaging with external override. A valid OCR runtime manifest must
+record checksums, reviewed licenses, `runtime_distribution_mode`,
+`runtime_package_binaries_included`, component source, and installer source for
+the OCR engine, tessdata language packs, and renderer dependency. The privacy
+sentinel `runtime_binaries_included` must remain false in redacted evidence
+because evidence packages must not contain runtime binary contents. Tesseract plus
+tessdata remains the preferred Apache-2.0 OCR stack. PDFium is the preferred
+bundled renderer candidate if quality and platform evidence are sufficient.
+Poppler/pdftoppm is operationally strong and widely packaged; if it is bundled,
+the release distribution must use a GPL-compatible license such as
+GPL-3.0-or-later and include license notices, source-offer obligations, SBOM
+entries, exact binary source, artifact checksums, and installer composition
+evidence. A valid manifest does not by itself complete non-English OCR quality
+validation, platform installer validation, or production OCR throughput proof.
+Tesseract plus tessdata is still the preferred OCR engine and language-pack
+pair inside either bundled or external runtime mode.
 
-Poppler/pdftoppm is operationally strong and widely packaged, but its licensing
-and distribution review must stay separate from this MIT repository's default
-release artifacts. It is acceptable as an external command discovered on the
-operator's machine or explicitly configured by path. Do not bundle Poppler
-binaries into default installers until legal review approves the exact binary
-source, license notices, source-offer obligations, and installer composition.
-PDFium remains the preferred future permissive-license bundled renderer
-candidate if the product later needs an included PDF renderer. MuPDF and
-Ghostscript are viable external command alternatives in some deployments, but
-their AGPL/commercial licensing posture is not a better default for a permissive
-MIT distribution.
+MuPDF and Ghostscript are viable external command alternatives or
+commercial-license options in some deployments, but their AGPL/commercial
+licensing posture needs explicit release review before bundling.
 
 After review, pass the same manifest to
 `resume-cli release-readiness --ocr-runtime-manifest

@@ -267,10 +267,10 @@ const RELEASE_READINESS_BLOCKERS: &[ReleaseReadinessBlocker] = &[
     },
     ReleaseReadinessBlocker {
         label: RELEASE_READINESS_OCR_LICENSE_LABEL,
-        detail: "Tesseract/tessdata is the accepted Apache-2.0 external OCR runtime direction, and Poppler/pdftoppm is an external renderer dependency that is not bundled by default; release evidence requires a reviewed OCR runtime manifest with checksums/licenses, dependency detection, and fail-closed operator guidance",
+        detail: "Tesseract/tessdata is the accepted Apache-2.0 OCR runtime direction, and the PDF renderer must follow bundled-first packaging with external override; if Poppler/pdftoppm is bundled, release evidence requires GPL-3.0-or-later-compatible distribution review, source-offer obligations, checksums/licenses, dependency detection, and fail-closed operator guidance",
         dependency_kind: "reviewed_runtime_manifest",
         needed_from: "local_runtime_review",
-        dependency_summary: "reviewed Tesseract/tessdata and Poppler/pdftoppm manifest with checksums, licenses, and dependency detection evidence",
+        dependency_summary: "reviewed Tesseract/tessdata and PDF renderer runtime manifest with distribution mode, checksums, licenses, source-offer obligations, and dependency detection evidence",
         next_action: "generate and review the OCR runtime manifest, then pass it to release-readiness",
     },
     ReleaseReadinessBlocker {
@@ -1460,6 +1460,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
         "reproducible_local_10k_baseline",
         CONTEXT,
     )?;
+    validate_current_stage_runtime_distribution(object, CONTEXT)?;
     require_release_evidence_bool(object, "performance_optimization_deferred", true, CONTEXT)?;
     require_release_evidence_u64(object, "release_readiness_exit", 1, CONTEXT)?;
     require_release_evidence_bool(object, "stable_release_expected_blocked", true, CONTEXT)?;
@@ -1663,6 +1664,32 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
     })
 }
 
+fn validate_current_stage_runtime_distribution(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+) -> Result<()> {
+    let mode = require_release_evidence_string_value(object, "runtime_distribution_mode", context)?;
+    let package_binaries_included =
+        require_release_evidence_bool_value(object, "runtime_package_binaries_included", context)?;
+    let expected_package_binaries = match mode {
+        "bundled" => true,
+        "external" => false,
+        _ => {
+            return Err(release_evidence_invalid(
+                context,
+                "runtime_distribution_mode",
+            ))
+        }
+    };
+    if package_binaries_included != expected_package_binaries {
+        return Err(release_evidence_invalid(
+            context,
+            "runtime_package_binaries_included",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_current_stage_evidence_bundle_digests(
     args: &ReleaseReadinessEvidenceArgs,
     digests: &CurrentStageEvidenceDigests,
@@ -1797,6 +1824,7 @@ fn validate_current_stage_blocked_summary_manifest(
         "reproducible_local_10k_baseline",
         CONTEXT,
     )?;
+    validate_current_stage_runtime_distribution(object, CONTEXT)?;
     require_release_evidence_bool_value(object, "private_corpus_read", CONTEXT)?;
     require_release_evidence_bool_value(object, "full_baseline_satisfied", CONTEXT)?;
     require_release_evidence_bool(object, "release_readiness_evidence", false, CONTEXT)?;

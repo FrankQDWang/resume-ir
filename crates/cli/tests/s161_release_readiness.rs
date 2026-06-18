@@ -70,11 +70,12 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("observed pages_per_second"));
     assert!(stdout.contains("follow-up performance-optimization goal"));
     assert!(stdout.contains("OCR runtime manifest/dependency evidence: blocked"));
-    assert!(stdout.contains("reviewed OCR runtime manifest"));
+    assert!(stdout.contains("reviewed Tesseract/tessdata"));
     assert!(stdout.contains("Tesseract/tessdata"));
     assert!(stdout.contains("Apache-2.0"));
     assert!(stdout.contains("Poppler/pdftoppm"));
-    assert!(stdout.contains("not bundled by default"));
+    assert!(stdout.contains("bundled-first packaging"));
+    assert!(stdout.contains("source-offer"));
     assert!(stdout.contains("dependency detection"));
     assert!(stdout.contains("embedding model license/distribution: blocked"));
     assert!(stdout.contains("reviewed licensed embedding model"));
@@ -322,11 +323,12 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
         .find(|blocker| blocker["label"] == "OCR runtime manifest/dependency evidence")
         .expect("OCR license blocker");
     let ocr_license_detail = ocr_license_blocker["detail"].as_str().unwrap();
-    assert!(ocr_license_detail.contains("reviewed OCR runtime manifest"));
+    assert!(ocr_license_detail.contains("GPL-3.0-or-later"));
+    assert!(ocr_license_detail.contains("source-offer"));
     assert!(ocr_license_detail.contains("Tesseract/tessdata"));
     assert!(ocr_license_detail.contains("Apache-2.0"));
     assert!(ocr_license_detail.contains("Poppler/pdftoppm"));
-    assert!(ocr_license_detail.contains("not bundled by default"));
+    assert!(ocr_license_detail.contains("bundled-first packaging"));
     assert!(ocr_license_detail.contains("dependency detection"));
 
     let model_license_blocker = blockers
@@ -2724,6 +2726,8 @@ fn current_stage_evidence_manifest() -> String {
         "\"schema_version\":\"resume-ir.current-stage-validation-evidence.v1\",",
         "\"privacy_boundary\":\"local_only_redacted_evidence_manifest\",",
         "\"current_stage_target\":\"reproducible_local_10k_baseline\",",
+        "\"runtime_distribution_mode\":\"bundled\",",
+        "\"runtime_package_binaries_included\":true,",
         "\"performance_optimization_deferred\":true,",
         "\"release_readiness_exit\":1,",
         "\"stable_release_expected_blocked\":true,",
@@ -2838,6 +2842,8 @@ fn current_stage_blocked_summary() -> String {
         "\"privacy_boundary\":\"local_only_redacted_blocked_summary\",",
         "\"validation_profile\":\"full\",",
         "\"current_stage_target\":\"reproducible_local_10k_baseline\",",
+        "\"runtime_distribution_mode\":\"bundled\",",
+        "\"runtime_package_binaries_included\":true,",
         "\"private_corpus_read\":true,",
         "\"full_baseline_satisfied\":false,",
         "\"release_readiness_evidence\":false,",

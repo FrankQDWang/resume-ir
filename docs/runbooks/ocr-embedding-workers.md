@@ -7,17 +7,30 @@ upload command input files, worker logs, model caches, vector snapshots,
 databases, indexes, or local data directories. Synthetic fixtures are required
 for public reproduction.
 
-The product does not bundle a licensed OCR engine or embedding model yet. Those
-remain BLOCKED until OCR runtime, model, and language-pack licenses are reviewed
-and distribution is approved.
+The product does not ship a reviewed bundled runtime pack or embedding model
+yet. Those remain BLOCKED until OCR runtime, model, language-pack, and PDF
+renderer licenses are reviewed and distribution is approved.
 
-## External runtime decision
+## Bundled-first runtime decision
 
-Tesseract/tessdata is the preferred external OCR runtime for the current stage.
-It is treated as a local command runtime with reviewed checksum and license
-evidence, not as an opaque bundled dependency. Poppler/pdftoppm is an accepted
-user-installed external PDF renderer and may be configured by command path, but
-it is not bundled by default.
+The product runtime direction is bundled-first: installers should include a
+reviewed local OCR/PDF runtime pack when license, checksum, notices, and
+upgrade/rollback evidence are complete. External override remains supported for
+operators who need to pin an already installed runtime or test a reviewed local
+binary. All evidence must record `runtime_distribution_mode` and
+`runtime_package_binaries_included` so a local external command is never
+mistaken for an included product runtime. The privacy sentinel
+`runtime_binaries_included` must remain false because local evidence packages
+must not contain runtime binary contents.
+
+Tesseract/tessdata is the preferred OCR engine/language-pack stack. PDFium is
+the preferred bundled renderer candidate because its license posture is lighter.
+Poppler/pdftoppm remains acceptable when it is operationally better, but a
+bundled Poppler release must use a GPL-compatible product distribution such as
+GPL-3.0-or-later and must include the exact license text, notices, source-offer,
+SBOM entries, artifact checksums, and installer composition evidence. A
+user-supplied Poppler command can still be used through the external override
+path when the default bundle is unavailable or under review.
 
 For the current-stage private 10k validation flow, use
 `scripts/local/run-current-stage-validation.sh` as the orchestration entrypoint.
@@ -27,19 +40,15 @@ release-readiness steps locally without uploading evidence.
 
 ## PDF Renderer License Boundary
 
-The MIT project may call a user-installed Poppler command such as `pdftoppm`
-through a local subprocess boundary. That does not make the repository's Rust
-code a Poppler distribution, and it keeps the default install path compatible
-with the current MIT public repository goal. Do not bundle Poppler/pdftoppm by
-default in product installers.
-
-If a future release bundles Poppler binaries, that release becomes a separate
-GPL-family distribution review item. The installer/release evidence must record
-the exact installed Poppler license from the selected distribution, include the
-required license/source-offer materials, and pass legal review before the
-release blocker can be cleared. Runtime manifests should record the exact
-installed Poppler license, version, artifact checksum, and reviewed status
-instead of assuming Poppler is MIT-licensed.
+MIT is not a product packaging constraint. The repository can keep MIT-licensed
+source while a bundled runtime release uses the license required by its reviewed
+runtime components. If a release bundles Poppler binaries, that release becomes
+a GPL-family distribution review item. The installer/release evidence must
+record the exact installed Poppler license from the selected distribution,
+include the required license/source-offer materials, and pass legal review
+before the release blocker can be cleared. Runtime manifests should record the
+exact installed Poppler license, version, artifact checksum, runtime source, and
+reviewed status instead of assuming Poppler is MIT-licensed.
 
 This is no longer an unresolved runtime-choice blocker. Current engineering
 work is dependency detection, local manifest validation, checksum/license
@@ -49,17 +58,18 @@ should report the missing dependency and remediation without printing local
 paths, raw resume text, OCR text, page images, command stderr, model caches, or
 index contents.
 
-PDFium remains the preferred future permissive-license bundled renderer candidate if the product later needs an included PDF renderer. MuPDF and
-Ghostscript can be evaluated as external command adapters, but their
-AGPL/commercial license posture is not a better default for this MIT repository.
+PDFium remains the preferred bundled renderer candidate if it satisfies quality
+and platform requirements. MuPDF and Ghostscript can be evaluated as external
+command adapters or commercial-license options, but their AGPL/commercial
+license posture needs the same explicit release review before bundling.
 
 ## OCR Runtime Preflight
 
 Canonical local command form:
 `resume-cli ocr preflight --json`.
 
-Before running OCR workers, check that the local external OCR runtime is
-discoverable without printing command paths:
+Before running OCR workers, check that the selected bundled runtime or external
+override is discoverable without printing command paths:
 
 ```bash
 resume-cli --data-dir <local-data-dir> ocr preflight --json \

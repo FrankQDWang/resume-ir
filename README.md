@@ -56,4 +56,6 @@ Do not import real resumes, upload data, push, release, sign binaries, or run he
 
 ## License
 
-This repository is licensed under the MIT License. See `LICENSE`.
+Current source code is licensed under the MIT License. See `LICENSE`.
+Release packages may use a different reviewed distribution license when bundled
+OCR/PDF/model runtime components require it; see `LICENSES/README.md`.

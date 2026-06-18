@@ -24,6 +24,7 @@ fi
 ./scripts/ci/check-daemon-closed-loop.sh
 ./scripts/ci/check-benchmark-smoke.sh
 ./scripts/ci/check-licenses.sh
+./scripts/ci/check-runtime-bundle-policy.sh
 ./scripts/ci/check-runbooks.sh
 ./scripts/ci/check-current-stage-observability.sh
 ./scripts/ci/check-local-embedding-runtime.sh

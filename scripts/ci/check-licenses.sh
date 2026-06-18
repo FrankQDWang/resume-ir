@@ -1,9 +1,16 @@
 #!/usr/bin/env sh
 set -eu
 
-CARGO_BIN="${CARGO:-cargo}"
-if ! command -v "$CARGO_BIN" >/dev/null 2>&1 && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
+CARGO_BIN="${CARGO:-}"
+if [ -z "$CARGO_BIN" ]; then
+  CARGO_BIN=cargo
+fi
+if ! "$CARGO_BIN" --version >/dev/null 2>&1 && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
   CARGO_BIN=/Users/frankqdwang/.cargo/bin/cargo
+fi
+if ! "$CARGO_BIN" --version >/dev/null 2>&1; then
+  printf '%s\n' "license check requires cargo" >&2
+  exit 1
 fi
 
 metadata_file="$(mktemp)"
@@ -31,8 +38,12 @@ allowed = {
     "Unlicense",
     "Zlib",
     "zlib-acknowledgement",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
 }
-forbidden_prefixes = ("GPL", "AGPL", "SSPL", "LGPL")
+forbidden_tokens = {"AGPL", "AGPL-3.0-only", "AGPL-3.0-or-later", "SSPL", "SSPL-1.0"}
 
 
 def tokens_for(expression):
@@ -43,12 +54,12 @@ def tokens_for(expression):
     }
 
 
-def is_permissive_choice(expression):
+def is_gpl_compatible_choice(expression):
     for choice in re.split(r"\s+OR\s+", expression):
         tokens = tokens_for(choice)
         if not tokens:
             continue
-        if any(token.startswith(forbidden_prefixes) for token in tokens):
+        if any(token in forbidden_tokens for token in tokens):
             continue
         if all(token in allowed for token in tokens):
             return True
@@ -70,10 +81,10 @@ for package in metadata.get("packages", []):
         failures.append(f"{name}: missing license expression")
         continue
 
-    if not is_permissive_choice(license_expr):
+    if not is_gpl_compatible_choice(license_expr):
         tokens = sorted(tokens_for(license_expr))
         failures.append(
-            f"{name}: no reviewed permissive license choice in {license_expr!r}; tokens={', '.join(tokens)}"
+            f"{name}: no reviewed GPL-compatible license choice in {license_expr!r}; tokens={', '.join(tokens)}"
         )
 
 if failures:

@@ -159,11 +159,12 @@ require_text "$stdout_file" "observed OCR page latency P50/P95/P99 metrics"
 require_text "$stdout_file" "observed pages_per_second"
 require_text "$stdout_file" "follow-up performance-optimization goal"
 require_text "$stdout_file" '"label": "OCR runtime manifest/dependency evidence"'
-require_text "$stdout_file" "reviewed OCR runtime manifest"
+require_text "$stdout_file" "reviewed Tesseract/tessdata"
 require_text "$stdout_file" "Tesseract/tessdata"
 require_text "$stdout_file" "Apache-2.0"
 require_text "$stdout_file" "Poppler/pdftoppm"
-require_text "$stdout_file" "not bundled by default"
+require_text "$stdout_file" "bundled-first packaging"
+require_text "$stdout_file" "source-offer"
 require_text "$stdout_file" "dependency detection"
 require_text "$stdout_file" '"label": "embedding model license/distribution"'
 require_text "$stdout_file" "reviewed licensed embedding model"
@@ -274,6 +275,8 @@ cat > "$current_stage_evidence" <<'JSON'
   "schema_version": "resume-ir.current-stage-validation-evidence.v1",
   "privacy_boundary": "local_only_redacted_evidence_manifest",
   "current_stage_target": "reproducible_local_10k_baseline",
+  "runtime_distribution_mode": "bundled",
+  "runtime_package_binaries_included": true,
   "performance_optimization_deferred": true,
   "release_readiness_exit": 1,
   "stable_release_expected_blocked": true,
@@ -384,6 +387,8 @@ cat > "$current_stage_blocked_summary" <<'JSON'
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "full",
   "current_stage_target": "reproducible_local_10k_baseline",
+  "runtime_distribution_mode": "bundled",
+  "runtime_package_binaries_included": true,
   "private_corpus_read": true,
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,

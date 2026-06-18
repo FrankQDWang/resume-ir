@@ -126,6 +126,7 @@ mkdir -p "$resume_root" "$data_dir" "$out_dir" "$embedding_runtime_bin_dir"
   --dimension 384 \
   --model-license Apache-2.0 \
   --runtime-pack-id reviewed-local-ocr-pack \
+  --runtime-distribution-mode bundled \
   --tesseract-command "$tesseract_command" \
   --pdftoppm-command "$pdftoppm_command" \
   --language eng \
@@ -182,6 +183,8 @@ require_text "$plan" '"resume_root": "<local-resume-root>"'
 require_text "$plan" '"data_dir": "<local-data-dir>"'
 require_text "$plan" '"out_dir": "<local-evidence-dir>"'
 require_text "$plan" '"current_stage_target": "reproducible_local_10k_baseline"'
+require_text "$plan" '"runtime_distribution_mode": "bundled"'
+require_text "$plan" '"runtime_package_binaries_included": true'
 require_text "$plan" '"performance_optimization_deferred": true'
 require_text "$plan" '"embedding_runtime_bin_dir_configured": true'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> privacy dataset-manifest --root <local-resume-root> --out <local-evidence-dir>/dataset-manifest.local.json --profile explicit --max-files 10000'
@@ -675,6 +678,7 @@ run_execute_smoke() {
     --dimension 384 \
     --model-license Apache-2.0 \
     --runtime-pack-id reviewed-local-ocr-pack \
+    --runtime-distribution-mode bundled \
     --tesseract-command "$execute_tesseract_command" \
     --pdftoppm-command "$execute_pdftoppm_command" \
     --language eng \
@@ -707,6 +711,8 @@ fi
 require_text "$evidence_manifest" '"schema_version": "resume-ir.current-stage-validation-evidence.v1"'
 require_text "$evidence_manifest" '"privacy_boundary": "local_only_redacted_evidence_manifest"'
 require_text "$evidence_manifest" '"current_stage_target": "reproducible_local_10k_baseline"'
+require_text "$evidence_manifest" '"runtime_distribution_mode": "bundled"'
+require_text "$evidence_manifest" '"runtime_package_binaries_included": true'
 require_text "$evidence_manifest" '"performance_optimization_deferred": true'
 require_text "$evidence_manifest" '"release_readiness_exit": 1'
 require_text "$evidence_manifest" '"stable_release_expected_blocked": true'
@@ -785,6 +791,8 @@ require_text "$smoke_summary" '"schema_version": "resume-ir.current-stage-smoke-
 require_text "$smoke_summary" '"privacy_boundary": "local_only_redacted_aggregate_summary"'
 require_text "$smoke_summary" '"validation_profile": "smoke"'
 require_text "$smoke_summary" '"current_stage_target": "local_real_corpus_smoke_chain"'
+require_text "$smoke_summary" '"runtime_distribution_mode": "bundled"'
+require_text "$smoke_summary" '"runtime_package_binaries_included": true'
 require_text "$smoke_summary" '"smoke_satisfied": true'
 require_text "$smoke_summary" '"full_baseline_satisfied": false'
 require_text "$smoke_summary" '"release_readiness_evidence": false'
@@ -814,6 +822,29 @@ reject_text "$tmpdir/execute-smoke-profile-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-smoke-profile-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-smoke-profile-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-smoke-profile-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke external-runtime-smoke \
+  --validation-profile smoke \
+  --runtime-distribution-mode external \
+  --max-files 6 \
+  --max-queries 3 \
+  --top-k 5
+external_smoke_status=$(cat "$tmpdir/execute-external-runtime-smoke-status.txt")
+if [ "$external_smoke_status" -ne 0 ]; then
+  fail "current-stage external runtime smoke profile execute failed"
+fi
+external_smoke_summary="$execute_out_dir/current-stage-smoke-summary.json"
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$external_smoke_summary" >/dev/null
+fi
+require_text "$external_smoke_summary" '"runtime_distribution_mode": "external"'
+require_text "$external_smoke_summary" '"runtime_package_binaries_included": false'
+require_text "$external_smoke_summary" '"runtime_binaries_included": false'
+require_current_stage_handoff \
+  "smoke_satisfied" \
+  "resume-ir.current-stage-smoke-summary.v1"
+reject_text "$external_smoke_summary" "$tmpdir"
+reject_text "$external_smoke_summary" "PRIVATE-current-stage"
 
 run_execute_smoke ocr-backlog
 ocr_backlog_status=$(cat "$tmpdir/execute-ocr-backlog-status.txt")
