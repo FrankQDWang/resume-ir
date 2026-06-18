@@ -31,6 +31,11 @@ GPL-3.0-or-later and must include the exact license text, notices, source-offer,
 SBOM entries, artifact checksums, and installer composition evidence. A
 user-supplied Poppler command can still be used through the external override
 path when the default bundle is unavailable or under review.
+Use `scripts/release/create-runtime-bundle-manifest.sh` during release dry-runs
+to produce the redacted `release.runtime_bundle.v1` manifest for reviewed local
+runtime artifacts. The manifest records basenames, byte counts, sha256 hashes,
+license IDs, sources, notices, and source-offer evidence only; it does not
+commit or upload runtime binaries.
 
 For the current-stage private 10k validation flow, use
 `scripts/local/run-current-stage-validation.sh` as the orchestration entrypoint.

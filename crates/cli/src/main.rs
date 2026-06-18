@@ -2059,6 +2059,52 @@ fn validate_release_artifact_manifest_report(report: &str) -> Result<()> {
     if !required_names.iter().all(|name| seen_names.contains(*name)) {
         return Err(release_evidence_invalid(CONTEXT, "artifacts"));
     }
+    if let Some(runtime_bundles_value) = object.get("runtime_bundle_manifests") {
+        let runtime_bundles = runtime_bundles_value
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "runtime_bundle_manifests"))?;
+        if runtime_bundles.is_empty() {
+            return Err(release_evidence_invalid(
+                CONTEXT,
+                "runtime_bundle_manifests",
+            ));
+        }
+        for runtime_bundle in runtime_bundles {
+            let runtime_bundle = runtime_bundle
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "runtime_bundle_manifests"))?;
+            let file = require_release_evidence_string_value(runtime_bundle, "file", CONTEXT)?;
+            if !is_release_evidence_basename(file) {
+                return Err(release_evidence_invalid(CONTEXT, "file"));
+            }
+            require_release_evidence_sha256(runtime_bundle, "sha256", CONTEXT)?;
+            require_release_evidence_positive_u64(runtime_bundle, "bytes", CONTEXT)?;
+            require_release_evidence_string(
+                runtime_bundle,
+                "schema_version",
+                "release.runtime_bundle.v1",
+                CONTEXT,
+            )?;
+            require_release_evidence_string(
+                runtime_bundle,
+                "runtime_distribution_mode",
+                "bundled",
+                CONTEXT,
+            )?;
+            require_release_evidence_bool(
+                runtime_bundle,
+                "runtime_package_binaries_included",
+                true,
+                CONTEXT,
+            )?;
+            require_release_evidence_bool(
+                runtime_bundle,
+                "runtime_binaries_included",
+                false,
+                CONTEXT,
+            )?;
+        }
+    }
     for step in [
         "packaging",
         "signing",

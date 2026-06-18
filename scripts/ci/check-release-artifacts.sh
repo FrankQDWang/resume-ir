@@ -40,8 +40,14 @@ for binary in resume-cli resume-daemon resume-benchmark; do
   printf 'synthetic binary %s\n' "$binary" > "$target_dir/$binary"
   chmod 755 "$target_dir/$binary"
 done
+printf '{"schema_version":"release.runtime_bundle.v1","runtime_distribution_mode":"bundled"}\n' \
+  > "$out_dir/runtime-bundle-manifest.json"
 
-"$script" --version v0.0.0 --target-dir "$target_dir" --out-dir "$out_dir"
+"$script" \
+  --version v0.0.0 \
+  --target-dir "$target_dir" \
+  --out-dir "$out_dir" \
+  --runtime-bundle-manifest "$out_dir/runtime-bundle-manifest.json"
 manifest="$out_dir/release-artifacts.json"
 require_file "$manifest"
 require_text "$manifest" '"schema_version": "release.artifacts.v1"'
@@ -52,6 +58,11 @@ require_text "$manifest" '"notarization"'
 require_text "$manifest" '"resume-cli"'
 require_text "$manifest" '"resume-daemon"'
 require_text "$manifest" '"resume-benchmark"'
+require_text "$manifest" '"runtime_bundle_manifests"'
+require_text "$manifest" '"runtime-bundle-manifest.json"'
+require_text "$manifest" '"runtime_distribution_mode": "bundled"'
+require_text "$manifest" '"runtime_package_binaries_included": true'
+require_text "$manifest" '"runtime_binaries_included": false'
 require_text "$manifest" '"sha256": "'
 require_text "$manifest" '"bytes": '
 

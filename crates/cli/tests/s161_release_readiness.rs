@@ -3233,6 +3233,9 @@ fn release_artifacts_manifest() -> String {
         "{\"name\":\"resume-daemon\",\"file\":\"resume-daemon\",\"sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"bytes\":202},",
         "{\"name\":\"resume-benchmark\",\"file\":\"resume-benchmark\",\"sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"bytes\":303}",
         "],",
+        "\"runtime_bundle_manifests\":[",
+        "{\"file\":\"runtime-bundle-manifest.json\",\"sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"bytes\":404,\"schema_version\":\"release.runtime_bundle.v1\",\"runtime_distribution_mode\":\"bundled\",\"runtime_package_binaries_included\":true,\"runtime_binaries_included\":false}",
+        "],",
         "\"blocked_release_steps\":[\"packaging\",\"signing\",\"notarization\",\"github_release_upload\"],",
         "\"notes\":\"Dry-run manifest only; no installer, signature, notarization ticket, release upload, local data, or runtime data is included.\"",
         "}"

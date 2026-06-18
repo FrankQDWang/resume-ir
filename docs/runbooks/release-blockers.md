@@ -1108,20 +1108,38 @@ Generate a local release dry-run manifest only after release binaries have been
 built:
 
 ```bash
+scripts/release/create-runtime-bundle-manifest.sh \
+  --version v0.1.0 \
+  --runtime-pack-id reviewed-runtime-pack \
+  --distribution-license GPL-3.0-or-later \
+  --source-offer reviewed-source-offer.txt \
+  --notice reviewed-NOTICE.txt \
+  --component tesseract\|ocr-engine\|Apache-2.0\|https://github.com/tesseract-ocr/tesseract\|<local-tesseract-binary> \
+  --component eng-tessdata\|ocr-language-pack\|Apache-2.0\|https://github.com/tesseract-ocr/tessdata\|<local-eng-traineddata> \
+  --component pdf-renderer\|pdf-renderer\|<reviewed-renderer-license>\|<reviewed-renderer-source>\|<local-pdf-renderer-binary> \
+  --out-dir release-dry-run \
+  --reviewed
 scripts/release/create-artifact-manifest.sh \
   --version v0.1.0 \
   --target-dir target/release \
-  --out-dir release-dry-run
+  --out-dir release-dry-run \
+  --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json
 scripts/release/create-sbom.sh \
   --version v0.1.0 \
   --out-dir release-dry-run
 ```
 
-The generated `release-artifacts.json` records binary names, byte counts, and
-sha256 hashes. The generated `release-sbom.json` is a redacted SPDX 2.3 package
-inventory derived from locked Cargo metadata. These dry-run files are not an
-installer, signature, notarization ticket, or GitHub Release upload, and they
-must not contain local paths or runtime data.
+The generated `runtime-bundle-manifest.json` uses schema
+`release.runtime_bundle.v1` and records only component basenames, byte counts,
+sha256 hashes, reviewed licenses, sources, notices, and source-offer evidence.
+It does not copy runtime binaries into the repository. The generated
+`release-artifacts.json` records binary names, byte counts, sha256 hashes, and
+the runtime bundle manifest digest under `runtime_bundle_manifests`. The
+generated `release-sbom.json` is a redacted SPDX 2.3 package inventory derived
+from locked Cargo metadata. These dry-run files are not an installer,
+signature, notarization ticket, or GitHub Release upload, and they must not
+contain local paths, raw runtime binary contents, local data, diagnostics,
+model caches, or resume data.
 
 On macOS only, generate unsigned pkg/dmg dry-run artifacts after release
 binaries have been built:
