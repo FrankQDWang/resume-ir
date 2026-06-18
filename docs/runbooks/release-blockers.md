@@ -86,6 +86,21 @@ redacted dataset manifest when present, and import stdout; it must not include
 resume paths, filenames, raw parsed text, query bodies, benchmark reports,
 indexes, SQLite data, or diagnostics.
 
+For repeated local validation on an already imported private data directory,
+operators may pass `--reuse-imported-corpus --reuse-dataset-manifest
+<prior-redacted-dataset-manifest.json>`. This mode is explicit opt-in. It
+validates and copies the prior `resume-ir.dataset-manifest.v1` redacted
+manifest into the new local evidence directory, checks any caller-supplied
+dataset-manifest digest against that copied file, writes a redacted
+`dataset-manifest.stdout.txt`, then runs `resume-cli status` against the
+existing local data directory and records that aggregate status under
+`import.stdout.txt`. It skips `privacy dataset-manifest --root ...` and
+`import --root ...`, so it is useful for continuing bounded OCR/embedding/query
+smoke after a full private corpus import has already completed locally. It must
+not be used to claim a new corpus scan/import happened, and it still leaves full
+current-stage evidence blocked unless the later hot-index, 500-query, OCR
+throughput, diagnostics, fault, and release-readiness evidence all pass.
+
 The default `--validation-profile full` is the only profile intended to produce
 `resume-ir.current-stage-validation-evidence.v1` for `release-readiness
 --current-stage-evidence`. The `--validation-profile smoke` profile is a
@@ -132,6 +147,11 @@ The benchmark report still carries redacted aggregate `document_count`,
 `searchable_document_count`, and `vector_indexed_document_count`; the full
 profile does not use the flag and remains blocked until the required hot-index
 coverage floor is met.
+The private benchmark evidence validator follows the selected validation
+profile: full profile still requires the 8000-document searchable/vector floors
+and 500 latency samples, while smoke profile requires non-zero searchable,
+vector, and query-sample evidence plus the same privacy, protocol, and internal
+consistency checks.
 
 `benchmark-corpus-summary.local.json` also carries redacted aggregate
 `document_status_counts`, `ingest_job_status_counts`,
@@ -194,6 +214,7 @@ scripts/local/run-current-stage-validation.sh --dry-run \
   --data-dir <local-data-dir> \
   --out-dir <local-evidence-dir> \
   [--query-set <local-query-set.jsonl>] \
+  [--reuse-imported-corpus --reuse-dataset-manifest <prior-redacted-dataset-manifest.json>] \
   --model-manifest <local-model-manifest.json> \
   --ocr-runtime-manifest <local-ocr-runtime-manifest.json> \
   --model-artifact <local-model-artifact> \
@@ -215,6 +236,7 @@ scripts/local/run-current-stage-validation.sh --dry-run \
   --max-files 10000 \
   --max-queries 500 \
   --top-k 10 \
+  [--private-query-timeout-ms <query-command-timeout-ms>] \
   [--ocr-jobs-per-tick <bounded-ocr-job-budget>]
 ```
 
@@ -375,6 +397,7 @@ scripts/local/run-current-stage-validation.sh --execute \
   --data-dir <local-data-dir> \
   --out-dir <local-evidence-dir> \
   [--query-set <local-query-set.jsonl>] \
+  [--reuse-imported-corpus --reuse-dataset-manifest <prior-redacted-dataset-manifest.json>] \
   --model-manifest <local-model-manifest.json> \
   --ocr-runtime-manifest <local-ocr-runtime-manifest.json> \
   --model-artifact <local-model-artifact> \
@@ -399,6 +422,7 @@ scripts/local/run-current-stage-validation.sh --execute \
   --max-files 10000 \
   --max-queries 500 \
   --top-k 10 \
+  [--private-query-timeout-ms <query-command-timeout-ms>] \
   [--ocr-jobs-per-tick <bounded-ocr-job-budget>]
 ```
 
@@ -437,6 +461,7 @@ scripts/local/run-current-stage-validation.sh --execute \
   --max-files <bounded-file-count> \
   --max-queries <bounded-query-count> \
   --top-k 10 \
+  [--private-query-timeout-ms <query-command-timeout-ms>] \
   [--ocr-jobs-per-tick <bounded-ocr-job-budget>]
 ```
 
@@ -444,6 +469,12 @@ Use `--ocr-jobs-per-tick` to increase how many queued OCR documents the
 bounded worker may claim during one foreground worker tick. The default is `1`
 for compatibility; raising it is a current-stage baseline throughput control,
 not a P95/P99 query-latency optimization claim.
+
+Use `--private-query-timeout-ms` to set the benchmark runner's per-query command
+budget for local `resume-cli benchmark-query-protocol` invocations. The default
+is `30000`; raising it is a current-stage validation command budget for cold or
+OCR-heavy local data directories, not a claim that query P95/P99 latency has
+been optimized.
 
 Smoke mode passes `--allow-smoke-confidence` to the benchmark gate because a
 bounded local wiring run may have `percentile_confidence: "smoke"`. Full

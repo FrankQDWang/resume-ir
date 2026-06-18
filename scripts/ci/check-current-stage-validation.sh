@@ -187,6 +187,7 @@ require_text "$plan" '"runtime_distribution_mode": "bundled"'
 require_text "$plan" '"runtime_package_binaries_included": true'
 require_text "$plan" '"performance_optimization_deferred": true'
 require_text "$plan" '"embedding_runtime_bin_dir_configured": true'
+require_text "$plan" '"private_query_timeout_ms": 30000'
 require_text "$plan" '"ocr_jobs_per_tick": 1'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> privacy dataset-manifest --root <local-resume-root> --out <local-evidence-dir>/dataset-manifest.local.json --profile explicit --max-files 10000'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> ocr preflight --json'
@@ -204,7 +205,7 @@ require_text "$plan" 'resume-daemon --data-dir <local-data-dir> run --foreground
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> benchmark-corpus-summary --json > <local-evidence-dir>/benchmark-corpus-summary.local.json'
 require_text "$plan" 'resume-benchmark private-query'
 require_text "$plan" '--command-arg benchmark-query-protocol'
-require_text "$plan" '--max-queries 500 --top-k 10'
+require_text "$plan" '--max-queries 500 --top-k 10 --timeout-ms 30000'
 require_text "$plan" 'resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --min-documents 8000 --min-queries 500 --max-p95-ms 86400000'
 require_text "$plan" 'resume-benchmark private-ocr-throughput'
 require_text "$plan" 'resume-benchmark ocr-gate --report <local-evidence-dir>/private-ocr-throughput.json --current-stage-baseline --require-private-real-corpus --min-pages 500'
@@ -322,8 +323,9 @@ require_text "$smoke_plan" '"validation_profile": "smoke"'
 require_text "$smoke_plan" '"current_stage_target": "local_real_corpus_smoke_chain"'
 require_text "$smoke_plan" '"full_baseline_satisfied": false'
 require_text "$smoke_plan" '"release_readiness_evidence": false'
+require_text "$smoke_plan" '"private_query_timeout_ms": 30000'
 require_text "$smoke_plan" 'benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries 3 --min-queries 1 --allow-keyword-fallback'
-require_text "$smoke_plan" '--corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json --allow-partial-hot-index-for-smoke --max-queries 3 --top-k 5'
+require_text "$smoke_plan" '--corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json --allow-partial-hot-index-for-smoke --max-queries 3 --top-k 5 --timeout-ms 30000'
 require_text "$smoke_plan" 'resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --allow-smoke-confidence --min-documents 1 --min-queries 1'
 require_text "$smoke_plan" 'resume-cli --data-dir <local-data-dir> fault-simulate --case disk-space-low --scratch-dir <local-evidence-dir>/fault-simulation-scratch --required-bytes 4096 --available-bytes 1024 --json > <local-evidence-dir>/fault-simulation-storage-low.json'
 require_text "$smoke_plan" 'resume-cli --data-dir <local-data-dir> fault-simulate --suite local-safe --scratch-dir <local-evidence-dir>/fault-simulation-suite-scratch --daemon-binary <local-resume-daemon> --ocr-command <local-ocr-crash-fixture> --json > <local-evidence-dir>/fault-simulation-suite-local-safe.json'
@@ -382,6 +384,10 @@ write_out_arg() {
 }
 case "$cmd:$sub" in
   privacy:dataset-manifest)
+    if [ "${FAKE_IMPORT_MODE:-ready}" = "forbid-scan" ]; then
+      printf 'dataset manifest scan was unexpectedly invoked during reuse\n' >&2
+      exit 65
+    fi
     write_out_arg "$@"
     printf 'dataset manifest: written\n'
     printf 'schema: resume-ir.dataset-manifest.v1\n'
@@ -435,13 +441,28 @@ case "$cmd:$sub" in
     printf '{"schema_version":"embedding-runtime-preflight.v1","embedding_protocol": "passed","ready":true}\n'
     ;;
   import:*)
+    if [ "${FAKE_IMPORT_MODE:-ready}" = "forbid-scan" ]; then
+      printf 'private corpus import was unexpectedly invoked during reuse\n' >&2
+      exit 65
+    fi
     if [ "${FAKE_IMPORT_MODE:-ready}" = "failed" ]; then
       printf 'import blocked: fake parser failure\n' >&2
       exit 1
     fi
     printf 'import task submitted\nstatus: completed\n'
     ;;
+  status:*)
+    printf 'indexed documents: 8720\n'
+    printf 'searchable documents: 8720\n'
+    printf 'ocr queue: 0\n'
+    printf 'embedding queue: 0\n'
+    printf 'paths: <redacted>\n'
+    ;;
   benchmark-corpus-summary:*)
+    if [ "${FAKE_CORPUS_SUMMARY_MODE:-hot}" = "smoke-low-hot" ]; then
+      printf '{"schema_version":"benchmark-corpus-summary.v1","privacy_boundary":"redacted_local_aggregate","document_count":8720,"searchable_document_count":33,"vector_indexed_document_count":33,"hot_index_fully_covered":false,"document_status_counts":{"failed_permanent":20,"ocr_required":8546,"searchable":33,"text_cleaned":121},"ingest_job_status_counts":{"completed":226,"queued":8465},"ingest_job_kind_status_counts":{"ocr_document":{"completed":89,"queued":8465},"update_index":{"completed":137}},"ingest_job_failure_counts":{},"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"contains_sample_ids":false}\n'
+      exit 0
+    fi
     if [ "${FAKE_CORPUS_SUMMARY_MODE:-hot}" = "ocr-backlog" ]; then
       printf '{"schema_version":"benchmark-corpus-summary.v1","privacy_boundary":"redacted_local_aggregate","document_count":8720,"searchable_document_count":162,"vector_indexed_document_count":0,"hot_index_fully_covered":false,"document_status_counts":{"failed_permanent":20,"ocr_required":8538,"searchable":162},"ingest_job_status_counts":{"completed":16,"queued":8537,"running":1},"ingest_job_kind_status_counts":{"ocr_document":{"completed":16,"queued":8537,"running":1}},"ingest_job_failure_counts":{},"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"contains_sample_ids":false}\n'
       exit 0
@@ -545,6 +566,10 @@ case "${1:-}" in
       printf '{"schema_version":"benchmark.private-query.v1","dataset_kind":"private-real-corpus","target_claim":"benchmark_baseline_observed"}\n'
       exit 0
     fi
+    if [ "${FAKE_BENCHMARK_MODE:-pass}" = "smoke-low-hot" ]; then
+      printf '{"schema_version":"benchmark.v1","run_id":"current_stage_fake","platform":"ci/fake","dataset_kind":"private-real-corpus","document_count":8720,"searchable_document_count":33,"vector_indexed_document_count":33,"query_count":3,"top_k":5,"build_ms":1.0,"query_total_ms":300.0,"qps":10.0,"index_size_bytes":1000,"query_latency_ms":{"samples":3,"min":1.0,"mean":5.0,"p50":5.0,"p95":42.0,"p99":84.0,"max":100.0},"zero_result_queries":0,"total_hits":30,"million_scale_verified":false,"percentile_confidence":"smoke","target_claim":"benchmark_baseline_observed","scope":"private local real-corpus query benchmark; aggregate redacted report only","corpus_origin":"private_local","privacy_boundary":"redacted_local_aggregate","query_protocol":"resume-ir-query-v1","query_mode":"hybrid","retrieval_layers":"fulltext+field+vector+rrf","hot_index":true,"hot_path_ocr":false,"hot_path_parsing":false,"hot_path_heavy_model_inference":false,"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"dataset_manifest_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","query_set_sha256":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","model_manifest_sha256":"1111111111111111111111111111111111111111111111111111111111111111","corpus_summary_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}\n'
+      exit 0
+    fi
     printf '{"schema_version":"benchmark.v1","run_id":"current_stage_fake","platform":"ci/fake","dataset_kind":"private-real-corpus","document_count":8720,"searchable_document_count":8720,"vector_indexed_document_count":8720,"query_count":500,"top_k":10,"build_ms":1.0,"query_total_ms":5000.0,"qps":100.0,"index_size_bytes":1000,"query_latency_ms":{"samples":500,"min":1.0,"mean":5.0,"p50":5.0,"p95":42.0,"p99":84.0,"max":100.0},"zero_result_queries":0,"total_hits":5000,"million_scale_verified":false,"percentile_confidence":"sampled","target_claim":"benchmark_baseline_observed","scope":"private local real-corpus query benchmark; aggregate redacted report only","corpus_origin":"private_local","privacy_boundary":"redacted_local_aggregate","query_protocol":"resume-ir-query-v1","query_mode":"hybrid","retrieval_layers":"fulltext+field+vector+rrf","hot_index":true,"hot_path_ocr":false,"hot_path_parsing":false,"hot_path_heavy_model_inference":false,"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"dataset_manifest_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","query_set_sha256":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","model_manifest_sha256":"1111111111111111111111111111111111111111111111111111111111111111","corpus_summary_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}\n'
     ;;
   gate)
@@ -553,11 +578,15 @@ case "${1:-}" in
       exit 1
     fi
     report_path=""
+    allow_smoke="false"
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --report)
           shift
           report_path="${1:-}"
+          ;;
+        --allow-smoke-confidence)
+          allow_smoke="true"
           ;;
       esac
       shift || true
@@ -573,14 +602,22 @@ case "${1:-}" in
       '"contains_raw_resume_text":false' \
       '"contains_resume_paths":false' \
       '"contains_queries":false' \
-      '"query_latency_ms":' \
-      '"samples":500'
+      '"query_latency_ms":'
     do
       if ! grep -Fq "$required" "$report_path"; then
         printf 'benchmark gate blocked: invalid private benchmark report\n' >&2
         exit 1
       fi
     done
+    if [ "$allow_smoke" = "true" ]; then
+      if ! grep -Fq '"samples":' "$report_path"; then
+        printf 'benchmark gate blocked: invalid private benchmark report\n' >&2
+        exit 1
+      fi
+    elif ! grep -Fq '"samples":500' "$report_path"; then
+      printf 'benchmark gate blocked: invalid private benchmark report\n' >&2
+      exit 1
+    fi
     printf 'benchmark gate passed\n'
     ;;
   private-ocr-throughput)
@@ -627,6 +664,9 @@ run_execute_smoke() {
   if [ "$mode" = "private-query-invalid" ]; then
     benchmark_mode="private-query-invalid"
   fi
+  if [ "$mode" = "smoke-low-hot" ]; then
+    benchmark_mode="smoke-low-hot"
+  fi
   if [ "$mode" = "private-ocr-throughput-failed" ]; then
     benchmark_mode="private-ocr-throughput-failed"
   fi
@@ -654,6 +694,9 @@ run_execute_smoke() {
   if [ "$mode" = "import-failed" ]; then
     import_mode="failed"
   fi
+  if [ "$mode" = "reuse-imported-corpus" ]; then
+    import_mode="forbid-scan"
+  fi
   query_set_mode="ready"
   if [ "$mode" = "query-set-draft-failed" ]; then
     query_set_mode="draft-failed"
@@ -661,6 +704,9 @@ run_execute_smoke() {
   corpus_summary_mode="hot"
   if [ "$mode" = "ocr-backlog" ]; then
     corpus_summary_mode="ocr-backlog"
+  fi
+  if [ "$mode" = "smoke-low-hot" ]; then
+    corpus_summary_mode="smoke-low-hot"
   fi
   FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_CORPUS_SUMMARY_MODE="$corpus_summary_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_FAULT_SIMULATION_MODE="$fault_simulation_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR="$embedding_runtime_bin_dir" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
@@ -715,6 +761,7 @@ require_text "$evidence_manifest" '"privacy_boundary": "local_only_redacted_evid
 require_text "$evidence_manifest" '"current_stage_target": "reproducible_local_10k_baseline"'
 require_text "$evidence_manifest" '"runtime_distribution_mode": "bundled"'
 require_text "$evidence_manifest" '"runtime_package_binaries_included": true'
+require_text "$evidence_manifest" '"private_query_timeout_ms": 30000'
 require_text "$evidence_manifest" '"performance_optimization_deferred": true'
 require_text "$evidence_manifest" '"release_readiness_exit": 1'
 require_text "$evidence_manifest" '"stable_release_expected_blocked": true'
@@ -795,6 +842,7 @@ require_text "$smoke_summary" '"validation_profile": "smoke"'
 require_text "$smoke_summary" '"current_stage_target": "local_real_corpus_smoke_chain"'
 require_text "$smoke_summary" '"runtime_distribution_mode": "bundled"'
 require_text "$smoke_summary" '"runtime_package_binaries_included": true'
+require_text "$smoke_summary" '"private_query_timeout_ms": 30000'
 require_text "$smoke_summary" '"smoke_satisfied": true'
 require_text "$smoke_summary" '"full_baseline_satisfied": false'
 require_text "$smoke_summary" '"release_readiness_evidence": false'
@@ -824,6 +872,82 @@ reject_text "$tmpdir/execute-smoke-profile-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-smoke-profile-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-smoke-profile-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-smoke-profile-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke smoke-low-hot \
+  --validation-profile smoke \
+  --max-files 6 \
+  --max-queries 3 \
+  --top-k 5
+smoke_low_hot_status=$(cat "$tmpdir/execute-smoke-low-hot-status.txt")
+if [ "$smoke_low_hot_status" -ne 0 ]; then
+  fail "current-stage smoke profile rejected partial hot-index benchmark evidence"
+fi
+smoke_low_hot_summary="$execute_out_dir/current-stage-smoke-summary.json"
+require_text "$smoke_low_hot_summary" '"smoke_satisfied": true'
+require_text "$smoke_low_hot_summary" '"private_query_baseline"'
+require_text "$smoke_low_hot_summary" '"searchable_document_count": 33'
+require_text "$smoke_low_hot_summary" '"vector_indexed_document_count": 33'
+require_current_stage_handoff \
+  "smoke_satisfied" \
+  "resume-ir.current-stage-smoke-summary.v1"
+reject_text "$smoke_low_hot_summary" "$tmpdir"
+reject_text "$smoke_low_hot_summary" "PRIVATE-current-stage"
+reject_text "$smoke_low_hot_summary" "private fake query"
+
+reuse_dataset_manifest="$tmpdir/reuse-dataset-manifest.local.json"
+cat > "$reuse_dataset_manifest" <<'JSON'
+{
+  "schema_version": "resume-ir.dataset-manifest.v1",
+  "privacy_boundary": "local_only_redacted_dataset_manifest",
+  "dataset_kind": "private-local-corpus",
+  "scan_profile": "explicit",
+  "file_count": 8720,
+  "extension_counts": {
+    "docx": 720,
+    "pdf": 8000
+  },
+  "contains_paths": false,
+  "contains_file_names": false,
+  "contains_raw_resume_text": false,
+  "contains_file_hashes": false,
+  "corpus_fingerprint_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+JSON
+run_execute_smoke reuse-imported-corpus \
+  --validation-profile smoke \
+  --reuse-imported-corpus \
+  --reuse-dataset-manifest "$reuse_dataset_manifest" \
+  --max-files 6 \
+  --max-queries 3 \
+  --top-k 5
+reuse_status=$(cat "$tmpdir/execute-reuse-imported-corpus-status.txt")
+if [ "$reuse_status" -ne 0 ]; then
+  fail "current-stage reuse-imported-corpus smoke execute failed"
+fi
+reuse_summary="$execute_out_dir/current-stage-smoke-summary.json"
+if [ ! -s "$reuse_summary" ]; then
+  fail "current-stage reuse-imported-corpus did not write smoke summary"
+fi
+require_text "$reuse_summary" '"reuse_imported_corpus": true'
+require_text "$reuse_summary" '"private_query_timeout_ms": 30000'
+expected_reuse_dataset_sha256=$(sha256_file "$reuse_dataset_manifest")
+require_text "$reuse_summary" "\"dataset_manifest_sha256\": \"$expected_reuse_dataset_sha256\""
+require_text "$execute_out_dir/dataset-manifest.stdout.txt" "dataset manifest: reused"
+require_text "$execute_out_dir/dataset-manifest.stdout.txt" "privacy boundary: local_only_redacted_dataset_manifest"
+require_text "$execute_out_dir/import.stdout.txt" "import: reused existing data-dir"
+require_text "$execute_out_dir/import.stdout.txt" "searchable documents: 8720"
+require_current_stage_handoff \
+  "smoke_satisfied" \
+  "resume-ir.current-stage-smoke-summary.v1"
+reject_text "$reuse_summary" "$tmpdir"
+reject_text "$reuse_summary" "PRIVATE-current-stage"
+reject_text "$reuse_summary" "private fake query"
+reject_text "$execute_out_dir/dataset-manifest.stdout.txt" "$tmpdir"
+reject_text "$execute_out_dir/import.stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-reuse-imported-corpus-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-reuse-imported-corpus-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-reuse-imported-corpus-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-reuse-imported-corpus-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke external-runtime-smoke \
   --validation-profile smoke \
@@ -1528,10 +1652,12 @@ require_text "$script" '"embedding_protocol": "passed"'
 require_text "$script" "current-stage-handoff.json"
 require_text "$script" "resume-ir.current-stage-handoff.v1"
 require_text "$script" "performance_optimization_deferred"
+require_text "$script" "--private-query-timeout-ms"
 require_text "$script" "ocr_backlog_exceeds_current_stage_budget"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"
 require_text "$runbook" "--embedding-runtime-bin-dir <local-runtime-bin-dir>"
+require_text "$runbook" "--private-query-timeout-ms"
 require_text "$runbook" "resume-ir.current-stage-validation-plan.v1"
 require_text "$runbook" "resume-ir.current-stage-validation-evidence.v1"
 require_text "$runbook" "resume-ir.current-stage-blocked-summary.v1"

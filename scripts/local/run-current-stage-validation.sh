@@ -15,6 +15,7 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   --language LANG --language-pack FILE|LANG=FILE [--language-pack LANG=FILE ...]
   --engine-license ID --renderer-license ID --language-license ID
   [--dataset-manifest-sha256 SHA256] [--query-set-sha256 SHA256]
+  [--reuse-imported-corpus --reuse-dataset-manifest FILE]
   [--model-manifest-sha256 SHA256]
   [--ocr-runtime-manifest-sha256 SHA256]
   [--renderer-manifest-sha256 SHA256]
@@ -22,6 +23,7 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   [--resume-cli PATH] [--resume-daemon PATH] [--resume-benchmark PATH]
   [--reviewed-model] [--reviewed-ocr-runtime]
   [--max-files N] [--max-queries N] [--top-k N]
+  [--private-query-timeout-ms N]
   [--worker-interval-ms N] [--ocr-worker-ticks N] [--ocr-jobs-per-tick N]
   [--embedding-worker-ticks N]
   [--ocr-throughput-max-documents N] [--ocr-throughput-max-pages N]
@@ -31,7 +33,10 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
 Default mode is --dry-run and default validation profile is full. Dry-run prints
 a redacted JSON plan and never reads the private resume root. Execute mode runs
 local-only commands and writes local evidence under --out-dir. The smoke profile
-proves wiring only; it does not produce release-readiness evidence.
+proves wiring only; it does not produce release-readiness evidence. Execute
+mode may explicitly reuse an already imported data-dir and a prior redacted
+dataset manifest to continue bounded local validation without rescanning the
+private corpus.
 EOF
   exit 2
 }
@@ -345,13 +350,75 @@ validate_fault_suite_report() {
 validate_private_benchmark_report() {
   path="$1"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required for private benchmark evidence validation"
-  python3 scripts/ci/validate-current-stage-private-benchmark.py --private-benchmark "$path"
+  python3 scripts/ci/validate-current-stage-private-benchmark.py \
+    --private-benchmark "$path" \
+    --validation-profile "$validation_profile"
 }
 
 validate_ocr_throughput_report() {
   path="$1"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required for OCR throughput evidence validation"
   python3 scripts/ci/validate-current-stage-ocr-throughput.py --ocr-throughput "$path"
+}
+
+validate_dataset_manifest_report() {
+  path="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for dataset manifest validation"
+  python3 - "$path" "$resume_root" "$data_dir" "$out_dir" <<'PY'
+import json
+import sys
+
+path, resume_root, data_dir, out_dir = sys.argv[1:5]
+with open(path, "r", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+if not isinstance(report, dict):
+    raise SystemExit("dataset manifest must be an object")
+if report.get("schema_version") != "resume-ir.dataset-manifest.v1":
+    raise SystemExit("dataset manifest schema failed")
+if report.get("privacy_boundary") != "local_only_redacted_dataset_manifest":
+    raise SystemExit("dataset manifest privacy boundary failed")
+for key in (
+    "contains_paths",
+    "contains_file_names",
+    "contains_raw_resume_text",
+    "contains_file_hashes",
+):
+    if report.get(key) is not False:
+        raise SystemExit(f"dataset manifest privacy sentinel failed: {key}")
+fingerprint = report.get("corpus_fingerprint_sha256")
+if not isinstance(fingerprint, str) or len(fingerprint) != 64:
+    raise SystemExit("dataset manifest corpus fingerprint failed")
+if any(ch not in "0123456789abcdefABCDEF" for ch in fingerprint):
+    raise SystemExit("dataset manifest corpus fingerprint failed")
+
+def walk_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for child in value.values():
+            yield from walk_strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from walk_strings(child)
+
+for text in walk_strings(report):
+    for marker in (resume_root, data_dir, out_dir, "PRIVATE-current-stage", "/Users/"):
+        if marker and marker in text:
+            raise SystemExit("dataset manifest leaked local marker")
+PY
+}
+
+validate_no_private_markers_in_file() {
+  path="$1"
+  context="$2"
+  for marker in "$resume_root" "$data_dir" "$out_dir" "PRIVATE-current-stage" "/Users/"; do
+    if [ -n "$marker" ] && grep -Fq -- "$marker" "$path"; then
+      printf '%s\n' "$context leaked local marker" >&2
+      return 1
+    fi
+  done
+  return 0
 }
 
 write_runtime_preflight_blocked_summary() {
@@ -471,8 +538,10 @@ EOF_STEPS
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -600,8 +669,10 @@ EOF_STEPS
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -716,8 +787,10 @@ write_query_set_blocked_summary() {
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -843,8 +916,10 @@ write_private_query_blocked_summary() {
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -990,8 +1065,10 @@ EOF_STEPS
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -1136,8 +1213,10 @@ EOF_DIAGNOSTICS_STEP
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -1271,8 +1350,10 @@ write_redacted_diagnostics_blocked_summary() {
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -1416,8 +1497,10 @@ write_release_readiness_blocked_summary() {
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -1601,8 +1684,10 @@ EOF_STEPS
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -1731,6 +1816,8 @@ renderer_license=""
 language_license=""
 dataset_manifest_sha256=""
 query_set_sha256=""
+reuse_imported_corpus="false"
+reuse_dataset_manifest=""
 model_manifest_sha256=""
 ocr_runtime_manifest_sha256=""
 renderer_manifest_sha256=""
@@ -1740,6 +1827,7 @@ reviewed_ocr_runtime="false"
 max_files="10000"
 max_queries="500"
 top_k="10"
+private_query_timeout_ms="30000"
 worker_interval_ms="1"
 ocr_worker_ticks="10000"
 ocr_jobs_per_tick="1"
@@ -1861,6 +1949,13 @@ $2"
     --query-set-sha256)
       need_value "$@"; query_set_sha256="$2"; shift 2
       ;;
+    --reuse-imported-corpus)
+      reuse_imported_corpus="true"
+      shift
+      ;;
+    --reuse-dataset-manifest)
+      need_value "$@"; reuse_dataset_manifest="$2"; shift 2
+      ;;
     --model-manifest-sha256)
       need_value "$@"; model_manifest_sha256="$2"; shift 2
       ;;
@@ -1889,6 +1984,9 @@ $2"
       ;;
     --top-k)
       need_value "$@"; top_k="$2"; shift 2
+      ;;
+    --private-query-timeout-ms)
+      need_value "$@"; private_query_timeout_ms="$2"; shift 2
       ;;
     --worker-interval-ms)
       need_value "$@"; worker_interval_ms="$2"; shift 2
@@ -1968,6 +2066,7 @@ require_positive_int "--dimension" "$dimension"
 require_positive_int "--max-files" "$max_files"
 require_positive_int "--max-queries" "$max_queries"
 require_positive_int "--top-k" "$top_k"
+require_positive_int "--private-query-timeout-ms" "$private_query_timeout_ms"
 require_positive_int "--worker-interval-ms" "$worker_interval_ms"
 require_positive_int "--ocr-worker-ticks" "$ocr_worker_ticks"
 require_positive_int "--ocr-jobs-per-tick" "$ocr_jobs_per_tick"
@@ -1985,6 +2084,11 @@ require_positive_int "--ocr-throughput-max-run-ms" "$ocr_throughput_max_run_ms"
 require_positive_int "--ocr-throughput-min-pages" "$ocr_throughput_min_pages"
 [ -z "$dataset_manifest_sha256" ] || require_sha256 "--dataset-manifest-sha256" "$dataset_manifest_sha256"
 [ -z "$query_set_sha256" ] || require_sha256 "--query-set-sha256" "$query_set_sha256"
+if [ "$reuse_imported_corpus" = "true" ]; then
+  require_arg "--reuse-dataset-manifest" "$reuse_dataset_manifest"
+elif [ -n "$reuse_dataset_manifest" ]; then
+  fail "--reuse-dataset-manifest requires --reuse-imported-corpus"
+fi
 [ -z "$model_manifest_sha256" ] || require_sha256 "--model-manifest-sha256" "$model_manifest_sha256"
 [ -z "$ocr_runtime_manifest_sha256" ] || require_sha256 "--ocr-runtime-manifest-sha256" "$ocr_runtime_manifest_sha256"
 [ -z "$renderer_manifest_sha256" ] || require_sha256 "--renderer-manifest-sha256" "$renderer_manifest_sha256"
@@ -2071,6 +2175,14 @@ case "$runtime_distribution_mode" in
     ;;
 esac
 
+if [ "$reuse_imported_corpus" = "true" ]; then
+  dataset_manifest_plan_command="copy <local-redacted-dataset-manifest> to <local-evidence-dir>/dataset-manifest.local.json and validate resume-ir.dataset-manifest.v1 without reading <local-resume-root>"
+  import_private_corpus_plan_command="resume-cli --data-dir <local-data-dir> status > <local-evidence-dir>/import.stdout.txt # reuse existing imported corpus; do not rescan private root"
+else
+  dataset_manifest_plan_command="resume-cli --data-dir <local-data-dir> privacy dataset-manifest --root <local-resume-root> --out <local-evidence-dir>/dataset-manifest.local.json --profile explicit --max-files $max_files"
+  import_private_corpus_plan_command="resume-cli --data-dir <local-data-dir> import --root <local-resume-root> --profile explicit --max-files $max_files"
+fi
+
 if [ "$mode" = "dry-run" ]; then
   cat <<EOF
 {
@@ -2092,8 +2204,10 @@ if [ "$mode" = "dry-run" ]; then
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -2133,11 +2247,11 @@ if [ "$mode" = "dry-run" ]; then
     },
     {
       "id": "dataset_manifest",
-      "command": "resume-cli --data-dir <local-data-dir> privacy dataset-manifest --root <local-resume-root> --out <local-evidence-dir>/dataset-manifest.local.json --profile explicit --max-files $max_files"
+      "command": "$dataset_manifest_plan_command"
     },
     {
       "id": "import_private_corpus",
-      "command": "resume-cli --data-dir <local-data-dir> import --root <local-resume-root> --profile explicit --max-files $max_files"
+      "command": "$import_private_corpus_plan_command"
     },
     {
       "id": "ocr_worker_once_primitive",
@@ -2165,7 +2279,7 @@ if [ "$mode" = "dry-run" ]; then
     },
     {
       "id": "private_query_baseline",
-      "command": "resume-benchmark private-query --query-set <local-query-set> --command resume-cli --command-arg --data-dir --command-arg <local-data-dir> --command-arg benchmark-query-protocol --command-arg --embedding-command --command-arg <local-embedding-command> --command-arg --model-id --command-arg <reviewed-local-model-id> --command-arg --dimension --command-arg <dimension> --corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json$private_query_partial_hot_index_plan --max-queries $max_queries --top-k $top_k --dataset-manifest-sha256 <dataset-manifest-sha256> --query-set-sha256 <query-set-sha256> --model-manifest-sha256 <model-manifest-sha256> --json > <local-evidence-dir>/private-benchmark-local.json"
+      "command": "resume-benchmark private-query --query-set <local-query-set> --command resume-cli --command-arg --data-dir --command-arg <local-data-dir> --command-arg benchmark-query-protocol --command-arg --embedding-command --command-arg <local-embedding-command> --command-arg --model-id --command-arg <reviewed-local-model-id> --command-arg --dimension --command-arg <dimension> --corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json$private_query_partial_hot_index_plan --max-queries $max_queries --top-k $top_k --timeout-ms $private_query_timeout_ms --dataset-manifest-sha256 <dataset-manifest-sha256> --query-set-sha256 <query-set-sha256> --model-manifest-sha256 <model-manifest-sha256> --json > <local-evidence-dir>/private-benchmark-local.json"
     },
     {
       "id": "baseline_shape_gate",
@@ -2200,6 +2314,7 @@ $terminal_plan_steps
     "Dry-run does not read the private resume root.",
     "Execute mode validates OCR and embedding runtime manifests/preflight before reading the private resume root.",
     "Optional --embedding-runtime-bin-dir prepends a local runtime bin directory to child-command PATH in execute mode; dry-run and redacted evidence record only whether it was configured, never the local path.",
+    "Optional --reuse-imported-corpus with --reuse-dataset-manifest continues from an already imported local data-dir and a prior redacted dataset manifest; it skips dataset scanning and private import but still validates the manifest digest and writes status-backed aggregate import evidence.",
     "After runtime preflight succeeds, execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
     "If --query-set is omitted, execute mode writes resume-ir.query-set.jsonl.v1 under <local-evidence-dir> with privacy boundary local_only_private_query_set, then uses its sha256 as the query-set digest.",
     "Execute mode writes resume-ir.current-stage-handoff.v1 under <local-evidence-dir> after writing a smoke summary, blocked summary, or full current-stage evidence manifest.",
@@ -2381,42 +2496,111 @@ if [ -n "$model_manifest_sha256" ] && [ "$model_manifest_sha256" != "$model_mani
 fi
 model_manifest_sha256="$model_manifest_sha256_output"
 
-printf '%s\n' "current-stage validation: dataset manifest"
-set +e
-"$resume_cli" --data-dir "$data_dir" privacy dataset-manifest \
-  --root "$resume_root" \
-  --out "$dataset_manifest" \
-  --profile explicit \
-  --max-files "$max_files" \
-  > "$out_dir/dataset-manifest.stdout.txt"
-dataset_manifest_status=$?
-set -e
-if [ "$dataset_manifest_status" -ne 0 ]; then
-  write_import_parser_blocked_summary \
-    "dataset_manifest" "dataset_manifest_failed" "$dataset_manifest_status"
-  fail "current-stage validation blocked: import/parser failed"
-fi
-generated_dataset_manifest_sha256=$(sha256_file "$dataset_manifest")
-if [ -n "$dataset_manifest_sha256" ] && [ "$dataset_manifest_sha256" != "$generated_dataset_manifest_sha256" ]; then
-  write_import_parser_blocked_summary \
-    "dataset_manifest" "dataset_manifest_digest_mismatch" 1
-  fail "dataset manifest digest mismatch"
-fi
-dataset_manifest_sha256="$generated_dataset_manifest_sha256"
+if [ "$reuse_imported_corpus" = "true" ]; then
+  printf '%s\n' "current-stage validation: dataset manifest (reused)"
+  if [ ! -f "$reuse_dataset_manifest" ]; then
+    write_import_parser_blocked_summary \
+      "dataset_manifest" "reuse_dataset_manifest_unavailable" 1
+    fail "current-stage validation blocked: reusable dataset manifest is unavailable"
+  fi
+  if [ "$reuse_dataset_manifest" != "$dataset_manifest" ]; then
+    cp "$reuse_dataset_manifest" "$dataset_manifest" || {
+      write_import_parser_blocked_summary \
+        "dataset_manifest" "reuse_dataset_manifest_copy_failed" 1
+      fail "current-stage validation blocked: reusable dataset manifest copy failed"
+    }
+  fi
+  if ! validate_dataset_manifest_report "$dataset_manifest"; then
+    write_import_parser_blocked_summary \
+      "dataset_manifest" "reuse_dataset_manifest_invalid" 1
+    fail "current-stage validation blocked: reusable dataset manifest is invalid"
+  fi
+  generated_dataset_manifest_sha256=$(sha256_file "$dataset_manifest")
+  if [ -n "$dataset_manifest_sha256" ] && [ "$dataset_manifest_sha256" != "$generated_dataset_manifest_sha256" ]; then
+    write_import_parser_blocked_summary \
+      "dataset_manifest" "dataset_manifest_digest_mismatch" 1
+    fail "dataset manifest digest mismatch"
+  fi
+  dataset_manifest_sha256="$generated_dataset_manifest_sha256"
+  {
+    printf '%s\n' "dataset manifest: reused"
+    printf '%s\n' "schema: resume-ir.dataset-manifest.v1"
+    printf '%s\n' "privacy boundary: local_only_redacted_dataset_manifest"
+    printf '%s\n' "manifest sha256: $dataset_manifest_sha256"
+    printf '%s\n' "paths: <redacted>"
+  } > "$out_dir/dataset-manifest.stdout.txt"
+  if ! validate_no_private_markers_in_file "$out_dir/dataset-manifest.stdout.txt" \
+    "dataset manifest reuse stdout"; then
+    write_import_parser_blocked_summary \
+      "dataset_manifest" "reuse_dataset_manifest_stdout_leaked_private_marker" 1
+    fail "current-stage validation blocked: reusable dataset manifest stdout leaked private marker"
+  fi
 
-printf '%s\n' "current-stage validation: import private corpus"
-set +e
-"$resume_cli" --data-dir "$data_dir" import \
-  --root "$resume_root" \
-  --profile explicit \
-  --max-files "$max_files" \
-  > "$out_dir/import.stdout.txt"
-import_status=$?
-set -e
-if [ "$import_status" -ne 0 ]; then
-  write_import_parser_blocked_summary \
-    "import_private_corpus" "import_private_corpus_failed" "$import_status"
-  fail "current-stage validation blocked: import/parser failed"
+  printf '%s\n' "current-stage validation: import private corpus (reused)"
+  status_tmp="$out_dir/import-status.tmp"
+  set +e
+  "$resume_cli" --data-dir "$data_dir" status > "$status_tmp"
+  import_status=$?
+  set -e
+  if [ "$import_status" -ne 0 ]; then
+    : > "$out_dir/import.stdout.txt"
+    write_import_parser_blocked_summary \
+      "import_private_corpus" "reuse_imported_corpus_status_failed" "$import_status"
+    rm -f "$status_tmp"
+    fail "current-stage validation blocked: reusable data-dir status failed"
+  fi
+  if ! validate_no_private_markers_in_file "$status_tmp" "reusable data-dir status"; then
+    : > "$out_dir/import.stdout.txt"
+    write_import_parser_blocked_summary \
+      "import_private_corpus" "reuse_imported_corpus_status_leaked_private_marker" 1
+    rm -f "$status_tmp"
+    fail "current-stage validation blocked: reusable data-dir status leaked private marker"
+  fi
+  {
+    printf '%s\n' "import: reused existing data-dir"
+    printf '%s\n' "scan: skipped"
+    printf '%s\n' "private root read: false"
+    cat "$status_tmp"
+  } > "$out_dir/import.stdout.txt"
+  rm -f "$status_tmp"
+else
+  printf '%s\n' "current-stage validation: dataset manifest"
+  set +e
+  "$resume_cli" --data-dir "$data_dir" privacy dataset-manifest \
+    --root "$resume_root" \
+    --out "$dataset_manifest" \
+    --profile explicit \
+    --max-files "$max_files" \
+    > "$out_dir/dataset-manifest.stdout.txt"
+  dataset_manifest_status=$?
+  set -e
+  if [ "$dataset_manifest_status" -ne 0 ]; then
+    write_import_parser_blocked_summary \
+      "dataset_manifest" "dataset_manifest_failed" "$dataset_manifest_status"
+    fail "current-stage validation blocked: import/parser failed"
+  fi
+  generated_dataset_manifest_sha256=$(sha256_file "$dataset_manifest")
+  if [ -n "$dataset_manifest_sha256" ] && [ "$dataset_manifest_sha256" != "$generated_dataset_manifest_sha256" ]; then
+    write_import_parser_blocked_summary \
+      "dataset_manifest" "dataset_manifest_digest_mismatch" 1
+    fail "dataset manifest digest mismatch"
+  fi
+  dataset_manifest_sha256="$generated_dataset_manifest_sha256"
+
+  printf '%s\n' "current-stage validation: import private corpus"
+  set +e
+  "$resume_cli" --data-dir "$data_dir" import \
+    --root "$resume_root" \
+    --profile explicit \
+    --max-files "$max_files" \
+    > "$out_dir/import.stdout.txt"
+  import_status=$?
+  set -e
+  if [ "$import_status" -ne 0 ]; then
+    write_import_parser_blocked_summary \
+      "import_private_corpus" "import_private_corpus_failed" "$import_status"
+    fail "current-stage validation blocked: import/parser failed"
+  fi
 fi
 
 printf '%s\n' "current-stage validation: bounded ocr worker"
@@ -2535,6 +2719,7 @@ set +e
   $private_query_partial_hot_index_arg \
   --max-queries "$max_queries" \
   --top-k "$top_k" \
+  --timeout-ms "$private_query_timeout_ms" \
   --dataset-manifest-sha256 "$dataset_manifest_sha256" \
   --query-set-sha256 "$query_set_sha256" \
   --model-manifest-sha256 "$model_manifest_sha256" \
@@ -2610,8 +2795,10 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -2887,8 +3074,10 @@ if [ "$validation_profile" = "smoke" ]; then
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
@@ -3063,8 +3252,10 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     "max_files": $max_files,
     "max_queries": $max_queries,
     "top_k": $top_k,
+    "private_query_timeout_ms": $private_query_timeout_ms,
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
+    "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks

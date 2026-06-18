@@ -14,8 +14,10 @@ SCHEMA_VERSION = "benchmark.v1"
 DATASET_KIND = "private-real-corpus"
 PRIVACY_BOUNDARY = "redacted_local_aggregate"
 SCOPE = "private local real-corpus query benchmark; aggregate redacted report only"
-MIN_DOCUMENTS = 8000
-MIN_QUERIES = 500
+FULL_MIN_DOCUMENTS = 8000
+FULL_MIN_QUERIES = 500
+SMOKE_MIN_DOCUMENTS = 1
+SMOKE_MIN_QUERIES = 1
 FORBIDDEN_TEXT_MARKERS = (
     "PRIVATE-current-stage",
     "private fake query",
@@ -90,7 +92,7 @@ def require_sha256(document: dict[str, Any], field: str) -> None:
         fail(f"{field} must be a sha256 hex digest")
 
 
-def validate_private_benchmark(document: dict[str, Any]) -> None:
+def validate_private_benchmark(document: dict[str, Any], validation_profile: str) -> None:
     reject_forbidden_text(document)
 
     require_string(document, "schema_version", SCHEMA_VERSION)
@@ -108,13 +110,34 @@ def validate_private_benchmark(document: dict[str, Any]) -> None:
     query_count = require_int(document, "query_count")
     zero_result_queries = require_int(document, "zero_result_queries")
 
-    if document_count < MIN_DOCUMENTS:
+    if validation_profile == "full":
+        min_documents = FULL_MIN_DOCUMENTS
+        min_queries = FULL_MIN_QUERIES
+        require_full_hot_index = True
+    elif validation_profile == "smoke":
+        min_documents = SMOKE_MIN_DOCUMENTS
+        min_queries = SMOKE_MIN_QUERIES
+        require_full_hot_index = False
+    else:
+        fail("validation_profile is invalid")
+
+    if document_count < min_documents:
         fail("document_count below current-stage floor")
-    if searchable_count < MIN_DOCUMENTS or searchable_count > document_count:
+    if searchable_count > document_count:
         fail("searchable_document_count is inconsistent")
-    if vector_count < MIN_DOCUMENTS or vector_count > searchable_count:
+    if vector_count > searchable_count:
         fail("vector_indexed_document_count is inconsistent")
-    if query_count < MIN_QUERIES:
+    if require_full_hot_index:
+        if searchable_count < min_documents:
+            fail("searchable_document_count is inconsistent")
+        if vector_count < min_documents:
+            fail("vector_indexed_document_count is inconsistent")
+    else:
+        if searchable_count < 1:
+            fail("searchable_document_count is inconsistent")
+        if vector_count < 1:
+            fail("vector_indexed_document_count is inconsistent")
+    if query_count < min_queries:
         fail("query_count below current-stage floor")
     if zero_result_queries > query_count:
         fail("zero_result_queries is inconsistent")
@@ -123,7 +146,7 @@ def validate_private_benchmark(document: dict[str, Any]) -> None:
     if not isinstance(latency, dict):
         fail("query_latency_ms must be an object")
     samples = require_int(latency, "samples")
-    if samples < MIN_QUERIES:
+    if samples < min_queries:
         fail("query latency samples below current-stage floor")
     p50 = require_number(latency, "p50")
     p95 = require_number(latency, "p95")
@@ -159,12 +182,18 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Path to private-benchmark-local.json.",
     )
+    parser.add_argument(
+        "--validation-profile",
+        choices=("full", "smoke"),
+        default="full",
+        help="Current-stage validation profile; smoke permits partial hot-index coverage.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    validate_private_benchmark(read_json(args.private_benchmark))
+    validate_private_benchmark(read_json(args.private_benchmark), args.validation_profile)
     return 0
 
 
