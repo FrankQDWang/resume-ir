@@ -21,7 +21,7 @@ require_text() {
 }
 
 script="scripts/release/create-sbom.sh"
-runtime_bundle_script="scripts/release/create-runtime-bundle-manifest.sh"
+runtime_bundle_script="scripts/release/assemble-runtime-bundle.sh"
 release_readiness_check="scripts/ci/check-release-readiness.sh"
 release_runbook="docs/runbooks/release-blockers.md"
 verify_script="scripts/ci/verify-local.sh"
@@ -55,14 +55,14 @@ printf 'notice text\n' > "$private_component_dir/NOTICE.txt"
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
   --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$private_component_dir/eng.traineddata" \
   --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$private_component_dir/pdftoppm" \
-  --out-dir "$out_dir" \
   --reviewed \
+  --out-dir "$out_dir/bundle" \
   > "$tmpdir/runtime-bundle.stdout"
 
 "$script" \
   --version v0.0.0 \
   --out-dir "$out_dir/sbom" \
-  --runtime-bundle-manifest "$out_dir/runtime-bundle-manifest.json" \
+  --runtime-bundle-manifest "$out_dir/bundle/runtime-bundle-manifest.json" \
   > "$tmpdir/sbom.stdout"
 
 sbom="$out_dir/sbom/release-sbom.json"
@@ -127,7 +127,7 @@ require_text "$verify_script" "./scripts/ci/check-runtime-bundle-sbom.sh"
 require_text "$workflow_guard" "check-runtime-bundle-sbom.sh"
 require_text "$release_readiness_check" '"name":"tesseract"'
 require_text "$release_readiness_check" '"runtime_distribution_mode=bundled"'
-require_text "$release_runbook" "--runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json"
+require_text "$release_runbook" "--runtime-bundle-manifest <local-runtime-bundle-out>/runtime-bundle-manifest.json"
 require_text "$release_runbook" "runtime packages"
 
 printf '%s\n' "runtime bundle SBOM check passed"

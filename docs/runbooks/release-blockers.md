@@ -1151,11 +1151,15 @@ release-readiness intake accepts representative baseline evidence with observed
 P50/P95/P99 latency and pages-per-second metrics, reviewed runtime/
 renderer/language-pack manifests, and no run-budget exhaustion.
 
-Generate a local release dry-run manifest only after release binaries have been
-built:
+Assemble the reviewed runtime payload before creating release artifacts. The
+assembly helper copies only already reviewed local runtime files into
+`<local-runtime-bundle-out>/runtime`, copies source-offer and notices into
+`<local-runtime-bundle-out>/evidence`, and generates the manifest from those
+assembled files so the package step consumes the same payload the manifest
+describes:
 
 ```bash
-scripts/release/create-runtime-bundle-manifest.sh \
+scripts/release/assemble-runtime-bundle.sh \
   --version v0.1.0 \
   --runtime-pack-id reviewed-runtime-pack \
   --distribution-license GPL-3.0-or-later \
@@ -1164,23 +1168,39 @@ scripts/release/create-runtime-bundle-manifest.sh \
   --component tesseract\|ocr-engine\|Apache-2.0\|https://github.com/tesseract-ocr/tesseract\|<local-tesseract-binary> \
   --component eng-tessdata\|ocr-language-pack\|Apache-2.0\|https://github.com/tesseract-ocr/tessdata\|<local-eng-traineddata> \
   --component pdf-renderer\|pdf-renderer\|<reviewed-renderer-license>\|<reviewed-renderer-source>\|<local-pdf-renderer-binary> \
-  --out-dir release-dry-run \
+  --out-dir <local-runtime-bundle-out> \
   --reviewed
+```
+
+The helper prints only redacted output. It does not download dependencies,
+perform legal review, sign, notarize, publish, upload, or commit runtime
+binaries. If legal review is incomplete, omit `--reviewed`; the helper must
+fail closed and the runtime distribution remains BLOCKED.
+`scripts/release/create-runtime-bundle-manifest.sh` remains the lower-level
+manifest writer used by the assembly helper and CI guards; release operators
+should prefer the assembly helper so package payloads and manifests are derived
+from the same staged runtime files.
+
+Generate a local release dry-run manifest only after release binaries have been
+built and the reviewed runtime payload has been assembled:
+
+```bash
 scripts/release/create-artifact-manifest.sh \
   --version v0.1.0 \
   --target-dir target/release \
   --out-dir release-dry-run \
-  --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json
+  --runtime-bundle-manifest <local-runtime-bundle-out>/runtime-bundle-manifest.json
 scripts/release/create-sbom.sh \
   --version v0.1.0 \
   --out-dir release-dry-run \
-  --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json
+  --runtime-bundle-manifest <local-runtime-bundle-out>/runtime-bundle-manifest.json
 ```
 
 The generated `runtime-bundle-manifest.json` uses schema
 `release.runtime_bundle.v1` and records only component basenames, byte counts,
 sha256 hashes, reviewed licenses, sources, notices, and source-offer evidence.
-It does not copy runtime binaries into the repository. The generated
+The assembled runtime directory is a local release input and must not be
+committed or uploaded. The generated
 `release-artifacts.json` records binary names, byte counts, sha256 hashes, and
 the runtime bundle manifest digest under `runtime_bundle_manifests`. The
 generated `release-sbom.json` is a redacted SPDX 2.3 package inventory derived
@@ -1200,8 +1220,8 @@ scripts/release/create-macos-package.sh \
   --version v0.1.0 \
   --target-dir target/release \
   --out-dir release-dry-run \
-  --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json \
-  --runtime-bundle-dir <reviewed-runtime-bundle-dir>
+  --runtime-bundle-manifest <local-runtime-bundle-out>/runtime-bundle-manifest.json \
+  --runtime-bundle-dir <assembled-runtime-dir>
 ```
 
 The generated `macos-package.json` records only artifact filenames, byte counts,
@@ -1263,8 +1283,8 @@ scripts/release/create-windows-package.ps1 `
   -Version v0.1.0 `
   -TargetDir target/release `
   -OutDir release-dry-run `
-  -RuntimeBundleManifest release-dry-run/runtime-bundle-manifest.json `
-  -RuntimeBundleDir <reviewed-runtime-bundle-dir>
+  -RuntimeBundleManifest <local-runtime-bundle-out>/runtime-bundle-manifest.json `
+  -RuntimeBundleDir <assembled-runtime-dir>
 ```
 
 The generated `windows-package.json` records only artifact filenames, byte

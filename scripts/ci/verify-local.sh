@@ -37,6 +37,7 @@ fi
 ./scripts/ci/check-release-readiness.sh
 ./scripts/ci/check-release-artifacts.sh
 ./scripts/ci/check-runtime-bundle-manifest.sh
+./scripts/ci/check-runtime-bundle-payload.sh
 ./scripts/ci/check-release-publication-evidence.sh
 ./scripts/ci/check-signing-evidence.sh
 ./scripts/ci/check-notarization-evidence.sh

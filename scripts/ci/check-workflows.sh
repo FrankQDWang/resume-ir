@@ -38,6 +38,7 @@ daemon_closed_loop_script="scripts/ci/check-daemon-closed-loop.sh"
 benchmark_smoke_script="scripts/ci/check-benchmark-smoke.sh"
 runtime_bundle_policy_script="scripts/ci/check-runtime-bundle-policy.sh"
 runtime_bundle_manifest_script="scripts/ci/check-runtime-bundle-manifest.sh"
+runtime_bundle_payload_script="scripts/ci/check-runtime-bundle-payload.sh"
 runtime_bundle_sbom_script="scripts/ci/check-runtime-bundle-sbom.sh"
 runtime_bundle_package_script="scripts/ci/check-runtime-bundle-package.sh"
 current_stage_handoff_script="scripts/ci/check-current-stage-handoff.sh"
@@ -47,7 +48,7 @@ local_ocr_runtime_script="scripts/ci/check-local-ocr-runtime.sh"
 local_diagnostics_evidence_script="scripts/ci/check-local-diagnostics-release-evidence.sh"
 local_quality_evidence_script="scripts/ci/check-local-quality-release-evidence.sh"
 
-for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_sbom_script" "$runtime_bundle_package_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
+for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_payload_script" "$runtime_bundle_sbom_script" "$runtime_bundle_package_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
   require_file "$file"
 done
 
@@ -98,6 +99,7 @@ require_text "$verify_script" "./scripts/ci/check-local-quality-release-evidence
 require_text "$verify_script" "./scripts/ci/check-release-readiness.sh"
 require_text "$verify_script" "./scripts/ci/check-release-artifacts.sh"
 require_text "$verify_script" "./scripts/ci/check-runtime-bundle-manifest.sh"
+require_text "$verify_script" "./scripts/ci/check-runtime-bundle-payload.sh"
 require_text "$verify_script" "./scripts/ci/check-release-publication-evidence.sh"
 require_text "$verify_script" "./scripts/ci/check-signing-evidence.sh"
 require_text "$verify_script" "./scripts/ci/check-notarization-evidence.sh"
@@ -182,6 +184,9 @@ require_text "$runtime_bundle_manifest_script" "release.runtime_bundle.v1"
 require_text "$runtime_bundle_manifest_script" "--runtime-bundle-manifest"
 require_text "$runtime_bundle_manifest_script" "runtime_bundle_manifests"
 require_text "$runtime_bundle_manifest_script" "runtime bundle manifest check passed"
+require_text "$runtime_bundle_payload_script" "scripts/release/assemble-runtime-bundle.sh"
+require_text "$runtime_bundle_payload_script" "--runtime-bundle-dir <assembled-runtime-dir>"
+require_text "$runtime_bundle_payload_script" "runtime bundle payload check passed"
 
 require_text "$runtime_bundle_sbom_script" "scripts/release/create-sbom.sh"
 require_text "$runtime_bundle_sbom_script" "--runtime-bundle-manifest"

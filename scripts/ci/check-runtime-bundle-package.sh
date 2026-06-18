@@ -47,7 +47,7 @@ require_text "$windows_package_script" "RuntimeBundleDir"
 require_text "$windows_package_script" "release.runtime_package_payload.v1"
 require_text "$verify_script" "./scripts/ci/check-runtime-bundle-package.sh"
 require_text "$workflow_guard" "check-runtime-bundle-package.sh"
-require_text "$release_runbook" "--runtime-bundle-dir <reviewed-runtime-bundle-dir>"
+require_text "$release_runbook" "--runtime-bundle-dir <assembled-runtime-dir>"
 
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-runtime-package-check.XXXXXX")
 trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
