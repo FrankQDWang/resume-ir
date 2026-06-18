@@ -76,6 +76,7 @@ const DEFAULT_OCR_PROFILE: &str = "balanced";
 const DEFAULT_OCR_RENDER_DPI: u32 = 300;
 const DEFAULT_OCR_PAGE_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
+const DEFAULT_OCR_JOBS_PER_TICK: usize = 1;
 const OCR_PAGE_BUDGET_REMEDIATION: &str =
     "raise OCR max pages per document or skip oversized scanned PDFs";
 const OCR_LANGUAGE_REMEDIATION: &str =
@@ -198,11 +199,18 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: choose either --work-index or --work-index-once",
         ));
     }
-    if (options.worker_interval_ms.is_some() || options.max_worker_ticks.is_some())
+    if (options.worker_interval_ms.is_some()
+        || options.max_worker_ticks.is_some()
+        || options.ocr_jobs_per_tick.is_some())
         && !options.has_worker_loop()
     {
         return Err(DaemonError::usage(
             "usage: worker loop options require --work-imports, --work-ocr, --work-embeddings, or --work-index",
+        ));
+    }
+    if options.ocr_jobs_per_tick.is_some() && !options.work_ocr {
+        return Err(DaemonError::usage(
+            "usage: --ocr-jobs-per-tick requires --work-ocr",
         ));
     }
     if options.import_rescan_min_age_seconds.is_some() && !options.rescan_completed_imports {
@@ -485,6 +493,13 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                     .ok_or_else(|| DaemonError::usage(run_usage()))?;
                 index += 2;
             }
+            "--ocr-jobs-per-tick" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.ocr_jobs_per_tick = Some(parse_positive_usize_run_value(value)?);
+                index += 2;
+            }
             "--embedding-command" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(DaemonError::usage(run_usage()));
@@ -581,7 +596,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>] [--stale-import-task-seconds <n>] [--import-retry-backoff-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>] [--stale-import-task-seconds <n>] [--import-retry-backoff-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--ocr-jobs-per-tick <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -717,7 +732,14 @@ fn run_worker_loop(
             }
         }
         if options.work_ocr {
-            let ocr_summary = run_ocr_worker_once(data_dir, store, options)?;
+            let ocr_summary = run_ocr_worker_batch(
+                data_dir,
+                store,
+                options,
+                options
+                    .ocr_jobs_per_tick
+                    .unwrap_or(DEFAULT_OCR_JOBS_PER_TICK),
+            )?;
             if ocr_summary.has_activity() {
                 print_ocr_worker_summary(&ocr_summary)?;
             }
@@ -901,6 +923,24 @@ fn run_ocr_worker_once(
     let mut summary = run_claimed_ocr_job(data_dir, store, &job, options, now)?;
     summary.stale_recovered = stale_recovered;
     Ok(summary)
+}
+
+fn run_ocr_worker_batch(
+    data_dir: &Path,
+    store: &MetaStore,
+    options: &RunOptions,
+    jobs_per_tick: usize,
+) -> Result<OcrWorkerSummary> {
+    let mut aggregate = OcrWorkerSummary::default();
+    for _ in 0..jobs_per_tick {
+        let summary = run_ocr_worker_once(data_dir, store, options)?;
+        let stop_after_summary = summary.paused || (summary.processed == 0 && summary.failed == 0);
+        aggregate.extend(summary);
+        if stop_after_summary {
+            break;
+        }
+    }
+    Ok(aggregate)
 }
 
 fn run_claimed_ocr_job(
@@ -4728,6 +4768,7 @@ struct RunOptions {
     ocr_render_dpi: u32,
     ocr_page_timeout_ms: u64,
     ocr_max_pages_per_document: u32,
+    ocr_jobs_per_tick: Option<usize>,
     embedding_command: Option<PathBuf>,
     embedding_model_id: Option<String>,
     embedding_dimension: Option<usize>,
@@ -4768,6 +4809,7 @@ impl Default for RunOptions {
             ocr_render_dpi: DEFAULT_OCR_RENDER_DPI,
             ocr_page_timeout_ms: DEFAULT_OCR_PAGE_TIMEOUT_MS,
             ocr_max_pages_per_document: DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT,
+            ocr_jobs_per_tick: None,
             embedding_command: None,
             embedding_model_id: None,
             embedding_dimension: None,
@@ -4897,6 +4939,15 @@ impl OcrWorkerSummary {
             || self.failed > 0
             || self.cache_writes > 0
             || self.cache_hits > 0
+    }
+
+    fn extend(&mut self, other: Self) {
+        self.stale_recovered += other.stale_recovered;
+        self.paused = self.paused || other.paused;
+        self.processed += other.processed;
+        self.failed += other.failed;
+        self.cache_writes += other.cache_writes;
+        self.cache_hits += other.cache_hits;
     }
 }
 

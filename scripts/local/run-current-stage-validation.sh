@@ -22,7 +22,8 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   [--resume-cli PATH] [--resume-daemon PATH] [--resume-benchmark PATH]
   [--reviewed-model] [--reviewed-ocr-runtime]
   [--max-files N] [--max-queries N] [--top-k N]
-  [--worker-interval-ms N] [--ocr-worker-ticks N] [--embedding-worker-ticks N]
+  [--worker-interval-ms N] [--ocr-worker-ticks N] [--ocr-jobs-per-tick N]
+  [--embedding-worker-ticks N]
   [--ocr-throughput-max-documents N] [--ocr-throughput-max-pages N]
   [--ocr-throughput-pages-per-document N] [--ocr-throughput-max-run-ms N]
   [--ocr-throughput-min-pages N]
@@ -473,6 +474,7 @@ EOF_STEPS
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -601,6 +603,7 @@ EOF_STEPS
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -716,6 +719,7 @@ write_query_set_blocked_summary() {
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -842,6 +846,7 @@ write_private_query_blocked_summary() {
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -988,6 +993,7 @@ EOF_STEPS
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -1133,6 +1139,7 @@ EOF_DIAGNOSTICS_STEP
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -1267,6 +1274,7 @@ write_redacted_diagnostics_blocked_summary() {
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -1411,6 +1419,7 @@ write_release_readiness_blocked_summary() {
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -1595,6 +1604,7 @@ EOF_STEPS
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -1732,6 +1742,7 @@ max_queries="500"
 top_k="10"
 worker_interval_ms="1"
 ocr_worker_ticks="10000"
+ocr_jobs_per_tick="1"
 embedding_worker_ticks="10000"
 ocr_max_pages_per_document="20"
 ocr_page_timeout_ms="30000"
@@ -1885,6 +1896,9 @@ $2"
     --ocr-worker-ticks)
       need_value "$@"; ocr_worker_ticks="$2"; shift 2
       ;;
+    --ocr-jobs-per-tick)
+      need_value "$@"; ocr_jobs_per_tick="$2"; shift 2
+      ;;
     --embedding-worker-ticks)
       need_value "$@"; embedding_worker_ticks="$2"; shift 2
       ;;
@@ -1956,6 +1970,7 @@ require_positive_int "--max-queries" "$max_queries"
 require_positive_int "--top-k" "$top_k"
 require_positive_int "--worker-interval-ms" "$worker_interval_ms"
 require_positive_int "--ocr-worker-ticks" "$ocr_worker_ticks"
+require_positive_int "--ocr-jobs-per-tick" "$ocr_jobs_per_tick"
 require_positive_int "--embedding-worker-ticks" "$embedding_worker_ticks"
 require_positive_int "--ocr-max-pages-per-document" "$ocr_max_pages_per_document"
 require_positive_int "--ocr-page-timeout-ms" "$ocr_page_timeout_ms"
@@ -2080,6 +2095,7 @@ if [ "$mode" = "dry-run" ]; then
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -2129,7 +2145,7 @@ if [ "$mode" = "dry-run" ]; then
     },
     {
       "id": "ocr_worker_bounded_loop",
-      "command": "resume-daemon --data-dir <local-data-dir> run --foreground --work-ocr --ocr-tesseract-command <local-tesseract-command> --ocr-pdftoppm-command <local-pdftoppm-command> --worker-interval-ms <bounded-interval-ms> --max-worker-ticks <bounded-worker-ticks>"
+      "command": "resume-daemon --data-dir <local-data-dir> run --foreground --work-ocr --ocr-tesseract-command <local-tesseract-command> --ocr-pdftoppm-command <local-pdftoppm-command> --worker-interval-ms <bounded-interval-ms> --max-worker-ticks <bounded-worker-ticks> --ocr-jobs-per-tick <bounded-ocr-jobs-per-tick>"
     },
     {
       "id": "embedding_worker_once_primitive",
@@ -2414,6 +2430,7 @@ printf '%s\n' "current-stage validation: bounded ocr worker"
   --ocr-max-pages-per-document "$ocr_max_pages_per_document" \
   --worker-interval-ms "$worker_interval_ms" \
   --max-worker-ticks "$ocr_worker_ticks" \
+  --ocr-jobs-per-tick "$ocr_jobs_per_tick" \
   > "$out_dir/ocr-worker.stdout.txt"
 
 printf '%s\n' "current-stage validation: bounded embedding worker"
@@ -2596,6 +2613,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -2872,6 +2890,7 @@ if [ "$validation_profile" = "smoke" ]; then
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
@@ -3047,6 +3066,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     "embedding_dimension": $dimension,
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "ocr_worker_ticks": $ocr_worker_ticks,
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
     "embedding_worker_ticks": $embedding_worker_ticks
   },
   "preflight_probes": {

@@ -826,29 +826,115 @@ printf 'OCRS50DaemonLoopToken background worker text\n'
     remove_dir(&data_dir);
 }
 
+#[cfg(unix)]
+#[test]
+fn daemon_ocr_worker_loop_batches_multiple_jobs_in_one_tick() {
+    let data_dir = temp_dir("ocr-worker-loop-batch-data");
+    let private_document_path_a = seed_scanned_document_fixture(
+        &data_dir,
+        "batch-a",
+        "synthetic-scanned-resume-batch-a.pdf",
+        "s50-synthetic-scanned-content-hash-batch-a",
+        single_page_scanned_pdf_bytes(),
+    );
+    let private_document_path_b = seed_scanned_document_fixture(
+        &data_dir,
+        "batch-b",
+        "synthetic-scanned-resume-batch-b.pdf",
+        "s50-synthetic-scanned-content-hash-batch-b",
+        single_page_scanned_pdf_bytes(),
+    );
+    let command = write_fixture_executable(
+        "fixture-daemon-ocr-worker-loop-batch",
+        r#"#!/bin/sh
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.72\n'
+printf 'text:\n'
+printf 'OCRS50DaemonBatchToken page %s\n' "$RESUME_IR_OCR_PAGE_NO"
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-ocr",
+            "--ocr-command",
+            path_str(&command),
+            "--worker-interval-ms",
+            "1",
+            "--max-worker-ticks",
+            "1",
+            "--ocr-jobs-per-tick",
+            "2",
+        ])
+        .output()
+        .expect("run daemon OCR worker loop with batch budget");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr worker processed: 2"));
+    assert!(stdout.contains("ocr worker cache writes: 2"));
+    assert!(stdout.contains("ocr worker failed: 0"));
+    assert!(!stdout.contains("OCRS50DaemonBatchToken"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_document_path_a)));
+    assert!(!stdout.contains(path_str(&private_document_path_b)));
+    assert!(!stdout.contains(path_str(&command)));
+
+    let hits = search_fulltext(&data_dir, "OCRS50DaemonBatchToken");
+    assert_eq!(hits.len(), 2);
+
+    remove_dir(&data_dir);
+}
+
 fn seed_scanned_document(data_dir: &Path) -> PathBuf {
     seed_scanned_document_with_bytes(data_dir, single_page_scanned_pdf_bytes())
 }
 
 fn seed_scanned_document_with_bytes(data_dir: &Path, bytes: &[u8]) -> PathBuf {
+    seed_scanned_document_fixture(
+        data_dir,
+        "scanned-document",
+        "synthetic-scanned-resume.pdf",
+        "s50-synthetic-scanned-content-hash",
+        bytes,
+    )
+}
+
+fn seed_scanned_document_fixture(
+    data_dir: &Path,
+    id_suffix: &str,
+    file_name: &str,
+    content_hash: &str,
+    bytes: &[u8],
+) -> PathBuf {
     let now = UnixTimestamp::from_unix_seconds(1_800_050_000);
     let private_root = data_dir.join("private-resumes");
     fs::create_dir_all(&private_root).unwrap();
-    let document_path = private_root.join("synthetic-scanned-resume.pdf");
+    let document_path = private_root.join(file_name);
     fs::write(&document_path, bytes).unwrap();
     let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
-    let doc_id = DocumentId::from_non_secret_parts(&["s50", "scanned-document"]);
+    let doc_id = DocumentId::from_non_secret_parts(&["s50", id_suffix]);
     store
         .upsert_document(&Document {
             id: doc_id.clone(),
             source_uri: format!("file://{}", path_str(&document_path)),
             normalized_path: path_str(&document_path).to_string(),
-            file_name: "synthetic-scanned-resume.pdf".to_string(),
+            file_name: file_name.to_string(),
             extension: FileExtension::Pdf,
             byte_size: fs::metadata(&document_path).unwrap().len(),
             mtime: now,
-            content_hash: Some("s50-synthetic-scanned-content-hash".to_string()),
+            content_hash: Some(content_hash.to_string()),
             text_hash: None,
             is_deleted: false,
             created_at: now,

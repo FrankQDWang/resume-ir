@@ -214,7 +214,8 @@ scripts/local/run-current-stage-validation.sh --dry-run \
   --language-license Apache-2.0 \
   --max-files 10000 \
   --max-queries 500 \
-  --top-k 10
+  --top-k 10 \
+  [--ocr-jobs-per-tick <bounded-ocr-job-budget>]
 ```
 
 For Tesseract combined languages such as `eng+chi_sim`, pass repeated
@@ -397,7 +398,8 @@ scripts/local/run-current-stage-validation.sh --execute \
   --reviewed-ocr-runtime \
   --max-files 10000 \
   --max-queries 500 \
-  --top-k 10
+  --top-k 10 \
+  [--ocr-jobs-per-tick <bounded-ocr-job-budget>]
 ```
 
 For bounded local command-wiring validation, use smoke mode and keep all outputs
@@ -434,8 +436,14 @@ scripts/local/run-current-stage-validation.sh --execute \
   --reviewed-ocr-runtime \
   --max-files <bounded-file-count> \
   --max-queries <bounded-query-count> \
-  --top-k 10
+  --top-k 10 \
+  [--ocr-jobs-per-tick <bounded-ocr-job-budget>]
 ```
+
+Use `--ocr-jobs-per-tick` to increase how many queued OCR documents the
+bounded worker may claim during one foreground worker tick. The default is `1`
+for compatibility; raising it is a current-stage baseline throughput control,
+not a P95/P99 query-latency optimization claim.
 
 Smoke mode passes `--allow-smoke-confidence` to the benchmark gate because a
 bounded local wiring run may have `percentile_confidence: "smoke"`. Full
