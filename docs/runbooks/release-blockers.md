@@ -1152,13 +1152,19 @@ binaries have been built:
 scripts/release/create-macos-package.sh \
   --version v0.1.0 \
   --target-dir target/release \
-  --out-dir release-dry-run
+  --out-dir release-dry-run \
+  --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json \
+  --runtime-bundle-dir <reviewed-runtime-bundle-dir>
 ```
 
 The generated `macos-package.json` records only artifact filenames, byte counts,
-hashes, unsigned status, and still-blocked release steps. The pkg/dmg files are
-local evidence only. They are not signed, not notarized, not uploaded, and do
-not prove install, upgrade, uninstall, rollback, or Gatekeeper behavior.
+hashes, unsigned status, and still-blocked release steps. When a reviewed
+runtime bundle is supplied, it also records `runtime_payload` with schema
+`release.runtime_package_payload.v1`, the runtime bundle manifest digest,
+component basenames, checksums, reviewed licenses, sources, and the runtime
+install location. The pkg/dmg files are local evidence only. They are not
+signed, not notarized, not uploaded, and do not prove install, upgrade,
+uninstall, rollback, or Gatekeeper behavior.
 
 Release dry-runs must also produce a blocked macOS installer lifecycle evidence
 manifest. The manifest schema is `release.macos_installer_evidence.v1` and must
@@ -1209,14 +1215,19 @@ dotnet tool install --global wix --version 6.0.2
 scripts/release/create-windows-package.ps1 `
   -Version v0.1.0 `
   -TargetDir target/release `
-  -OutDir release-dry-run
+  -OutDir release-dry-run `
+  -RuntimeBundleManifest release-dry-run/runtime-bundle-manifest.json `
+  -RuntimeBundleDir <reviewed-runtime-bundle-dir>
 ```
 
 The generated `windows-package.json` records only artifact filenames, byte
-counts, hashes, unsigned status, MSI kind, and still-blocked release steps. The
-MSI file is local evidence only. It is not signed, not uploaded, and does not
-prove install, upgrade, uninstall, rollback, Windows service registration, or
-service lifecycle behavior.
+counts, hashes, unsigned status, MSI kind, and still-blocked release steps.
+When a reviewed runtime bundle is supplied, it also records
+`runtime_payload` with schema `release.runtime_package_payload.v1`, the runtime
+bundle manifest digest, component basenames, checksums, reviewed licenses,
+sources, and the runtime install location. The MSI file is local evidence only.
+It is not signed, not uploaded, and does not prove install, upgrade, uninstall,
+rollback, Windows service registration, or service lifecycle behavior.
 
 Release dry-runs must also produce a blocked Windows installer lifecycle
 evidence manifest. The manifest schema is

@@ -2207,6 +2207,7 @@ fn validate_macos_package_manifest_report(report: &str) -> Result<()> {
     require_release_evidence_string(object, "signing_status", "unsigned", CONTEXT)?;
     require_release_evidence_string(object, "notarization_status", "not_requested", CONTEXT)?;
     validate_release_package_artifacts(object, CONTEXT, &["pkg", "dmg"])?;
+    validate_release_package_runtime_payload(object, CONTEXT, "/usr/local/lib/resume-ir/runtime")?;
     for step in [
         "signing",
         "notarization",
@@ -2257,6 +2258,11 @@ fn validate_windows_package_manifest_report(report: &str) -> Result<()> {
     )?;
     require_release_evidence_string(object, "signing_status", "unsigned", CONTEXT)?;
     validate_release_package_artifacts(object, CONTEXT, &["msi"])?;
+    validate_release_package_runtime_payload(
+        object,
+        CONTEXT,
+        "ProgramFilesFolder/resume-ir/runtime",
+    )?;
     for step in [
         "signing",
         "github_release_upload",
@@ -2911,6 +2917,91 @@ fn validate_release_package_artifacts(
     } else {
         Err(release_evidence_invalid(context, "artifacts"))
     }
+}
+
+fn validate_release_package_runtime_payload(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+    expected_install_location: &str,
+) -> Result<()> {
+    let Some(payload) = object.get("runtime_payload") else {
+        return Ok(());
+    };
+    let payload = payload
+        .as_object()
+        .ok_or_else(|| release_evidence_invalid(context, "runtime_payload"))?;
+    require_release_evidence_string(
+        payload,
+        "schema_version",
+        "release.runtime_package_payload.v1",
+        context,
+    )?;
+    require_release_evidence_string(payload, "runtime_distribution_mode", "bundled", context)?;
+    require_release_evidence_bool(payload, "runtime_package_binaries_included", true, context)?;
+    require_release_evidence_bool(
+        payload,
+        "runtime_binaries_included_in_manifest",
+        false,
+        context,
+    )?;
+    require_release_evidence_string(
+        payload,
+        "install_location",
+        expected_install_location,
+        context,
+    )?;
+
+    let bundle_manifest =
+        require_release_evidence_object(payload, "runtime_bundle_manifest", context)?;
+    let bundle_manifest_file =
+        require_release_evidence_string_value(bundle_manifest, "file", context)?;
+    if !is_release_evidence_basename(bundle_manifest_file) {
+        return Err(release_evidence_invalid(context, "runtime_bundle_manifest"));
+    }
+    require_release_evidence_sha256(bundle_manifest, "sha256", context)?;
+    require_release_evidence_positive_u64(bundle_manifest, "bytes", context)?;
+    require_release_evidence_string(
+        bundle_manifest,
+        "schema_version",
+        "release.runtime_bundle.v1",
+        context,
+    )?;
+    require_release_evidence_string(
+        bundle_manifest,
+        "runtime_distribution_mode",
+        "bundled",
+        context,
+    )?;
+
+    let components = require_release_evidence_array(payload, "components", context)?;
+    if components.is_empty() {
+        return Err(release_evidence_invalid(context, "components"));
+    }
+    let mut seen_files = BTreeSet::new();
+    for component in components {
+        let component = component
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "components"))?;
+        require_release_evidence_string_value(component, "id", context)?;
+        require_release_evidence_string_value(component, "kind", context)?;
+        let file = require_release_evidence_string_value(component, "file", context)?;
+        if !is_release_evidence_basename(file) || !seen_files.insert(file.to_string()) {
+            return Err(release_evidence_invalid(context, "components"));
+        }
+        require_release_evidence_sha256(component, "sha256", context)?;
+        require_release_evidence_positive_u64(component, "bytes", context)?;
+        require_release_evidence_string_value(component, "license", context)?;
+        let source = require_release_evidence_string_value(component, "source", context)?;
+        if source.starts_with('/')
+            || source.contains("PRIVATE-")
+            || source.contains("/Users/")
+            || release_readiness_diagnostics_report_contains_private_marker(source)
+        {
+            return Err(release_evidence_invalid(context, "source"));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_release_sbom_external_refs(

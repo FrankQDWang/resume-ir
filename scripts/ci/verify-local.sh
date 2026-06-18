@@ -42,6 +42,7 @@ fi
 ./scripts/ci/check-notarization-evidence.sh
 ./scripts/ci/check-release-sbom.sh
 ./scripts/ci/check-runtime-bundle-sbom.sh
+./scripts/ci/check-runtime-bundle-package.sh
 ./scripts/ci/check-macos-package.sh
 ./scripts/ci/check-macos-installer-evidence.sh
 ./scripts/ci/check-windows-package.sh
