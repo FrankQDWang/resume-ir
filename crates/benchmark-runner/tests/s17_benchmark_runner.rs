@@ -529,7 +529,9 @@ fn benchmark_gate_rejects_private_real_report_without_hot_hybrid_evidence() {
         ",\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
         ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\"",
         ",\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
-        ",\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
+        ",\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
+        ",\"query_embedding_runtime\":\"local-command\"",
+        ",\"query_embedding_command_invocations\":200"
     ));
     report.push('}');
     let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
