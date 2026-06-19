@@ -3141,6 +3141,19 @@ fn validate_release_package_runtime_payload(
     let payload = payload
         .as_object()
         .ok_or_else(|| release_evidence_invalid(context, "runtime_payload"))?;
+    validate_release_evidence_allowed_keys(
+        payload,
+        &[
+            "schema_version",
+            "runtime_distribution_mode",
+            "runtime_package_binaries_included",
+            "runtime_binaries_included_in_manifest",
+            "install_location",
+            "runtime_bundle_manifest",
+            "components",
+        ],
+        context,
+    )?;
     require_release_evidence_string(
         payload,
         "schema_version",
@@ -3164,6 +3177,17 @@ fn validate_release_package_runtime_payload(
 
     let bundle_manifest =
         require_release_evidence_object(payload, "runtime_bundle_manifest", context)?;
+    validate_release_evidence_allowed_keys(
+        bundle_manifest,
+        &[
+            "file",
+            "sha256",
+            "bytes",
+            "schema_version",
+            "runtime_distribution_mode",
+        ],
+        context,
+    )?;
     let bundle_manifest_file =
         require_release_evidence_string_value(bundle_manifest, "file", context)?;
     if !is_release_evidence_basename(bundle_manifest_file) {
@@ -3194,6 +3218,11 @@ fn validate_release_package_runtime_payload(
         let component = component
             .as_object()
             .ok_or_else(|| release_evidence_invalid(context, "components"))?;
+        validate_release_evidence_allowed_keys(
+            component,
+            &["id", "kind", "file", "sha256", "bytes", "license", "source"],
+            context,
+        )?;
         require_release_evidence_string_value(component, "id", context)?;
         let kind = require_release_evidence_string_value(component, "kind", context)?;
         if matches!(kind, "ocr-engine" | "pdf-renderer" | "ocr-language-pack") {
