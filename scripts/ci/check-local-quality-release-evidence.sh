@@ -41,6 +41,135 @@ reject_regex() {
   fi
 }
 
+resolve_cargo() {
+  configured="${CARGO:-cargo}"
+  if command -v "$configured" >/dev/null 2>&1; then
+    printf '%s' "$configured"
+    return
+  fi
+  if [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
+    printf '%s' /Users/frankqdwang/.cargo/bin/cargo
+    return
+  fi
+  fail "local quality release-evidence check requires cargo"
+}
+
+run_real_quality_benchmark_smoke() {
+  cargo_bin="$(resolve_cargo)"
+  smoke_dir="$tmpdir/real-quality-smoke"
+  mkdir -p "$smoke_dir"
+
+  field_dataset="$smoke_dir/private-field-quality.jsonl"
+  dedupe_dataset="$smoke_dir/private-dedupe-quality.jsonl"
+  vector_dataset="$smoke_dir/private-vector-quality.jsonl"
+  embedding_command="$smoke_dir/embedding-command.sh"
+  field_report="$smoke_dir/private-field-quality.json"
+  dedupe_report="$smoke_dir/private-dedupe-quality.json"
+  vector_report="$smoke_dir/private-vector-quality.json"
+
+  cat > "$field_dataset" <<'JSONL'
+{"sample_id":"private-field-smoke-001","text":"Name: Synthetic Field Candidate\nSummary: REDACTION_SENTINEL_FIELD_VALUE\nEmail: field-candidate@example.test\nPhone: +1 (415) 555-0132\nWeChat: Candidate_2026\nEducation\nSchool: Synthetic 985 University (985/211/双一流)\nDegree: Bachelor of Engineering\nMajor: Computer Science\nLocation: Shanghai\nExperience\nCompany: Synthetic Commerce Inc.\nTitle: Product Manager\n2020年1月 - 2024年3月\nCertifications\nPMP\nSkills: Rust, Java","expected":[{"type":"name","normalized":"synthetic field candidate"},{"type":"email","normalized":"field-candidate@example.test"},{"type":"phone","normalized":"+14155550132"},{"type":"wechat","normalized":"candidate_2026"},{"type":"school","normalized":"synthetic 985 university (985/211/双一流)"},{"type":"school_tier","normalized":"985"},{"type":"school_tier","normalized":"211"},{"type":"school_tier","normalized":"double_first_class"},{"type":"degree","normalized":"bachelor"},{"type":"major","normalized":"computer_science"},{"type":"location","normalized":"shanghai"},{"type":"company","normalized":"synthetic commerce"},{"type":"title","normalized":"product_manager"},{"type":"date_range","normalized":"2020-01/2024-03"},{"type":"years_experience","normalized":"4.2"},{"type":"certificate","normalized":"pmp"},{"type":"skill","normalized":"Rust"},{"type":"skill","normalized":"Java"}]}
+JSONL
+
+  cat > "$dedupe_dataset" <<'JSONL'
+{"sample_id":"private-dedupe-smoke-001","left":{"id":"private-left-doc-001","name":"Synthetic Duplicate Candidate","schools":["Synthetic University"],"companies":["Synthetic Commerce"],"skills":["Rust","Payments","REDACTION_SENTINEL_DEDUPE_VALUE"]},"right":{"id":"private-right-doc-001","name":"synthetic duplicate candidate","schools":["synthetic university"],"companies":["Synthetic Commerce"],"skills":["Rust","Search"]},"duplicate":true}
+{"sample_id":"private-dedupe-smoke-002","left":{"id":"private-left-doc-002","name":"Synthetic Duplicate Candidate","schools":["Synthetic University"],"companies":["Synthetic Commerce"],"skills":["Rust"]},"right":{"id":"private-right-doc-002","name":"Different Synthetic Candidate","schools":["Synthetic University"],"companies":["Synthetic Commerce"],"skills":["Rust"]},"duplicate":false}
+JSONL
+
+  cat > "$vector_dataset" <<'JSONL'
+{"sample_id":"private-vector-smoke-001","query":"REDACTION_SENTINEL_VECTOR_QUERY backend java payment","candidates":[{"id":"private-vector-candidate-001","text":"REDACTION_SENTINEL_VECTOR_CANDIDATE Java payment backend search engineer","relevant":true},{"id":"private-vector-candidate-002","text":"Synthetic sales operations","relevant":false}]}
+{"sample_id":"private-vector-smoke-002","query":"REDACTION_SENTINEL_VECTOR_QUERY rust indexing","candidates":[{"id":"private-vector-candidate-003","text":"REDACTION_SENTINEL_VECTOR_CANDIDATE Rust indexing platform engineer","relevant":true},{"id":"private-vector-candidate-004","text":"Synthetic HR partner","relevant":false}]}
+JSONL
+
+  cat > "$embedding_command" <<'SH'
+#!/usr/bin/env sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=%s\n' "$RESUME_IR_EMBEDDING_MODEL_ID"
+printf 'dimension=%s\n' "$RESUME_IR_EMBEDDING_DIMENSION"
+awk '
+  /^input=/ {
+    split(substr($0, 7), parts, "\t");
+    id = parts[1];
+    if (id ~ /^query-000000/ || id ~ /^candidate-000000-000000/) {
+      vector = "1.0,0.0,0.0";
+    } else if (id ~ /^query-000001/ || id ~ /^candidate-000001-000000/) {
+      vector = "0.0,1.0,0.0";
+    } else {
+      vector = "0.0,0.0,1.0";
+    }
+    printf "vector=%s\t%s\n", id, vector;
+  }
+' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+SH
+  chmod 700 "$embedding_command"
+
+  sha_a="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  sha_b="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  sha_c="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+  "$cargo_bin" run --quiet -p benchmark-runner --bin resume-benchmark --locked -- field-quality \
+    --dataset "$field_dataset" \
+    --private-business-labeled \
+    --dataset-manifest-sha256 "$sha_a" \
+    --annotation-manifest-sha256 "$sha_b" \
+    --json > "$field_report"
+  "$cargo_bin" run --quiet -p benchmark-runner --bin resume-benchmark --locked -- field-gate \
+    --report "$field_report" \
+    --require-private-business-labeled \
+    --min-samples 1 \
+    --min-precision 0.93 \
+    --min-recall 0.93 \
+    --min-f1 0.93 >/dev/null
+
+  "$cargo_bin" run --quiet -p benchmark-runner --bin resume-benchmark --locked -- dedupe-quality \
+    --dataset "$dedupe_dataset" \
+    --private-business-labeled \
+    --dataset-manifest-sha256 "$sha_a" \
+    --annotation-manifest-sha256 "$sha_b" \
+    --json > "$dedupe_report"
+  "$cargo_bin" run --quiet -p benchmark-runner --bin resume-benchmark --locked -- dedupe-gate \
+    --report "$dedupe_report" \
+    --require-private-business-labeled \
+    --min-pairs 2 \
+    --min-positive-pairs 1 \
+    --min-precision 0.90 \
+    --min-recall 0.90 \
+    --min-f1 0.90 >/dev/null
+
+  "$cargo_bin" run --quiet -p benchmark-runner --bin resume-benchmark --locked -- vector-quality \
+    --dataset "$vector_dataset" \
+    --command "$embedding_command" \
+    --model-id smoke-local-model \
+    --dimension 3 \
+    --private-business-labeled \
+    --dataset-manifest-sha256 "$sha_a" \
+    --annotation-manifest-sha256 "$sha_b" \
+    --model-manifest-sha256 "$sha_c" \
+    --top-k 1 \
+    --json > "$vector_report"
+  "$cargo_bin" run --quiet -p benchmark-runner --bin resume-benchmark --locked -- vector-gate \
+    --report "$vector_report" \
+    --require-private-business-labeled \
+    --min-samples 2 \
+    --min-recall-at-k 0.90 \
+    --min-mrr 0.90 \
+    --min-ndcg-at-k 0.90 \
+    --max-zero-recall-queries 0 >/dev/null
+
+  require_text "$field_report" '"schema_version":"field-quality.v1"'
+  require_text "$dedupe_report" '"schema_version":"dedupe-quality.v1"'
+  require_text "$vector_report" '"schema_version":"vector-quality.v1"'
+  require_text "$field_report" '"dataset_kind":"private-business-labeled"'
+  require_text "$dedupe_report" '"dataset_kind":"private-business-labeled"'
+  require_text "$vector_report" '"dataset_kind":"private-business-labeled"'
+
+  for report in "$field_report" "$dedupe_report" "$vector_report"; do
+    reject_text "$report" "$smoke_dir" "temporary quality smoke path"
+    reject_text "$report" "REDACTION_SENTINEL" "raw quality smoke payload"
+    reject_regex "$report" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"
+  done
+}
+
 quality_script="scripts/local/prepare-local-quality-release-evidence.sh"
 if [ ! -f "$quality_script" ]; then
   fail "missing local quality release evidence preparation script"
@@ -238,4 +367,6 @@ reject_text "$stdout_file" "dedupe labels stay local" "raw dedupe labels"
 reject_text "$stdout_file" "vector labels stay local" "raw vector labels"
 reject_regex "$stdout_file" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"
 
+run_real_quality_benchmark_smoke
+printf '%s\n' "real benchmark smoke: passed"
 printf '%s\n' "local quality release-evidence check passed"

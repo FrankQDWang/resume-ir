@@ -220,6 +220,7 @@ require_text "$local_quality_evidence_script" "quality review is incomplete"
 require_text "$local_quality_evidence_script" "--field-quality-report"
 require_text "$local_quality_evidence_script" "--dedupe-quality-report"
 require_text "$local_quality_evidence_script" "--vector-quality-report"
+require_text "$local_quality_evidence_script" "real benchmark smoke: passed"
 require_text "$local_quality_evidence_script" "local quality release-evidence check passed"
 
 require_text "$current_stage_handoff_script" "scripts/local/summarize-current-stage-validation.py"
