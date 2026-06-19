@@ -131,6 +131,46 @@ const WITNESS_IMPORT_FAILURE_KINDS: &[ImportFailureKind] = &[
     ImportFailureKind::EmptyText,
 ];
 const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, benchmark-query-set, benchmark-query-protocol, benchmark-corpus-summary, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
+const TOP_LEVEL_HELP: &str = "\
+resume-cli
+
+Local-first resume import and search.
+
+Usage:
+  resume-cli [--data-dir <local-data-dir>] <command> [options]
+  resume-cli --help
+
+Core operator workflows:
+  import                Import Word/PDF resume roots into local metadata and indexes.
+  status                Show local task, OCR, full-text, vector, and index state.
+  search                Search fulltext, field-filtered, semantic, or hybrid indexes.
+  detail                Show a redacted resume detail view by document id.
+  delete | purge        Hide deleted resumes from search, then purge local data.
+
+Runtime and worker commands:
+  ocr preflight         Check local OCR renderer/engine/language runtime.
+  ocr-worker           Process queued scanned-PDF OCR jobs.
+  model preflight       Check a local embedding command and reviewed model manifest.
+  embed-worker          Generate local embeddings and persistent vector snapshots.
+  pause | resume        Pause or resume OCR work.
+
+Diagnostics and release evidence:
+  doctor                Inspect local metadata, index, runtime, and diagnostic state.
+  export-diagnostics --redact
+                        Emit local aggregate diagnostics without paths, queries, or resume text.
+  benchmark-query-set   Draft local private query-set evidence.
+  benchmark-query-protocol
+                        Run the local query protocol for benchmark evidence.
+  benchmark-corpus-summary
+                        Emit redacted aggregate corpus observability.
+  fault-simulate        Run local-safe synthetic fault probes.
+  release-readiness     Report stable-release blockers and provided evidence.
+
+Current-stage boundary:
+  Core local import/search closure can be verified locally. Stable release remains
+  blocked by external evidence, credentials, platform transcripts, runtime/model
+  review, and private quality data. Performance optimization is deferred.
+";
 const RELEASE_READINESS_PERFORMANCE_LABEL: &str = "private real-corpus performance evidence";
 const RELEASE_READINESS_FIELD_QUALITY_LABEL: &str = "field extraction quality";
 const RELEASE_READINESS_DEDUPE_QUALITY_LABEL: &str = "dedupe quality";
@@ -324,7 +364,17 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    if is_top_level_help(&args) {
+        print_top_level_help();
+        return Ok(());
+    }
+
     let data_dir = take_data_dir(&mut args)?;
+    if is_top_level_help(&args) {
+        print_top_level_help();
+        return Ok(());
+    }
+
     let Some(command) = args.first().map(String::as_str) else {
         return Err(CliError::usage(TOP_LEVEL_USAGE));
     };
@@ -356,6 +406,14 @@ fn run() -> Result<()> {
         "release-readiness" => release_readiness_command(&args[1..]),
         _ => Err(CliError::usage(TOP_LEVEL_USAGE)),
     }
+}
+
+fn is_top_level_help(args: &[String]) -> bool {
+    matches!(args, [arg] if arg == "--help" || arg == "-h" || arg == "help")
+}
+
+fn print_top_level_help() {
+    print!("{TOP_LEVEL_HELP}");
 }
 
 fn release_readiness_command(args: &[String]) -> Result<()> {

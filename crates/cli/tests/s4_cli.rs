@@ -9,6 +9,36 @@ use meta_store::{
 };
 
 #[test]
+fn top_level_help_lists_core_operator_workflows_without_data_dir_or_path_leak() {
+    for args in [["--help"].as_slice(), ["help"].as_slice()] {
+        let cwd = temp_dir("top-level-help-cwd");
+        let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .current_dir(&cwd)
+            .args(args)
+            .output()
+            .expect("run resume-cli top-level help");
+
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("resume-cli"));
+        assert!(stdout.contains("Local-first resume import and search"));
+        assert!(stdout.contains("import"));
+        assert!(stdout.contains("search"));
+        assert!(stdout.contains("ocr preflight"));
+        assert!(stdout.contains("model preflight"));
+        assert!(stdout.contains("doctor"));
+        assert!(stdout.contains("export-diagnostics --redact"));
+        assert!(stdout.contains("release-readiness"));
+        assert!(stdout.contains("Performance optimization is deferred"));
+        assert!(!stdout.contains("/Users/"));
+        assert!(!stdout.contains("PRIVATE"));
+        assert!(!cwd.join("local-data").exists());
+        remove_dir(&cwd);
+    }
+}
+
+#[test]
 fn status_creates_store_and_reports_empty_aggregates() {
     let data_dir = temp_dir("status-data");
 
