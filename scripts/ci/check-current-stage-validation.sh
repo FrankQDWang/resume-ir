@@ -64,6 +64,58 @@ require_summary_observability() {
     || fail "$file current-stage summary observability is invalid"
 }
 
+require_partial_hot_index_observability() {
+  file="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for partial hot-index observability validation"
+  python3 scripts/ci/validate-current-stage-observability.py --summary "$file" --min-documents 1 \
+    || fail "$file partial hot-index observability shape is invalid"
+  python3 - "$file" <<'PY' || fail "$file partial hot-index observability is invalid"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    document = json.load(handle)
+
+observability = document.get("corpus_summary_observability")
+if not isinstance(observability, dict):
+    raise SystemExit("missing corpus_summary_observability")
+
+document_count = observability.get("document_count")
+searchable = observability.get("searchable_document_count")
+vector = observability.get("vector_indexed_document_count")
+hot = observability.get("hot_index_fully_covered")
+
+if not all(isinstance(value, int) for value in (document_count, searchable, vector)):
+    raise SystemExit("observability counts must be integers")
+if not (document_count > searchable > 0):
+    raise SystemExit("partial hot-index summary must have nonzero partial searchable coverage")
+if not (0 < vector <= searchable):
+    raise SystemExit("partial hot-index summary must have nonzero vector coverage within searchable coverage")
+if hot is not False:
+    raise SystemExit("partial hot-index summary must not claim full hot-index coverage")
+PY
+}
+
+require_reused_import_stdout() {
+  file="$1"
+  require_text "$file" "import: reused existing data-dir"
+  require_text "$file" "searchable documents:"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for reused import stdout validation"
+  python3 - "$file" <<'PY' || fail "$file reused import stdout is invalid"
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    text = handle.read()
+
+match = re.search(r"(?m)^searchable documents: ([0-9]+)$", text)
+if match is None:
+    raise SystemExit("missing searchable document count")
+if int(match.group(1)) < 1:
+    raise SystemExit("searchable document count must be positive")
+PY
+}
+
 require_fault_suite_evidence() {
   file="$1"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required for current-stage fault-suite validation"
@@ -452,15 +504,15 @@ case "$cmd:$sub" in
     printf 'import task submitted\nstatus: completed\n'
     ;;
   status:*)
-    printf 'indexed documents: 8720\n'
-    printf 'searchable documents: 8720\n'
+    printf 'indexed documents: 9133\n'
+    printf 'searchable documents: 9133\n'
     printf 'ocr queue: 0\n'
     printf 'embedding queue: 0\n'
     printf 'paths: <redacted>\n'
     ;;
   benchmark-corpus-summary:*)
     if [ "${FAKE_CORPUS_SUMMARY_MODE:-hot}" = "smoke-low-hot" ]; then
-      printf '{"schema_version":"benchmark-corpus-summary.v1","privacy_boundary":"redacted_local_aggregate","document_count":8720,"searchable_document_count":33,"vector_indexed_document_count":33,"hot_index_fully_covered":false,"document_status_counts":{"failed_permanent":20,"ocr_required":8546,"searchable":33,"text_cleaned":121},"ingest_job_status_counts":{"completed":226,"queued":8465},"ingest_job_kind_status_counts":{"ocr_document":{"completed":89,"queued":8465},"update_index":{"completed":137}},"ingest_job_failure_counts":{},"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"contains_sample_ids":false}\n'
+      printf '{"schema_version":"benchmark-corpus-summary.v1","privacy_boundary":"redacted_local_aggregate","document_count":9133,"searchable_document_count":41,"vector_indexed_document_count":29,"hot_index_fully_covered":false,"document_status_counts":{"failed_permanent":20,"ocr_required":8951,"searchable":41,"text_cleaned":121},"ingest_job_status_counts":{"completed":226,"queued":8870},"ingest_job_kind_status_counts":{"ocr_document":{"completed":89,"queued":8870},"update_index":{"completed":137}},"ingest_job_failure_counts":{},"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"contains_sample_ids":false}\n'
       exit 0
     fi
     if [ "${FAKE_CORPUS_SUMMARY_MODE:-hot}" = "ocr-backlog" ]; then
@@ -567,7 +619,7 @@ case "${1:-}" in
       exit 0
     fi
     if [ "${FAKE_BENCHMARK_MODE:-pass}" = "smoke-low-hot" ]; then
-      printf '{"schema_version":"benchmark.v1","run_id":"current_stage_fake","platform":"ci/fake","dataset_kind":"private-real-corpus","document_count":8720,"searchable_document_count":33,"vector_indexed_document_count":33,"query_count":3,"top_k":5,"build_ms":1.0,"query_total_ms":300.0,"qps":10.0,"index_size_bytes":1000,"query_latency_ms":{"samples":3,"min":1.0,"mean":5.0,"p50":5.0,"p95":42.0,"p99":84.0,"max":100.0},"zero_result_queries":0,"total_hits":30,"million_scale_verified":false,"percentile_confidence":"smoke","target_claim":"benchmark_baseline_observed","scope":"private local real-corpus query benchmark; aggregate redacted report only","corpus_origin":"private_local","privacy_boundary":"redacted_local_aggregate","query_protocol":"resume-ir-query-v1","query_mode":"hybrid","retrieval_layers":"fulltext+field+vector+rrf","query_embedding_runtime":"local-command","query_embedding_command_invocations":3,"hot_index":true,"hot_path_ocr":false,"hot_path_parsing":false,"hot_path_heavy_model_inference":false,"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"dataset_manifest_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","query_set_sha256":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","model_manifest_sha256":"1111111111111111111111111111111111111111111111111111111111111111","corpus_summary_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}\n'
+      printf '{"schema_version":"benchmark.v1","run_id":"current_stage_fake","platform":"ci/fake","dataset_kind":"private-real-corpus","document_count":9133,"searchable_document_count":41,"vector_indexed_document_count":29,"query_count":3,"top_k":5,"build_ms":1.0,"query_total_ms":300.0,"qps":10.0,"index_size_bytes":1000,"query_latency_ms":{"samples":3,"min":1.0,"mean":5.0,"p50":5.0,"p95":42.0,"p99":84.0,"max":100.0},"zero_result_queries":0,"total_hits":30,"million_scale_verified":false,"percentile_confidence":"smoke","target_claim":"benchmark_baseline_observed","scope":"private local real-corpus query benchmark; aggregate redacted report only","corpus_origin":"private_local","privacy_boundary":"redacted_local_aggregate","query_protocol":"resume-ir-query-v1","query_mode":"hybrid","retrieval_layers":"fulltext+field+vector+rrf","query_embedding_runtime":"local-command","query_embedding_command_invocations":3,"hot_index":true,"hot_path_ocr":false,"hot_path_parsing":false,"hot_path_heavy_model_inference":false,"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"dataset_manifest_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","query_set_sha256":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","model_manifest_sha256":"1111111111111111111111111111111111111111111111111111111111111111","corpus_summary_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}\n'
       exit 0
     fi
     printf '{"schema_version":"benchmark.v1","run_id":"current_stage_fake","platform":"ci/fake","dataset_kind":"private-real-corpus","document_count":8720,"searchable_document_count":8720,"vector_indexed_document_count":8720,"query_count":500,"top_k":10,"build_ms":1.0,"query_total_ms":5000.0,"qps":100.0,"index_size_bytes":1000,"query_latency_ms":{"samples":500,"min":1.0,"mean":5.0,"p50":5.0,"p95":42.0,"p99":84.0,"max":100.0},"zero_result_queries":0,"total_hits":5000,"million_scale_verified":false,"percentile_confidence":"sampled","target_claim":"benchmark_baseline_observed","scope":"private local real-corpus query benchmark; aggregate redacted report only","corpus_origin":"private_local","privacy_boundary":"redacted_local_aggregate","query_protocol":"resume-ir-query-v1","query_mode":"hybrid","retrieval_layers":"fulltext+field+vector+rrf","query_embedding_runtime":"local-command","query_embedding_command_invocations":500,"hot_index":true,"hot_path_ocr":false,"hot_path_parsing":false,"hot_path_heavy_model_inference":false,"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"dataset_manifest_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","query_set_sha256":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","model_manifest_sha256":"1111111111111111111111111111111111111111111111111111111111111111","corpus_summary_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}\n'
@@ -885,8 +937,7 @@ fi
 smoke_low_hot_summary="$execute_out_dir/current-stage-smoke-summary.json"
 require_text "$smoke_low_hot_summary" '"smoke_satisfied": true'
 require_text "$smoke_low_hot_summary" '"private_query_baseline"'
-require_text "$smoke_low_hot_summary" '"searchable_document_count": 33'
-require_text "$smoke_low_hot_summary" '"vector_indexed_document_count": 33'
+require_partial_hot_index_observability "$smoke_low_hot_summary"
 require_current_stage_handoff \
   "smoke_satisfied" \
   "resume-ir.current-stage-smoke-summary.v1"
@@ -934,8 +985,7 @@ expected_reuse_dataset_sha256=$(sha256_file "$reuse_dataset_manifest")
 require_text "$reuse_summary" "\"dataset_manifest_sha256\": \"$expected_reuse_dataset_sha256\""
 require_text "$execute_out_dir/dataset-manifest.stdout.txt" "dataset manifest: reused"
 require_text "$execute_out_dir/dataset-manifest.stdout.txt" "privacy boundary: local_only_redacted_dataset_manifest"
-require_text "$execute_out_dir/import.stdout.txt" "import: reused existing data-dir"
-require_text "$execute_out_dir/import.stdout.txt" "searchable documents: 8720"
+require_reused_import_stdout "$execute_out_dir/import.stdout.txt"
 require_current_stage_handoff \
   "smoke_satisfied" \
   "resume-ir.current-stage-smoke-summary.v1"
