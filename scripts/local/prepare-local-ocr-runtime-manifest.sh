@@ -41,6 +41,15 @@ validate_identifier() {
   esac
 }
 
+validate_license_expression() {
+  name="$1"
+  value="$2"
+  [ -n "$value" ] || fail "ocr runtime manifest blocked: invalid $name"
+  if printf '%s' "$value" | LC_ALL=C grep -Eq '[^-A-Za-z0-9._:/+() ]'; then
+    fail "ocr runtime manifest blocked: invalid $name"
+  fi
+}
+
 resolve_command() {
   configured="$1"
   command_name="$2"
@@ -154,9 +163,9 @@ require_arg "--language-license" "$language_license"
 
 validate_identifier "--runtime-pack-id" "$runtime_pack_id"
 validate_identifier "--language" "$language"
-validate_identifier "--engine-license" "$engine_license"
-validate_identifier "--renderer-license" "$renderer_license"
-validate_identifier "--language-license" "$language_license"
+validate_license_expression "--engine-license" "$engine_license"
+validate_license_expression "--renderer-license" "$renderer_license"
+validate_license_expression "--language-license" "$language_license"
 
 if [ "$reviewed" -ne 1 ]; then
   fail "ocr runtime manifest blocked: legal review is incomplete"

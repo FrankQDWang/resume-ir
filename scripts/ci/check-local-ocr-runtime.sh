@@ -83,19 +83,22 @@ case "${2:-}" in
     out=""
     runtime_pack_id=""
     language=""
+    renderer_license=""
     reviewed="false"
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --out) out="$2"; shift 2 ;;
         --runtime-pack-id) runtime_pack_id="$2"; shift 2 ;;
         --language) language="$2"; shift 2 ;;
+        --renderer-license) renderer_license="$2"; shift 2 ;;
         --reviewed) reviewed="true"; shift ;;
         *) shift ;;
       esac
     done
     [ -n "$out" ] || exit 65
+    [ -n "$renderer_license" ] || exit 66
     cat > "$out" <<JSON
-{"schema_version":"resume-ir.ocr-runtime-manifest.v1","runtime_pack_id":"$runtime_pack_id","components":[{"id":"tesseract","kind":"ocr-engine","engine":"tesseract","version":"5.5.1","artifact":{"path":"<fake-tesseract>","sha256":"synthetic"},"license":{"id":"Apache-2.0","reviewed":$reviewed}},{"id":"poppler-pdftoppm","kind":"pdf-renderer","engine":"poppler-pdftoppm","version":"25.12.0","artifact":{"path":"<fake-pdftoppm>","sha256":"synthetic"},"license":{"id":"GPL-2.0-or-later","reviewed":$reviewed}}],"languages":[{"id":"$language","artifact":{"path":"<fake-tessdata>","sha256":"synthetic"},"license":{"id":"Apache-2.0","reviewed":$reviewed}}]}
+{"schema_version":"resume-ir.ocr-runtime-manifest.v1","runtime_pack_id":"$runtime_pack_id","components":[{"id":"tesseract","kind":"ocr-engine","engine":"tesseract","version":"5.5.1","artifact":{"path":"<fake-tesseract>","sha256":"synthetic"},"license":{"id":"Apache-2.0","reviewed":$reviewed}},{"id":"poppler-pdftoppm","kind":"pdf-renderer","engine":"poppler-pdftoppm","version":"25.12.0","artifact":{"path":"<fake-pdftoppm>","sha256":"synthetic"},"license":{"id":"$renderer_license","reviewed":$reviewed}}],"languages":[{"id":"$language","artifact":{"path":"<fake-tessdata>","sha256":"synthetic"},"license":{"id":"Apache-2.0","reviewed":$reviewed}}]}
 JSON
     printf 'ocr runtime manifest draft: written\npaths: <redacted>\n'
     ;;
@@ -153,6 +156,36 @@ reject_text "$manifest_stdout" "PRIVATE-ocr-bin" "private OCR bin marker"
 reject_text "$manifest_stderr" "PRIVATE-ocr-bin" "private OCR bin marker"
 reject_text "$manifest_stdout" "SYNTHETIC TESSDATA" "language pack bytes"
 
+spdx_manifest_out="$tmpdir/PRIVATE-spdx-ocr-runtime-manifest.json"
+spdx_manifest_stdout="$tmpdir/spdx-manifest-stdout.txt"
+spdx_manifest_stderr="$tmpdir/spdx-manifest-stderr.txt"
+set +e
+FAKE_RESUME_CLI_ARGS="$fake_resume_cli_args" "$manifest_script" \
+  --resume-cli "$fake_resume_cli" \
+  --out "$spdx_manifest_out" \
+  --runtime-pack-id reviewed-local-ocr-pack \
+  --tesseract-command "$tesseract" \
+  --pdftoppm-command "$pdftoppm" \
+  --language eng \
+  --language-pack "$language_pack" \
+  --engine-license Apache-2.0 \
+  --renderer-license "GPL-2.0-only OR GPL-3.0-only" \
+  --language-license Apache-2.0 \
+  --reviewed \
+  > "$spdx_manifest_stdout" 2> "$spdx_manifest_stderr"
+spdx_manifest_status=$?
+set -e
+if [ "$spdx_manifest_status" -ne 0 ]; then
+  fail "local OCR manifest preparation rejected SPDX renderer license expression"
+fi
+if [ -s "$spdx_manifest_stderr" ]; then
+  fail "local OCR manifest preparation wrote stderr on SPDX expression success"
+fi
+require_text "$spdx_manifest_stdout" "renderer license: GPL-2.0-only OR GPL-3.0-only"
+require_text "$spdx_manifest_out" '"id":"GPL-2.0-only OR GPL-3.0-only"'
+reject_text "$spdx_manifest_stdout" "$tmpdir" "temporary local path"
+reject_text "$spdx_manifest_stderr" "$tmpdir" "temporary local path"
+
 unreviewed_stdout="$tmpdir/unreviewed-stdout.txt"
 unreviewed_stderr="$tmpdir/unreviewed-stderr.txt"
 set +e
@@ -197,7 +230,7 @@ set +e
   --language eng \
   --language-pack "$language_pack" \
   --engine-license Apache-2.0 \
-  --renderer-license GPL-2.0-or-later \
+  --renderer-license "GPL-2.0-only OR GPL-3.0-only" \
   --language-license Apache-2.0 \
   --reviewed \
   > "$actual_stdout" 2> "$actual_stderr"
@@ -216,6 +249,7 @@ require_text "$actual_stdout" "runtime pack: reviewed-local-ocr-pack"
 require_text "$actual_stdout" "engine: tesseract"
 require_text "$actual_stdout" "renderer: poppler-pdftoppm"
 require_text "$actual_stdout" "language: eng"
+require_text "$actual_stdout" "renderer license: GPL-2.0-only OR GPL-3.0-only"
 require_text "$actual_stdout" "license reviewed: yes"
 require_text "$actual_stdout" "paths: <redacted>"
 require_text "$actual_manifest_out" "\"schema_version\": \"resume-ir.ocr-runtime-manifest.v1\""

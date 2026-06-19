@@ -5035,11 +5035,7 @@ fn parse_model_draft_manifest_args(args: &[String]) -> Result<ModelDraftManifest
                 artifact = Some(take_model_path_arg(args, &mut index, artifact.is_some())?)
             }
             "--license" => {
-                license = Some(take_model_identifier_arg(
-                    args,
-                    &mut index,
-                    license.is_some(),
-                )?)
+                license = Some(take_model_license_arg(args, &mut index, license.is_some())?)
             }
             "--reviewed" => {
                 if reviewed {
@@ -5102,6 +5098,20 @@ fn take_model_identifier_arg(
         return Err(CliError::usage(model_usage()));
     };
     if !valid_model_manifest_identifier(value) {
+        return Err(CliError::usage(model_usage()));
+    }
+    *index += 2;
+    Ok(value.clone())
+}
+
+fn take_model_license_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<String> {
+    if duplicate {
+        return Err(CliError::usage(model_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(model_usage()));
+    };
+    if !valid_license_expression(value) {
         return Err(CliError::usage(model_usage()));
     }
     *index += 2;
@@ -5464,7 +5474,7 @@ fn validate_model_manifest_model(
 
     let license = model_manifest_object(model, "license")?;
     let license_id = model_manifest_string(license, "id")?;
-    if !valid_model_manifest_identifier(license_id) {
+    if !valid_license_expression(license_id) {
         return Err(CliError::user("model manifest blocked: invalid license"));
     }
     let reviewed = license
@@ -5558,6 +5568,17 @@ fn valid_model_manifest_identifier(value: &str) -> bool {
         && value.chars().all(|character| {
             character.is_ascii_alphanumeric()
                 || matches!(character, '-' | '_' | '.' | '/' | ':' | '+')
+        })
+}
+
+fn valid_license_expression(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(
+                    character,
+                    '-' | '_' | '.' | '/' | ':' | '+' | '(' | ')' | ' '
+                )
         })
 }
 
@@ -5775,21 +5796,21 @@ fn parse_ocr_draft_manifest_args(args: &[String]) -> Result<OcrDraftManifestArgs
                 language_pack_args.push(take_ocr_language_pack_arg(args, &mut index)?);
             }
             "--engine-license" => {
-                engine_license = Some(take_ocr_identifier_arg(
+                engine_license = Some(take_ocr_license_arg(
                     args,
                     &mut index,
                     engine_license.is_some(),
                 )?);
             }
             "--renderer-license" => {
-                renderer_license = Some(take_ocr_identifier_arg(
+                renderer_license = Some(take_ocr_license_arg(
                     args,
                     &mut index,
                     renderer_license.is_some(),
                 )?);
             }
             "--language-license" => {
-                language_license = Some(take_ocr_identifier_arg(
+                language_license = Some(take_ocr_license_arg(
                     args,
                     &mut index,
                     language_license.is_some(),
@@ -5923,6 +5944,20 @@ fn take_ocr_identifier_arg(args: &[String], index: &mut usize, duplicate: bool) 
         return Err(CliError::usage(ocr_usage()));
     };
     if !valid_model_manifest_identifier(value) {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    *index += 2;
+    Ok(value.clone())
+}
+
+fn take_ocr_license_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<String> {
+    if duplicate {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(ocr_usage()));
+    };
+    if !valid_license_expression(value) {
         return Err(CliError::usage(ocr_usage()));
     }
     *index += 2;
@@ -6423,7 +6458,7 @@ fn validate_ocr_runtime_artifact(
 fn validate_ocr_manifest_license(value: &serde_json::Value) -> Result<()> {
     let license = ocr_manifest_object(value, "license")?;
     let license_id = ocr_manifest_string(license, "id")?;
-    if !valid_model_manifest_identifier(license_id) {
+    if !valid_license_expression(license_id) {
         return Err(CliError::user(
             "ocr runtime manifest blocked: invalid license",
         ));
