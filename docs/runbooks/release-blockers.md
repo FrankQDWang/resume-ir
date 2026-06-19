@@ -1415,6 +1415,13 @@ After review, pass the same manifest to
 `resume-cli release-readiness --model-manifest <local-model-manifest.json>` so
 the release gate can validate checksum/license evidence without printing local
 paths or model contents.
+`--model-manifest` by itself records only `embedding model manifest evidence`;
+it does not clear `embedding model license/distribution`. The distribution
+blocker clears only when the same `release-readiness` invocation also includes
+a macOS or Windows package manifest whose `runtime_payload` contains an
+`embedding-model` component with a SHA-256 matching a reviewed embedding model
+from the model manifest. This keeps a reviewed local manifest from being
+mistaken for an offline packaged model distribution.
 
 Validate any proposed local OCR runtime pack before worker configuration:
 

@@ -138,6 +138,7 @@ const RELEASE_READINESS_VECTOR_QUALITY_LABEL: &str = "vector quality";
 const RELEASE_READINESS_OCR_THROUGHPUT_LABEL: &str = "OCR throughput";
 const RELEASE_READINESS_OCR_LICENSE_LABEL: &str = "OCR runtime manifest/dependency evidence";
 const RELEASE_READINESS_MODEL_LICENSE_LABEL: &str = "embedding model license/distribution";
+const RELEASE_READINESS_MODEL_MANIFEST_EVIDENCE_LABEL: &str = "embedding model manifest evidence";
 const RELEASE_READINESS_DIAGNOSTICS_LABEL: &str = "redacted diagnostics evidence";
 const RELEASE_READINESS_RELEASE_ARTIFACT_MANIFEST_LABEL: &str =
     "release artifact manifest evidence";
@@ -838,11 +839,24 @@ fn validate_release_readiness_evidence(
                 CliError::user("model manifest blocked: embedding model is not present"),
             ));
         }
-        provided.push(ReleaseReadinessProvidedEvidence {
-            label: RELEASE_READINESS_MODEL_LICENSE_LABEL,
-            privacy_boundary: "reviewed_local_manifest",
-            detail: "reviewed embedding model manifest passed checksum and license validation",
-        });
+        if release_readiness_model_distribution_is_packaged(args, &validation)? {
+            provided.push(ReleaseReadinessProvidedEvidence {
+                label: RELEASE_READINESS_MODEL_MANIFEST_EVIDENCE_LABEL,
+                privacy_boundary: "reviewed_local_manifest",
+                detail: "reviewed embedding model manifest passed checksum and license validation",
+            });
+            provided.push(ReleaseReadinessProvidedEvidence {
+                label: RELEASE_READINESS_MODEL_LICENSE_LABEL,
+                privacy_boundary: "blocked_release_evidence_manifest",
+                detail: "reviewed embedding model manifest is bound to a matching packaged runtime payload",
+            });
+        } else {
+            provided.push(ReleaseReadinessProvidedEvidence {
+                label: RELEASE_READINESS_MODEL_MANIFEST_EVIDENCE_LABEL,
+                privacy_boundary: "reviewed_local_manifest",
+                detail: "model manifest is reviewed but package payload does not prove matching offline model distribution",
+            });
+        }
     }
     if let Some(path) = &args.ocr_runtime_manifest {
         let validation = validate_ocr_runtime_manifest(path).map_err(|error| {
@@ -1074,6 +1088,84 @@ fn validate_release_readiness_evidence(
         });
     }
     Ok(provided)
+}
+
+fn release_readiness_model_distribution_is_packaged(
+    args: &ReleaseReadinessEvidenceArgs,
+    validation: &ModelManifestValidation,
+) -> Result<bool> {
+    let embedding_model_sha256 = validation
+        .models
+        .iter()
+        .filter(|model| model.model_type == "embedding")
+        .map(|model| model.sha256.as_str())
+        .collect::<BTreeSet<_>>();
+    if embedding_model_sha256.is_empty() {
+        return Ok(false);
+    }
+
+    for path in [&args.macos_package_manifest, &args.windows_package_manifest]
+        .into_iter()
+        .flatten()
+    {
+        let report = read_release_readiness_evidence_report(path)?;
+        if release_package_runtime_payload_contains_embedding_model(
+            &report,
+            &embedding_model_sha256,
+        )? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn release_package_runtime_payload_contains_embedding_model(
+    report: &str,
+    embedding_model_sha256: &BTreeSet<&str>,
+) -> Result<bool> {
+    const CONTEXT: &str = "embedding model distribution package payload";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "embedding model distribution blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("embedding model distribution blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("embedding model distribution blocked: expected JSON object")
+    })?;
+    let Some(payload_value) = object.get("runtime_payload") else {
+        return Ok(false);
+    };
+    let payload = payload_value
+        .as_object()
+        .ok_or_else(|| release_evidence_invalid(CONTEXT, "runtime_payload"))?;
+    require_release_evidence_string(
+        payload,
+        "schema_version",
+        "release.runtime_package_payload.v1",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(payload, "runtime_distribution_mode", "bundled", CONTEXT)?;
+    require_release_evidence_bool(payload, "runtime_package_binaries_included", true, CONTEXT)?;
+    let components = require_release_evidence_array(payload, "components", CONTEXT)?;
+    for component in components {
+        let component = component
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "components"))?;
+        let kind = require_release_evidence_string_value(component, "kind", CONTEXT)?;
+        let file = require_release_evidence_string_value(component, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        let sha256 = require_release_evidence_sha256_value(component, "sha256", CONTEXT)?;
+        if kind == "embedding-model" && embedding_model_sha256.contains(sha256) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 const SIGNING_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
