@@ -96,7 +96,8 @@ require_text "$stdout_file" "private business labeled field/dedupe quality repor
 require_text "$stdout_file" '"id": "P3_semantic_vector"'
 require_text "$stdout_file" "final reviewed embedding model distribution decision"
 require_text "$stdout_file" '"id": "P4_ocr"'
-require_text "$stdout_file" "full current-stage OCR throughput baseline evidence"
+require_text "$stdout_file" "stable-release OCR throughput evidence deferred to performance optimization goal"
+require_text "$stdout_file" "stable-release hot-index coverage evidence deferred to performance optimization goal"
 require_text "$stdout_file" '"id": "P5_cross_platform_release"'
 require_text "$stdout_file" "real signing/notarization credentials"
 require_text "$stdout_file" "signing/notarization fail-closed dry-run gates"

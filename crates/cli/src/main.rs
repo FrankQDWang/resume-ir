@@ -518,9 +518,9 @@ fn release_readiness_goal_gap_matrix_json() -> serde_json::Value {
                     "current-stage smoke local runtime probe"
                 ],
                 "blocked_by": [
-                    "full current-stage OCR throughput baseline evidence",
-                    "full hot-index current-stage validation evidence",
-                    "representative OCR backlog drain evidence"
+                    "stable-release OCR throughput evidence deferred to performance optimization goal",
+                    "stable-release hot-index coverage evidence deferred to performance optimization goal",
+                    "representative OCR backlog drain evidence deferred to performance optimization goal"
                 ]
             },
             {

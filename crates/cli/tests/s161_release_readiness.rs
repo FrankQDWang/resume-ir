@@ -449,6 +449,24 @@ fn release_readiness_json_reports_goal_gap_matrix_without_claiming_complete_prod
         .iter()
         .any(|item| item == "private business labeled field/dedupe quality reports"));
 
+    let p4 = rows
+        .iter()
+        .find(|row| row["id"] == "P4_ocr")
+        .expect("P4 row");
+    assert_eq!(p4["implementation_status"], "production_complete");
+    assert_eq!(p4["release_status"], "blocked");
+    let p4_blockers = p4["blocked_by"].as_array().expect("P4 blockers");
+    assert!(p4_blockers.iter().any(|item| item
+        == "stable-release OCR throughput evidence deferred to performance optimization goal"));
+    assert!(p4_blockers.iter().any(|item| item
+        == "stable-release hot-index coverage evidence deferred to performance optimization goal"));
+    assert!(!p4_blockers
+        .iter()
+        .any(|item| item == "full current-stage OCR throughput baseline evidence"));
+    assert!(!p4_blockers
+        .iter()
+        .any(|item| item == "full hot-index current-stage validation evidence"));
+
     let p5 = rows
         .iter()
         .find(|row| row["id"] == "P5_cross_platform_release")
