@@ -39,6 +39,88 @@ fn top_level_help_lists_core_operator_workflows_without_data_dir_or_path_leak() 
 }
 
 #[test]
+fn command_help_lists_core_usage_without_data_dir_or_path_leak() {
+    let cases: &[(&[&str], &[&str])] = &[
+        (
+            &["help", "import"],
+            &["usage: resume-cli import", "--root-preset local-discovery"],
+        ),
+        (
+            &["search", "--help"],
+            &[
+                "usage: resume-cli search",
+                "--mode fulltext|semantic|hybrid",
+            ],
+        ),
+        (&["ocr", "--help"], &["usage: resume-cli ocr", "preflight"]),
+        (
+            &["model", "--help"],
+            &["usage: resume-cli model", "preflight"],
+        ),
+        (
+            &["status", "--help"],
+            &["usage: resume-cli status", "--watch-import"],
+        ),
+    ];
+
+    for (args, expected_fragments) in cases {
+        let cwd = temp_dir("command-help-cwd");
+        let data_dir = cwd.join("private-data-dir");
+        let mut command_args = vec!["--data-dir", path_str(&data_dir)];
+        command_args.extend(args.iter().copied());
+
+        let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .current_dir(&cwd)
+            .args(command_args)
+            .output()
+            .expect("run resume-cli command help");
+
+        assert!(output.status.success(), "args {args:?}");
+        assert!(output.stderr.is_empty(), "args {args:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for fragment in *expected_fragments {
+            assert!(
+                stdout.contains(fragment),
+                "args {args:?}, missing {fragment}"
+            );
+        }
+        assert!(!stdout.contains("/Users/"), "args {args:?}");
+        assert!(!stdout.contains("PRIVATE"), "args {args:?}");
+        assert!(!stdout.contains(path_str(&data_dir)), "args {args:?}");
+        assert!(!data_dir.exists(), "args {args:?}");
+        assert!(!cwd.join("local-data").exists(), "args {args:?}");
+        remove_dir(&cwd);
+    }
+
+    let cwd = temp_dir("command-help-after-private-arg-cwd");
+    let data_dir = cwd.join("private-data-dir");
+    let root_dir = cwd.join("private-root-name");
+    fs::create_dir_all(&root_dir).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .current_dir(&cwd)
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&root_dir),
+            "--help",
+        ])
+        .output()
+        .expect("run resume-cli command help after private arg");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("usage: resume-cli import"));
+    assert!(!stdout.contains("import task submitted"));
+    assert!(!stdout.contains(path_str(&root_dir)));
+    assert!(!data_dir.exists());
+    assert!(!cwd.join("local-data").exists());
+    remove_dir(&cwd);
+}
+
+#[test]
 fn status_creates_store_and_reports_empty_aggregates() {
     let data_dir = temp_dir("status-data");
 

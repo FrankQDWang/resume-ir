@@ -368,10 +368,18 @@ fn run() -> Result<()> {
         print_top_level_help();
         return Ok(());
     }
+    if let Some(topic) = command_help_topic(&args) {
+        print_command_help(topic)?;
+        return Ok(());
+    }
 
     let data_dir = take_data_dir(&mut args)?;
     if is_top_level_help(&args) {
         print_top_level_help();
+        return Ok(());
+    }
+    if let Some(topic) = command_help_topic(&args) {
+        print_command_help(topic)?;
         return Ok(());
     }
 
@@ -409,11 +417,61 @@ fn run() -> Result<()> {
 }
 
 fn is_top_level_help(args: &[String]) -> bool {
-    matches!(args, [arg] if arg == "--help" || arg == "-h" || arg == "help")
+    matches!(args, [arg] if is_help_flag(arg) || arg == "help")
+}
+
+fn is_help_flag(value: &str) -> bool {
+    value == "--help" || value == "-h"
+}
+
+fn command_help_topic(args: &[String]) -> Option<&str> {
+    match args {
+        [command, topic] if command == "help" => Some(topic.as_str()),
+        [command, ..] if command == "--data-dir" => None,
+        [command, rest @ ..] if command != "help" && rest.iter().any(|arg| is_help_flag(arg)) => {
+            Some(command.as_str())
+        }
+        _ => None,
+    }
 }
 
 fn print_top_level_help() {
     print!("{TOP_LEVEL_HELP}");
+}
+
+fn print_command_help(topic: &str) -> Result<()> {
+    let usage = command_usage(topic).ok_or_else(|| CliError::usage(TOP_LEVEL_USAGE))?;
+    println!("{usage}");
+    Ok(())
+}
+
+fn command_usage(topic: &str) -> Option<&'static str> {
+    match topic {
+        "status" => Some(status_usage()),
+        "import" => Some(import_usage_text()),
+        "search" => Some(search_usage()),
+        "benchmark-query-set" => Some(benchmark_query_set_usage()),
+        "benchmark-query-protocol" => Some(benchmark_query_protocol_usage()),
+        "benchmark-corpus-summary" => Some(benchmark_corpus_summary_usage()),
+        "detail" => Some(detail_usage()),
+        "delete" => Some(delete_usage()),
+        "purge" => Some(purge_usage()),
+        "cancel" => Some(cancel_usage_text()),
+        "pause" | "resume" => Some(task_control_usage_text()),
+        "ocr-worker" => Some(ocr_worker_usage_text()),
+        "embed-worker" => Some(embed_worker_usage_text()),
+        "candidate-review" => Some(candidate_review_usage()),
+        "model" => Some(model_usage()),
+        "ocr" => Some(ocr_usage()),
+        "privacy" => Some(privacy_usage()),
+        "service" => Some(service_usage()),
+        "fault-simulate" => Some(fault_simulate_usage()),
+        "witness" => Some(witness_usage_text()),
+        "doctor" => Some(doctor_usage()),
+        "export-diagnostics" => Some(export_diagnostics_usage()),
+        "release-readiness" => Some(release_readiness_usage()),
+        _ => None,
+    }
 }
 
 fn release_readiness_command(args: &[String]) -> Result<()> {
@@ -10143,10 +10201,12 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
     })
 }
 
+fn witness_usage_text() -> &'static str {
+    "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--probe-search] [--probe-fields] [--probe-benchmark-corpus] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]] [--run-embedding [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>]]"
+}
+
 fn witness_usage() -> CliError {
-    CliError::usage(
-        "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--probe-search] [--probe-fields] [--probe-benchmark-corpus] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]] [--run-embedding [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>]]",
-    )
+    CliError::usage(witness_usage_text())
 }
 
 fn default_ocr_worker_args() -> OcrWorkerArgs {
@@ -11477,10 +11537,12 @@ fn parse_positive_usize(value: &str) -> Result<usize> {
     Ok(parsed)
 }
 
+fn import_usage_text() -> &'static str {
+    "usage: resume-cli import [--enqueue] [--ipc auto|<http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]"
+}
+
 fn import_usage() -> CliError {
-    CliError::usage(
-        "usage: resume-cli import [--enqueue] [--ipc auto|<http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]",
-    )
+    CliError::usage(import_usage_text())
 }
 
 fn expand_import_root_selection(selection: &ImportRootSelection) -> Result<Vec<PathBuf>> {
@@ -13793,10 +13855,12 @@ fn parse_cancel_import_args(args: &[String]) -> Result<CancelImportArgs> {
     })
 }
 
+fn cancel_usage_text() -> &'static str {
+    "usage: resume-cli cancel import [--ipc auto|<http://127.0.0.1:port/imports/cancel|/status> --ipc-token-file <path>] --task-id <id>"
+}
+
 fn cancel_usage() -> CliError {
-    CliError::usage(
-        "usage: resume-cli cancel import [--ipc auto|<http://127.0.0.1:port/imports/cancel|/status> --ipc-token-file <path>] --task-id <id>",
-    )
+    CliError::usage(cancel_usage_text())
 }
 
 fn parse_worker_task_control_args(args: &[String]) -> Result<WorkerTaskKind> {
@@ -13828,8 +13892,12 @@ fn worker_task_status_label(paused: bool) -> &'static str {
     }
 }
 
+fn task_control_usage_text() -> &'static str {
+    "usage: resume-cli pause --task ocr OR resume --task ocr"
+}
+
 fn task_control_usage() -> CliError {
-    CliError::usage("usage: resume-cli pause --task ocr OR resume --task ocr")
+    CliError::usage(task_control_usage_text())
 }
 
 fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -14374,10 +14442,12 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
     })
 }
 
+fn ocr_worker_usage_text() -> &'static str {
+    "usage: resume-cli ocr-worker --once [--command <path>|--tesseract-command <path>] [--render-command <path>|--pdftoppm-command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>] [--max-pages-per-document <n>]"
+}
+
 fn ocr_worker_usage() -> CliError {
-    CliError::usage(
-        "usage: resume-cli ocr-worker --once [--command <path>|--tesseract-command <path>] [--render-command <path>|--pdftoppm-command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>] [--max-pages-per-document <n>]",
-    )
+    CliError::usage(ocr_worker_usage_text())
 }
 
 fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -14767,10 +14837,12 @@ fn valid_cli_identifier(value: &str) -> bool {
         && !value.contains('\t')
 }
 
+fn embed_worker_usage_text() -> &'static str {
+    "usage: resume-cli embed-worker --once [--command <path>] [--model-id <id>] [--dimension <n>] [--max-docs <n>] [--max-text-bytes <bytes>] [--timeout-ms <ms>]"
+}
+
 fn embed_worker_usage() -> CliError {
-    CliError::usage(
-        "usage: resume-cli embed-worker --once [--command <path>] [--model-id <id>] [--dimension <n>] [--max-docs <n>] [--max-text-bytes <bytes>] [--timeout-ms <ms>]",
-    )
+    CliError::usage(embed_worker_usage_text())
 }
 
 fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -15097,19 +15169,22 @@ struct DiagnosticArgs {
 }
 
 fn parse_doctor_args(args: &[String]) -> Result<DiagnosticArgs> {
-    parse_diagnostic_ocr_args(args, "usage: resume-cli doctor [--ocr-lang <lang>]")
+    parse_diagnostic_ocr_args(args, doctor_usage())
 }
 
 fn parse_export_diagnostics_args(args: &[String]) -> Result<DiagnosticArgs> {
     if args.first().map(String::as_str) != Some("--redact") {
-        return Err(CliError::usage(
-            "usage: resume-cli export-diagnostics --redact [--ocr-lang <lang>]",
-        ));
+        return Err(CliError::usage(export_diagnostics_usage()));
     }
-    parse_diagnostic_ocr_args(
-        &args[1..],
-        "usage: resume-cli export-diagnostics --redact [--ocr-lang <lang>]",
-    )
+    parse_diagnostic_ocr_args(&args[1..], export_diagnostics_usage())
+}
+
+fn doctor_usage() -> &'static str {
+    "usage: resume-cli doctor [--ocr-lang <lang>]"
+}
+
+fn export_diagnostics_usage() -> &'static str {
+    "usage: resume-cli export-diagnostics --redact [--ocr-lang <lang>]"
 }
 
 fn parse_diagnostic_ocr_args(args: &[String], usage: &'static str) -> Result<DiagnosticArgs> {
