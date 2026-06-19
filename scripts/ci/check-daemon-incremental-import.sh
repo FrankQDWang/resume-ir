@@ -71,6 +71,8 @@ reject_paths() {
   reject_text "$file" "$canonical_fixture_root" "canonical fixture root path"
   reject_text "$file" "$initial_resume" "initial resume path"
   reject_text "$file" "$new_resume" "new resume path"
+  reject_text "$file" "$pdf_resume" "pdf resume path"
+  reject_text "$file" "$pdf_fixture" "source pdf fixture path"
   reject_regex "$file" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"
 }
 
@@ -152,6 +154,10 @@ fi
 if ! command -v python3 >/dev/null 2>&1; then
   fail "daemon incremental import check requires python3"
 fi
+pdf_fixture="tests/fixtures/resumes/synthetic-java-platform.pdf"
+if [ ! -f "$pdf_fixture" ]; then
+  fail "daemon incremental import PDF fixture is missing"
+fi
 
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-daemon-incremental.XXXXXX")"
 trap cleanup EXIT HUP INT TERM
@@ -160,6 +166,7 @@ data_dir="$tmpdir/PRIVATE_DAEMON_INCREMENTAL_DATA"
 fixture_root="$tmpdir/PRIVATE_DAEMON_INCREMENTAL_ROOT"
 initial_resume="$fixture_root/incremental-initial.docx"
 new_resume="$fixture_root/incremental-new.docx"
+pdf_resume="$fixture_root/incremental-pdf.pdf"
 daemon_stdout="$tmpdir/daemon.out"
 daemon_stderr="$tmpdir/daemon.err"
 daemon_pid=""
@@ -195,6 +202,7 @@ daemon_pid=$!
 sleep 1
 create_docx "$initial_resume" "WatcherUpdatedToken refreshed candidate with Rust backend experience."
 create_docx "$new_resume" "IncrementalNewCandidateToken candidate with Java platform experience."
+cp "$pdf_fixture" "$pdf_resume"
 sleep 1
 create_docx "$initial_resume" "WatcherUpdatedToken refreshed candidate with Rust backend and distributed systems experience."
 
@@ -204,12 +212,15 @@ wait_for_search_results "updated" "WatcherUpdatedToken" 1 "$updated_search_out"
 new_search_out="$tmpdir/new-search.out"
 wait_for_search_results "new" "IncrementalNewCandidateToken" 1 "$new_search_out"
 
+pdf_search_out="$tmpdir/pdf-search.out"
+wait_for_search_results "pdf" "payment" 1 "$pdf_search_out"
+
 stale_search_out="$tmpdir/stale-search.out"
 wait_for_search_results "stale" "InitialIncrementalToken" 0 "$stale_search_out"
 
 status_out="$tmpdir/status.out"
 run_cli "post-incremental status" "$status_out" status --watch-import
-require_text "$status_out" "searchable documents: 2"
+require_text "$status_out" "searchable documents: 3"
 require_text "$status_out" "import tasks queued: 0"
 require_text "$status_out" "search index: available (full-text snapshot)"
 reject_paths "$status_out"

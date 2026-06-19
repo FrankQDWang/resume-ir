@@ -169,6 +169,9 @@ require_text "$daemon_incremental_script" "import --root"
 require_text "$daemon_incremental_script" 'search "$token"'
 require_text "$daemon_incremental_script" "WatcherUpdatedToken"
 require_text "$daemon_incremental_script" "IncrementalNewCandidateToken"
+require_text "$daemon_incremental_script" "synthetic-java-platform.pdf"
+require_text "$daemon_incremental_script" "incremental-pdf.pdf"
+require_text "$daemon_incremental_script" 'wait_for_search_results "pdf"'
 require_text "$daemon_incremental_script" "daemon incremental import check passed"
 
 require_text "$benchmark_smoke_script" "resume-benchmark --locked -- synthetic-query"
