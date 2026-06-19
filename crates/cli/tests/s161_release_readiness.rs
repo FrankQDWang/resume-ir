@@ -1436,10 +1436,11 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
     assert!(provided_labels.contains(&"OCR throughput"));
     assert!(provided_labels.contains(&"embedding model manifest evidence"));
     assert!(!provided_labels.contains(&"embedding model license/distribution"));
-    assert!(provided_labels.contains(&"OCR runtime manifest/dependency evidence"));
+    assert!(provided_labels.contains(&"OCR runtime manifest evidence"));
+    assert!(!provided_labels.contains(&"OCR runtime manifest/dependency evidence"));
     let ocr_runtime_evidence = provided
         .iter()
-        .find(|evidence| evidence["label"] == "OCR runtime manifest/dependency evidence")
+        .find(|evidence| evidence["label"] == "OCR runtime manifest evidence")
         .expect("OCR runtime evidence");
     let ocr_runtime_detail = ocr_runtime_evidence["detail"]
         .as_str()
@@ -1451,7 +1452,7 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
         assert_eq!(evidence["status"], "provided");
         let label = evidence["label"].as_str().expect("provided label");
         let expected_boundary = match label {
-            "embedding model manifest evidence" | "OCR runtime manifest/dependency evidence" => {
+            "embedding model manifest evidence" | "OCR runtime manifest evidence" => {
                 "reviewed_local_manifest"
             }
             _ => "redacted_local_aggregate",
@@ -1470,7 +1471,7 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
     assert!(!blocker_labels.contains(&"vector quality"));
     assert!(!blocker_labels.contains(&"OCR throughput"));
     assert!(blocker_labels.contains(&"embedding model license/distribution"));
-    assert!(!blocker_labels.contains(&"OCR runtime manifest/dependency evidence"));
+    assert!(blocker_labels.contains(&"OCR runtime manifest/dependency evidence"));
     assert!(blocker_labels.contains(&"redacted diagnostics evidence"));
     assert!(blocker_labels.contains(&"signing certificates"));
     assert!(blocker_labels.contains(&"macOS notarization"));
@@ -2593,6 +2594,83 @@ fn release_readiness_keeps_embedding_distribution_blocked_without_matching_packa
 }
 
 #[test]
+fn release_readiness_clears_ocr_runtime_distribution_with_matching_package_payload() {
+    let data_dir = temp_path("release-readiness-ocr-package-private-data");
+    let evidence_dir = temp_path("release-readiness-ocr-package-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let ocr_engine_artifact = evidence_dir.join("reviewed-ocr-engine.bin");
+    let ocr_renderer_artifact = evidence_dir.join("reviewed-ocr-renderer.bin");
+    let ocr_manifest = evidence_dir.join("reviewed-ocr-manifest.json");
+    let macos_package = evidence_dir.join("macos-package.json");
+    write_reviewed_ocr_manifest(&ocr_engine_artifact, &ocr_renderer_artifact, &ocr_manifest);
+    fs::write(&macos_package, macos_package_manifest_with_ocr_runtime()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--ocr-runtime-manifest",
+            path_str(&ocr_manifest),
+            "--macos-package-manifest",
+            path_str(&macos_package),
+        ])
+        .output()
+        .expect("run release readiness with matching OCR package payload");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("release readiness OCR package json report");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence");
+    let provided_labels = provided
+        .iter()
+        .map(|evidence| evidence["label"].as_str().expect("provided label"))
+        .collect::<Vec<_>>();
+    assert!(provided_labels.contains(&"OCR runtime manifest evidence"));
+    assert!(provided_labels.contains(&"OCR runtime manifest/dependency evidence"));
+    assert!(provided_labels.contains(&"macOS package manifest evidence"));
+    let ocr_distribution = provided
+        .iter()
+        .find(|evidence| evidence["label"] == "OCR runtime manifest/dependency evidence")
+        .expect("OCR runtime distribution evidence");
+    assert_eq!(
+        ocr_distribution["privacy_boundary"],
+        "blocked_release_evidence_manifest"
+    );
+    assert!(ocr_distribution["detail"]
+        .as_str()
+        .expect("OCR runtime distribution detail")
+        .contains("matching bundled runtime package payload"));
+
+    let blocker_labels = report["blockers"]
+        .as_array()
+        .expect("blockers")
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(!blocker_labels.contains(&"OCR runtime manifest/dependency evidence"));
+    assert!(blocker_labels.contains(&"signing certificates"));
+    assert!(blocker_labels.contains(&"macOS notarization"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&ocr_engine_artifact)));
+    assert!(!stdout.contains(path_str(&ocr_renderer_artifact)));
+    assert!(!stderr.contains(path_str(&ocr_manifest)));
+    assert!(!stdout.contains("SYNTHETIC"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_benchmark_evidence_below_local_document_floor_without_path_leaks() {
     let data_dir = temp_path("release-readiness-benchmark-floor-private-data");
     let evidence_dir = temp_path("release-readiness-benchmark-floor-private-reports");
@@ -3537,6 +3615,39 @@ fn macos_package_manifest_with_embedding_model() -> String {
         "\"components\":[",
         "{\"id\":\"tesseract\",\"kind\":\"ocr-engine\",\"file\":\"tesseract\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":101,\"license\":\"Apache-2.0\",\"source\":\"https://github.com/tesseract-ocr/tesseract\"},",
         "{\"id\":\"fixture-reviewed-embedding-model\",\"kind\":\"embedding-model\",\"file\":\"model.onnx\",\"sha256\":\"57aac1132f550796663cdadce2ae702cb0bbf96b8620bc12f385d7b8aae0e492\",\"bytes\":32,\"license\":\"Apache-2.0\",\"source\":\"https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2\"}",
+        "]",
+        "},",
+        "\"artifacts\":[",
+        "{\"kind\":\"pkg\",\"file\":\"resume-ir-v0.0.0-macos.pkg\",\"sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"bytes\":404},",
+        "{\"kind\":\"dmg\",\"file\":\"resume-ir-v0.0.0-macos.dmg\",\"sha256\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"bytes\":505}",
+        "],",
+        "\"blocked_release_steps\":[\"signing\",\"notarization\",\"github_release_upload\",\"installer_lifecycle_validation\",\"windows_msi\"],",
+        "\"notes\":\"Unsigned local macOS package dry run only; no signing, notarization, installer lifecycle validation, GitHub Release upload, local data, or runtime data is included.\"",
+        "}"
+    )
+    .to_string()
+}
+
+fn macos_package_manifest_with_ocr_runtime() -> String {
+    concat!(
+        "{",
+        "\"schema_version\":\"release.macos_package.v1\",",
+        "\"version\":\"v0.0.0\",",
+        "\"packaging_status\":\"unsigned_dry_run\",",
+        "\"install_location\":\"/usr/local/bin\",",
+        "\"signing_status\":\"unsigned\",",
+        "\"notarization_status\":\"not_requested\",",
+        "\"runtime_payload\":{",
+        "\"schema_version\":\"release.runtime_package_payload.v1\",",
+        "\"runtime_distribution_mode\":\"bundled\",",
+        "\"runtime_package_binaries_included\":true,",
+        "\"runtime_binaries_included_in_manifest\":false,",
+        "\"install_location\":\"/usr/local/lib/resume-ir/runtime\",",
+        "\"runtime_bundle_manifest\":{\"file\":\"runtime-bundle-manifest.json\",\"sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"bytes\":404,\"schema_version\":\"release.runtime_bundle.v1\",\"runtime_distribution_mode\":\"bundled\"},",
+        "\"components\":[",
+        "{\"id\":\"fixture-tesseract\",\"kind\":\"ocr-engine\",\"file\":\"tesseract\",\"sha256\":\"f4c4eb4c45e595f803f076791dd942e6fd8bb93076207f8830ed6b8694f11e4a\",\"bytes\":101,\"license\":\"Apache-2.0\",\"source\":\"https://github.com/tesseract-ocr/tesseract\"},",
+        "{\"id\":\"fixture-pdftoppm\",\"kind\":\"pdf-renderer\",\"file\":\"pdftoppm\",\"sha256\":\"571699d70504c3e505293c25953a85c38bdc8c13681aed7f7e3c4ce77fc8245f\",\"bytes\":202,\"license\":\"GPL-2.0-or-later\",\"source\":\"https://poppler.freedesktop.org/\"},",
+        "{\"id\":\"fixture-eng-tessdata\",\"kind\":\"ocr-language-pack\",\"file\":\"eng.traineddata\",\"sha256\":\"f4c4eb4c45e595f803f076791dd942e6fd8bb93076207f8830ed6b8694f11e4a\",\"bytes\":303,\"license\":\"Apache-2.0\",\"source\":\"https://github.com/tesseract-ocr/tessdata\"}",
         "]",
         "},",
         "\"artifacts\":[",

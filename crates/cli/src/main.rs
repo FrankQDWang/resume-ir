@@ -137,6 +137,7 @@ const RELEASE_READINESS_DEDUPE_QUALITY_LABEL: &str = "dedupe quality";
 const RELEASE_READINESS_VECTOR_QUALITY_LABEL: &str = "vector quality";
 const RELEASE_READINESS_OCR_THROUGHPUT_LABEL: &str = "OCR throughput";
 const RELEASE_READINESS_OCR_LICENSE_LABEL: &str = "OCR runtime manifest/dependency evidence";
+const RELEASE_READINESS_OCR_MANIFEST_EVIDENCE_LABEL: &str = "OCR runtime manifest evidence";
 const RELEASE_READINESS_MODEL_LICENSE_LABEL: &str = "embedding model license/distribution";
 const RELEASE_READINESS_MODEL_MANIFEST_EVIDENCE_LABEL: &str = "embedding model manifest evidence";
 const RELEASE_READINESS_DIAGNOSTICS_LABEL: &str = "redacted diagnostics evidence";
@@ -864,10 +865,17 @@ fn validate_release_readiness_evidence(
         })?;
         validate_release_readiness_ocr_manifest_coverage(&validation)?;
         provided.push(ReleaseReadinessProvidedEvidence {
-            label: RELEASE_READINESS_OCR_LICENSE_LABEL,
+            label: RELEASE_READINESS_OCR_MANIFEST_EVIDENCE_LABEL,
             privacy_boundary: "reviewed_local_manifest",
             detail: "reviewed bundled-first OCR runtime manifest with external override passed checksum, license, and component coverage validation",
         });
+        if release_readiness_ocr_runtime_distribution_is_packaged(args, &validation)? {
+            provided.push(ReleaseReadinessProvidedEvidence {
+                label: RELEASE_READINESS_OCR_LICENSE_LABEL,
+                privacy_boundary: "blocked_release_evidence_manifest",
+                detail: "reviewed OCR runtime manifest is bound to a matching bundled runtime package payload",
+            });
+        }
     }
     if let Some(path) = &args.diagnostics_report {
         let report = read_release_readiness_evidence_report(path)?;
@@ -1166,6 +1174,117 @@ fn release_package_runtime_payload_contains_embedding_model(
         }
     }
     Ok(false)
+}
+
+fn release_readiness_ocr_runtime_distribution_is_packaged(
+    args: &ReleaseReadinessEvidenceArgs,
+    validation: &OcrRuntimeManifestValidation,
+) -> Result<bool> {
+    let engine_sha256 = validation
+        .components
+        .iter()
+        .filter(|component| component.kind == "ocr-engine")
+        .map(|component| component.sha256.as_str())
+        .collect::<BTreeSet<_>>();
+    let renderer_sha256 = validation
+        .components
+        .iter()
+        .filter(|component| component.kind == "pdf-renderer")
+        .map(|component| component.sha256.as_str())
+        .collect::<BTreeSet<_>>();
+    let language_pack_sha256 = validation
+        .components
+        .iter()
+        .filter(|component| component.kind == "ocr-language-pack")
+        .map(|component| component.sha256.as_str())
+        .chain(
+            validation
+                .languages
+                .iter()
+                .map(|language| language.sha256.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+
+    if engine_sha256.is_empty() || renderer_sha256.is_empty() || language_pack_sha256.is_empty() {
+        return Ok(false);
+    }
+
+    for path in [&args.macos_package_manifest, &args.windows_package_manifest]
+        .into_iter()
+        .flatten()
+    {
+        let report = read_release_readiness_evidence_report(path)?;
+        if release_package_runtime_payload_contains_ocr_runtime(
+            &report,
+            &engine_sha256,
+            &renderer_sha256,
+            &language_pack_sha256,
+        )? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn release_package_runtime_payload_contains_ocr_runtime(
+    report: &str,
+    engine_sha256: &BTreeSet<&str>,
+    renderer_sha256: &BTreeSet<&str>,
+    language_pack_sha256: &BTreeSet<&str>,
+) -> Result<bool> {
+    const CONTEXT: &str = "OCR runtime distribution package payload";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "OCR runtime distribution blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("OCR runtime distribution blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("OCR runtime distribution blocked: expected JSON object"))?;
+    let Some(payload_value) = object.get("runtime_payload") else {
+        return Ok(false);
+    };
+    let payload = payload_value
+        .as_object()
+        .ok_or_else(|| release_evidence_invalid(CONTEXT, "runtime_payload"))?;
+    require_release_evidence_string(
+        payload,
+        "schema_version",
+        "release.runtime_package_payload.v1",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(payload, "runtime_distribution_mode", "bundled", CONTEXT)?;
+    require_release_evidence_bool(payload, "runtime_package_binaries_included", true, CONTEXT)?;
+    let components = require_release_evidence_array(payload, "components", CONTEXT)?;
+
+    let mut has_engine = false;
+    let mut has_renderer = false;
+    let mut has_language_pack = false;
+    for component in components {
+        let component = component
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "components"))?;
+        let kind = require_release_evidence_string_value(component, "kind", CONTEXT)?;
+        let file = require_release_evidence_string_value(component, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        let sha256 = require_release_evidence_sha256_value(component, "sha256", CONTEXT)?;
+        match kind {
+            "ocr-engine" if engine_sha256.contains(sha256) => has_engine = true,
+            "pdf-renderer" if renderer_sha256.contains(sha256) => has_renderer = true,
+            "ocr-language-pack" if language_pack_sha256.contains(sha256) => {
+                has_language_pack = true
+            }
+            _ => {}
+        }
+    }
+
+    Ok(has_engine && has_renderer && has_language_pack)
 }
 
 const SIGNING_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
