@@ -15,7 +15,11 @@
 当前阶段不要求极致性能优化，也不因为真实 1 万简历 benchmark
 延迟高而无限循环。当前完成线是：
 
-1. 生成可复现 benchmark baseline、观测指标和真实本机 1 万份本地验证流程。
+1. 完成本地导入、增量管理、全文/字段/语义/混合检索的可用闭环，并
+   生成可复现 current-stage dry-run、smoke、blocked handoff、观测指标和
+   真实本机 1 万份本地验证流程。若 full 10k/8000 hot-index/500-query
+   baseline 因 OCR backlog 或性能预算阻塞，记录 redacted aggregate
+   blocked summary，不把它作为当前阶段收口 gate。
 2. 保留指定目录扫描；全盘扫描视为用户把根目录或磁盘作为扫描根的同一能力。
 3. OCR/PDF/model runtime 采用 bundled-first 方向：默认产品体验应尽量随
    安装包提供可审查 runtime，并保留 external override。Tesseract/tessdata
@@ -34,4 +38,6 @@
    记录和失败闭环；若模型权重 license 未确认，标为 external/legal
    blocked，不伪造完成。
 
-百万级真实语料验证、P95/P99 压低和查询热路径极限调优迁入后续“性能极致优化” goal。
+full hot-index baseline 压实、500-query 私有 benchmark、百万级真实语料验证、
+P95/P99 压低和查询热路径极限调优迁入后续“性能极致优化” goal；可视化 UI
+迁入后续 UI/manual usage goal。

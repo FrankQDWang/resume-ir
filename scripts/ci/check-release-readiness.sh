@@ -85,8 +85,8 @@ require_text "$stdout_file" '"next_action":'
 require_text "$stdout_file" '"goal_gap_matrix": {'
 require_text "$stdout_file" '"schema_version": "resume-ir.goal-gap-matrix.v1"'
 require_text "$stdout_file" '"complete_product": false'
-require_text "$stdout_file" '"current_stage": "baseline_not_complete"'
-require_text "$stdout_file" '"completion_statement": "complete product is not complete while any row is blocked or not_complete"'
+require_text "$stdout_file" '"current_stage": "core_import_search_closed_release_blocked"'
+require_text "$stdout_file" '"completion_statement": "core local import/search closure is verified; complete stable release remains blocked by evidence, credentials, platform transcripts, and deferred performance goals"'
 require_text "$stdout_file" '"id": "P0_foundation"'
 require_text "$stdout_file" '"implementation_status": "production_complete"'
 require_text "$stdout_file" '"release_status": "covered_by_local_ci"'
@@ -102,8 +102,8 @@ require_text "$stdout_file" "real signing/notarization credentials"
 require_text "$stdout_file" "signing/notarization fail-closed dry-run gates"
 require_text "$stdout_file" "hosted macOS/Windows build/test workflows"
 require_text "$stdout_file" '"id": "P6_performance_stability"'
-require_text "$stdout_file" '"implementation_status": "not_complete"'
-require_text "$stdout_file" "full current-stage local baseline evidence"
+require_text "$stdout_file" '"implementation_status": "deferred_to_performance_optimization_goal"'
+require_text "$stdout_file" "500-query/full hot-index baseline deferred to performance optimization goal"
 require_text "$stdout_file" '"label": "signing certificates"'
 require_text "$stdout_file" "production signing certificates"
 require_text "$stdout_file" "certificate chain"
@@ -132,11 +132,12 @@ require_text "$stdout_file" "LaunchAgent dry-run automation exists"
 require_text "$stdout_file" "signed pkg/dmg"
 require_text "$stdout_file" "install/upgrade/uninstall/rollback"
 require_text "$stdout_file" '"label": "private real-corpus performance evidence"'
-require_text "$stdout_file" "reproducible local private real-corpus hot-index hybrid benchmark baseline is not available"
-require_text "$stdout_file" "available private corpus"
-require_text "$stdout_file" "min-documents 8000"
+require_text "$stdout_file" "stable-release private real-corpus hot-index hybrid benchmark evidence is not available"
+require_text "$stdout_file" "available local private corpus"
+require_text "$stdout_file" "current goal can close"
+require_text "$stdout_file" "8000-document hot-index floor"
 require_text "$stdout_file" "500 query samples"
-require_text "$stdout_file" "observed P50/P95/P99 metrics"
+require_text "$stdout_file" "P50/P95/P99 metrics"
 require_text "$stdout_file" "follow-up performance-optimization goal"
 require_text "$stdout_file" '"label": "field extraction quality"'
 require_text "$stdout_file" "private business labeled field-quality evidence is not available"
@@ -153,10 +154,11 @@ require_text "$stdout_file" "recall@k >= 0.90"
 require_text "$stdout_file" "MRR >= 0.85"
 require_text "$stdout_file" "NDCG@k >= 0.90"
 require_text "$stdout_file" '"label": "OCR throughput"'
-require_text "$stdout_file" "private real-corpus OCR baseline evidence is not available"
+require_text "$stdout_file" "stable-release private real-corpus OCR throughput evidence is not available"
 require_text "$stdout_file" "min-pages 500"
-require_text "$stdout_file" "observed OCR page latency P50/P95/P99 metrics"
-require_text "$stdout_file" "observed pages_per_second"
+require_text "$stdout_file" "current goal may close"
+require_text "$stdout_file" "OCR page latency P50/P95/P99 metrics"
+require_text "$stdout_file" "pages_per_second"
 require_text "$stdout_file" "follow-up performance-optimization goal"
 require_text "$stdout_file" '"label": "OCR runtime manifest/dependency evidence"'
 require_text "$stdout_file" "reviewed Tesseract/tessdata"

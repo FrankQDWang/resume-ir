@@ -46,10 +46,11 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("artifact upload evidence"));
     assert!(stdout.contains("private real-corpus performance evidence: blocked"));
     assert!(stdout.contains("hot-index hybrid"));
-    assert!(stdout.contains("available private corpus"));
-    assert!(stdout.contains("min-documents 8000"));
+    assert!(stdout.contains("available local private corpus"));
+    assert!(stdout.contains("current goal can close"));
+    assert!(stdout.contains("8000-document hot-index floor"));
     assert!(stdout.contains("500 query samples"));
-    assert!(stdout.contains("observed P50/P95/P99 metrics"));
+    assert!(stdout.contains("P50/P95/P99 metrics"));
     assert!(stdout.contains("follow-up performance-optimization goal"));
     assert!(!stdout.contains("100k/1M real-corpus benchmarks: blocked"));
     assert!(!stdout.contains("--require-million-scale"));
@@ -66,8 +67,9 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("NDCG@k >= 0.90"));
     assert!(stdout.contains("OCR throughput: blocked"));
     assert!(stdout.contains("min-pages 500"));
-    assert!(stdout.contains("observed OCR page latency P50/P95/P99 metrics"));
-    assert!(stdout.contains("observed pages_per_second"));
+    assert!(stdout.contains("current goal may close"));
+    assert!(stdout.contains("OCR page latency P50/P95/P99 metrics"));
+    assert!(stdout.contains("pages_per_second"));
     assert!(stdout.contains("follow-up performance-optimization goal"));
     assert!(stdout.contains("OCR runtime manifest/dependency evidence: blocked"));
     assert!(stdout.contains("reviewed Tesseract/tessdata"));
@@ -199,16 +201,20 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
         .expect("benchmark blocker");
     let benchmark_detail = benchmark_blocker["detail"].as_str().unwrap();
     assert!(benchmark_detail.contains("hot-index hybrid"));
-    assert!(benchmark_detail.contains("available private corpus"));
-    assert!(benchmark_detail.contains("min-documents 8000"));
+    assert!(benchmark_detail.contains("current goal can close"));
+    assert!(benchmark_detail.contains("8000-document hot-index floor"));
     assert!(benchmark_detail.contains("500 query samples"));
-    assert!(benchmark_detail.contains("observed P50/P95/P99 metrics"));
+    assert!(benchmark_detail.contains("P50/P95/P99 metrics"));
     assert!(benchmark_detail.contains("follow-up performance-optimization goal"));
     assert!(!benchmark_detail.contains("--require-million-scale"));
     assert_eq!(
         benchmark_blocker["blocked_dependency"]["kind"],
         "local_current_stage_evidence"
     );
+    let benchmark_summary = benchmark_blocker["blocked_dependency"]["summary"]
+        .as_str()
+        .expect("benchmark blocked dependency summary");
+    assert!(benchmark_summary.contains("available local private corpus"));
     assert_eq!(
         benchmark_blocker["blocked_dependency"]["needed_from"],
         "local_private_validation_run"
@@ -314,8 +320,9 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
         .expect("OCR throughput blocker");
     let ocr_detail = ocr_blocker["detail"].as_str().unwrap();
     assert!(ocr_detail.contains("min-pages 500"));
-    assert!(ocr_detail.contains("observed OCR page latency P50/P95/P99 metrics"));
-    assert!(ocr_detail.contains("observed pages_per_second"));
+    assert!(ocr_detail.contains("current goal may close"));
+    assert!(ocr_detail.contains("OCR page latency P50/P95/P99 metrics"));
+    assert!(ocr_detail.contains("pages_per_second"));
     assert!(ocr_detail.contains("follow-up performance-optimization goal"));
 
     let ocr_license_blocker = blockers
@@ -390,10 +397,13 @@ fn release_readiness_json_reports_goal_gap_matrix_without_claiming_complete_prod
     let matrix = &report["goal_gap_matrix"];
     assert_eq!(matrix["schema_version"], "resume-ir.goal-gap-matrix.v1");
     assert_eq!(matrix["complete_product"], false);
-    assert_eq!(matrix["current_stage"], "baseline_not_complete");
+    assert_eq!(
+        matrix["current_stage"],
+        "core_import_search_closed_release_blocked"
+    );
     assert_eq!(
         matrix["completion_statement"],
-        "complete product is not complete while any row is blocked or not_complete"
+        "core local import/search closure is verified; complete stable release remains blocked by evidence, credentials, platform transcripts, and deferred performance goals"
     );
 
     let rows = matrix["rows"].as_array().expect("goal matrix rows");
@@ -465,13 +475,17 @@ fn release_readiness_json_reports_goal_gap_matrix_without_claiming_complete_prod
         .iter()
         .find(|row| row["id"] == "P6_performance_stability")
         .expect("P6 row");
-    assert_eq!(p6["implementation_status"], "not_complete");
+    assert_eq!(
+        p6["implementation_status"],
+        "deferred_to_performance_optimization_goal"
+    );
     assert_eq!(p6["release_status"], "blocked");
     assert!(p6["blocked_by"]
         .as_array()
         .expect("P6 blockers")
         .iter()
-        .any(|item| item == "full current-stage local baseline evidence"));
+        .any(|item| item
+            == "500-query/full hot-index baseline deferred to performance optimization goal"));
 
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stderr.contains(path_str(&data_dir)));

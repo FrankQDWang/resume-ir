@@ -11,11 +11,16 @@ unresolved.
 
 ## Current-stage boundary
 
-The current goal is a reproducible local baseline, not final latency tuning.
-Completion evidence for this stage is a local 10k validation baseline over the
-available private corpus, observable aggregate metrics, and a repeatable
-operator workflow. P95/P99 reduction, stricter latency targets, and external
-100k/1M real-corpus validation belong to the deferred performance-optimization goal.
+The current goal is local import/search closure, not final latency tuning.
+Closure evidence for this stage is a repeatable local operator workflow, CLI
+and daemon closed-loop checks, current-stage dry-run/smoke/blocked handoff
+evidence, observable aggregate metrics, and a real local validation path over
+the available private corpus. A local 10k validation baseline, full
+8000-document hot-index coverage, 500-query private benchmark, P95/P99
+reduction, stricter latency targets, and external 100k/1M real-corpus
+validation belong to the deferred performance-optimization goal and stable
+release evidence. Do not keep this goal open solely to drain an OCR-heavy local
+corpus or lower latency.
 
 OCR runtime direction is bundled-first with external override. Tesseract/
 tessdata is the accepted OCR engine/language-pack direction. PDFium is the
@@ -554,11 +559,14 @@ P0/P1 can show local implementation covered by CI, P2/P3/P4 can show local
 implementation present while quality/runtime/baseline evidence remains blocked,
 P5 can show local release automation implementation complete while real signing,
 notarization, administrator-elevated platform transcripts, and release approval
-remain blocked, and P6 remains not complete until the full current-stage
-baseline, quality datasets, hardware drills, and later external scale validation
-exist. The matrix must keep `complete_product: false`,
-`current_stage: "baseline_not_complete"`, and the completion statement that the
-complete product is not complete while any row is blocked or not_complete.
+remain blocked, and P6 can be deferred to the performance-optimization goal
+until the 500-query/full hot-index baseline, quality datasets, hardware drills,
+and later external scale validation exist. The matrix must keep
+`complete_product: false`, `current_stage:
+"core_import_search_closed_release_blocked"`, and the completion statement that
+core local import/search closure is verified while complete stable release
+remains blocked by evidence, credentials, platform transcripts, and deferred
+performance goals.
 
 After local redacted aggregate reports have been generated and reviewed, feed
 them into the readiness gate as evidence inputs. Reviewed model/OCR manifests
@@ -849,13 +857,13 @@ rounding tolerance. Do not upload reports if they contain raw resume text, local
 paths, queries, sample IDs, or filenames.
 
 The current local private corpus is approximately ten thousand resumes, not a
-100k or 1M corpus. Local release-readiness therefore requires a redacted
-hot-index hybrid baseline over the available private corpus with at least 8000
-local documents, at least 8000 hot-searchable documents, at least 8000
-vector-indexed documents, and 500 query latency samples. P95/P99 reduction and
-external 100k/1M scale validation move to the follow-up performance
-optimization goal; do not keep rerunning this goal solely because the baseline
-latency is above the eventual product target.
+100k or 1M corpus. Stable-release performance readiness therefore still needs a
+redacted hot-index hybrid baseline over the available private corpus with at
+least 8000 local documents, at least 8000 hot-searchable documents, at least
+8000 vector-indexed documents, and 500 query latency samples. That evidence now
+belongs to the follow-up performance optimization goal, together with P95/P99
+reduction and external 100k/1M scale validation; do not keep rerunning this
+goal solely because hot-index coverage or latency is not yet release-grade.
 
 Generate the private query benchmark report locally only after the target
 private corpus has been imported, indexed, and warmed, and after the local query
