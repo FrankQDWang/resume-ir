@@ -866,7 +866,7 @@ fn validate_release_readiness_evidence(
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_OCR_LICENSE_LABEL,
             privacy_boundary: "reviewed_local_manifest",
-            detail: "reviewed external OCR runtime manifest passed checksum, license, and component coverage validation",
+            detail: "reviewed bundled-first OCR runtime manifest with external override passed checksum, license, and component coverage validation",
         });
     }
     if let Some(path) = &args.diagnostics_report {

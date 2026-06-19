@@ -1437,6 +1437,16 @@ fn release_readiness_json_accepts_local_evidence_reports_but_keeps_external_bloc
     assert!(provided_labels.contains(&"embedding model manifest evidence"));
     assert!(!provided_labels.contains(&"embedding model license/distribution"));
     assert!(provided_labels.contains(&"OCR runtime manifest/dependency evidence"));
+    let ocr_runtime_evidence = provided
+        .iter()
+        .find(|evidence| evidence["label"] == "OCR runtime manifest/dependency evidence")
+        .expect("OCR runtime evidence");
+    let ocr_runtime_detail = ocr_runtime_evidence["detail"]
+        .as_str()
+        .expect("OCR runtime evidence detail");
+    assert!(ocr_runtime_detail.contains("bundled-first OCR runtime manifest"));
+    assert!(ocr_runtime_detail.contains("external override"));
+    assert!(!ocr_runtime_detail.contains("external OCR runtime manifest"));
     for evidence in provided {
         assert_eq!(evidence["status"], "provided");
         let label = evidence["label"].as_str().expect("provided label");
