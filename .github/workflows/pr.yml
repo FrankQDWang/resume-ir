@@ -55,6 +55,9 @@ jobs:
       - name: Daemon closed-loop check
         run: ./scripts/ci/check-daemon-closed-loop.sh
 
+      - name: Daemon incremental import check
+        run: ./scripts/ci/check-daemon-incremental-import.sh
+
       - name: License check
         run: ./scripts/ci/check-licenses.sh
 

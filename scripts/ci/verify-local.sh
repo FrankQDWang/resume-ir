@@ -22,6 +22,7 @@ fi
 "$CARGO_BIN" test -p benchmark-runner --locked -- --test-threads=1
 ./scripts/ci/check-cli-closed-loop.sh
 ./scripts/ci/check-daemon-closed-loop.sh
+./scripts/ci/check-daemon-incremental-import.sh
 ./scripts/ci/check-benchmark-smoke.sh
 ./scripts/ci/check-licenses.sh
 ./scripts/ci/check-runtime-bundle-policy.sh

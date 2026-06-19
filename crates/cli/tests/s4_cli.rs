@@ -202,6 +202,73 @@ fn status_reports_latest_import_scan_progress_without_path_leak() {
 }
 
 #[test]
+fn status_watch_import_without_ipc_reports_local_import_scan_progress_without_path_leak() {
+    let data_dir = temp_dir("status-watch-import-local-data");
+    let private_root = temp_dir("status-watch-import-local-private-root");
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_700_000_201);
+    let task_id = ImportTaskId::from_non_secret_parts(&["status-watch-import-local"]);
+    store
+        .insert_import_task(&ImportTask {
+            id: task_id.clone(),
+            root_path: path_str(&private_root).to_string(),
+            status: ImportTaskStatus::Completed,
+            queued_at: now,
+            started_at: Some(now),
+            finished_at: Some(now),
+            updated_at: now,
+        })
+        .unwrap();
+    store
+        .upsert_import_scan_scope(&ImportScanScope {
+            import_task_id: task_id,
+            root_kind: ImportRootKind::Explicit,
+            root_preset: None,
+            scan_profile: ImportScanProfile::Explicit,
+            requested_root_path: path_str(&private_root).to_string(),
+            canonical_root_path: path_str(&private_root).to_string(),
+            files_discovered: 3,
+            ignored_entries: 1,
+            scan_errors: 0,
+            searchable_documents: 2,
+            ocr_required_documents: 0,
+            ocr_jobs_queued: 0,
+            failed_documents: 0,
+            deleted_documents: 1,
+            scan_budget_kind: None,
+            scan_budget_limit: None,
+            scan_budget_observed: None,
+            scan_budget_exhausted: false,
+            updated_at: now,
+        })
+        .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "status",
+            "--watch-import",
+        ])
+        .output()
+        .expect("run resume-cli local status --watch-import");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("resume-ir status"));
+    assert!(stdout.contains("latest import files discovered: 3"));
+    assert!(stdout.contains("latest import searchable documents: 2"));
+    assert!(stdout.contains("latest import deleted documents: 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
 fn import_root_submits_persistent_task_without_path_leak() {
     let data_dir = temp_dir("import-data");
     let root_dir = temp_dir("import-root-private-name");

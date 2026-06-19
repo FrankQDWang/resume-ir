@@ -9189,7 +9189,7 @@ fn parse_status_args(data_dir: &Path, args: &[String]) -> Result<StatusArgs> {
     }
 
     let Some(ipc_value) = ipc_value else {
-        if watch_import {
+        if ipc_token_file.is_some() {
             return Err(CliError::usage(status_usage()));
         }
         return Ok(StatusArgs {
