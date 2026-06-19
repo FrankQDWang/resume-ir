@@ -1207,6 +1207,49 @@ fn release_readiness_json_accepts_platform_package_manifest_evidence_without_cle
 }
 
 #[test]
+fn release_readiness_rejects_package_manifest_with_partial_ocr_runtime_payload_without_path_leaks()
+{
+    let data_dir = temp_path("release-readiness-partial-ocr-package-private-data");
+    let evidence_dir = temp_path("release-readiness-partial-ocr-package-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let macos_package = evidence_dir.join("macos-package.json");
+    fs::write(
+        &macos_package,
+        macos_package_manifest_with_partial_ocr_runtime(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--macos-package-manifest",
+            path_str(&macos_package),
+        ])
+        .output()
+        .expect("run release readiness with partial OCR package manifest payload");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("macOS package manifest evidence"));
+    assert!(stderr.contains("ocr_runtime_components"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_actual_hardware_fault_drill_evidence_without_path_leaks() {
     let data_dir = temp_path("release-readiness-hardware-fault-private-data");
     let evidence_dir = temp_path("release-readiness-hardware-fault-private-reports");
@@ -3568,6 +3611,10 @@ fn github_release_publication_gate_manifest() -> String {
 }
 
 fn macos_package_manifest() -> String {
+    macos_package_manifest_with_ocr_runtime()
+}
+
+fn macos_package_manifest_with_partial_ocr_runtime() -> String {
     concat!(
         "{",
         "\"schema_version\":\"release.macos_package.v1\",",
@@ -3614,6 +3661,8 @@ fn macos_package_manifest_with_embedding_model() -> String {
         "\"runtime_bundle_manifest\":{\"file\":\"runtime-bundle-manifest.json\",\"sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"bytes\":404,\"schema_version\":\"release.runtime_bundle.v1\",\"runtime_distribution_mode\":\"bundled\"},",
         "\"components\":[",
         "{\"id\":\"tesseract\",\"kind\":\"ocr-engine\",\"file\":\"tesseract\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":101,\"license\":\"Apache-2.0\",\"source\":\"https://github.com/tesseract-ocr/tesseract\"},",
+        "{\"id\":\"pdftoppm\",\"kind\":\"pdf-renderer\",\"file\":\"pdftoppm\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"bytes\":202,\"license\":\"GPL-2.0-or-later\",\"source\":\"https://poppler.freedesktop.org/\"},",
+        "{\"id\":\"eng-tessdata\",\"kind\":\"ocr-language-pack\",\"file\":\"eng.traineddata\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"bytes\":303,\"license\":\"Apache-2.0\",\"source\":\"https://github.com/tesseract-ocr/tessdata\"},",
         "{\"id\":\"fixture-reviewed-embedding-model\",\"kind\":\"embedding-model\",\"file\":\"model.onnx\",\"sha256\":\"57aac1132f550796663cdadce2ae702cb0bbf96b8620bc12f385d7b8aae0e492\",\"bytes\":32,\"license\":\"Apache-2.0\",\"source\":\"https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2\"}",
         "]",
         "},",
@@ -3677,7 +3726,11 @@ fn windows_package_manifest() -> String {
         "\"runtime_binaries_included_in_manifest\":false,",
         "\"install_location\":\"ProgramFilesFolder/resume-ir/runtime\",",
         "\"runtime_bundle_manifest\":{\"file\":\"runtime-bundle-manifest.json\",\"sha256\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"bytes\":404,\"schema_version\":\"release.runtime_bundle.v1\",\"runtime_distribution_mode\":\"bundled\"},",
-        "\"components\":[{\"id\":\"tesseract\",\"kind\":\"ocr-engine\",\"file\":\"tesseract.exe\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":101,\"license\":\"Apache-2.0\",\"source\":\"https://github.com/tesseract-ocr/tesseract\"}]",
+        "\"components\":[",
+        "{\"id\":\"tesseract\",\"kind\":\"ocr-engine\",\"file\":\"tesseract.exe\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":101,\"license\":\"Apache-2.0\",\"source\":\"https://github.com/tesseract-ocr/tesseract\"},",
+        "{\"id\":\"pdftoppm\",\"kind\":\"pdf-renderer\",\"file\":\"pdftoppm.exe\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"bytes\":202,\"license\":\"GPL-2.0-or-later\",\"source\":\"https://poppler.freedesktop.org/\"},",
+        "{\"id\":\"eng-tessdata\",\"kind\":\"ocr-language-pack\",\"file\":\"eng.traineddata\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"bytes\":303,\"license\":\"Apache-2.0\",\"source\":\"https://github.com/tesseract-ocr/tessdata\"}",
+        "]",
         "},",
         "\"artifacts\":[",
         "{\"kind\":\"msi\",\"file\":\"resume-ir-v0.0.0-windows.msi\",\"sha256\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"bytes\":606}",

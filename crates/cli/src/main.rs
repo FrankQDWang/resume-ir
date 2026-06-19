@@ -3189,12 +3189,16 @@ fn validate_release_package_runtime_payload(
         return Err(release_evidence_invalid(context, "components"));
     }
     let mut seen_files = BTreeSet::new();
+    let mut ocr_component_kinds = BTreeSet::new();
     for component in components {
         let component = component
             .as_object()
             .ok_or_else(|| release_evidence_invalid(context, "components"))?;
         require_release_evidence_string_value(component, "id", context)?;
-        require_release_evidence_string_value(component, "kind", context)?;
+        let kind = require_release_evidence_string_value(component, "kind", context)?;
+        if matches!(kind, "ocr-engine" | "pdf-renderer" | "ocr-language-pack") {
+            ocr_component_kinds.insert(kind.to_string());
+        }
         let file = require_release_evidence_string_value(component, "file", context)?;
         if !is_release_evidence_basename(file) || !seen_files.insert(file.to_string()) {
             return Err(release_evidence_invalid(context, "components"));
@@ -3210,6 +3214,13 @@ fn validate_release_package_runtime_payload(
         {
             return Err(release_evidence_invalid(context, "source"));
         }
+    }
+    if !ocr_component_kinds.is_empty()
+        && !["ocr-engine", "pdf-renderer", "ocr-language-pack"]
+            .iter()
+            .all(|kind| ocr_component_kinds.contains(*kind))
+    {
+        return Err(release_evidence_invalid(context, "ocr_runtime_components"));
     }
 
     Ok(())
