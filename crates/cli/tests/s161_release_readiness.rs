@@ -3140,6 +3140,52 @@ fn release_readiness_rejects_unreviewed_model_manifest_without_path_leaks() {
 }
 
 #[test]
+fn release_readiness_rejects_model_manifest_unknown_model_field_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-model-unknown-field-private-data");
+    let evidence_dir = temp_path("release-readiness-model-unknown-field-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let model_artifact = evidence_dir.join("reviewed-model-artifact.bin");
+    let model_manifest = evidence_dir.join("reviewed-model-manifest.json");
+    write_reviewed_model_manifest(&model_artifact, &model_manifest);
+    let manifest_text = fs::read_to_string(&model_manifest)
+        .unwrap()
+        .replace(
+            "\"format\": \"onnx\",",
+            "\"format\": \"onnx\",\n      \"private_cache_path\": \"/Users/frank/PRIVATE/model-cache\",",
+        );
+    fs::write(&model_manifest, manifest_text).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--model-manifest",
+            path_str(&model_manifest),
+        ])
+        .output()
+        .expect("reject model manifest with unknown model field");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("embedding model license/distribution"));
+    assert!(stderr.contains("model manifest blocked: private_cache_path is not allowed"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&model_artifact)));
+    assert!(!stderr.contains(path_str(&model_manifest)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+    assert!(!stderr.contains("model-cache"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_keeps_embedding_distribution_blocked_without_matching_package_payload() {
     let data_dir = temp_path("release-readiness-model-manifest-only-private-data");
     let evidence_dir = temp_path("release-readiness-model-manifest-only-private-reports");
@@ -3263,6 +3309,54 @@ fn release_readiness_clears_ocr_runtime_distribution_with_matching_package_paylo
     assert!(!stdout.contains(path_str(&ocr_renderer_artifact)));
     assert!(!stderr.contains(path_str(&ocr_manifest)));
     assert!(!stdout.contains("SYNTHETIC"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_ocr_runtime_manifest_unknown_component_field_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-ocr-unknown-field-private-data");
+    let evidence_dir = temp_path("release-readiness-ocr-unknown-field-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let ocr_engine_artifact = evidence_dir.join("reviewed-ocr-engine.bin");
+    let ocr_renderer_artifact = evidence_dir.join("reviewed-ocr-renderer.bin");
+    let ocr_manifest = evidence_dir.join("reviewed-ocr-manifest.json");
+    write_reviewed_ocr_manifest(&ocr_engine_artifact, &ocr_renderer_artifact, &ocr_manifest);
+    let manifest_text = fs::read_to_string(&ocr_manifest)
+        .unwrap()
+        .replace(
+            "\"version\": \"5.5.1\",",
+            "\"version\": \"5.5.1\",\n      \"runtime_probe_path\": \"/Users/frank/PRIVATE/tesseract\",",
+        );
+    fs::write(&ocr_manifest, manifest_text).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--ocr-runtime-manifest",
+            path_str(&ocr_manifest),
+        ])
+        .output()
+        .expect("reject OCR runtime manifest with unknown component field");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("OCR runtime manifest/dependency evidence"));
+    assert!(stderr.contains("ocr runtime manifest blocked: runtime_probe_path is not allowed"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&ocr_engine_artifact)));
+    assert!(!stderr.contains(path_str(&ocr_renderer_artifact)));
+    assert!(!stderr.contains(path_str(&ocr_manifest)));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stderr.contains("/Users/"));
+    assert!(!stderr.contains("tesseract"));
 
     let _ = fs::remove_dir_all(&data_dir);
     let _ = fs::remove_dir_all(&evidence_dir);

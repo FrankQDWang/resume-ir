@@ -5993,6 +5993,10 @@ fn validate_model_manifest(manifest_path: &Path) -> Result<ModelManifestValidati
         .map_err(|_| CliError::user("model manifest blocked: manifest is unavailable"))?;
     let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
         .map_err(|_| CliError::user("model manifest blocked: invalid manifest"))?;
+    validate_model_manifest_allowed_keys(
+        &manifest_json,
+        &["schema_version", "model_pack_id", "models"],
+    )?;
 
     let schema_version = model_manifest_string(&manifest_json, "schema_version")?;
     if schema_version != MODEL_MANIFEST_SCHEMA_VERSION {
@@ -6023,9 +6027,10 @@ fn validate_model_manifest_model(
     manifest_path: &Path,
     model: &serde_json::Value,
 ) -> Result<ModelManifestModelValidation> {
-    if !model.is_object() {
-        return Err(CliError::user("model manifest blocked: invalid manifest"));
-    }
+    validate_model_manifest_allowed_keys(
+        model,
+        &["id", "type", "dim", "format", "artifact", "license"],
+    )?;
 
     let model_id = model_manifest_string(model, "id")?;
     if !valid_model_manifest_identifier(model_id) {
@@ -6051,6 +6056,7 @@ fn validate_model_manifest_model(
     }
 
     let artifact = model_manifest_object(model, "artifact")?;
+    validate_model_manifest_allowed_keys(artifact, &["path", "sha256"])?;
     let artifact_path = model_manifest_string(artifact, "path")?;
     if artifact_path.trim().is_empty()
         || artifact_path.contains('\n')
@@ -6061,6 +6067,7 @@ fn validate_model_manifest_model(
     let expected_sha256 = model_manifest_sha256(model_manifest_string(artifact, "sha256")?)?;
 
     let license = model_manifest_object(model, "license")?;
+    validate_model_manifest_allowed_keys(license, &["id", "reviewed"])?;
     let license_id = model_manifest_string(license, "id")?;
     if !valid_license_expression(license_id) {
         return Err(CliError::user("model manifest blocked: invalid license"));
@@ -6088,6 +6095,16 @@ fn validate_model_manifest_model(
         dimension,
         sha256: actual_sha256,
     })
+}
+
+fn validate_model_manifest_allowed_keys(
+    value: &serde_json::Value,
+    allowed_keys: &[&str],
+) -> Result<()> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid manifest"))?;
+    validate_release_evidence_allowed_keys(object, allowed_keys, "model manifest")
 }
 
 fn model_manifest_object<'a>(
@@ -6911,6 +6928,15 @@ fn validate_ocr_runtime_manifest(manifest_path: &Path) -> Result<OcrRuntimeManif
         .map_err(|_| CliError::user("ocr runtime manifest blocked: manifest is unavailable"))?;
     let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
         .map_err(|_| CliError::user("ocr runtime manifest blocked: invalid manifest"))?;
+    validate_ocr_runtime_manifest_allowed_keys(
+        &manifest_json,
+        &[
+            "schema_version",
+            "runtime_pack_id",
+            "components",
+            "languages",
+        ],
+    )?;
 
     let schema_version = ocr_manifest_string(&manifest_json, "schema_version")?;
     if schema_version != OCR_RUNTIME_MANIFEST_SCHEMA_VERSION {
@@ -6949,11 +6975,10 @@ fn validate_ocr_runtime_component(
     manifest_path: &Path,
     component: &serde_json::Value,
 ) -> Result<OcrRuntimeComponentValidation> {
-    if !component.is_object() {
-        return Err(CliError::user(
-            "ocr runtime manifest blocked: invalid manifest",
-        ));
-    }
+    validate_ocr_runtime_manifest_allowed_keys(
+        component,
+        &["id", "kind", "engine", "version", "artifact", "license"],
+    )?;
 
     let component_id = ocr_manifest_string(component, "id")?;
     if !valid_model_manifest_identifier(component_id) {
@@ -6996,11 +7021,7 @@ fn validate_ocr_runtime_language(
     manifest_path: &Path,
     language: &serde_json::Value,
 ) -> Result<OcrRuntimeLanguageValidation> {
-    if !language.is_object() {
-        return Err(CliError::user(
-            "ocr runtime manifest blocked: invalid manifest",
-        ));
-    }
+    validate_ocr_runtime_manifest_allowed_keys(language, &["id", "artifact", "license"])?;
     let language_id = ocr_manifest_string(language, "id")?;
     if !valid_model_manifest_identifier(language_id) {
         return Err(CliError::user(
@@ -7021,6 +7042,7 @@ fn validate_ocr_runtime_artifact(
     value: &serde_json::Value,
 ) -> Result<String> {
     let artifact = ocr_manifest_object(value, "artifact")?;
+    validate_ocr_runtime_manifest_allowed_keys(artifact, &["path", "sha256"])?;
     let artifact_path = ocr_manifest_string(artifact, "path")?;
     if artifact_path.trim().is_empty()
         || artifact_path.contains('\n')
@@ -7045,6 +7067,7 @@ fn validate_ocr_runtime_artifact(
 
 fn validate_ocr_manifest_license(value: &serde_json::Value) -> Result<()> {
     let license = ocr_manifest_object(value, "license")?;
+    validate_ocr_runtime_manifest_allowed_keys(license, &["id", "reviewed"])?;
     let license_id = ocr_manifest_string(license, "id")?;
     if !valid_license_expression(license_id) {
         return Err(CliError::user(
@@ -7062,6 +7085,16 @@ fn validate_ocr_manifest_license(value: &serde_json::Value) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn validate_ocr_runtime_manifest_allowed_keys(
+    value: &serde_json::Value,
+    allowed_keys: &[&str],
+) -> Result<()> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("ocr runtime manifest blocked: invalid manifest"))?;
+    validate_release_evidence_allowed_keys(object, allowed_keys, "ocr runtime manifest")
 }
 
 fn ocr_manifest_object<'a>(
