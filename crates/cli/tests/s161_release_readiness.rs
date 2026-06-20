@@ -1481,6 +1481,52 @@ fn release_readiness_json_accepts_verified_github_publication_gate_without_path_
 }
 
 #[test]
+fn release_readiness_rejects_verified_github_publication_gate_synthetic_note_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-github-publication-verified-synthetic-data");
+    let evidence_dir = temp_path("release-readiness-github-publication-verified-synthetic-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let publication_gate = evidence_dir.join("github-release-publication-gate.json");
+    fs::write(
+        &publication_gate,
+        github_release_publication_verified_gate_manifest().replace(
+            "\"notes\":\"Dry-run mode does not call GitHub, read tokens, create releases, or upload artifacts. Execute mode is fail-closed behind explicit approval and token checks.\"",
+            "\"notes\":\"Synthetic verified execute publication gate fixture; no real GitHub API call, token access, release creation, or artifact upload was performed by this check.\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--github-release-publication-gate",
+            path_str(&publication_gate),
+        ])
+        .output()
+        .expect("reject synthetic verified GitHub Release publication gate evidence");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("GitHub Release publication gate evidence"));
+    assert!(stderr.contains("GitHub Release publication gate blocked: notes is invalid"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&publication_gate)));
+    assert!(!stderr.contains(path_str(&publication_gate)));
+    assert!(!stdout.contains("github_token"));
+    assert!(!stderr.contains("github_token"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_github_publication_gate_missing_download_verify_without_path_leaks() {
     let data_dir = temp_path("release-readiness-github-publication-gate-missing-verify-data");
     let evidence_dir =

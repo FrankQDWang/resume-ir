@@ -1844,7 +1844,16 @@ fn validate_github_release_publication_gate_report(
             CONTEXT,
         )?;
     }
-    require_release_evidence_non_empty_string(object, "notes", CONTEXT)?;
+    let notes = require_release_evidence_non_empty_string(object, "notes", CONTEXT)?;
+    if execution_mode == "execute" {
+        let normalized_notes = notes.to_ascii_lowercase();
+        if normalized_notes.contains("synthetic")
+            || normalized_notes.contains("fixture")
+            || normalized_notes.contains("no real")
+        {
+            return Err(release_evidence_invalid(CONTEXT, "notes"));
+        }
+    }
     validate_github_release_publication_gate_artifacts(object, artifact_publish_status)?;
     Ok((privacy_boundary, detail))
 }
