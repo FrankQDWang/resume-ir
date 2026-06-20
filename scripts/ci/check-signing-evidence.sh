@@ -96,6 +96,28 @@ if "$signing_script" --version v0.0.1 --artifact-manifest "$out_dir/release-arti
   fail "signing evidence script accepted a mismatched artifact manifest version"
 fi
 
+unknown_manifest="$tmpdir/release-artifacts-unknown-field.json"
+python3 - "$out_dir/release-artifacts.json" "$unknown_manifest" <<'PY'
+import json
+import sys
+
+source = sys.argv[1]
+target = sys.argv[2]
+
+with open(source, "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+
+document["artifacts"][0]["local_probe_path"] = "PRIVATE-signing-cache"
+
+with open(target, "w", encoding="utf-8") as handle:
+    json.dump(document, handle)
+    handle.write("\n")
+PY
+
+if "$signing_script" --version v0.0.0 --artifact-manifest "$unknown_manifest" --out-dir "$out_dir/unknown" >/dev/null 2>&1; then
+  fail "signing evidence script accepted an unknown artifact manifest field"
+fi
+
 require_text "$verify_script" "./scripts/ci/check-signing-evidence.sh"
 require_text "$workflow_guard" "check-signing-evidence.sh"
 require_text "$release_workflow" "scripts/release/create-signing-evidence.sh"

@@ -77,6 +77,32 @@ def fail(message):
     raise SystemExit(message)
 
 
+def require_allowed_keys(mapping, allowed, context):
+    unexpected = sorted(set(mapping) - set(allowed))
+    if unexpected:
+        fail(f"artifact manifest contains unsupported {context} field")
+
+
+def is_basename(value):
+    return (
+        isinstance(value, str)
+        and value not in {"", ".", ".."}
+        and "/" not in value
+        and "\\" not in value
+        and ":" not in value
+    )
+
+
+def require_sha256(value, message):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        fail(message)
+
+
+def require_positive_int(value, message):
+    if not isinstance(value, int) or value <= 0:
+        fail(message)
+
+
 if not re.fullmatch(r"v[0-9]+[.][0-9]+[.][0-9]+", version):
     fail("version must look like vX.Y.Z")
 
@@ -86,14 +112,70 @@ try:
 except json.JSONDecodeError as error:
     fail(f"artifact manifest is not valid JSON: {error.msg}")
 
+if not isinstance(report, dict):
+    fail("artifact manifest root must be an object")
+require_allowed_keys(
+    report,
+    {
+        "schema_version",
+        "version",
+        "packaging_status",
+        "artifacts",
+        "runtime_bundle_manifests",
+        "blocked_release_steps",
+        "notes",
+    },
+    "root",
+)
 if report.get("schema_version") != "release.artifacts.v1":
     fail("artifact manifest schema_version must be release.artifacts.v1")
 if report.get("version") != version:
     fail("artifact manifest version does not match requested version")
+if report.get("packaging_status") != "blocked":
+    fail("artifact manifest packaging_status must be blocked")
 
 artifacts = report.get("artifacts")
 if not isinstance(artifacts, list) or not artifacts:
     fail("artifact manifest must contain artifacts")
+
+runtime_bundle_manifests = report.get("runtime_bundle_manifests")
+if runtime_bundle_manifests is not None:
+    if not isinstance(runtime_bundle_manifests, list) or not runtime_bundle_manifests:
+        fail("artifact manifest runtime bundle manifests are invalid")
+    for runtime_bundle in runtime_bundle_manifests:
+        if not isinstance(runtime_bundle, dict):
+            fail("artifact manifest runtime bundle entries must be objects")
+        require_allowed_keys(
+            runtime_bundle,
+            {
+                "file",
+                "sha256",
+                "bytes",
+                "schema_version",
+                "runtime_distribution_mode",
+                "runtime_package_binaries_included",
+                "runtime_binaries_included",
+            },
+            "runtime bundle",
+        )
+        if not is_basename(runtime_bundle.get("file")):
+            fail("runtime bundle manifest file must be a basename")
+        require_sha256(
+            runtime_bundle.get("sha256"),
+            "runtime bundle manifest sha256 must be lowercase hex",
+        )
+        require_positive_int(
+            runtime_bundle.get("bytes"),
+            "runtime bundle manifest bytes must be a positive integer",
+        )
+        if runtime_bundle.get("schema_version") != "release.runtime_bundle.v1":
+            fail("runtime bundle manifest schema_version must be release.runtime_bundle.v1")
+        if runtime_bundle.get("runtime_distribution_mode") != "bundled":
+            fail("runtime bundle manifest distribution mode must be bundled")
+        if runtime_bundle.get("runtime_package_binaries_included") is not True:
+            fail("runtime bundle manifest must include package binaries")
+        if runtime_bundle.get("runtime_binaries_included") is not False:
+            fail("runtime bundle manifest must not include raw runtime binaries")
 
 artifact_records = []
 required_names = {"resume-cli", "resume-daemon", "resume-benchmark"}
@@ -101,18 +183,17 @@ seen_names = set()
 for artifact in artifacts:
     if not isinstance(artifact, dict):
         fail("artifact entries must be objects")
+    require_allowed_keys(artifact, {"name", "file", "sha256", "bytes"}, "artifact")
     name = artifact.get("name")
     file_name = artifact.get("file")
     sha256 = artifact.get("sha256")
     bytes_count = artifact.get("bytes")
     if not isinstance(name, str) or name not in required_names:
         fail("artifact name is not a required release binary")
-    if not isinstance(file_name, str) or "/" in file_name or "\\" in file_name:
+    if not is_basename(file_name):
         fail("artifact file must be a basename")
-    if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
-        fail("artifact sha256 must be lowercase hex")
-    if not isinstance(bytes_count, int) or bytes_count <= 0:
-        fail("artifact bytes must be a positive integer")
+    require_sha256(sha256, "artifact sha256 must be lowercase hex")
+    require_positive_int(bytes_count, "artifact bytes must be a positive integer")
     seen_names.add(name)
     artifact_records.append(
         {
