@@ -1082,13 +1082,13 @@ fn validate_release_readiness_evidence(
     }
     if let Some(path) = &args.github_release_publication_gate {
         let report = read_release_readiness_evidence_report(path)?;
-        validate_github_release_publication_gate_report(&report).map_err(|error| {
+        let detail = validate_github_release_publication_gate_report(&report).map_err(|error| {
             release_readiness_manifest_error(RELEASE_READINESS_GITHUB_PUBLICATION_GATE_LABEL, error)
         })?;
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_GITHUB_PUBLICATION_GATE_LABEL,
             privacy_boundary: "blocked_release_evidence_manifest",
-            detail: "release.github_publication_gate.v1 fail-closed dry-run gate passed schema and publication boundary checks",
+            detail,
         });
     }
     if let Some(path) = &args.macos_package_manifest {
@@ -1747,7 +1747,7 @@ fn validate_release_publication_artifacts(
     Ok(())
 }
 
-fn validate_github_release_publication_gate_report(report: &str) -> Result<()> {
+fn validate_github_release_publication_gate_report(report: &str) -> Result<&'static str> {
     const CONTEXT: &str = "GitHub Release publication gate";
     if release_readiness_diagnostics_report_contains_private_marker(report)
         || release_evidence_report_contains_forbidden_marker(report)
@@ -1793,8 +1793,22 @@ fn validate_github_release_publication_gate_report(report: &str) -> Result<()> {
     if !is_github_repo_slug(repo) {
         return Err(release_evidence_invalid(CONTEXT, "repo"));
     }
-    require_release_evidence_string(object, "execution_mode", "dry_run", CONTEXT)?;
-    require_release_evidence_string(object, "publication_status", "blocked", CONTEXT)?;
+    let execution_mode =
+        require_release_evidence_non_empty_string(object, "execution_mode", CONTEXT)?;
+    let (publication_status, artifact_publish_status, detail) = match execution_mode {
+        "dry_run" => (
+            "blocked",
+            "blocked",
+            "release.github_publication_gate.v1 fail-closed dry-run gate passed schema and publication boundary checks",
+        ),
+        "execute" => (
+            "published_verified",
+            "uploaded_verified",
+            "release.github_publication_gate.v1 verified execute gate passed upload and download evidence checks",
+        ),
+        _ => return Err(release_evidence_invalid(CONTEXT, "execution_mode")),
+    };
+    require_release_evidence_string(object, "publication_status", publication_status, CONTEXT)?;
     require_release_evidence_string(
         object,
         "approval_gate",
@@ -1825,12 +1839,13 @@ fn validate_github_release_publication_gate_report(report: &str) -> Result<()> {
         )?;
     }
     require_release_evidence_non_empty_string(object, "notes", CONTEXT)?;
-    validate_github_release_publication_gate_artifacts(object)?;
-    Ok(())
+    validate_github_release_publication_gate_artifacts(object, artifact_publish_status)?;
+    Ok(detail)
 }
 
 fn validate_github_release_publication_gate_artifacts(
     object: &serde_json::Map<String, serde_json::Value>,
+    expected_publish_status: &str,
 ) -> Result<()> {
     const CONTEXT: &str = "GitHub Release publication gate";
     let artifacts = require_release_evidence_array(object, "artifacts", CONTEXT)?;
@@ -1856,7 +1871,12 @@ fn validate_github_release_publication_gate_artifacts(
         }
         require_release_evidence_sha256(artifact, "artifact_sha256", CONTEXT)?;
         require_release_evidence_positive_u64(artifact, "bytes", CONTEXT)?;
-        require_release_evidence_string(artifact, "publish_status", "blocked", CONTEXT)?;
+        require_release_evidence_string(
+            artifact,
+            "publish_status",
+            expected_publish_status,
+            CONTEXT,
+        )?;
     }
     for required in ["resume-cli", "resume-daemon", "resume-benchmark"] {
         if !seen.contains(required) {

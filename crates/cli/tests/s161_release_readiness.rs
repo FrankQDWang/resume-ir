@@ -1412,6 +1412,75 @@ fn release_readiness_json_accepts_github_publication_gate_without_clearing_block
 }
 
 #[test]
+fn release_readiness_json_accepts_verified_github_publication_gate_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-github-publication-verified-data");
+    let evidence_dir = temp_path("release-readiness-github-publication-verified-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let publication_gate = evidence_dir.join("github-release-publication-gate.json");
+    fs::write(
+        &publication_gate,
+        github_release_publication_verified_gate_manifest(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--github-release-publication-gate",
+            path_str(&publication_gate),
+        ])
+        .output()
+        .expect("run release readiness with verified GitHub Release publication gate evidence");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("release readiness verified publication gate json");
+    let provided = report["provided_evidence"]
+        .as_array()
+        .expect("provided evidence array");
+    let gate_evidence = provided
+        .iter()
+        .find(|evidence| {
+            evidence["label"].as_str().expect("provided label")
+                == "GitHub Release publication gate evidence"
+        })
+        .expect("GitHub Release publication gate evidence is provided");
+    assert_eq!(gate_evidence["status"], "provided");
+    assert_eq!(
+        gate_evidence["privacy_boundary"],
+        "blocked_release_evidence_manifest"
+    );
+    assert!(gate_evidence["detail"]
+        .as_str()
+        .expect("provided detail")
+        .contains("verified execute"));
+
+    let blockers = report["blockers"].as_array().expect("blockers array");
+    let blocker_labels = blockers
+        .iter()
+        .map(|blocker| blocker["label"].as_str().expect("blocker label"))
+        .collect::<Vec<_>>();
+    assert!(blocker_labels.contains(&"GitHub Release publication"));
+    assert!(stderr.contains("release readiness blocked"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&publication_gate)));
+    assert!(!stderr.contains(path_str(&publication_gate)));
+    assert!(!stdout.contains("github_token"));
+    assert!(!stderr.contains("github_token"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_rejects_github_publication_gate_missing_download_verify_without_path_leaks() {
     let data_dir = temp_path("release-readiness-github-publication-gate-missing-verify-data");
     let evidence_dir =
@@ -4257,6 +4326,22 @@ fn github_release_publication_gate_manifest() -> String {
         "}"
     )
     .to_string()
+}
+
+fn github_release_publication_verified_gate_manifest() -> String {
+    github_release_publication_gate_manifest()
+        .replace(
+            "\"execution_mode\":\"dry_run\"",
+            "\"execution_mode\":\"execute\"",
+        )
+        .replace(
+            "\"publication_status\":\"blocked\"",
+            "\"publication_status\":\"published_verified\"",
+        )
+        .replace(
+            "\"publish_status\":\"blocked\"",
+            "\"publish_status\":\"uploaded_verified\"",
+        )
 }
 
 fn macos_package_manifest() -> String {
