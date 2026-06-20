@@ -40,8 +40,34 @@ for binary in resume-cli resume-daemon resume-benchmark; do
   printf 'synthetic binary %s\n' "$binary" > "$target_dir/$binary"
   chmod 755 "$target_dir/$binary"
 done
-printf '{"schema_version":"release.runtime_bundle.v1","runtime_distribution_mode":"bundled"}\n' \
-  > "$out_dir/runtime-bundle-manifest.json"
+cat > "$out_dir/runtime-bundle-manifest.json" <<'JSON'
+{
+  "schema_version": "release.runtime_bundle.v1",
+  "version": "v0.0.0",
+  "runtime_pack_id": "reviewed-runtime-pack",
+  "runtime_distribution_mode": "bundled",
+  "runtime_package_binaries_included": true,
+  "runtime_binaries_included": false,
+  "distribution_license": "GPL-3.0-or-later",
+  "legal_review": "reviewed",
+  "source_offer": {
+    "file": "source-offer.txt",
+    "bytes": 101,
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "components": [
+    {
+      "id": "tesseract",
+      "kind": "ocr-engine",
+      "file": "tesseract",
+      "bytes": 202,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "license": {"id": "Apache-2.0", "reviewed": true},
+      "source": "https://github.com/tesseract-ocr/tesseract"
+    }
+  ]
+}
+JSON
 
 "$script" \
   --version v0.0.0 \
@@ -72,6 +98,17 @@ fi
 
 if "$script" --version 0.0.0 --target-dir "$target_dir" --out-dir "$out_dir/invalid" >/dev/null 2>&1; then
   fail "release artifact manifest script accepted an invalid version"
+fi
+
+printf '{"schema_version":"release.runtime_bundle.v1","runtime_distribution_mode":"external","runtime_package_binaries_included":false}\n' \
+  > "$out_dir/invalid-runtime-bundle-manifest.json"
+if "$script" \
+  --version v0.0.1 \
+  --target-dir "$target_dir" \
+  --out-dir "$out_dir/invalid-runtime" \
+  --runtime-bundle-manifest "$out_dir/invalid-runtime-bundle-manifest.json" \
+  >/dev/null 2>&1; then
+  fail "release artifact manifest script accepted an invalid runtime bundle manifest"
 fi
 
 rm "$target_dir/resume-daemon"
