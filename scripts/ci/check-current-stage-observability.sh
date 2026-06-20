@@ -59,7 +59,11 @@ cat >"$valid_summary" <<'JSON'
         "queued": 1123
       }
     },
-    "ingest_job_failure_counts": {}
+    "ingest_job_failure_counts": {},
+    "contains_raw_resume_text": false,
+    "contains_resume_paths": false,
+    "contains_queries": false,
+    "contains_sample_ids": false
   }
 }
 JSON
@@ -87,7 +91,11 @@ cat >"$valid_full" <<'JSON'
         "completed": 8001
       }
     },
-    "ingest_job_failure_counts": {}
+    "ingest_job_failure_counts": {},
+    "contains_raw_resume_text": false,
+    "contains_resume_paths": false,
+    "contains_queries": false,
+    "contains_sample_ids": false
   }
 }
 JSON
@@ -106,7 +114,11 @@ cat >"$below_floor" <<'JSON'
     "document_status_counts": {},
     "ingest_job_status_counts": {},
     "ingest_job_kind_status_counts": {},
-    "ingest_job_failure_counts": {}
+    "ingest_job_failure_counts": {},
+    "contains_raw_resume_text": false,
+    "contains_resume_paths": false,
+    "contains_queries": false,
+    "contains_sample_ids": false
   }
 }
 JSON
@@ -126,7 +138,11 @@ cat >"$bad_vector" <<'JSON'
     "document_status_counts": {},
     "ingest_job_status_counts": {},
     "ingest_job_kind_status_counts": {},
-    "ingest_job_failure_counts": {}
+    "ingest_job_failure_counts": {},
+    "contains_raw_resume_text": false,
+    "contains_resume_paths": false,
+    "contains_queries": false,
+    "contains_sample_ids": false
   }
 }
 JSON
@@ -147,6 +163,10 @@ cat >"$private_field" <<'JSON'
     "ingest_job_status_counts": {},
     "ingest_job_kind_status_counts": {},
     "ingest_job_failure_counts": {},
+    "contains_raw_resume_text": false,
+    "contains_resume_paths": false,
+    "contains_queries": false,
+    "contains_sample_ids": false,
     "data_dir": "/Users/example/private-runtime-data"
   }
 }
@@ -167,7 +187,11 @@ cat >"$full_without_hot_index" <<'JSON'
     "document_status_counts": {},
     "ingest_job_status_counts": {},
     "ingest_job_kind_status_counts": {},
-    "ingest_job_failure_counts": {}
+    "ingest_job_failure_counts": {},
+    "contains_raw_resume_text": false,
+    "contains_resume_paths": false,
+    "contains_queries": false,
+    "contains_sample_ids": false
   }
 }
 JSON
