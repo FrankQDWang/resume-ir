@@ -101,6 +101,26 @@ if "$script" --version v0.0.0 --artifact-manifest "$artifact_manifest_unknown" -
   fail "release publication evidence accepted an unknown artifact manifest field"
 fi
 
+artifact_manifest_duplicate="$tmpdir/release-artifacts-duplicate.json"
+cat > "$artifact_manifest_duplicate" <<'JSON'
+{
+  "schema_version": "release.artifacts.v1",
+  "version": "v0.0.0",
+  "packaging_status": "blocked",
+  "artifacts": [
+    {"name": "resume-cli", "file": "resume-cli", "sha256": "1111111111111111111111111111111111111111111111111111111111111111", "bytes": 101},
+    {"name": "resume-cli", "file": "resume-cli-copy", "sha256": "4444444444444444444444444444444444444444444444444444444444444444", "bytes": 404},
+    {"name": "resume-daemon", "file": "resume-daemon", "sha256": "2222222222222222222222222222222222222222222222222222222222222222", "bytes": 202},
+    {"name": "resume-benchmark", "file": "resume-benchmark", "sha256": "3333333333333333333333333333333333333333333333333333333333333333", "bytes": 303}
+  ],
+  "blocked_release_steps": ["packaging", "signing", "notarization", "github_release_upload"],
+  "notes": "Synthetic dry-run fixture only."
+}
+JSON
+if "$script" --version v0.0.0 --artifact-manifest "$artifact_manifest_duplicate" --out-dir "$out_dir/duplicate-artifact" >/dev/null 2>&1; then
+  fail "release publication evidence accepted duplicate artifact entries"
+fi
+
 "$publish_script" \
   --dry-run \
   --version v0.0.0 \

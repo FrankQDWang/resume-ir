@@ -179,6 +179,7 @@ if runtime_bundle_manifests is not None:
 
 required_names = {"resume-cli", "resume-daemon", "resume-benchmark"}
 seen_names = set()
+seen_files = set()
 publication_artifacts = []
 for artifact in artifacts:
     if not isinstance(artifact, dict):
@@ -194,7 +195,12 @@ for artifact in artifacts:
         fail("artifact file must be a basename")
     require_sha256(sha256, "artifact sha256 must be lowercase hex")
     require_positive_int(bytes_count, "artifact bytes must be a positive integer")
+    if name in seen_names:
+        fail("artifact manifest contains duplicate release artifact name")
+    if file_name in seen_files:
+        fail("artifact manifest contains duplicate release artifact file")
     seen_names.add(name)
+    seen_files.add(file_name)
     publication_artifacts.append(
         {
             "name": name,
