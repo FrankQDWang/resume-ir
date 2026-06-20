@@ -103,6 +103,17 @@ def require_positive_int(value, message):
         fail(message)
 
 
+def require_string_list_contains(mapping, key, expected, message):
+    values = mapping.get(key)
+    if not isinstance(values, list) or not values:
+        fail(f"{message} must be a non-empty list")
+    if any(not isinstance(value, str) or not value for value in values):
+        fail(f"{message} must contain strings")
+    missing = sorted(set(expected) - set(values))
+    if missing:
+        fail(message)
+
+
 if not re.fullmatch(r"v[0-9]+[.][0-9]+[.][0-9]+", version):
     fail("version must look like vX.Y.Z")
 
@@ -133,6 +144,12 @@ if report.get("version") != version:
     fail("artifact manifest version does not match requested version")
 if report.get("packaging_status") != "blocked":
     fail("artifact manifest packaging_status must be blocked")
+require_string_list_contains(
+    report,
+    "blocked_release_steps",
+    {"packaging", "signing", "notarization", "github_release_upload"},
+    "artifact manifest blocked_release_steps is incomplete",
+)
 
 artifacts = report.get("artifacts")
 if not isinstance(artifacts, list) or not artifacts:
