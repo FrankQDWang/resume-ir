@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -13,7 +13,11 @@ use meta_store::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(windows)]
+const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(not(windows))]
+const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(10);
+const IPC_ENDPOINT_POLL_DELAY: Duration = Duration::from_millis(25);
 const IMPORT_WORKER_STATUS_REQUEST_LIMIT: usize = 320;
 const IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS: usize = 260;
 const IMPORT_WORKER_SEARCHABLE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -34,14 +38,12 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let endpoint_manifest_path = data_dir.join("ipc.endpoints.json");
     let endpoint_manifest =
@@ -125,14 +127,12 @@ fn daemon_streams_redacted_import_progress_over_loopback_ipc() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_get_import_progress(&endpoint, Some(&token));
 
@@ -242,14 +242,12 @@ fn daemon_returns_404_for_non_status_ipc_path() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let response = http_get_path(&endpoint, "/not-status");
 
     assert!(response.contains("HTTP/1.1 404 Not Found"));
@@ -279,14 +277,12 @@ fn daemon_requires_bearer_token_for_import_command_ipc() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let response = http_post_import_command(&endpoint, None, &fixture_root, Some(1));
 
     assert!(response.contains("HTTP/1.1 401 Unauthorized"));
@@ -323,14 +319,12 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
             "--max-requests",
             "2",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
     let status_response = http_get(&endpoint);
@@ -394,14 +388,12 @@ fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
             "--max-requests",
             "2",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let first_response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
     assert!(first_response.contains("HTTP/1.1 202 Accepted"));
@@ -458,14 +450,12 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_post_import_command_with_root_preset(
         &endpoint,
@@ -524,14 +514,12 @@ fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
             "--max-requests",
             "2",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_post_import_cancel_command(&endpoint, Some(&token), &task_id);
     assert!(response.contains("HTTP/1.1 202 Accepted"));
@@ -579,14 +567,12 @@ fn daemon_rejects_wrong_bearer_token_for_import_command_ipc() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let response = http_post_import_command(
         &endpoint,
         Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
@@ -623,14 +609,12 @@ fn daemon_rejects_malformed_ipc_request_without_stopping() {
             "--max-requests",
             "2",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let malformed = raw_ipc_request(
         &endpoint,
         b"POST /imports HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: nope\r\n\r\n",
@@ -670,14 +654,12 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
 
@@ -726,14 +708,12 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
             "--max-requests",
             request_limit_arg.as_str(),
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc plus import worker");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, None);
     assert!(response.contains("HTTP/1.1 202 Accepted"));
@@ -790,14 +770,12 @@ fn daemon_repairs_existing_weak_ipc_token_permissions() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let response = http_get(&endpoint);
 
     assert!(response.contains("HTTP/1.1 200 OK"));
@@ -834,14 +812,12 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
             "--max-requests",
             request_limit_arg.as_str(),
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc plus import worker");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let initial_response = http_get(&endpoint);
     assert!(initial_response.contains("HTTP/1.1 200 OK"));
     assert!(initial_response.contains("\"searchable_documents\":0"));
@@ -947,24 +923,56 @@ fn daemon_rejects_worker_tick_limit_in_combined_ipc_worker_mode() {
     remove_dir(&data_dir);
 }
 
-fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {
+fn read_ipc_endpoint(child: &mut Child, data_dir: &Path) -> String {
     let deadline = Instant::now() + IPC_ENDPOINT_TIMEOUT;
-    let mut line = String::new();
+    let manifest_path = data_dir.join("ipc.endpoints.json");
+    let mut last_manifest_state = "<not observed>".to_string();
 
     while Instant::now() < deadline {
-        line.clear();
-        let bytes = stdout.read_line(&mut line).expect("read daemon stdout");
-        if bytes == 0 {
-            continue;
+        if let Some(status) = child.try_wait().expect("poll daemon child") {
+            let stderr = read_child_stderr(child);
+            panic!(
+                "daemon exited before ipc status endpoint was discoverable: {status}\nmanifest: {last_manifest_state}\nstderr:\n{stderr}"
+            );
         }
-        if let Some(endpoint) = line.trim().strip_prefix("ipc status endpoint: ") {
-            return endpoint.to_string();
+
+        match fs::read_to_string(&manifest_path) {
+            Ok(body) => {
+                let manifest: serde_json::Value = match serde_json::from_str(&body) {
+                    Ok(manifest) => manifest,
+                    Err(error) => {
+                        last_manifest_state = format!("invalid json: {error}: {body}");
+                        std::thread::sleep(IPC_ENDPOINT_POLL_DELAY);
+                        continue;
+                    }
+                };
+                if let Some(endpoint) = manifest["status"].as_str() {
+                    return endpoint.to_string();
+                }
+                last_manifest_state = format!("missing status endpoint field: {body}");
+            }
+            Err(error) => {
+                last_manifest_state = format!("unavailable: {error}");
+            }
         }
+
+        std::thread::sleep(IPC_ENDPOINT_POLL_DELAY);
+    }
+
+    if let Some(status) = child.try_wait().expect("poll daemon child") {
+        let stderr = read_child_stderr(child);
+        panic!(
+            "daemon exited before ipc status endpoint was discoverable: {status}\nmanifest: {last_manifest_state}\nstderr:\n{stderr}"
+        );
     }
 
     let _ = child.kill();
     let _ = child.wait();
-    panic!("daemon did not print ipc status endpoint");
+    let stderr = read_child_stderr(child);
+    panic!(
+        "daemon did not make ipc status endpoint discoverable within {:?}\nmanifest: {last_manifest_state}\nstderr:\n{stderr}",
+        IPC_ENDPOINT_TIMEOUT
+    );
 }
 
 fn wait_for_searchable_documents(
