@@ -212,6 +212,7 @@ release_artifacts="$tmpdir/release-artifacts.json"
 release_sbom="$tmpdir/release-sbom.json"
 release_publication_evidence="$tmpdir/release-publication-evidence.json"
 github_publication_gate="$tmpdir/github-release-publication-gate.json"
+github_publication_verified_gate="$tmpdir/github-release-publication-verified-gate.json"
 macos_package="$tmpdir/macos-package.json"
 windows_package="$tmpdir/windows-package.json"
 macos_installer_evidence="$tmpdir/macos-installer-evidence.json"
@@ -225,6 +226,8 @@ current_stage_evidence="$tmpdir/current-stage-validation-evidence.json"
 current_stage_blocked_summary="$tmpdir/current-stage-blocked-summary.json"
 evidence_stdout_file="$tmpdir/evidence-stdout.txt"
 evidence_stderr_file="$tmpdir/evidence-stderr.txt"
+verified_publication_stdout_file="$tmpdir/verified-publication-stdout.txt"
+verified_publication_stderr_file="$tmpdir/verified-publication-stderr.txt"
 blocked_summary_stdout_file="$tmpdir/blocked-summary-stdout.txt"
 blocked_summary_stderr_file="$tmpdir/blocked-summary-stderr.txt"
 
@@ -245,6 +248,9 @@ cat > "$release_publication_evidence" <<'JSON'
 JSON
 cat > "$github_publication_gate" <<'JSON'
 {"schema_version":"release.github_publication_gate.v1","version":"v0.0.0","repo":"FrankQDWang/resume-ir","execution_mode":"dry_run","publication_status":"blocked","approval_gate":"human_release_approval_required","secret_interface":"GITHUB_TOKEN_or_GH_TOKEN_required_for_execute","artifact_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publication_evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","planned_steps":["validate_release_artifact_manifest","validate_publication_evidence_manifest","gh_release_create","gh_release_upload","gh_release_download_verify"],"artifacts":[{"name":"resume-cli","file":"resume-cli","artifact_sha256":"1111111111111111111111111111111111111111111111111111111111111111","bytes":101,"publish_status":"blocked"},{"name":"resume-daemon","file":"resume-daemon","artifact_sha256":"2222222222222222222222222222222222222222222222222222222222222222","bytes":202,"publish_status":"blocked"},{"name":"resume-benchmark","file":"resume-benchmark","artifact_sha256":"3333333333333333333333333333333333333333333333333333333333333333","bytes":303,"publish_status":"blocked"}],"prohibited_public_material":["github_token","release_pat","local_paths","raw_resume_data","diagnostic_packages","model_caches"],"notes":"Dry-run mode does not call GitHub, read tokens, create releases, or upload artifacts. Execute mode is fail-closed behind explicit approval and token checks."}
+JSON
+cat > "$github_publication_verified_gate" <<'JSON'
+{"schema_version":"release.github_publication_gate.v1","version":"v0.0.0","repo":"FrankQDWang/resume-ir","execution_mode":"execute","publication_status":"published_verified","approval_gate":"human_release_approval_required","secret_interface":"GITHUB_TOKEN_or_GH_TOKEN_required_for_execute","artifact_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publication_evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","planned_steps":["validate_release_artifact_manifest","validate_publication_evidence_manifest","gh_release_create","gh_release_upload","gh_release_download_verify"],"artifacts":[{"name":"resume-cli","file":"resume-cli","artifact_sha256":"1111111111111111111111111111111111111111111111111111111111111111","bytes":101,"publish_status":"uploaded_verified"},{"name":"resume-daemon","file":"resume-daemon","artifact_sha256":"2222222222222222222222222222222222222222222222222222222222222222","bytes":202,"publish_status":"uploaded_verified"},{"name":"resume-benchmark","file":"resume-benchmark","artifact_sha256":"3333333333333333333333333333333333333333333333333333333333333333","bytes":303,"publish_status":"uploaded_verified"}],"prohibited_public_material":["github_token","release_pat","local_paths","raw_resume_data","diagnostic_packages","model_caches"],"notes":"Synthetic verified execute publication gate fixture; no real GitHub API call, token access, release creation, or artifact upload was performed by this check."}
 JSON
 cat > "$macos_package" <<'JSON'
 {"schema_version":"release.macos_package.v1","version":"v0.0.0","packaging_status":"unsigned_dry_run","install_location":"/usr/local/bin","signing_status":"unsigned","notarization_status":"not_requested","artifacts":[{"kind":"pkg","file":"resume-ir-v0.0.0-macos.pkg","sha256":"4444444444444444444444444444444444444444444444444444444444444444","bytes":404},{"kind":"dmg","file":"resume-ir-v0.0.0-macos.dmg","sha256":"5555555555555555555555555555555555555555555555555555555555555555","bytes":505}],"blocked_release_steps":["signing","notarization","github_release_upload","installer_lifecycle_validation","windows_msi"],"notes":"Unsigned local macOS package dry run only; no signing, notarization, installer lifecycle validation, GitHub Release upload, local data, or runtime data is included."}
@@ -557,6 +563,37 @@ reject_text "$evidence_stdout_file" "resume-ir-v0.0.0"
 reject_text "$evidence_stderr_file" "resume-ir-v0.0.0"
 reject_text "$evidence_stdout_file" "local-data"
 reject_text "$evidence_stderr_file" "local-data"
+
+set +e
+"$CARGO_BIN" run --quiet -p resume-cli --locked -- \
+  --data-dir "$data_dir" release-readiness --json \
+  --github-release-publication-gate "$github_publication_verified_gate" \
+  > "$verified_publication_stdout_file" 2> "$verified_publication_stderr_file"
+verified_publication_status=$?
+set -e
+
+if [ "$verified_publication_status" -eq 0 ]; then
+  fail "release-readiness command unexpectedly accepted verified publication evidence as a stable release"
+fi
+
+require_text "$verified_publication_stdout_file" '"label": "GitHub Release publication gate evidence"'
+require_text "$verified_publication_stdout_file" '"status": "provided"'
+require_text "$verified_publication_stdout_file" '"privacy_boundary": "verified_release_evidence_manifest"'
+require_text "$verified_publication_stdout_file" "release.github_publication_gate.v1 verified execute gate passed upload and download evidence checks"
+require_text "$verified_publication_stdout_file" '"label": "GitHub Release publication"'
+require_text "$verified_publication_stderr_file" "release readiness blocked: stable release criteria are not met"
+reject_text "$verified_publication_stdout_file" "$tmpdir"
+reject_text "$verified_publication_stderr_file" "$tmpdir"
+reject_text "$verified_publication_stdout_file" "PRIVATE-release-readiness-data"
+reject_text "$verified_publication_stderr_file" "PRIVATE-release-readiness-data"
+reject_text "$verified_publication_stdout_file" "/Users/"
+reject_text "$verified_publication_stderr_file" "/Users/"
+reject_text "$verified_publication_stdout_file" "github_token"
+reject_text "$verified_publication_stderr_file" "github_token"
+reject_text "$verified_publication_stdout_file" "release_pat"
+reject_text "$verified_publication_stderr_file" "release_pat"
+reject_text "$verified_publication_stdout_file" "local-data"
+reject_text "$verified_publication_stderr_file" "local-data"
 
 set +e
 "$CARGO_BIN" run --quiet -p resume-cli --locked -- \
