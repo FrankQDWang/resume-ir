@@ -2831,6 +2831,22 @@ fn validate_macos_package_manifest_report(report: &str) -> Result<()> {
         .as_object()
         .ok_or_else(|| CliError::user("macOS package manifest blocked: expected JSON object"))?;
 
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "packaging_status",
+            "install_location",
+            "signing_status",
+            "notarization_status",
+            "runtime_payload",
+            "artifacts",
+            "blocked_release_steps",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_string(
         object,
         "schema_version",
@@ -2877,6 +2893,22 @@ fn validate_windows_package_manifest_report(report: &str) -> Result<()> {
         .as_object()
         .ok_or_else(|| CliError::user("Windows package manifest blocked: expected JSON object"))?;
 
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "packaging_status",
+            "installer_kind",
+            "install_location",
+            "signing_status",
+            "runtime_payload",
+            "artifacts",
+            "blocked_release_steps",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_string(
         object,
         "schema_version",
@@ -3537,6 +3569,11 @@ fn validate_release_package_artifacts(
         let artifact = artifact
             .as_object()
             .ok_or_else(|| release_evidence_invalid(context, "artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &["kind", "file", "sha256", "bytes"],
+            context,
+        )?;
         let kind = require_release_evidence_string_value(artifact, "kind", context)?;
         if !required_kinds.contains(&kind) {
             return Err(release_evidence_invalid(context, "artifacts"));
