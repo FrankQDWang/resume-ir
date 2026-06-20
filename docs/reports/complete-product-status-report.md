@@ -18,7 +18,7 @@ follow-up goals that must happen before the product can be called complete.
 | P2_fields_dedupe | implementation production complete, release evidence blocked | email/phone/contact redaction, school, degree, major, company, title, skills, certificate, location, date ranges, confidence/evidence, filters, candidate folding, soft dedupe |
 | P3_semantic_vector | implementation production complete, release evidence blocked | local embedding command protocol, model manifest/preflight, persistent vector snapshot, semantic search, hybrid search, RRF, query embedding attestation; runtime bundle guards now require packaged `embedding-model` payload/SBOM coverage |
 | P4_ocr | implementation production complete, release evidence blocked | scanned PDF OCR queue, pdftoppm renderer path, Tesseract worker path, OCR cache, page budget, pause/resume, retry, OCR result indexing, runtime manifest/preflight |
-| P5_cross_platform_release | automation production complete, release evidence blocked | macOS/Windows package dry-runs, install/upgrade/uninstall/rollback plans, Windows service dry-run plan, signing/notarization fail-closed gates, SBOM/runtime bundle checks |
+| P5_cross_platform_release | automation production complete, release evidence blocked | macOS/Windows package dry-runs, install/upgrade/uninstall/rollback plans, Windows service dry-run plan, signing/notarization fail-closed gates, SBOM/runtime bundle checks, GitHub Release dry-run and verified execute-gate evidence intake |
 
 ## 未完成/阻塞项
 
@@ -41,7 +41,7 @@ follow-up goals that must happen before the product can be called complete.
 | Windows installer lifecycle | Administrator-elevated Windows runner transcript for MSI install, upgrade, repair, uninstall, and rollback using fresh release artifacts. |
 | Windows service lifecycle | Administrator-elevated Windows Service install/start/status/stop/recovery/uninstall/rollback transcript. |
 | macOS installer lifecycle | Fresh signed pkg/dmg install, upgrade, uninstall, rollback, LaunchAgent, and Gatekeeper transcript. |
-| GitHub Release publication | Human release approval plus working GitHub release token or Git credential path and artifact upload/download verification. |
+| GitHub Release publication | Human release approval plus working GitHub release token or Git credential path and artifact upload/download verification. Verified execute-mode `release.github_publication_gate.v1` evidence is classified as `verified_release_evidence_manifest`, but it does not clear signing, notarization, platform lifecycle, or private evidence blockers by itself. |
 | private real-corpus performance evidence | Follow-up performance optimization goal: reviewed local OCR/model manifests, hot-index coverage, 500 query samples, and aggregate latency report. |
 | field extraction quality | Private business-labeled field dataset with aggregate precision/recall/F1 across required fields. |
 | dedupe quality | Private labeled pair dataset with enough positive pairs and aggregate precision/recall/F1. |
@@ -85,10 +85,30 @@ python3 -m py_compile scripts/ci/validate-current-stage-observability.py scripts
 sh -n scripts/ci/check-current-stage-validation.sh scripts/ci/check-current-stage-handoff.sh scripts/local/run-current-stage-validation.sh
 ./scripts/ci/check-current-stage-validation.sh
 ./scripts/ci/check-current-stage-handoff.sh
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-release-publication-evidence.sh
 ./scripts/ci/check-runbooks.sh
 ./scripts/ci/guard-public-repo.sh
 git diff --check
 ```
+
+Latest release proof-path refresh after S480:
+
+```text
+sh -n scripts/ci/check-release-readiness.sh
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-release-publication-evidence.sh
+./scripts/ci/check-runbooks.sh
+git diff --check -- AGENTS.md GOAL.md README.md PROGRESS.md docs 01_system_design_系统设计 02_execution_plan_执行方案 scripts Cargo.toml Cargo.lock crates tests
+./scripts/ci/guard-public-repo.sh
+```
+
+Observed result: exit 0 for every command. The refresh covered dry-run GitHub
+Release publication evidence, verified execute-mode gate evidence with
+`verified_release_evidence_manifest`, runbook/report freshness, whitespace
+checks, and the public repository privacy guard. It did not create a GitHub
+Release, upload artifacts, read release tokens, sign packages, notarize
+artifacts, or execute platform lifecycle validation.
 
 Latest PR #9 checks after S444:
 
@@ -105,6 +125,12 @@ windows-latest: pass
 ## git log 摘要
 
 ```text
+7353450 test: cover verified release gate readiness
+ba3f2b8 docs: document verified release gate semantics
+0889e5c fix: classify verified release evidence
+8d9964e fix: accept verified release publication gate
+d3d69e4 fix: report verified release publication status
+792ba2e fix: finalize release gate after verification
 7517df5 fix: preserve current-stage handoff sentinels
 7f8e406 test: require current-stage redaction sentinels
 e3740ed test: harden daemon ipc readiness
@@ -114,7 +140,8 @@ b12159e docs: add current-stage closure report
 
 ## git status
 
-Expected clean branch state after this report slice is committed and pushed:
+Expected clean branch state after this report slice is committed and pushed.
+The exact ahead count is local-state dependent until the branch is pushed:
 
 ```text
 ## codex/fault-injection-diagnostics...origin/codex/fault-injection-diagnostics
