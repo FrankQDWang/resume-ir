@@ -83,12 +83,154 @@ def fail(message):
     sys.exit(1)
 
 
+def require_allowed_keys(mapping, allowed, context):
+    unexpected = sorted(set(mapping) - set(allowed))
+    if unexpected:
+        fail(f"macOS package manifest contains unsupported {context} field")
+
+
+def is_basename(value):
+    return (
+        isinstance(value, str)
+        and value not in {"", ".", ".."}
+        and "/" not in value
+        and "\\" not in value
+        and ":" not in value
+    )
+
+
 def basename_only(value, label):
-    if not isinstance(value, str) or not value:
-        fail(f"{label} must be a non-empty string")
-    if os.path.basename(value) != value:
+    if not is_basename(value):
         fail(f"{label} must be a basename")
     return value
+
+
+def require_string(mapping, key, context):
+    value = mapping.get(key)
+    if not isinstance(value, str) or not value:
+        fail(f"macOS package manifest invalid: {context}.{key}")
+    return value
+
+
+def require_exact_string(mapping, key, expected, context):
+    if mapping.get(key) != expected:
+        fail(f"macOS package manifest invalid: {context}.{key}")
+
+
+def require_bool(mapping, key, expected, context):
+    if mapping.get(key) is not expected:
+        fail(f"macOS package manifest invalid: {context}.{key}")
+
+
+def require_sha256(value, message):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        fail(message)
+
+
+def require_positive_int(value, message):
+    if not isinstance(value, int) or value <= 0:
+        fail(message)
+
+
+def validate_runtime_payload(report):
+    payload = report.get("runtime_payload")
+    if payload is None:
+        return
+    if not isinstance(payload, dict):
+        fail("macOS package manifest runtime payload must be an object")
+    require_allowed_keys(
+        payload,
+        {
+            "schema_version",
+            "runtime_distribution_mode",
+            "runtime_package_binaries_included",
+            "runtime_binaries_included_in_manifest",
+            "install_location",
+            "runtime_bundle_manifest",
+            "components",
+        },
+        "runtime payload",
+    )
+    require_exact_string(
+        payload,
+        "schema_version",
+        "release.runtime_package_payload.v1",
+        "runtime_payload",
+    )
+    require_exact_string(payload, "runtime_distribution_mode", "bundled", "runtime_payload")
+    require_bool(payload, "runtime_package_binaries_included", True, "runtime_payload")
+    require_bool(payload, "runtime_binaries_included_in_manifest", False, "runtime_payload")
+    require_exact_string(
+        payload,
+        "install_location",
+        "/usr/local/lib/resume-ir/runtime",
+        "runtime_payload",
+    )
+
+    bundle_manifest = payload.get("runtime_bundle_manifest")
+    if not isinstance(bundle_manifest, dict):
+        fail("macOS package manifest runtime bundle manifest must be an object")
+    require_allowed_keys(
+        bundle_manifest,
+        {"file", "sha256", "bytes", "schema_version", "runtime_distribution_mode"},
+        "runtime bundle manifest",
+    )
+    if not is_basename(bundle_manifest.get("file")):
+        fail("runtime bundle manifest file must be a basename")
+    require_sha256(
+        bundle_manifest.get("sha256"),
+        "runtime bundle manifest sha256 must be lowercase hex",
+    )
+    require_positive_int(
+        bundle_manifest.get("bytes"),
+        "runtime bundle manifest bytes must be a positive integer",
+    )
+    require_exact_string(
+        bundle_manifest,
+        "schema_version",
+        "release.runtime_bundle.v1",
+        "runtime_bundle_manifest",
+    )
+    require_exact_string(
+        bundle_manifest,
+        "runtime_distribution_mode",
+        "bundled",
+        "runtime_bundle_manifest",
+    )
+
+    components = payload.get("components")
+    if not isinstance(components, list) or not components:
+        fail("macOS package manifest runtime payload must contain components")
+    seen_files = set()
+    ocr_component_kinds = set()
+    for component in components:
+        if not isinstance(component, dict):
+            fail("macOS package manifest runtime payload components must be objects")
+        require_allowed_keys(
+            component,
+            {"id", "kind", "file", "sha256", "bytes", "license", "source"},
+            "runtime component",
+        )
+        require_string(component, "id", "runtime_component")
+        kind = require_string(component, "kind", "runtime_component")
+        if kind in {"ocr-engine", "pdf-renderer", "ocr-language-pack"}:
+            ocr_component_kinds.add(kind)
+        file_name = component.get("file")
+        if not is_basename(file_name) or file_name in seen_files:
+            fail("runtime component file must be a unique basename")
+        seen_files.add(file_name)
+        require_sha256(component.get("sha256"), "runtime component sha256 must be lowercase hex")
+        require_positive_int(component.get("bytes"), "runtime component bytes must be positive")
+        require_string(component, "license", "runtime_component")
+        source = require_string(component, "source", "runtime_component")
+        if source.startswith("/") or "PRIVATE-" in source or "/Users/" in source:
+            fail("runtime component source must not contain local/private markers")
+    if ocr_component_kinds and not {
+        "ocr-engine",
+        "pdf-renderer",
+        "ocr-language-pack",
+    }.issubset(ocr_component_kinds):
+        fail("macOS package manifest runtime payload has partial OCR runtime components")
 
 
 with open(package_manifest_path, "rb") as handle:
@@ -101,6 +243,24 @@ except UnicodeDecodeError:
 except json.JSONDecodeError as error:
     fail(f"macOS package manifest is not valid JSON: {error.msg}")
 
+if not isinstance(report, dict):
+    fail("macOS package manifest root must be an object")
+require_allowed_keys(
+    report,
+    {
+        "schema_version",
+        "version",
+        "packaging_status",
+        "install_location",
+        "signing_status",
+        "notarization_status",
+        "runtime_payload",
+        "artifacts",
+        "blocked_release_steps",
+        "notes",
+    },
+    "root",
+)
 if report.get("schema_version") != "release.macos_package.v1":
     fail("macOS package manifest schema_version must be release.macos_package.v1")
 if report.get("version") != version:
@@ -115,8 +275,18 @@ if report.get("notarization_status") != "not_requested":
     fail("macOS package manifest notarization_status must be not_requested")
 
 blocked_steps = report.get("blocked_release_steps")
-if not isinstance(blocked_steps, list) or "installer_lifecycle_validation" not in blocked_steps:
-    fail("macOS package manifest must keep installer_lifecycle_validation blocked")
+if not isinstance(blocked_steps, list):
+    fail("macOS package manifest blocked_release_steps must be an array")
+for step in [
+    "signing",
+    "notarization",
+    "github_release_upload",
+    "installer_lifecycle_validation",
+]:
+    if step not in blocked_steps:
+        fail("macOS package manifest is missing required blocked release step")
+
+validate_runtime_payload(report)
 
 artifacts = report.get("artifacts")
 if not isinstance(artifacts, list) or not artifacts:
@@ -127,16 +297,15 @@ seen_kinds = set()
 for artifact in artifacts:
     if not isinstance(artifact, dict):
         fail("macOS package artifact must be an object")
+    require_allowed_keys(artifact, {"kind", "file", "sha256", "bytes"}, "artifact")
     kind = artifact.get("kind")
     if kind not in {"pkg", "dmg"}:
         fail("macOS package artifact kind must be pkg or dmg")
     file_name = basename_only(artifact.get("file"), "macOS package artifact file")
     sha256 = artifact.get("sha256")
     byte_count = artifact.get("bytes")
-    if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
-        fail("macOS package artifact sha256 must be lowercase hex")
-    if not isinstance(byte_count, int) or byte_count <= 0:
-        fail("macOS package artifact bytes must be a positive integer")
+    require_sha256(sha256, "macOS package artifact sha256 must be lowercase hex")
+    require_positive_int(byte_count, "macOS package artifact bytes must be a positive integer")
     seen_kinds.add(kind)
     artifact_records.append(
         {

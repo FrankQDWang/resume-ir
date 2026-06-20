@@ -228,6 +228,10 @@ if "$installer_script" --version v0.0.0 --macos-package-manifest "$unknown_manif
   fail "macOS installer evidence script accepted an unknown macOS package manifest field"
 fi
 
+if "$lifecycle_script" --version v0.0.0 --macos-package-manifest "$unknown_manifest" --out "$out_dir/unknown-lifecycle.json" --dry-run >/dev/null 2>&1; then
+  fail "macOS installer lifecycle script accepted an unknown macOS package manifest field"
+fi
+
 require_text "$verify_script" "./scripts/ci/check-macos-installer-evidence.sh"
 require_text "$workflow_guard" "check-macos-installer-evidence.sh"
 require_text "$release_workflow" "scripts/release/create-macos-installer-evidence.sh"
