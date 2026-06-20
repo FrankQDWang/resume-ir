@@ -948,6 +948,52 @@ fn release_readiness_json_accepts_release_artifact_and_sbom_evidence_without_cle
 }
 
 #[test]
+fn release_readiness_rejects_release_artifact_manifest_unknown_field_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-release-manifest-unknown-field-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-release-manifest-unknown-field-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let release_artifacts = evidence_dir.join("release-artifacts.json");
+    fs::write(
+        &release_artifacts,
+        release_artifacts_manifest().replace(
+            "\"packaging_status\":\"blocked\"",
+            "\"packaging_status\":\"blocked\",\"diagnostic_note\":\"redacted\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--release-artifact-manifest",
+            path_str(&release_artifacts),
+        ])
+        .output()
+        .expect("run release readiness with unknown release artifact field");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("release artifact manifest"));
+    assert!(stderr.contains("diagnostic_note is not allowed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_release_publication_evidence_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-release-publication-private-data");
     let evidence_dir = temp_path("release-readiness-release-publication-private-reports");

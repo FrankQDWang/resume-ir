@@ -2358,6 +2358,19 @@ fn validate_release_artifact_manifest_report(report: &str) -> Result<()> {
         .as_object()
         .ok_or_else(|| CliError::user("release artifact manifest blocked: expected JSON object"))?;
 
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "packaging_status",
+            "artifacts",
+            "runtime_bundle_manifests",
+            "blocked_release_steps",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_string(object, "schema_version", "release.artifacts.v1", CONTEXT)?;
     let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
     validate_release_evidence_version(version, CONTEXT)?;
@@ -2370,6 +2383,11 @@ fn validate_release_artifact_manifest_report(report: &str) -> Result<()> {
         let artifact = artifact
             .as_object()
             .ok_or_else(|| release_evidence_invalid(CONTEXT, "artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &["name", "file", "sha256", "bytes"],
+            CONTEXT,
+        )?;
         let name = require_release_evidence_string_value(artifact, "name", CONTEXT)?;
         if !required_names.contains(&name) {
             return Err(release_evidence_invalid(CONTEXT, "artifacts"));
@@ -2400,6 +2418,19 @@ fn validate_release_artifact_manifest_report(report: &str) -> Result<()> {
             let runtime_bundle = runtime_bundle
                 .as_object()
                 .ok_or_else(|| release_evidence_invalid(CONTEXT, "runtime_bundle_manifests"))?;
+            validate_release_evidence_allowed_keys(
+                runtime_bundle,
+                &[
+                    "file",
+                    "sha256",
+                    "bytes",
+                    "schema_version",
+                    "runtime_distribution_mode",
+                    "runtime_package_binaries_included",
+                    "runtime_binaries_included",
+                ],
+                CONTEXT,
+            )?;
             let file = require_release_evidence_string_value(runtime_bundle, "file", CONTEXT)?;
             if !is_release_evidence_basename(file) {
                 return Err(release_evidence_invalid(CONTEXT, "file"));
