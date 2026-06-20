@@ -162,6 +162,27 @@ if "$publish_script" \
   --out-dir "$out_dir/unknown-publication" >/dev/null 2>&1; then
   fail "GitHub Release publication gate accepted an unknown publication evidence field"
 fi
+publication_mismatch="$tmpdir/release-publication-evidence-mismatched-artifact.json"
+python3 - "$manifest" "$publication_mismatch" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+document = json.loads(source.read_text(encoding="utf-8"))
+document["artifacts"][0]["artifact_sha256"] = "9999999999999999999999999999999999999999999999999999999999999999"
+target.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+PY
+if "$publish_script" \
+  --dry-run \
+  --version v0.0.0 \
+  --repo FrankQDWang/resume-ir \
+  --artifact-manifest "$artifact_manifest" \
+  --publication-evidence "$publication_mismatch" \
+  --out-dir "$out_dir/mismatched-publication" >/dev/null 2>&1; then
+  fail "GitHub Release publication gate accepted mismatched publication artifact evidence"
+fi
 if "$publish_script" --execute --version v0.0.0 --repo FrankQDWang/resume-ir --artifact-manifest "$artifact_manifest" --publication-evidence "$manifest" --out-dir "$out_dir/execute" >/dev/null 2>&1; then
   fail "GitHub Release publication execute mode passed without explicit approval"
 fi

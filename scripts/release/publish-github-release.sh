@@ -255,6 +255,8 @@ publication_artifacts = publication_report.get("artifacts")
 if not isinstance(publication_artifacts, list) or not publication_artifacts:
     fail("publication evidence must contain artifacts")
 seen_publication = set()
+seen_publication_files = set()
+publication_by_name = {}
 for artifact in publication_artifacts:
     if not isinstance(artifact, dict):
         fail("publication evidence artifact entries must be objects")
@@ -278,13 +280,25 @@ for artifact in publication_artifacts:
     )
     if artifact.get("upload_status") != "blocked":
         fail("publication evidence artifact upload_status must be blocked")
+    if name in seen_publication:
+        fail("publication evidence contains duplicate artifact name")
+    if file_name in seen_publication_files:
+        fail("publication evidence contains duplicate artifact file")
     seen_publication.add(name)
+    seen_publication_files.add(file_name)
+    publication_by_name[name] = {
+        "file": file_name,
+        "artifact_sha256": sha256,
+        "bytes": bytes_count,
+    }
 if sorted(required_names - seen_publication):
     fail("publication evidence is missing required release binaries")
 
 source_artifacts = artifacts_report.get("artifacts")
 if not isinstance(source_artifacts, list) or not source_artifacts:
     fail("artifact manifest must contain artifacts")
+seen_source = set()
+seen_source_files = set()
 artifacts = []
 for artifact in source_artifacts:
     if not isinstance(artifact, dict):
@@ -300,6 +314,21 @@ for artifact in source_artifacts:
         fail("artifact file must be a basename")
     require_sha256(sha256, "artifact sha256 must be lowercase hex")
     require_positive_int(bytes_count, "artifact bytes must be a positive integer")
+    if name in seen_source:
+        fail("artifact manifest contains duplicate artifact name")
+    if file_name in seen_source_files:
+        fail("artifact manifest contains duplicate artifact file")
+    seen_source.add(name)
+    seen_source_files.add(file_name)
+    publication_artifact = publication_by_name.get(name)
+    if publication_artifact is None:
+        fail("publication evidence is missing artifact from source manifest")
+    if (
+        publication_artifact["file"] != file_name
+        or publication_artifact["artifact_sha256"] != sha256
+        or publication_artifact["bytes"] != bytes_count
+    ):
+        fail("publication evidence artifact does not match source manifest")
     artifacts.append(
         {
             "name": name,
