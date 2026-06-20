@@ -178,6 +178,10 @@ observability = {
     "ingest_job_status_counts": object_field("ingest_job_status_counts"),
     "ingest_job_kind_status_counts": object_field("ingest_job_kind_status_counts"),
     "ingest_job_failure_counts": object_field("ingest_job_failure_counts"),
+    "contains_raw_resume_text": False,
+    "contains_resume_paths": False,
+    "contains_queries": False,
+    "contains_sample_ids": False,
 }
 
 json.dump(observability, sys.stdout, ensure_ascii=True, sort_keys=True, indent=2)

@@ -19,6 +19,12 @@ REQUIRED_MAP_FIELDS = (
     "ingest_job_kind_status_counts",
     "ingest_job_failure_counts",
 )
+REQUIRED_FALSE_FIELDS = (
+    "contains_raw_resume_text",
+    "contains_resume_paths",
+    "contains_queries",
+    "contains_sample_ids",
+)
 FORBIDDEN_FIELDS = (
     "resume_root",
     "data_dir",
@@ -50,6 +56,11 @@ def require_int(value: Any, field: str) -> int:
     if not isinstance(value, int):
         fail(f"{field} must be an integer")
     return value
+
+
+def require_false(value: Any, field: str) -> None:
+    if value is not False:
+        fail(f"{field} must be false")
 
 
 def validate_observability(
@@ -90,6 +101,9 @@ def validate_observability(
     for field in REQUIRED_MAP_FIELDS:
         if not isinstance(observability.get(field), dict):
             fail(f"{field} must be an object")
+
+    for field in REQUIRED_FALSE_FIELDS:
+        require_false(observability.get(field), field)
 
     for field in FORBIDDEN_FIELDS:
         if field in observability:

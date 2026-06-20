@@ -148,6 +148,27 @@ require_file "$verify_script"
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-current-stage-check.XXXXXX")
 trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
 
+observability_good="$tmpdir/observability-good.json"
+observability_missing_redaction="$tmpdir/observability-missing-redaction.json"
+observability_leaking_redaction="$tmpdir/observability-leaking-redaction.json"
+cat > "$observability_good" <<'JSON'
+{"corpus_summary_observability":{"privacy_boundary":"redacted_local_aggregate","document_count":8000,"searchable_document_count":8000,"vector_indexed_document_count":8000,"hot_index_fully_covered":true,"document_status_counts":{},"ingest_job_status_counts":{},"ingest_job_kind_status_counts":{},"ingest_job_failure_counts":{},"contains_raw_resume_text":false,"contains_resume_paths":false,"contains_queries":false,"contains_sample_ids":false}}
+JSON
+cat > "$observability_missing_redaction" <<'JSON'
+{"corpus_summary_observability":{"privacy_boundary":"redacted_local_aggregate","document_count":8000,"searchable_document_count":8000,"vector_indexed_document_count":8000,"hot_index_fully_covered":true,"document_status_counts":{},"ingest_job_status_counts":{},"ingest_job_kind_status_counts":{},"ingest_job_failure_counts":{}}}
+JSON
+cat > "$observability_leaking_redaction" <<'JSON'
+{"corpus_summary_observability":{"privacy_boundary":"redacted_local_aggregate","document_count":8000,"searchable_document_count":8000,"vector_indexed_document_count":8000,"hot_index_fully_covered":true,"document_status_counts":{},"ingest_job_status_counts":{},"ingest_job_kind_status_counts":{},"ingest_job_failure_counts":{},"contains_raw_resume_text":true,"contains_resume_paths":false,"contains_queries":false,"contains_sample_ids":false}}
+JSON
+python3 scripts/ci/validate-current-stage-observability.py --summary "$observability_good" \
+  || fail "current-stage observability validator rejected redacted evidence"
+if python3 scripts/ci/validate-current-stage-observability.py --summary "$observability_missing_redaction" >/dev/null 2>&1; then
+  fail "current-stage observability validator accepted missing redaction sentinels"
+fi
+if python3 scripts/ci/validate-current-stage-observability.py --summary "$observability_leaking_redaction" >/dev/null 2>&1; then
+  fail "current-stage observability validator accepted leaking redaction sentinel"
+fi
+
 plan="$tmpdir/current-stage-validation-plan.json"
 resume_root="$tmpdir/PRIVATE-current-stage-resumes"
 data_dir="$tmpdir/PRIVATE-current-stage-data"
