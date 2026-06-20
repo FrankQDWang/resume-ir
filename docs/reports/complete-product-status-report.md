@@ -81,19 +81,35 @@ Observed result: expected nonzero exit with `stable_release: "blocked"`,
 Focused validation for this report slice:
 
 ```text
+python3 -m py_compile scripts/ci/validate-current-stage-observability.py scripts/local/summarize-current-stage-validation.py
+sh -n scripts/ci/check-current-stage-validation.sh scripts/ci/check-current-stage-handoff.sh scripts/local/run-current-stage-validation.sh
+./scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-handoff.sh
 ./scripts/ci/check-runbooks.sh
 ./scripts/ci/guard-public-repo.sh
 git diff --check
 ```
 
+Latest PR #9 checks after S444:
+
+```text
+dependency tree: pass
+license policy: pass
+public repository guard: pass
+runbook policy: pass
+rust workspace: pass
+macos-latest: pass
+windows-latest: pass
+```
+
 ## git log 摘要
 
 ```text
+7517df5 fix: preserve current-stage handoff sentinels
+7f8e406 test: require current-stage redaction sentinels
+e3740ed test: harden daemon ipc readiness
+75e42ff docs: add complete product status report
 b12159e docs: add current-stage closure report
-d9cd216 docs: classify current-stage handoff blockers
-5df9bbf docs: record current-stage smoke validation
-036789d fix: preserve spdx runtime licenses
-cedb2bc chore: cover incremental pdf import
 ```
 
 ## git status
