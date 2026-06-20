@@ -145,6 +145,17 @@ def require_positive_int(value, message):
         fail(message)
 
 
+def require_string_list_contains(mapping, key, expected, message):
+    values = mapping.get(key)
+    if not isinstance(values, list) or not values:
+        fail(f"{message} must be a non-empty list")
+    if any(not isinstance(value, str) or not value for value in values):
+        fail(f"{message} must contain strings")
+    missing = sorted(set(expected) - set(values))
+    if missing:
+        fail(message)
+
+
 if mode not in {"dry_run", "execute"}:
     fail("mode is invalid")
 if not re.fullmatch(r"v[0-9]+[.][0-9]+[.][0-9]+", version):
@@ -249,6 +260,41 @@ if publication_report.get("evidence_boundary") != "dry_run_no_release_publicatio
     fail("publication evidence boundary is invalid")
 if publication_report.get("artifact_manifest_sha256") != hashlib.sha256(artifact_raw).hexdigest():
     fail("publication evidence artifact manifest digest does not match")
+
+require_string_list_contains(
+    publication_report,
+    "required_evidence",
+    {
+        "human_release_approval",
+        "github_actions_release_token",
+        "github_release_upload_evidence",
+    },
+    "publication evidence required_evidence is incomplete",
+)
+require_string_list_contains(
+    publication_report,
+    "blocked_release_steps",
+    {
+        "github_release_approval",
+        "github_release_create",
+        "github_release_upload",
+        "release_artifact_download_verification",
+    },
+    "publication evidence blocked_release_steps is incomplete",
+)
+require_string_list_contains(
+    publication_report,
+    "prohibited_public_material",
+    {
+        "github_token",
+        "release_pat",
+        "local_paths",
+        "raw_resume_data",
+        "diagnostic_packages",
+        "model_caches",
+    },
+    "publication evidence prohibited_public_material is incomplete",
+)
 
 required_names = {"resume-cli", "resume-daemon", "resume-benchmark"}
 publication_artifacts = publication_report.get("artifacts")

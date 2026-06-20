@@ -183,6 +183,29 @@ if "$publish_script" \
   --out-dir "$out_dir/mismatched-publication" >/dev/null 2>&1; then
   fail "GitHub Release publication gate accepted mismatched publication artifact evidence"
 fi
+publication_missing_required="$tmpdir/release-publication-evidence-missing-required.json"
+python3 - "$manifest" "$publication_missing_required" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+document = json.loads(source.read_text(encoding="utf-8"))
+document["required_evidence"] = ["github_release_upload_evidence"]
+document["blocked_release_steps"] = ["github_release_upload"]
+document["prohibited_public_material"] = ["local_paths"]
+target.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+PY
+if "$publish_script" \
+  --dry-run \
+  --version v0.0.0 \
+  --repo FrankQDWang/resume-ir \
+  --artifact-manifest "$artifact_manifest" \
+  --publication-evidence "$publication_missing_required" \
+  --out-dir "$out_dir/missing-required-publication" >/dev/null 2>&1; then
+  fail "GitHub Release publication gate accepted incomplete publication blocker evidence"
+fi
 if "$publish_script" --execute --version v0.0.0 --repo FrankQDWang/resume-ir --artifact-manifest "$artifact_manifest" --publication-evidence "$manifest" --out-dir "$out_dir/execute" >/dev/null 2>&1; then
   fail "GitHub Release publication execute mode passed without explicit approval"
 fi
