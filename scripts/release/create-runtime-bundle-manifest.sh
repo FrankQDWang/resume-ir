@@ -173,6 +173,7 @@ validate_id("distribution license", distribution_license)
 
 components = []
 seen_ids = set()
+seen_files = set()
 with open(components_path, "r", encoding="utf-8") as handle:
     for line in handle:
         line = line.rstrip("\n")
@@ -191,12 +192,16 @@ with open(components_path, "r", encoding="utf-8") as handle:
             fail("runtime bundle manifest blocked: duplicate component id")
         if not os.path.isfile(artifact_path):
             fail("runtime bundle manifest blocked: component artifact is unavailable")
+        file_name = basename(artifact_path)
+        if file_name in seen_files:
+            fail("runtime bundle manifest blocked: duplicate component file")
+        seen_files.add(file_name)
         seen_ids.add(component_id)
         components.append(
             {
                 "id": component_id,
                 "kind": kind,
-                "file": basename(artifact_path),
+                "file": file_name,
                 "bytes": byte_count(artifact_path),
                 "sha256": sha256_file(artifact_path),
                 "license": {"id": license_id, "reviewed": True},
