@@ -449,6 +449,7 @@ download_dir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-release-download-verify.XXXX
 trap 'rm -rf "$download_dir"' EXIT HUP INT TERM
 
 python3 - "$artifact_manifest" "$artifact_dir" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -460,6 +461,11 @@ for artifact in manifest["artifacts"]:
     path = artifact_dir / file_name
     if not path.is_file():
         raise SystemExit(f"release artifact is missing: {file_name}")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != artifact["sha256"]:
+        raise SystemExit(f"release artifact sha256 mismatch: {file_name}")
+    if len(raw) != artifact["bytes"]:
+        raise SystemExit(f"release artifact byte count mismatch: {file_name}")
 PY
 
 if ! gh release view "$version" --repo "$repo" >/dev/null 2>&1; then

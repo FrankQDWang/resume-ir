@@ -405,6 +405,31 @@ require_text "$fake_log" "release upload"
 if ! grep -Fq "release download" "$fake_log"; then
   fail "GitHub Release publication execute mode did not download uploaded artifacts for verification"
 fi
+corrupt_local_artifact_dir="$tmpdir/corrupt-local-artifacts"
+mkdir -p "$corrupt_local_artifact_dir"
+cp "$execute_artifact_dir/resume-cli" "$corrupt_local_artifact_dir/resume-cli"
+cp "$execute_artifact_dir/resume-daemon" "$corrupt_local_artifact_dir/resume-daemon"
+cp "$execute_artifact_dir/resume-benchmark" "$corrupt_local_artifact_dir/resume-benchmark"
+printf '%s\n' "corrupted local cli release artifact" > "$corrupt_local_artifact_dir/resume-cli"
+: > "$fake_log"
+if PATH="$fake_bin:$PATH" \
+GH_TOKEN="synthetic-token" \
+FAKE_GH_LOG="$fake_log" \
+FAKE_RELEASE_ARTIFACT_DIR="$execute_artifact_dir" \
+  "$publish_script" \
+    --execute \
+    --approve-release \
+    --version v0.0.0 \
+    --repo FrankQDWang/resume-ir \
+    --artifact-manifest "$execute_artifact_manifest" \
+    --publication-evidence "$execute_publication_evidence" \
+    --artifact-dir "$corrupt_local_artifact_dir" \
+    --out-dir "$out_dir/execute-corrupt-local-artifact" >/dev/null 2>&1; then
+  fail "GitHub Release publication execute mode accepted a corrupted local artifact"
+fi
+if grep -Fq "release upload" "$fake_log"; then
+  fail "GitHub Release publication execute mode uploaded before local artifact verification"
+fi
 corrupt_release_artifact_dir="$tmpdir/corrupt-release-artifacts"
 mkdir -p "$corrupt_release_artifact_dir"
 cp "$execute_artifact_dir/resume-cli" "$corrupt_release_artifact_dir/resume-cli"
