@@ -84,6 +84,19 @@ if "$script" \
   fail "runtime bundle manifest script accepted duplicate component artifact basenames"
 fi
 
+if "$script" \
+  --version v0.0.0 \
+  --runtime-pack-id reviewed-runtime-pack \
+  --distribution-license GPL-3.0-or-later \
+  --source-offer "$private_component_dir/source-offer.txt" \
+  --notice "$private_component_dir/source-offer.txt" \
+  --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
+  --reviewed \
+  --out-dir "$out_dir/duplicate-evidence" \
+  >/dev/null 2>&1; then
+  fail "runtime bundle manifest script accepted duplicate evidence file basenames"
+fi
+
 "$script" \
   --version v0.0.0 \
   --runtime-pack-id reviewed-runtime-pack \

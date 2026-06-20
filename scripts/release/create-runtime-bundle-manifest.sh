@@ -212,6 +212,8 @@ with open(components_path, "r", encoding="utf-8") as handle:
 if not components:
     fail("runtime bundle manifest blocked: no components")
 
+source_offer_file = basename(source_offer)
+seen_evidence_files = {source_offer_file}
 notices = []
 with open(notices_path, "r", encoding="utf-8") as handle:
     for line in handle:
@@ -220,9 +222,13 @@ with open(notices_path, "r", encoding="utf-8") as handle:
             continue
         if not os.path.isfile(notice_path):
             fail("runtime bundle manifest blocked: notice file is unavailable")
+        notice_file = basename(notice_path)
+        if notice_file in seen_evidence_files:
+            fail("runtime bundle manifest blocked: duplicate evidence file")
+        seen_evidence_files.add(notice_file)
         notices.append(
             {
-                "file": basename(notice_path),
+                "file": notice_file,
                 "bytes": byte_count(notice_path),
                 "sha256": sha256_file(notice_path),
             }
@@ -238,7 +244,7 @@ document = {
     "distribution_license": distribution_license,
     "legal_review": "reviewed",
     "source_offer": {
-        "file": basename(source_offer),
+        "file": source_offer_file,
         "bytes": byte_count(source_offer),
         "sha256": sha256_file(source_offer),
     },
