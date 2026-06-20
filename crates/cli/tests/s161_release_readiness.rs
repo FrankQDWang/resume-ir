@@ -718,6 +718,97 @@ fn release_readiness_json_accepts_blocked_release_automation_evidence_without_cl
 }
 
 #[test]
+fn release_readiness_rejects_release_automation_evidence_unknown_field_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-automation-unknown-field-private-data");
+    let evidence_dir = temp_path("release-readiness-automation-unknown-field-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let signing_evidence = evidence_dir.join("signing-evidence.json");
+    fs::write(
+        &signing_evidence,
+        blocked_signing_evidence().replace(
+            "\"signing_status\":\"blocked\"",
+            "\"signing_status\":\"blocked\",\"diagnostic_note\":\"redacted\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--signing-evidence",
+            path_str(&signing_evidence),
+        ])
+        .output()
+        .expect("run release readiness with unknown release automation field");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("signing automation evidence"));
+    assert!(stderr.contains("diagnostic_note is not allowed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_release_automation_planned_action_unknown_field_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-automation-action-unknown-field-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-automation-action-unknown-field-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let macos_installer_evidence = evidence_dir.join("macos-installer-evidence.json");
+    fs::write(
+        &macos_installer_evidence,
+        blocked_macos_installer_evidence().replace(
+            "{\"action\":\"install\",\"action_status\":\"blocked\"}",
+            "{\"action\":\"install\",\"diagnostic_note\":\"redacted\",\"action_status\":\"blocked\"}",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--macos-installer-evidence",
+            path_str(&macos_installer_evidence),
+        ])
+        .output()
+        .expect("run release readiness with unknown release automation planned action field");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("macOS installer automation evidence"));
+    assert!(stderr.contains("diagnostic_note is not allowed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_windows_service_lifecycle_plan_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-service-lifecycle-plan-private-data");
     let evidence_dir = temp_path("release-readiness-service-lifecycle-plan-private-reports");

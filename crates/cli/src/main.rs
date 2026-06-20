@@ -1477,6 +1477,7 @@ fn validate_release_automation_evidence_report(
         CliError::user("release automation evidence blocked: expected JSON object")
     })?;
 
+    validate_release_automation_evidence_allowed_keys(object, spec)?;
     require_release_json_string(object, "schema_version", spec.schema_version)?;
     require_release_json_string(object, spec.status_key, "blocked")?;
     require_release_json_string(object, "evidence_boundary", spec.evidence_boundary)?;
@@ -1487,6 +1488,145 @@ fn validate_release_automation_evidence_report(
         require_release_blocked_planned_actions(object)?;
     }
 
+    Ok(())
+}
+
+fn validate_release_automation_evidence_allowed_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    spec: &ReleaseAutomationEvidenceSpec,
+) -> Result<()> {
+    const CONTEXT: &str = "release automation evidence";
+    let allowed_keys = match spec.schema_version {
+        "release.signing_evidence.v1" => &[
+            "schema_version",
+            "version",
+            "signing_status",
+            "evidence_boundary",
+            "artifact_manifest_sha256",
+            "artifacts",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ][..],
+        "release.notarization_evidence.v1" => &[
+            "schema_version",
+            "version",
+            "notarization_status",
+            "evidence_boundary",
+            "macos_package_manifest_sha256",
+            "artifacts",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ][..],
+        "release.macos_installer_evidence.v1" => &[
+            "schema_version",
+            "version",
+            "installer_lifecycle_status",
+            "evidence_boundary",
+            "macos_package_manifest_sha256",
+            "installer_tool",
+            "installer_supporting_tools",
+            "admin_elevation",
+            "installation_status",
+            "rollback_validation_status",
+            "launch_agent_validation_status",
+            "installer_artifacts",
+            "planned_actions",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ][..],
+        "release.windows_installer_evidence.v1" => &[
+            "schema_version",
+            "version",
+            "installer_lifecycle_status",
+            "evidence_boundary",
+            "windows_package_manifest_sha256",
+            "installer_engine",
+            "admin_elevation",
+            "installation_status",
+            "rollback_validation_status",
+            "installer_artifacts",
+            "planned_actions",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ][..],
+        "release.windows_service_evidence.v1" => &[
+            "schema_version",
+            "version",
+            "service_lifecycle_status",
+            "evidence_boundary",
+            "windows_package_manifest_sha256",
+            "service_manager",
+            "admin_elevation",
+            "registration_status",
+            "recovery_validation_status",
+            "installer_artifacts",
+            "planned_actions",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ][..],
+        _ => {
+            return Err(CliError::user(
+                "release automation evidence blocked: schema_version is invalid",
+            ))
+        }
+    };
+    validate_release_evidence_allowed_keys(object, allowed_keys, CONTEXT)?;
+    validate_release_automation_object_array_keys(
+        object,
+        "artifacts",
+        &[
+            "name",
+            "kind",
+            "file",
+            "artifact_sha256",
+            "bytes",
+            "signature_status",
+            "verification_status",
+            "ticket_status",
+            "staple_status",
+            "gatekeeper_status",
+        ],
+    )?;
+    validate_release_automation_object_array_keys(
+        object,
+        "installer_artifacts",
+        &["kind", "file", "artifact_sha256", "bytes"],
+    )?;
+    validate_release_automation_object_array_keys(
+        object,
+        "planned_actions",
+        &["action", "action_status", "required_evidence"],
+    )
+}
+
+fn validate_release_automation_object_array_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    allowed_keys: &[&str],
+) -> Result<()> {
+    const CONTEXT: &str = "release automation evidence";
+    let Some(values) = object.get(key) else {
+        return Ok(());
+    };
+    let values = values
+        .as_array()
+        .ok_or_else(|| CliError::user(format!("{CONTEXT} blocked: {key} is invalid")))?;
+    for value in values {
+        let value = value
+            .as_object()
+            .ok_or_else(|| CliError::user(format!("{CONTEXT} blocked: {key} is invalid")))?;
+        validate_release_evidence_allowed_keys(value, allowed_keys, CONTEXT)?;
+    }
     Ok(())
 }
 
