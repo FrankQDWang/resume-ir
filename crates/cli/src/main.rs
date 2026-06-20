@@ -2970,6 +2970,25 @@ fn validate_macos_installer_lifecycle_plan_report(report: &str) -> Result<()> {
         CliError::user("macOS installer lifecycle plan blocked: expected JSON object")
     })?;
 
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "execution_mode",
+            "installer_lifecycle_status",
+            "evidence_boundary",
+            "macos_package_manifest_sha256",
+            "admin_elevation",
+            "release_runner",
+            "installer_artifacts",
+            "planned_actions",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_string(
         object,
         "schema_version",
@@ -3066,6 +3085,28 @@ fn validate_windows_installer_lifecycle_plan_report(report: &str) -> Result<()> 
         CliError::user("Windows installer lifecycle plan blocked: expected JSON object")
     })?;
 
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "execution_mode",
+            "installer_lifecycle_status",
+            "evidence_boundary",
+            "windows_package_manifest_sha256",
+            "installer_engine",
+            "admin_elevation",
+            "release_runner",
+            "installation_status",
+            "rollback_validation_status",
+            "installer_artifacts",
+            "planned_actions",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_string(
         object,
         "schema_version",
@@ -3156,6 +3197,11 @@ fn validate_installer_lifecycle_artifacts(
         let artifact = artifact
             .as_object()
             .ok_or_else(|| release_evidence_invalid(context, "installer_artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &["kind", "file", "artifact_sha256", "bytes"],
+            context,
+        )?;
         let kind = require_release_evidence_string_value(artifact, "kind", context)?;
         if !required_kinds.contains(&kind) {
             return Err(release_evidence_invalid(context, "installer_artifacts"));
@@ -3196,6 +3242,18 @@ fn validate_installer_lifecycle_actions(
         let action = action
             .as_object()
             .ok_or_else(|| release_evidence_invalid(context, "planned_actions"))?;
+        validate_release_evidence_allowed_keys(
+            action,
+            &[
+                "action",
+                "command",
+                "target_artifact",
+                "dry_run_intent",
+                "requires_approval",
+                "action_status",
+            ],
+            context,
+        )?;
         let action_name = require_release_evidence_string_value(action, "action", context)?;
         if action_name != expected.action || !seen_actions.insert(action_name.to_string()) {
             return Err(release_evidence_invalid(context, "planned_actions"));
@@ -3260,6 +3318,29 @@ fn validate_windows_service_lifecycle_plan_report(report: &str) -> Result<()> {
         CliError::user("Windows service lifecycle plan blocked: expected JSON object")
     })?;
 
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "execution_mode",
+            "service_lifecycle_status",
+            "evidence_boundary",
+            "windows_package_manifest_sha256",
+            "service_manager",
+            "admin_elevation",
+            "release_runner",
+            "registration_status",
+            "recovery_validation_status",
+            "rollback_validation_status",
+            "service_artifacts",
+            "planned_actions",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_string(
         object,
         "schema_version",
@@ -3337,6 +3418,17 @@ fn validate_windows_service_lifecycle_artifacts(
         let artifact = artifact
             .as_object()
             .ok_or_else(|| release_evidence_invalid(CONTEXT, "service_artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &[
+                "kind",
+                "file",
+                "artifact_sha256",
+                "bytes",
+                "service_validation_status",
+            ],
+            CONTEXT,
+        )?;
         require_release_evidence_string(artifact, "kind", "msi", CONTEXT)?;
         let file = require_release_evidence_string_value(artifact, "file", CONTEXT)?;
         if !is_release_evidence_basename(file) {
@@ -3382,6 +3474,18 @@ fn validate_windows_service_lifecycle_actions(
         let action = action
             .as_object()
             .ok_or_else(|| release_evidence_invalid(CONTEXT, "planned_actions"))?;
+        validate_release_evidence_allowed_keys(
+            action,
+            &[
+                "action",
+                "command",
+                "target_artifact",
+                "dry_run_intent",
+                "requires_approval",
+                "action_status",
+            ],
+            CONTEXT,
+        )?;
         let action_name = require_release_evidence_string_value(action, "action", CONTEXT)?;
         if action_name != expected_action || !seen_actions.insert(action_name.to_string()) {
             return Err(release_evidence_invalid(CONTEXT, "planned_actions"));

@@ -962,6 +962,147 @@ fn release_readiness_json_accepts_installer_lifecycle_plans_without_clearing_blo
 }
 
 #[test]
+fn release_readiness_rejects_installer_lifecycle_plan_unknown_field_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-installer-lifecycle-unknown-field-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-installer-lifecycle-unknown-field-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let macos_lifecycle_plan = evidence_dir.join("macos-installer-lifecycle-dry-run.json");
+    fs::write(
+        &macos_lifecycle_plan,
+        blocked_macos_installer_lifecycle_plan().replace(
+            "\"execution_mode\":\"dry_run\"",
+            "\"execution_mode\":\"dry_run\",\"diagnostic_note\":\"redacted\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--macos-installer-lifecycle-plan",
+            path_str(&macos_lifecycle_plan),
+        ])
+        .output()
+        .expect("run release readiness with unknown installer lifecycle plan field");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("macOS installer lifecycle plan evidence"));
+    assert!(stderr.contains("diagnostic_note is not allowed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_installer_lifecycle_plan_action_unknown_field_without_path_leaks() {
+    let data_dir =
+        temp_path("release-readiness-installer-lifecycle-action-unknown-field-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-installer-lifecycle-action-unknown-field-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let windows_lifecycle_plan = evidence_dir.join("windows-installer-lifecycle-dry-run.json");
+    fs::write(
+        &windows_lifecycle_plan,
+        blocked_windows_installer_lifecycle_plan().replace(
+            "\"action\":\"install\",\"command\":\"msiexec.exe\"",
+            "\"action\":\"install\",\"diagnostic_note\":\"redacted\",\"command\":\"msiexec.exe\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--windows-installer-lifecycle-plan",
+            path_str(&windows_lifecycle_plan),
+        ])
+        .output()
+        .expect("run release readiness with unknown installer lifecycle action field");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("Windows installer lifecycle plan evidence"));
+    assert!(stderr.contains("diagnostic_note is not allowed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_windows_service_lifecycle_plan_artifact_unknown_field_without_path_leaks(
+) {
+    let data_dir =
+        temp_path("release-readiness-service-lifecycle-artifact-unknown-field-private-data");
+    let evidence_dir =
+        temp_path("release-readiness-service-lifecycle-artifact-unknown-field-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let lifecycle_plan = evidence_dir.join("windows-service-lifecycle-dry-run.json");
+    fs::write(
+        &lifecycle_plan,
+        blocked_windows_service_lifecycle_plan().replace(
+            "\"kind\":\"msi\",\"file\":\"resume-ir-v0.0.0-windows.msi\"",
+            "\"kind\":\"msi\",\"diagnostic_note\":\"redacted\",\"file\":\"resume-ir-v0.0.0-windows.msi\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--windows-service-lifecycle-plan",
+            path_str(&lifecycle_plan),
+        ])
+        .output()
+        .expect("run release readiness with unknown Windows service lifecycle artifact field");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("Windows service lifecycle plan evidence"));
+    assert!(stderr.contains("diagnostic_note is not allowed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_release_artifact_and_sbom_evidence_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-release-manifest-private-data");
     let evidence_dir = temp_path("release-readiness-release-manifest-private-reports");
