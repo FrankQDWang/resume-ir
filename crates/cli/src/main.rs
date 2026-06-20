@@ -1909,6 +1909,28 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
         CliError::user("current-stage validation evidence blocked: expected JSON object")
     })?;
 
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "privacy_boundary",
+            "current_stage_target",
+            "runtime_distribution_mode",
+            "runtime_package_binaries_included",
+            "performance_optimization_deferred",
+            "release_readiness_exit",
+            "stable_release_expected_blocked",
+            "input_digests",
+            "parameters",
+            "preflight_probes",
+            "corpus_summary_observability",
+            "steps",
+            "redacted_outputs",
+            "privacy_sentinels",
+            "must_not_upload",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_string(
         object,
         "schema_version",
@@ -1933,6 +1955,16 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
     require_release_evidence_bool(object, "stable_release_expected_blocked", true, CONTEXT)?;
 
     let input_digests = require_release_evidence_object(object, "input_digests", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        input_digests,
+        &[
+            "dataset_manifest_sha256",
+            "query_set_sha256",
+            "model_manifest_sha256",
+            "ocr_runtime_manifest_sha256",
+        ],
+        CONTEXT,
+    )?;
     let dataset_manifest_sha256 =
         require_release_evidence_sha256_value(input_digests, "dataset_manifest_sha256", CONTEXT)?;
     let query_set_sha256 =
@@ -1961,6 +1993,18 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
     ]);
 
     let parameters = require_release_evidence_object(object, "parameters", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        parameters,
+        &[
+            "max_files",
+            "max_queries",
+            "top_k",
+            "embedding_dimension",
+            "ocr_worker_ticks",
+            "embedding_worker_ticks",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_min_u64(parameters, "max_files", 8000, CONTEXT)?;
     require_release_evidence_min_u64(parameters, "max_queries", 500, CONTEXT)?;
     for key in [
@@ -1973,6 +2017,11 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
     }
 
     let preflight_probes = require_release_evidence_object(object, "preflight_probes", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        preflight_probes,
+        &["ocr_runtime_probe", "embedding_protocol"],
+        CONTEXT,
+    )?;
     require_release_evidence_string(preflight_probes, "ocr_runtime_probe", "passed", CONTEXT)?;
     require_release_evidence_string(preflight_probes, "embedding_protocol", "passed", CONTEXT)?;
 
@@ -2051,6 +2100,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
         let output = output
             .as_object()
             .ok_or_else(|| release_evidence_invalid(CONTEXT, "redacted_outputs"))?;
+        validate_release_evidence_allowed_keys(output, &["file", "sha256"], CONTEXT)?;
         let file = require_release_evidence_string_value(output, "file", CONTEXT)?;
         if !is_release_evidence_basename(file) {
             return Err(release_evidence_invalid(CONTEXT, "file"));
@@ -2100,6 +2150,18 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
     )?;
 
     let privacy_sentinels = require_release_evidence_object(object, "privacy_sentinels", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        privacy_sentinels,
+        &[
+            "local_paths_included",
+            "raw_resume_text_included",
+            "raw_query_text_included",
+            "model_bytes_included",
+            "runtime_binaries_included",
+            "report_bodies_included",
+        ],
+        CONTEXT,
+    )?;
     for key in [
         "local_paths_included",
         "raw_resume_text_included",
@@ -2272,6 +2334,35 @@ fn validate_current_stage_blocked_summary_manifest(
         CliError::user("current-stage blocked summary blocked: expected JSON object")
     })?;
 
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "privacy_boundary",
+            "validation_profile",
+            "current_stage_target",
+            "runtime_distribution_mode",
+            "runtime_package_binaries_included",
+            "private_corpus_read",
+            "full_baseline_satisfied",
+            "release_readiness_evidence",
+            "performance_optimization_deferred",
+            "blocked_step",
+            "blocked_category",
+            "blocked_reason",
+            "blocked_exit",
+            "input_digests",
+            "parameters",
+            "preflight_probes",
+            "corpus_summary_observability",
+            "steps",
+            "redacted_outputs",
+            "privacy_sentinels",
+            "not_completed",
+            "must_not_upload",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_string(
         object,
         "schema_version",
@@ -2318,6 +2409,16 @@ fn validate_current_stage_blocked_summary_manifest(
         require_release_evidence_positive_u64_value(object, "blocked_exit", CONTEXT)?;
 
     let input_digests = require_release_evidence_object(object, "input_digests", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        input_digests,
+        &[
+            "dataset_manifest_sha256",
+            "query_set_sha256",
+            "model_manifest_sha256",
+            "ocr_runtime_manifest_sha256",
+        ],
+        CONTEXT,
+    )?;
     let mut expected_input_digests = BTreeMap::new();
     for key in [
         "dataset_manifest_sha256",
@@ -2333,6 +2434,22 @@ fn validate_current_stage_blocked_summary_manifest(
     }
 
     let parameters = require_release_evidence_object(object, "parameters", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        parameters,
+        &[
+            "max_files",
+            "max_queries",
+            "top_k",
+            "embedding_dimension",
+            "embedding_runtime_bin_dir_configured",
+            "ocr_worker_ticks",
+            "embedding_worker_ticks",
+            "query_set_min_queries",
+            "baseline_min_documents",
+            "baseline_min_queries",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_min_u64(parameters, "max_files", 8000, CONTEXT)?;
     require_release_evidence_min_u64(parameters, "max_queries", 500, CONTEXT)?;
     require_release_evidence_min_u64(parameters, "baseline_min_documents", 8000, CONTEXT)?;
@@ -2353,6 +2470,11 @@ fn validate_current_stage_blocked_summary_manifest(
     )?;
 
     let preflight_probes = require_release_evidence_object(object, "preflight_probes", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        preflight_probes,
+        &["ocr_runtime_probe", "embedding_protocol"],
+        CONTEXT,
+    )?;
     let ocr_runtime_probe =
         require_release_evidence_string_value(preflight_probes, "ocr_runtime_probe", CONTEXT)?;
     let embedding_protocol =
@@ -2378,6 +2500,7 @@ fn validate_current_stage_blocked_summary_manifest(
         let step = step
             .as_object()
             .ok_or_else(|| release_evidence_invalid(CONTEXT, "steps"))?;
+        validate_release_evidence_allowed_keys(step, &["id", "status", "exit_code"], CONTEXT)?;
         let id = require_release_evidence_non_empty_string(step, "id", CONTEXT)?;
         let status = require_release_evidence_string_value(step, "status", CONTEXT)?;
         if !["success", "blocked", "expected_blocked"].contains(&status) {
@@ -2420,6 +2543,7 @@ fn validate_current_stage_blocked_summary_manifest(
         let output = output
             .as_object()
             .ok_or_else(|| release_evidence_invalid(CONTEXT, "redacted_outputs"))?;
+        validate_release_evidence_allowed_keys(output, &["file", "sha256"], CONTEXT)?;
         let file = require_release_evidence_string_value(output, "file", CONTEXT)?;
         if !is_release_evidence_basename(file) || !seen_outputs.insert(file.to_string()) {
             return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
@@ -2435,6 +2559,18 @@ fn validate_current_stage_blocked_summary_manifest(
     }
 
     let privacy_sentinels = require_release_evidence_object(object, "privacy_sentinels", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        privacy_sentinels,
+        &[
+            "local_paths_included",
+            "raw_resume_text_included",
+            "raw_query_text_included",
+            "model_bytes_included",
+            "runtime_binaries_included",
+            "report_bodies_included",
+        ],
+        CONTEXT,
+    )?;
     for key in [
         "local_paths_included",
         "raw_resume_text_included",
@@ -4080,6 +4216,7 @@ fn require_release_evidence_exact_steps(
         let step = step
             .as_object()
             .ok_or_else(|| release_evidence_invalid(context, "steps"))?;
+        validate_release_evidence_allowed_keys(step, &["id", "status", "exit_code"], context)?;
         let id = step
             .get("id")
             .and_then(serde_json::Value::as_str)
