@@ -2495,6 +2495,21 @@ fn validate_release_sbom_report(report: &str) -> Result<()> {
         .as_object()
         .ok_or_else(|| CliError::user("release SBOM blocked: expected JSON object"))?;
 
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "spdxVersion",
+            "dataLicense",
+            "SPDXID",
+            "name",
+            "documentNamespace",
+            "creationInfo",
+            "packages",
+            "relationships",
+        ],
+        CONTEXT,
+    )?;
+    validate_release_sbom_root_nested_objects(object)?;
     require_release_evidence_string(object, "spdxVersion", "SPDX-2.3", CONTEXT)?;
     require_release_evidence_string(object, "SPDXID", "SPDXRef-DOCUMENT", CONTEXT)?;
     let name = require_release_evidence_string_value(object, "name", CONTEXT)?;
@@ -2510,6 +2525,26 @@ fn validate_release_sbom_report(report: &str) -> Result<()> {
         let package = package
             .as_object()
             .ok_or_else(|| release_evidence_invalid(CONTEXT, "packages"))?;
+        validate_release_evidence_allowed_keys(
+            package,
+            &[
+                "SPDXID",
+                "name",
+                "versionInfo",
+                "supplier",
+                "downloadLocation",
+                "filesAnalyzed",
+                "licenseConcluded",
+                "licenseDeclared",
+                "copyrightText",
+                "checksums",
+                "annotations",
+                "externalRefs",
+                "dependencies",
+            ],
+            CONTEXT,
+        )?;
+        validate_release_sbom_package_nested_objects(package)?;
         let name = require_release_evidence_string_value(package, "name", CONTEXT)?;
         if required_names.contains(&name) {
             seen_names.insert(name.to_string());
@@ -2534,6 +2569,110 @@ fn validate_release_sbom_report(report: &str) -> Result<()> {
         return Err(release_evidence_invalid(CONTEXT, "packages"));
     }
 
+    Ok(())
+}
+
+fn validate_release_sbom_root_nested_objects(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    const CONTEXT: &str = "release SBOM";
+    if let Some(creation_info) = object.get("creationInfo") {
+        let creation_info = creation_info
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "creationInfo"))?;
+        validate_release_evidence_allowed_keys(creation_info, &["created", "creators"], CONTEXT)?;
+    }
+    if let Some(relationships) = object.get("relationships") {
+        let relationships = relationships
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "relationships"))?;
+        for relationship in relationships {
+            let relationship = relationship
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "relationships"))?;
+            validate_release_evidence_allowed_keys(
+                relationship,
+                &["spdxElementId", "relationshipType", "relatedSpdxElement"],
+                CONTEXT,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_release_sbom_package_nested_objects(
+    package: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    const CONTEXT: &str = "release SBOM";
+    if let Some(checksums) = package.get("checksums") {
+        let checksums = checksums
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "checksums"))?;
+        for checksum in checksums {
+            let checksum = checksum
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "checksums"))?;
+            validate_release_evidence_allowed_keys(
+                checksum,
+                &["algorithm", "checksumValue"],
+                CONTEXT,
+            )?;
+        }
+    }
+    if let Some(annotations) = package.get("annotations") {
+        let annotations = annotations
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "annotations"))?;
+        for annotation in annotations {
+            let annotation = annotation
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "annotations"))?;
+            validate_release_evidence_allowed_keys(
+                annotation,
+                &["annotationType", "annotator", "annotationDate", "comment"],
+                CONTEXT,
+            )?;
+        }
+    }
+    if let Some(external_refs) = package.get("externalRefs") {
+        let external_refs = external_refs
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "externalRefs"))?;
+        for external_ref in external_refs {
+            let external_ref = external_ref
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "externalRefs"))?;
+            validate_release_evidence_allowed_keys(
+                external_ref,
+                &["referenceCategory", "referenceType", "referenceLocator"],
+                CONTEXT,
+            )?;
+        }
+    }
+    if let Some(dependencies) = package.get("dependencies") {
+        let dependencies = dependencies
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "dependencies"))?;
+        for dependency in dependencies {
+            let dependency = dependency
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "dependencies"))?;
+            validate_release_evidence_allowed_keys(
+                dependency,
+                &[
+                    "name",
+                    "req",
+                    "kind",
+                    "optional",
+                    "uses_default_features",
+                    "features",
+                    "rename",
+                    "target",
+                ],
+                CONTEXT,
+            )?;
+        }
+    }
     Ok(())
 }
 

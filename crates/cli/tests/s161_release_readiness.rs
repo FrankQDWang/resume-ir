@@ -994,6 +994,51 @@ fn release_readiness_rejects_release_artifact_manifest_unknown_field_without_pat
 }
 
 #[test]
+fn release_readiness_rejects_release_sbom_unknown_package_field_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-sbom-unknown-field-private-data");
+    let evidence_dir = temp_path("release-readiness-sbom-unknown-field-private-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let release_sbom = evidence_dir.join("release-sbom.json");
+    fs::write(
+        &release_sbom,
+        release_sbom_manifest().replace(
+            "\"filesAnalyzed\":false,\"licenseDeclared\":\"MIT\"",
+            "\"filesAnalyzed\":false,\"diagnostic_note\":\"redacted\",\"licenseDeclared\":\"MIT\"",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--release-sbom",
+            path_str(&release_sbom),
+        ])
+        .output()
+        .expect("run release readiness with unknown release SBOM package field");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("release SBOM"));
+    assert!(stderr.contains("diagnostic_note is not allowed"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_release_publication_evidence_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-release-publication-private-data");
     let evidence_dir = temp_path("release-readiness-release-publication-private-reports");
