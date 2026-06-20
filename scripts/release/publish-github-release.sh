@@ -445,6 +445,8 @@ if [ -z "${GITHUB_TOKEN:-}" ] && [ -z "${GH_TOKEN:-}" ]; then
   fail "execute mode requires GITHUB_TOKEN or GH_TOKEN"
 fi
 command -v gh >/dev/null 2>&1 || fail "execute mode requires gh"
+download_dir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-release-download-verify.XXXXXX")
+trap 'rm -rf "$download_dir"' EXIT HUP INT TERM
 
 python3 - "$artifact_manifest" "$artifact_dir" <<'PY'
 import json
@@ -476,5 +478,37 @@ for artifact in manifest["artifacts"]:
 PY
   gh release upload "$version" "$artifact_path" --repo "$repo" --clobber
 done
+
+python3 - "$artifact_manifest" <<'PY' | while IFS= read -r artifact_file; do
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for artifact in manifest["artifacts"]:
+    print(artifact["file"])
+PY
+  gh release download "$version" --repo "$repo" --dir "$download_dir" --pattern "$artifact_file"
+done
+
+python3 - "$artifact_manifest" "$download_dir" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+download_dir = Path(sys.argv[2])
+for artifact in manifest["artifacts"]:
+    file_name = artifact["file"]
+    path = download_dir / file_name
+    if not path.is_file():
+        raise SystemExit(f"downloaded release artifact is missing: {file_name}")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != artifact["sha256"]:
+        raise SystemExit(f"downloaded release artifact sha256 mismatch: {file_name}")
+    if len(raw) != artifact["bytes"]:
+        raise SystemExit(f"downloaded release artifact byte count mismatch: {file_name}")
+PY
 
 printf '%s\n' "$gate"

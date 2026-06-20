@@ -266,6 +266,166 @@ fi
 if "$publish_script" --execute --version v0.0.0 --repo FrankQDWang/resume-ir --artifact-manifest "$artifact_manifest" --publication-evidence "$manifest" --out-dir "$out_dir/execute" >/dev/null 2>&1; then
   fail "GitHub Release publication execute mode passed without explicit approval"
 fi
+execute_artifact_dir="$tmpdir/execute-artifacts"
+mkdir -p "$execute_artifact_dir"
+printf '%s\n' "synthetic cli release artifact" > "$execute_artifact_dir/resume-cli"
+printf '%s\n' "synthetic daemon release artifact" > "$execute_artifact_dir/resume-daemon"
+printf '%s\n' "synthetic benchmark release artifact" > "$execute_artifact_dir/resume-benchmark"
+execute_artifact_manifest="$tmpdir/release-artifacts-execute.json"
+execute_publication_evidence="$tmpdir/release-publication-evidence-execute.json"
+python3 - "$execute_artifact_dir" "$execute_artifact_manifest" "$execute_publication_evidence" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+artifact_dir = Path(sys.argv[1])
+artifact_manifest = Path(sys.argv[2])
+publication_evidence = Path(sys.argv[3])
+release_artifacts = []
+publication_artifacts = []
+for name in ("resume-cli", "resume-daemon", "resume-benchmark"):
+    path = artifact_dir / name
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    release_artifacts.append(
+        {"name": name, "file": name, "sha256": digest, "bytes": len(raw)}
+    )
+    publication_artifacts.append(
+        {
+            "name": name,
+            "file": name,
+            "artifact_sha256": digest,
+            "bytes": len(raw),
+            "upload_status": "blocked",
+        }
+    )
+artifact_document = {
+    "schema_version": "release.artifacts.v1",
+    "version": "v0.0.0",
+    "packaging_status": "blocked",
+    "artifacts": release_artifacts,
+    "blocked_release_steps": ["packaging", "signing", "notarization", "github_release_upload"],
+    "notes": "Synthetic execute-mode fixture only.",
+}
+artifact_manifest.write_text(json.dumps(artifact_document, indent=2) + "\n", encoding="utf-8")
+publication_document = {
+    "schema_version": "release.publication_evidence.v1",
+    "version": "v0.0.0",
+    "publication_status": "blocked",
+    "evidence_boundary": "dry_run_no_release_publication",
+    "artifact_manifest_sha256": hashlib.sha256(artifact_manifest.read_bytes()).hexdigest(),
+    "artifacts": publication_artifacts,
+    "required_evidence": [
+        "human_release_approval",
+        "github_actions_release_token",
+        "github_release_upload_evidence",
+    ],
+    "blocked_release_steps": [
+        "github_release_approval",
+        "github_release_create",
+        "github_release_upload",
+        "release_artifact_download_verification",
+    ],
+    "prohibited_public_material": [
+        "github_token",
+        "release_pat",
+        "local_paths",
+        "raw_resume_data",
+        "diagnostic_packages",
+        "model_caches",
+    ],
+    "notes": "Synthetic execute-mode fixture only.",
+}
+publication_evidence.write_text(json.dumps(publication_document, indent=2) + "\n", encoding="utf-8")
+PY
+fake_bin="$tmpdir/fake-bin"
+fake_log="$tmpdir/fake-gh.log"
+mkdir -p "$fake_bin"
+cat > "$fake_bin/gh" <<'SH'
+#!/usr/bin/env sh
+set -eu
+printf '%s\n' "$*" >> "$FAKE_GH_LOG"
+if [ "$#" -ge 2 ] && [ "$1" = "release" ] && [ "$2" = "view" ]; then
+  exit 1
+fi
+if [ "$#" -ge 2 ] && [ "$1" = "release" ] && [ "$2" = "create" ]; then
+  exit 0
+fi
+if [ "$#" -ge 2 ] && [ "$1" = "release" ] && [ "$2" = "upload" ]; then
+  exit 0
+fi
+if [ "$#" -ge 2 ] && [ "$1" = "release" ] && [ "$2" = "download" ]; then
+  dir=""
+  pattern=""
+  shift 2
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dir)
+        [ "$#" -ge 2 ] || exit 2
+        dir="$2"
+        shift 2
+        ;;
+      --pattern)
+        [ "$#" -ge 2 ] || exit 2
+        pattern="$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  [ -n "$dir" ] || exit 2
+  [ -n "$pattern" ] || exit 2
+  cp "$FAKE_RELEASE_ARTIFACT_DIR/$pattern" "$dir/$pattern"
+  exit 0
+fi
+exit 2
+SH
+chmod +x "$fake_bin/gh"
+: > "$fake_log"
+PATH="$fake_bin:$PATH" \
+GH_TOKEN="synthetic-token" \
+FAKE_GH_LOG="$fake_log" \
+FAKE_RELEASE_ARTIFACT_DIR="$execute_artifact_dir" \
+  "$publish_script" \
+    --execute \
+    --approve-release \
+    --version v0.0.0 \
+    --repo FrankQDWang/resume-ir \
+    --artifact-manifest "$execute_artifact_manifest" \
+    --publication-evidence "$execute_publication_evidence" \
+    --artifact-dir "$execute_artifact_dir" \
+    --out-dir "$out_dir/execute-with-download" >/dev/null
+require_file "$out_dir/execute-with-download/github-release-publication-gate.json"
+require_text "$out_dir/execute-with-download/github-release-publication-gate.json" '"execution_mode": "execute"'
+require_text "$out_dir/execute-with-download/github-release-publication-gate.json" '"publication_status": "ready_for_execute"'
+require_text "$fake_log" "release upload"
+if ! grep -Fq "release download" "$fake_log"; then
+  fail "GitHub Release publication execute mode did not download uploaded artifacts for verification"
+fi
+corrupt_release_artifact_dir="$tmpdir/corrupt-release-artifacts"
+mkdir -p "$corrupt_release_artifact_dir"
+cp "$execute_artifact_dir/resume-cli" "$corrupt_release_artifact_dir/resume-cli"
+cp "$execute_artifact_dir/resume-daemon" "$corrupt_release_artifact_dir/resume-daemon"
+cp "$execute_artifact_dir/resume-benchmark" "$corrupt_release_artifact_dir/resume-benchmark"
+printf '%s\n' "corrupted downloaded cli release artifact" > "$corrupt_release_artifact_dir/resume-cli"
+if PATH="$fake_bin:$PATH" \
+GH_TOKEN="synthetic-token" \
+FAKE_GH_LOG="$fake_log" \
+FAKE_RELEASE_ARTIFACT_DIR="$corrupt_release_artifact_dir" \
+  "$publish_script" \
+    --execute \
+    --approve-release \
+    --version v0.0.0 \
+    --repo FrankQDWang/resume-ir \
+    --artifact-manifest "$execute_artifact_manifest" \
+    --publication-evidence "$execute_publication_evidence" \
+    --artifact-dir "$execute_artifact_dir" \
+    --out-dir "$out_dir/execute-corrupt-download" >/dev/null 2>&1; then
+  fail "GitHub Release publication execute mode accepted a corrupted downloaded artifact"
+fi
 
 require_text "$workflow" "scripts/release/create-release-publication-evidence.sh"
 require_text "$workflow" "scripts/release/publish-github-release.sh"
