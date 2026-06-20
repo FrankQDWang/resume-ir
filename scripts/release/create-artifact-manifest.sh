@@ -106,6 +106,12 @@ def require_basename(value, key):
         fail(f"runtime bundle manifest invalid: {key}")
 
 
+def require_allowed_keys(mapping, allowed, context):
+    unexpected = sorted(set(mapping) - set(allowed))
+    if unexpected:
+        fail(f"runtime bundle manifest invalid: {context}.{unexpected[0]}")
+
+
 with open(manifest_path, "r", encoding="utf-8") as handle:
     payload = handle.read()
 
@@ -129,6 +135,25 @@ except json.JSONDecodeError:
 if not isinstance(document, dict):
     fail("runtime bundle manifest invalid: root")
 
+require_allowed_keys(
+    document,
+    {
+        "schema_version",
+        "version",
+        "runtime_pack_id",
+        "runtime_distribution_mode",
+        "runtime_package_binaries_included",
+        "runtime_binaries_included",
+        "distribution_license",
+        "legal_review",
+        "source_offer",
+        "notices",
+        "components",
+        "blocked_release_steps",
+        "privacy_sentinels",
+    },
+    "root",
+)
 if require_string(document, "schema_version") != "release.runtime_bundle.v1":
     fail("runtime bundle manifest invalid: schema_version")
 require_string(document, "version")
@@ -144,9 +169,21 @@ if require_string(document, "legal_review") != "reviewed":
 source_offer = document.get("source_offer")
 if not isinstance(source_offer, dict):
     fail("runtime bundle manifest invalid: source_offer")
+require_allowed_keys(source_offer, {"file", "bytes", "sha256"}, "source_offer")
 require_basename(require_string(source_offer, "file"), "source_offer.file")
 require_positive_int(source_offer, "bytes")
 require_sha256(source_offer, "sha256")
+
+notices = document.get("notices", [])
+if not isinstance(notices, list):
+    fail("runtime bundle manifest invalid: notices")
+for notice in notices:
+    if not isinstance(notice, dict):
+        fail("runtime bundle manifest invalid: notices")
+    require_allowed_keys(notice, {"file", "bytes", "sha256"}, "notices")
+    require_basename(require_string(notice, "file"), "notices.file")
+    require_positive_int(notice, "bytes")
+    require_sha256(notice, "sha256")
 
 components = document.get("components")
 if not isinstance(components, list) or not components:
@@ -156,6 +193,11 @@ seen_files = set()
 for component in components:
     if not isinstance(component, dict):
         fail("runtime bundle manifest invalid: components")
+    require_allowed_keys(
+        component,
+        {"id", "kind", "file", "bytes", "sha256", "license", "source"},
+        "component",
+    )
     component_id = require_string(component, "id")
     if component_id in seen_ids:
         fail("runtime bundle manifest invalid: duplicate component id")
@@ -171,6 +213,7 @@ for component in components:
     license_info = component.get("license")
     if not isinstance(license_info, dict):
         fail("runtime bundle manifest invalid: component.license")
+    require_allowed_keys(license_info, {"id", "reviewed"}, "component.license")
     require_string(license_info, "id")
     require_bool(license_info, "reviewed", True)
     source = require_string(component, "source")

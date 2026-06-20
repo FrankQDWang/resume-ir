@@ -111,6 +111,26 @@ if "$script" \
   fail "release artifact manifest script accepted an invalid runtime bundle manifest"
 fi
 
+python3 - "$out_dir/runtime-bundle-manifest.json" "$out_dir/unknown-field-runtime-bundle-manifest.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+document["diagnostic_note"] = "redacted"
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    json.dump(document, handle)
+    handle.write("\n")
+PY
+if "$script" \
+  --version v0.0.1 \
+  --target-dir "$target_dir" \
+  --out-dir "$out_dir/unknown-runtime-field" \
+  --runtime-bundle-manifest "$out_dir/unknown-field-runtime-bundle-manifest.json" \
+  >/dev/null 2>&1; then
+  fail "release artifact manifest script accepted unknown runtime bundle manifest fields"
+fi
+
 rm "$target_dir/resume-daemon"
 if "$script" --version v0.0.1 --target-dir "$target_dir" --out-dir "$out_dir/missing" >/dev/null 2>&1; then
   fail "release artifact manifest script accepted missing release binaries"
