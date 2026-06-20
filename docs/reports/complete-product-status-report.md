@@ -55,13 +55,13 @@ follow-up goals that must happen before the product can be called complete.
 
 ## 执行过的验证命令
 
-Latest full local verification run before this report slice:
+Latest full local verification run for this report refresh:
 
 ```text
 ./scripts/ci/verify-local.sh
 ```
 
-Observed result: exit 0. The run covered workspace tests, CLI/daemon
+Observed result: exit 0 on the current branch tip. The run covered workspace tests, CLI/daemon
 closed-loop checks, incremental import, OCR/runtime checks, embedding/runtime
 checks, diagnostics release-evidence, local quality release-evidence,
 current-stage validation and handoff, workflow and release-readiness guards,
@@ -77,6 +77,26 @@ cargo run --quiet -p resume-cli --locked -- release-readiness --json
 
 Observed result: expected nonzero exit with `stable_release: "blocked"`,
 `complete_product: false`, and explicit blockers.
+
+Fresh private local-only current-stage smoke/witness validation for this report
+refresh:
+
+```text
+target/debug/resume-cli witness --root <user-authorized-local-resume-root> --max-files 100 --probe-search --probe-fields --probe-benchmark-corpus --run-ocr ...
+scripts/local/run-current-stage-validation.sh --execute --validation-profile smoke --resume-root <user-authorized-local-resume-root> --max-files 50 ...
+```
+
+Observed result: both commands exited 0. The witness reported only redacted
+aggregates: 100 supported inputs selected, 4 unsupported entries skipped, 0 scan
+errors, 2 directly searchable documents, 98 OCR-required documents, 0 failed
+import documents, 1 bounded OCR completion, 1 bounded OCR failure, 24 aggregate
+field mentions across 3 documents, and 1 redacted search-probe hit. The
+current-stage smoke reported OCR runtime probe passed, embedding protocol
+passed, `smoke_satisfied: true`, 50 documents, 5 searchable documents, 5
+vector-indexed documents, partial hot-index coverage,
+`full_baseline_satisfied: false`, `release_readiness_evidence: false`, and
+`performance_optimization_deferred: true`. Temporary private data/evidence
+directories were removed after aggregate extraction.
 
 Focused validation for this report slice:
 
@@ -125,6 +145,12 @@ windows-latest: pass
 ## git log 摘要
 
 ```text
+7a0fb56 fix: require publication privacy markers
+cabb6bf fix: require release gate privacy markers
+ba6295f fix: reject unknown release gate steps
+8377e24 fix: require release gate evidence boundary
+7579bcb fix: reject synthetic verified release gates
+d56c1e5 docs: refresh complete product release status
 7353450 test: cover verified release gate readiness
 ba3f2b8 docs: document verified release gate semantics
 0889e5c fix: classify verified release evidence

@@ -6,6 +6,9 @@ Last updated: 2026-06-20
 
 Current-stage status: closed with blocked handoff.
 
+S487 refresh: core import/search remains closed with a passing local smoke
+handoff; stable release remains blocked.
+
 Complete product status: not complete.
 
 Machine-readable release-readiness status remains `complete_product:false` and
@@ -72,6 +75,20 @@ These blockers are handoff guidance only. They do not clear stable release
 readiness and they must not be used to claim the full 10k/8000 hot-index
 baseline.
 
+S487 refreshed this status on the current branch tip. Fresh
+`./scripts/ci/verify-local.sh` exited 0. A private local-only PDF/Word witness
+selected 100 supported inputs, skipped 4 unsupported entries, reported 0 scan
+errors, 2 directly searchable documents, 98 OCR-required documents, 0 failed
+import documents, bounded OCR with 1 completed and 1 failed document, field
+aggregate probing over 3 documents with 24 mentions, and 1 redacted search-probe
+hit; temporary witness data was removed. A private local-only current-stage
+smoke execute also exited 0 with OCR runtime probe passed, embedding protocol
+passed, `smoke_satisfied: true`, 50 documents, 5 searchable documents, 5
+vector-indexed documents, partial hot-index coverage,
+`full_baseline_satisfied: false`, `release_readiness_evidence: false`, and
+`performance_optimization_deferred: true`. The temporary private current-stage
+data/evidence directory was removed after aggregate extraction.
+
 ## Blocked Or Deferred Items
 
 | Item | Status | Required input or next goal |
@@ -96,6 +113,9 @@ baseline.
 Local verification for the latest current-stage handoff slice:
 
 ```text
+./scripts/ci/verify-local.sh
+target/debug/resume-cli witness --root <user-authorized-local-resume-root> --max-files 100 --probe-search --probe-fields --probe-benchmark-corpus --run-ocr ...
+scripts/local/run-current-stage-validation.sh --execute --validation-profile smoke --resume-root <user-authorized-local-resume-root> --max-files 50 ...
 python3 -m py_compile scripts/local/summarize-current-stage-validation.py
 ./scripts/ci/check-current-stage-validation.sh
 ./scripts/ci/check-runbooks.sh
