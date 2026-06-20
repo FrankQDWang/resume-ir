@@ -225,6 +225,44 @@ if "$publish_script" \
   --out-dir "$out_dir/missing-required-publication" >/dev/null 2>&1; then
   fail "GitHub Release publication gate accepted incomplete publication blocker evidence"
 fi
+artifact_manifest_gate_missing_blockers="$tmpdir/release-artifacts-gate-missing-blockers.json"
+cat > "$artifact_manifest_gate_missing_blockers" <<'JSON'
+{
+  "schema_version": "release.artifacts.v1",
+  "version": "v0.0.0",
+  "packaging_status": "blocked",
+  "artifacts": [
+    {"name": "resume-cli", "file": "resume-cli", "sha256": "1111111111111111111111111111111111111111111111111111111111111111", "bytes": 101},
+    {"name": "resume-daemon", "file": "resume-daemon", "sha256": "2222222222222222222222222222222222222222222222222222222222222222", "bytes": 202},
+    {"name": "resume-benchmark", "file": "resume-benchmark", "sha256": "3333333333333333333333333333333333333333333333333333333333333333", "bytes": 303}
+  ],
+  "blocked_release_steps": ["github_release_upload"],
+  "notes": "Synthetic dry-run fixture only."
+}
+JSON
+publication_gate_missing_blockers="$tmpdir/release-publication-evidence-gate-missing-artifact-blockers.json"
+python3 - "$manifest" "$artifact_manifest_gate_missing_blockers" "$publication_gate_missing_blockers" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+artifact_manifest = Path(sys.argv[2])
+target = Path(sys.argv[3])
+document = json.loads(source.read_text(encoding="utf-8"))
+document["artifact_manifest_sha256"] = hashlib.sha256(artifact_manifest.read_bytes()).hexdigest()
+target.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+PY
+if "$publish_script" \
+  --dry-run \
+  --version v0.0.0 \
+  --repo FrankQDWang/resume-ir \
+  --artifact-manifest "$artifact_manifest_gate_missing_blockers" \
+  --publication-evidence "$publication_gate_missing_blockers" \
+  --out-dir "$out_dir/missing-gate-artifact-blockers" >/dev/null 2>&1; then
+  fail "GitHub Release publication gate accepted incomplete artifact blocker evidence"
+fi
 if "$publish_script" --execute --version v0.0.0 --repo FrankQDWang/resume-ir --artifact-manifest "$artifact_manifest" --publication-evidence "$manifest" --out-dir "$out_dir/execute" >/dev/null 2>&1; then
   fail "GitHub Release publication execute mode passed without explicit approval"
 fi

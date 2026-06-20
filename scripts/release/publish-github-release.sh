@@ -192,6 +192,12 @@ if artifacts_report.get("version") != version:
     fail("artifact manifest version does not match requested version")
 if artifacts_report.get("packaging_status") != "blocked":
     fail("artifact manifest packaging_status must be blocked")
+require_string_list_contains(
+    artifacts_report,
+    "blocked_release_steps",
+    {"packaging", "signing", "notarization", "github_release_upload"},
+    "artifact manifest blocked_release_steps is incomplete",
+)
 
 runtime_bundle_manifests = artifacts_report.get("runtime_bundle_manifests")
 if runtime_bundle_manifests is not None:
