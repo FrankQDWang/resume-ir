@@ -1698,14 +1698,19 @@ fn validate_release_publication_evidence_report(report: &str) -> Result<()> {
             CONTEXT,
         )?;
     }
-    for expected in ["github_token", "local_paths"] {
-        require_release_evidence_array_contains_string(
-            object,
-            "prohibited_public_material",
-            expected,
-            CONTEXT,
-        )?;
-    }
+    require_release_evidence_exact_string_array(
+        object,
+        "prohibited_public_material",
+        &[
+            "github_token",
+            "release_pat",
+            "local_paths",
+            "raw_resume_data",
+            "diagnostic_packages",
+            "model_caches",
+        ],
+        CONTEXT,
+    )?;
     require_release_evidence_non_empty_string(object, "notes", CONTEXT)?;
     validate_release_publication_artifacts(object)?;
     Ok(())
