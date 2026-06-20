@@ -795,6 +795,8 @@ proved retrievable before publication can count as evidence. Real publication
 remains blocked until a human approves the release and supplies the CI secret
 interface.
 
+In execute mode, `publish-github-release.sh` finalizes `github-release-publication-gate.json` only after local artifact verification, upload, download, and checksum/byte verification have all passed. The verified gate reports `publication_status: "published_verified"` and each artifact reports `publish_status: "uploaded_verified"`. Release-readiness records this shape as `verified_release_evidence_manifest`, while preserving the broader `GitHub Release publication` blocker until signing, notarization, cross-platform lifecycle evidence, and the other release-blocking private evidence are also available. Failed local verification, upload, or download verification must not leave a finalized gate manifest in the output directory.
+
 macOS package dry-runs must also produce a blocked notarization evidence
 manifest. The manifest schema is `release.notarization_evidence.v1` and must
 contain only macOS package artifact names, byte counts, hashes, and blocked

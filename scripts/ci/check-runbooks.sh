@@ -268,6 +268,10 @@ require_text "$release_runbook" "GitHub Release publication"
 require_text "$release_runbook" "GitHub"
 require_text "$release_runbook" "Actions release token"
 require_text "$release_runbook" "artifact upload evidence"
+require_text "$release_runbook" 'publication_status: "published_verified"'
+require_text "$release_runbook" 'publish_status: "uploaded_verified"'
+require_text "$release_runbook" "verified_release_evidence_manifest"
+require_text "$release_runbook" "finalizes \`github-release-publication-gate.json\` only after local artifact verification, upload, download, and checksum/byte verification"
 require_text "$release_runbook" "release publication approval"
 require_text "$release_runbook" "release-platform transcript"
 require_text "$release_runbook" "private labeled quality dataset"
