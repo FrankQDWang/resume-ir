@@ -175,17 +175,124 @@ def require_runtime_sha256(mapping, key):
     return value.lower()
 
 
+def require_runtime_allowed_keys(mapping, allowed, context):
+    unexpected = sorted(set(mapping) - set(allowed))
+    if unexpected:
+        fail(f"runtime bundle manifest invalid {context}.{unexpected[0]}")
+
+
+def require_runtime_basename(value, label):
+    if not isinstance(value, str) or not value or "/" in value or "\\" in value or value in {".", ".."}:
+        fail(f"runtime bundle manifest invalid {label}")
+    return value
+
+
+def validate_runtime_bundle_document(runtime_document):
+    if not isinstance(runtime_document, dict):
+        fail("runtime bundle manifest root is invalid")
+    require_runtime_allowed_keys(
+        runtime_document,
+        {
+            "schema_version",
+            "version",
+            "runtime_pack_id",
+            "runtime_distribution_mode",
+            "runtime_package_binaries_included",
+            "runtime_binaries_included",
+            "distribution_license",
+            "legal_review",
+            "source_offer",
+            "notices",
+            "components",
+            "blocked_release_steps",
+            "privacy_sentinels",
+        },
+        "root",
+    )
+    if runtime_document.get("schema_version") != "release.runtime_bundle.v1":
+        fail("runtime bundle manifest schema_version is invalid")
+    require_runtime_string(runtime_document, "version")
+    require_runtime_string(runtime_document, "runtime_pack_id")
+    runtime_mode = require_runtime_string(runtime_document, "runtime_distribution_mode")
+    if runtime_mode != "bundled":
+        fail("runtime bundle mode must be bundled")
+    require_runtime_bool(runtime_document, "runtime_package_binaries_included", True)
+    require_runtime_bool(runtime_document, "runtime_binaries_included", False)
+    require_runtime_string(runtime_document, "distribution_license")
+    if runtime_document.get("legal_review") != "reviewed":
+        fail("runtime bundle manifest legal_review is invalid")
+
+    source_offer = runtime_document.get("source_offer")
+    if not isinstance(source_offer, dict):
+        fail("runtime bundle source_offer is missing")
+    require_runtime_allowed_keys(source_offer, {"file", "bytes", "sha256"}, "source_offer")
+    require_runtime_basename(require_runtime_string(source_offer, "file"), "source_offer.file")
+    require_runtime_int(source_offer, "bytes")
+    require_runtime_sha256(source_offer, "sha256")
+
+    notices = runtime_document.get("notices", [])
+    if not isinstance(notices, list):
+        fail("runtime bundle manifest notices are invalid")
+    for notice in notices:
+        if not isinstance(notice, dict):
+            fail("runtime bundle manifest notice is invalid")
+        require_runtime_allowed_keys(notice, {"file", "bytes", "sha256"}, "notices")
+        require_runtime_basename(require_runtime_string(notice, "file"), "notices.file")
+        require_runtime_int(notice, "bytes")
+        require_runtime_sha256(notice, "sha256")
+
+    blocked_steps = runtime_document.get("blocked_release_steps")
+    if not isinstance(blocked_steps, list):
+        fail("runtime bundle manifest blocked_release_steps is invalid")
+    for step in [
+        "runtime_binary_copy_into_installer",
+        "installer_platform_validation",
+        "signing",
+        "notarization",
+        "github_release_upload",
+    ]:
+        if step not in blocked_steps:
+            fail("runtime bundle manifest blocked_release_steps is incomplete")
+
+    privacy_sentinels = runtime_document.get("privacy_sentinels")
+    if not isinstance(privacy_sentinels, dict):
+        fail("runtime bundle privacy_sentinels are missing")
+    require_runtime_allowed_keys(
+        privacy_sentinels,
+        {
+            "local_paths_included",
+            "runtime_binaries_included",
+            "raw_resume_text_included",
+            "model_bytes_included",
+        },
+        "privacy_sentinels",
+    )
+    require_runtime_bool(privacy_sentinels, "local_paths_included", False)
+    require_runtime_bool(privacy_sentinels, "runtime_binaries_included", False)
+    require_runtime_bool(privacy_sentinels, "raw_resume_text_included", False)
+    require_runtime_bool(privacy_sentinels, "model_bytes_included", False)
+
+
 def runtime_package(component, runtime_document, created, index):
+    if not isinstance(component, dict):
+        fail("runtime bundle manifest component is invalid")
+    require_runtime_allowed_keys(
+        component,
+        {"id", "kind", "file", "bytes", "sha256", "license", "source"},
+        "component",
+    )
     component_id = require_runtime_string(component, "id")
     kind = require_runtime_string(component, "kind")
-    file_name = require_runtime_string(component, "file")
-    if "/" in file_name or "\\" in file_name or file_name in {"", ".", ".."}:
-        fail("runtime component file must be a basename")
+    file_name = require_runtime_basename(
+        require_runtime_string(component, "file"),
+        "component.file",
+    )
     bytes_value = require_runtime_int(component, "bytes")
     sha256 = require_runtime_sha256(component, "sha256")
     license_obj = component.get("license")
     if not isinstance(license_obj, dict):
         fail("runtime component license is missing")
+    require_runtime_allowed_keys(license_obj, {"id", "reviewed"}, "component.license")
     license_id = require_runtime_string(license_obj, "id")
     require_runtime_bool(license_obj, "reviewed", True)
     source = require_runtime_string(component, "source")
@@ -194,9 +301,10 @@ def runtime_package(component, runtime_document, created, index):
     source_offer = runtime_document.get("source_offer")
     if not isinstance(source_offer, dict):
         fail("runtime bundle source_offer is missing")
-    source_offer_file = require_runtime_string(source_offer, "file")
-    if "/" in source_offer_file or "\\" in source_offer_file:
-        fail("runtime source_offer file must be a basename")
+    source_offer_file = require_runtime_basename(
+        require_runtime_string(source_offer, "file"),
+        "source_offer.file",
+    )
     source_offer_sha256 = require_runtime_sha256(source_offer, "sha256")
     distribution_license = require_runtime_string(runtime_document, "distribution_license")
     require_runtime_bool(runtime_document, "runtime_package_binaries_included", True)
@@ -358,13 +466,28 @@ for index, package in enumerate(
 
 if runtime_bundle_manifest_path:
     with open(runtime_bundle_manifest_path, "r", encoding="utf-8") as handle:
-        runtime_document = json.load(handle)
-    if runtime_document.get("schema_version") != "release.runtime_bundle.v1":
-        fail("runtime bundle manifest schema_version is invalid")
+        runtime_payload = handle.read()
+    for marker in (
+        "PRIVATE-",
+        "/Users/",
+        "local-data",
+        "diagnostics",
+        "model-cache",
+        "resume text",
+        "raw_path",
+    ):
+        if marker in runtime_payload:
+            fail("runtime bundle manifest private marker is present")
+    try:
+        runtime_document = json.loads(runtime_payload)
+    except json.JSONDecodeError:
+        fail("runtime bundle manifest JSON is invalid")
+    validate_runtime_bundle_document(runtime_document)
     components = runtime_document.get("components")
     if not isinstance(components, list) or not components:
         fail("runtime bundle manifest components are missing")
     seen_runtime_ids = set()
+    seen_runtime_files = set()
     for index, component in enumerate(components, start=1):
         if not isinstance(component, dict):
             fail("runtime bundle manifest component is invalid")
@@ -372,6 +495,11 @@ if runtime_bundle_manifest_path:
         if component_id in seen_runtime_ids:
             fail("runtime bundle manifest duplicate component")
         seen_runtime_ids.add(component_id)
+        component_file = component.get("file")
+        if isinstance(component_file, str):
+            if component_file in seen_runtime_files:
+                fail("runtime bundle manifest duplicate component file")
+            seen_runtime_files.add(component_file)
         package_record = runtime_package(component, runtime_document, created, index)
         packages.append(package_record)
         relationships.append(

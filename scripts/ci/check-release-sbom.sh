@@ -51,6 +51,32 @@ scripts/release/create-runtime-bundle-manifest.sh \
   --out-dir "$out_dir/runtime" \
   --reviewed \
   > "$tmpdir/runtime-bundle.stdout"
+unknown_runtime_manifest="$tmpdir/runtime-bundle-unknown-field.json"
+python3 - "$out_dir/runtime/runtime-bundle-manifest.json" "$unknown_runtime_manifest" <<'PY'
+import json
+import sys
+
+source = sys.argv[1]
+target = sys.argv[2]
+
+with open(source, "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+
+document["components"][0]["local_probe_path"] = "redacted-sbom-runtime-cache"
+
+with open(target, "w", encoding="utf-8") as handle:
+    json.dump(document, handle)
+    handle.write("\n")
+PY
+
+if "$script" \
+  --version v0.0.0 \
+  --out-dir "$out_dir/unknown-runtime" \
+  --runtime-bundle-manifest "$unknown_runtime_manifest" \
+  >/dev/null 2>&1; then
+  fail "release SBOM script accepted unknown runtime bundle manifest fields"
+fi
+
 "$script" \
   --version v0.0.0 \
   --out-dir "$out_dir" \
