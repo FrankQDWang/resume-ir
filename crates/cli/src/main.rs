@@ -1831,13 +1831,18 @@ fn validate_github_release_publication_gate_report(
     )?;
     require_release_evidence_sha256(object, "artifact_manifest_sha256", CONTEXT)?;
     require_release_evidence_sha256(object, "publication_evidence_sha256", CONTEXT)?;
-    for expected in [
-        "gh_release_create",
-        "gh_release_upload",
-        "gh_release_download_verify",
-    ] {
-        require_release_evidence_array_contains_string(object, "planned_steps", expected, CONTEXT)?;
-    }
+    require_release_evidence_exact_string_array(
+        object,
+        "planned_steps",
+        &[
+            "validate_release_artifact_manifest",
+            "validate_publication_evidence_manifest",
+            "gh_release_create",
+            "gh_release_upload",
+            "gh_release_download_verify",
+        ],
+        CONTEXT,
+    )?;
     for expected in ["github_token", "local_paths"] {
         require_release_evidence_array_contains_string(
             object,
@@ -4238,6 +4243,28 @@ fn require_release_evidence_array_contains_string(
     } else {
         Err(release_evidence_invalid(context, key))
     }
+}
+
+fn require_release_evidence_exact_string_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: &[&str],
+    context: &'static str,
+) -> Result<()> {
+    let values = require_release_evidence_array(object, key, context)?;
+    if values.len() != expected.len() {
+        return Err(release_evidence_invalid(context, key));
+    }
+    let mut seen = BTreeSet::new();
+    for (value, expected_value) in values.iter().zip(expected.iter()) {
+        let actual = value
+            .as_str()
+            .ok_or_else(|| release_evidence_invalid(context, key))?;
+        if actual != *expected_value || !seen.insert(actual.to_string()) {
+            return Err(release_evidence_invalid(context, key));
+        }
+    }
+    Ok(())
 }
 
 fn require_release_evidence_exact_steps(
