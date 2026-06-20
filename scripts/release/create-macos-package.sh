@@ -147,10 +147,30 @@ def require_string(mapping, key):
     return value
 
 
+def require_allowed_keys(mapping, allowed, context):
+    unexpected = sorted(set(mapping) - set(allowed))
+    if unexpected:
+        fail(f"runtime package blocked: unsupported {context} field")
+
+
 def require_bool(mapping, key, expected):
     value = mapping.get(key)
     if value is not expected:
         fail(f"runtime package blocked: invalid {key}")
+
+
+def require_positive_int(mapping, key):
+    value = mapping.get(key)
+    if not isinstance(value, int) or value <= 0:
+        fail(f"runtime package blocked: invalid {key}")
+    return value
+
+
+def require_sha256(mapping, key):
+    value = require_string(mapping, key).lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", value):
+        fail(f"runtime package blocked: invalid {key}")
+    return value
 
 
 def sha256_file(path):
@@ -163,7 +183,7 @@ def sha256_file(path):
 
 def basename(value, label):
     name = require_string({"value": value}, "value")
-    if name != os.path.basename(name) or name in {".", ".."}:
+    if name != os.path.basename(name) or name in {".", ".."} or "\\" in name:
         fail(f"runtime package blocked: invalid {label}")
     return name
 
@@ -174,16 +194,101 @@ payload_dir = Path(sys.argv[3])
 payload_json = Path(sys.argv[4])
 
 try:
-    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_text = manifest_path.read_text(encoding="utf-8")
+except UnicodeDecodeError:
+    fail("runtime package blocked: runtime bundle manifest must be UTF-8 JSON")
+
+for marker in ("PRIVATE-", "/Users/", "local-data", "diagnostics", "model-cache", "resume text", "raw_path"):
+    if marker in manifest_text:
+        fail("runtime package blocked: runtime bundle manifest contains private marker")
+
+try:
+    document = json.loads(manifest_text)
 except json.JSONDecodeError as error:
     fail(f"runtime package blocked: invalid runtime bundle manifest: {error.msg}")
 
+if not isinstance(document, dict):
+    fail("runtime package blocked: runtime bundle manifest root must be an object")
+require_allowed_keys(
+    document,
+    {
+        "schema_version",
+        "version",
+        "runtime_pack_id",
+        "runtime_distribution_mode",
+        "runtime_package_binaries_included",
+        "runtime_binaries_included",
+        "distribution_license",
+        "legal_review",
+        "source_offer",
+        "notices",
+        "components",
+        "blocked_release_steps",
+        "privacy_sentinels",
+    },
+    "root",
+)
 if document.get("schema_version") != "release.runtime_bundle.v1":
     fail("runtime package blocked: runtime bundle manifest schema mismatch")
+require_string(document, "version")
+require_string(document, "runtime_pack_id")
 if document.get("runtime_distribution_mode") != "bundled":
     fail("runtime package blocked: runtime distribution mode must be bundled")
 require_bool(document, "runtime_package_binaries_included", True)
 require_bool(document, "runtime_binaries_included", False)
+require_string(document, "distribution_license")
+if document.get("legal_review") != "reviewed":
+    fail("runtime package blocked: runtime bundle legal review must be reviewed")
+
+source_offer = document.get("source_offer")
+if not isinstance(source_offer, dict):
+    fail("runtime package blocked: source offer is missing")
+require_allowed_keys(source_offer, {"file", "bytes", "sha256"}, "source_offer")
+basename(source_offer.get("file"), "source_offer.file")
+require_positive_int(source_offer, "bytes")
+require_sha256(source_offer, "sha256")
+
+notices = document.get("notices", [])
+if not isinstance(notices, list):
+    fail("runtime package blocked: notices must be an array")
+for notice in notices:
+    if not isinstance(notice, dict):
+        fail("runtime package blocked: notice must be an object")
+    require_allowed_keys(notice, {"file", "bytes", "sha256"}, "notice")
+    basename(notice.get("file"), "notice file")
+    require_positive_int(notice, "bytes")
+    require_sha256(notice, "sha256")
+
+blocked_release_steps = document.get("blocked_release_steps")
+if not isinstance(blocked_release_steps, list):
+    fail("runtime package blocked: blocked_release_steps must be an array")
+for step in [
+    "runtime_binary_copy_into_installer",
+    "installer_platform_validation",
+    "signing",
+    "notarization",
+    "github_release_upload",
+]:
+    if step not in blocked_release_steps:
+        fail("runtime package blocked: missing blocked release step")
+
+privacy_sentinels = document.get("privacy_sentinels")
+if not isinstance(privacy_sentinels, dict):
+    fail("runtime package blocked: privacy sentinels are missing")
+require_allowed_keys(
+    privacy_sentinels,
+    {
+        "local_paths_included",
+        "runtime_binaries_included",
+        "raw_resume_text_included",
+        "model_bytes_included",
+    },
+    "privacy_sentinels",
+)
+require_bool(privacy_sentinels, "local_paths_included", False)
+require_bool(privacy_sentinels, "runtime_binaries_included", False)
+require_bool(privacy_sentinels, "raw_resume_text_included", False)
+require_bool(privacy_sentinels, "model_bytes_included", False)
 
 components = document.get("components")
 if not isinstance(components, list) or not components:
@@ -191,11 +296,20 @@ if not isinstance(components, list) or not components:
 
 payload_dir.mkdir(parents=True, exist_ok=True)
 component_records = []
+seen_ids = set()
 seen_files = set()
 for component in components:
     if not isinstance(component, dict):
         fail("runtime package blocked: component must be an object")
+    require_allowed_keys(
+        component,
+        {"id", "kind", "file", "bytes", "sha256", "license", "source"},
+        "component",
+    )
     component_id = require_string(component, "id")
+    if component_id in seen_ids:
+        fail("runtime package blocked: duplicate component id")
+    seen_ids.add(component_id)
     kind = require_string(component, "kind")
     file_name = basename(component.get("file"), "component file")
     if file_name in seen_files:
@@ -204,15 +318,12 @@ for component in components:
     source = require_string(component, "source")
     if source.startswith("/") or "PRIVATE-" in source or "/Users/" in source:
         fail("runtime package blocked: component source is private")
-    expected_sha256 = require_string(component, "sha256").lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
-        fail("runtime package blocked: component sha256 is invalid")
-    expected_bytes = component.get("bytes")
-    if not isinstance(expected_bytes, int) or expected_bytes <= 0:
-        fail("runtime package blocked: component bytes is invalid")
+    expected_sha256 = require_sha256(component, "sha256")
+    expected_bytes = require_positive_int(component, "bytes")
     license_obj = component.get("license")
     if not isinstance(license_obj, dict):
         fail("runtime package blocked: component license is missing")
+    require_allowed_keys(license_obj, {"id", "reviewed"}, "component.license")
     license_id = require_string(license_obj, "id")
     require_bool(license_obj, "reviewed", True)
 

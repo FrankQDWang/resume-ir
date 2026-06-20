@@ -98,6 +98,34 @@ SH
       printf 'synthetic macOS binary %s\n' "$binary" > "$target_dir/$binary"
       chmod 755 "$target_dir/$binary"
     done
+    unknown_manifest="$tmpdir/runtime-bundle-unknown-field.json"
+    python3 - "$out_dir/runtime-bundle-manifest.json" "$unknown_manifest" <<'PY'
+import json
+import sys
+
+source = sys.argv[1]
+target = sys.argv[2]
+
+with open(source, "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+
+document["components"][0]["local_probe_path"] = "PRIVATE-runtime-package-cache"
+
+with open(target, "w", encoding="utf-8") as handle:
+    json.dump(document, handle)
+    handle.write("\n")
+PY
+
+    if PATH="$fake_bin:$PATH" "$macos_package_script" \
+      --version v0.0.0 \
+      --target-dir "$target_dir" \
+      --out-dir "$tmpdir/package-unknown" \
+      --runtime-bundle-manifest "$unknown_manifest" \
+      --runtime-bundle-dir "$runtime_dir" \
+      >/dev/null 2>&1; then
+      fail "macOS package script accepted unknown runtime bundle manifest fields"
+    fi
+
     PATH="$fake_bin:$PATH" "$macos_package_script" \
       --version v0.0.0 \
       --target-dir "$target_dir" \
