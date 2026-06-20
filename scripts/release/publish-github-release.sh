@@ -431,12 +431,13 @@ document = {
 output.write_text(json.dumps(document, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 PY
 
-mv "$tmp_gate" "$gate"
-
 if [ "$mode" = "dry_run" ]; then
+  mv "$tmp_gate" "$gate"
   printf '%s\n' "$gate"
   exit 0
 fi
+
+trap 'rm -f "$tmp_gate"' EXIT HUP INT TERM
 
 [ "$approved" = "true" ] || fail "execute mode requires --approve-release"
 [ -n "$artifact_dir" ] || fail "execute mode requires --artifact-dir"
@@ -446,7 +447,7 @@ if [ -z "${GITHUB_TOKEN:-}" ] && [ -z "${GH_TOKEN:-}" ]; then
 fi
 command -v gh >/dev/null 2>&1 || fail "execute mode requires gh"
 download_dir=$(mktemp -d "${TMPDIR:-/tmp}/resume-ir-release-download-verify.XXXXXX")
-trap 'rm -rf "$download_dir"' EXIT HUP INT TERM
+trap 'rm -f "$tmp_gate"; rm -rf "$download_dir"' EXIT HUP INT TERM
 
 python3 - "$artifact_manifest" "$artifact_dir" <<'PY'
 import hashlib
@@ -517,4 +518,5 @@ for artifact in manifest["artifacts"]:
         raise SystemExit(f"downloaded release artifact byte count mismatch: {file_name}")
 PY
 
+mv "$tmp_gate" "$gate"
 printf '%s\n' "$gate"

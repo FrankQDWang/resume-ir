@@ -353,6 +353,9 @@ if [ "$#" -ge 2 ] && [ "$1" = "release" ] && [ "$2" = "create" ]; then
   exit 0
 fi
 if [ "$#" -ge 2 ] && [ "$1" = "release" ] && [ "$2" = "upload" ]; then
+  if [ "${FAKE_GH_FAIL_UPLOAD:-}" = "1" ]; then
+    exit 1
+  fi
   exit 0
 fi
 if [ "$#" -ge 2 ] && [ "$1" = "release" ] && [ "$2" = "download" ]; then
@@ -429,6 +432,27 @@ FAKE_RELEASE_ARTIFACT_DIR="$execute_artifact_dir" \
 fi
 if grep -Fq "release upload" "$fake_log"; then
   fail "GitHub Release publication execute mode uploaded before local artifact verification"
+fi
+failed_upload_out_dir="$out_dir/execute-upload-failure"
+: > "$fake_log"
+if PATH="$fake_bin:$PATH" \
+GH_TOKEN="synthetic-token" \
+FAKE_GH_LOG="$fake_log" \
+FAKE_GH_FAIL_UPLOAD=1 \
+FAKE_RELEASE_ARTIFACT_DIR="$execute_artifact_dir" \
+  "$publish_script" \
+    --execute \
+    --approve-release \
+    --version v0.0.0 \
+    --repo FrankQDWang/resume-ir \
+    --artifact-manifest "$execute_artifact_manifest" \
+    --publication-evidence "$execute_publication_evidence" \
+    --artifact-dir "$execute_artifact_dir" \
+    --out-dir "$failed_upload_out_dir" >/dev/null 2>&1; then
+  fail "GitHub Release publication execute mode passed after upload failure"
+fi
+if [ -e "$failed_upload_out_dir/github-release-publication-gate.json" ]; then
+  fail "GitHub Release publication execute mode finalized gate before upload verification"
 fi
 corrupt_release_artifact_dir="$tmpdir/corrupt-release-artifacts"
 mkdir -p "$corrupt_release_artifact_dir"
