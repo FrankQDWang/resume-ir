@@ -1082,12 +1082,13 @@ fn validate_release_readiness_evidence(
     }
     if let Some(path) = &args.github_release_publication_gate {
         let report = read_release_readiness_evidence_report(path)?;
-        let detail = validate_github_release_publication_gate_report(&report).map_err(|error| {
+        let (privacy_boundary, detail) = validate_github_release_publication_gate_report(&report)
+            .map_err(|error| {
             release_readiness_manifest_error(RELEASE_READINESS_GITHUB_PUBLICATION_GATE_LABEL, error)
         })?;
         provided.push(ReleaseReadinessProvidedEvidence {
             label: RELEASE_READINESS_GITHUB_PUBLICATION_GATE_LABEL,
-            privacy_boundary: "blocked_release_evidence_manifest",
+            privacy_boundary,
             detail,
         });
     }
@@ -1747,7 +1748,9 @@ fn validate_release_publication_artifacts(
     Ok(())
 }
 
-fn validate_github_release_publication_gate_report(report: &str) -> Result<&'static str> {
+fn validate_github_release_publication_gate_report(
+    report: &str,
+) -> Result<(&'static str, &'static str)> {
     const CONTEXT: &str = "GitHub Release publication gate";
     if release_readiness_diagnostics_report_contains_private_marker(report)
         || release_evidence_report_contains_forbidden_marker(report)
@@ -1795,15 +1798,18 @@ fn validate_github_release_publication_gate_report(report: &str) -> Result<&'sta
     }
     let execution_mode =
         require_release_evidence_non_empty_string(object, "execution_mode", CONTEXT)?;
-    let (publication_status, artifact_publish_status, detail) = match execution_mode {
+    let (publication_status, artifact_publish_status, privacy_boundary, detail) =
+        match execution_mode {
         "dry_run" => (
             "blocked",
             "blocked",
+            "blocked_release_evidence_manifest",
             "release.github_publication_gate.v1 fail-closed dry-run gate passed schema and publication boundary checks",
         ),
         "execute" => (
             "published_verified",
             "uploaded_verified",
+            "verified_release_evidence_manifest",
             "release.github_publication_gate.v1 verified execute gate passed upload and download evidence checks",
         ),
         _ => return Err(release_evidence_invalid(CONTEXT, "execution_mode")),
@@ -1840,7 +1846,7 @@ fn validate_github_release_publication_gate_report(report: &str) -> Result<&'sta
     }
     require_release_evidence_non_empty_string(object, "notes", CONTEXT)?;
     validate_github_release_publication_gate_artifacts(object, artifact_publish_status)?;
-    Ok(detail)
+    Ok((privacy_boundary, detail))
 }
 
 fn validate_github_release_publication_gate_artifacts(

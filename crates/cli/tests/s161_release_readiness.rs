@@ -1453,7 +1453,7 @@ fn release_readiness_json_accepts_verified_github_publication_gate_without_path_
     assert_eq!(gate_evidence["status"], "provided");
     assert_eq!(
         gate_evidence["privacy_boundary"],
-        "blocked_release_evidence_manifest"
+        "verified_release_evidence_manifest"
     );
     assert!(gate_evidence["detail"]
         .as_str()
