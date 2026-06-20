@@ -56,6 +56,49 @@ cat > "$package_manifest" <<'EOF'
   "install_location": "/usr/local/bin",
   "signing_status": "unsigned",
   "notarization_status": "not_requested",
+  "runtime_payload": {
+    "schema_version": "release.runtime_package_payload.v1",
+    "runtime_distribution_mode": "bundled",
+    "runtime_package_binaries_included": true,
+    "runtime_binaries_included_in_manifest": false,
+    "install_location": "/usr/local/lib/resume-ir/runtime",
+    "runtime_bundle_manifest": {
+      "file": "runtime-bundle-manifest.json",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "bytes": 789,
+      "schema_version": "release.runtime_bundle.v1",
+      "runtime_distribution_mode": "bundled"
+    },
+    "components": [
+      {
+        "id": "synthetic-tesseract",
+        "kind": "ocr-engine",
+        "file": "tesseract",
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "bytes": 101,
+        "license": "Apache-2.0",
+        "source": "synthetic-reviewed-source"
+      },
+      {
+        "id": "synthetic-pdftoppm",
+        "kind": "pdf-renderer",
+        "file": "pdftoppm",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "bytes": 202,
+        "license": "GPL-compatible-reviewed",
+        "source": "synthetic-reviewed-source"
+      },
+      {
+        "id": "synthetic-tessdata-eng",
+        "kind": "ocr-language-pack",
+        "file": "eng.traineddata",
+        "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "bytes": 303,
+        "license": "Apache-2.0",
+        "source": "synthetic-reviewed-source"
+      }
+    ]
+  },
   "artifacts": [
     {
       "kind": "pkg",
@@ -119,6 +162,28 @@ fi
 
 if "$notarization_script" --version v0.0.1 --macos-package-manifest "$package_manifest" --out-dir "$out_dir/mismatch" >/dev/null 2>&1; then
   fail "notarization evidence script accepted a mismatched macOS package manifest version"
+fi
+
+unknown_manifest="$tmpdir/macos-package-unknown-field.json"
+python3 - "$package_manifest" "$unknown_manifest" <<'PY'
+import json
+import sys
+
+source = sys.argv[1]
+target = sys.argv[2]
+
+with open(source, "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+
+document["artifacts"][0]["local_probe_path"] = "PRIVATE-notary-cache"
+
+with open(target, "w", encoding="utf-8") as handle:
+    json.dump(document, handle)
+    handle.write("\n")
+PY
+
+if "$notarization_script" --version v0.0.0 --macos-package-manifest "$unknown_manifest" --out-dir "$out_dir/unknown" >/dev/null 2>&1; then
+  fail "notarization evidence script accepted an unknown macOS package manifest field"
 fi
 
 require_text "$verify_script" "./scripts/ci/check-notarization-evidence.sh"
