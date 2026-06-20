@@ -119,6 +119,32 @@ def fail(message):
     raise SystemExit(message)
 
 
+def require_allowed_keys(mapping, allowed, context):
+    unexpected = sorted(set(mapping) - set(allowed))
+    if unexpected:
+        fail(f"{context} contains unsupported field")
+
+
+def is_basename(value):
+    return (
+        isinstance(value, str)
+        and value not in {"", ".", ".."}
+        and "/" not in value
+        and "\\" not in value
+        and ":" not in value
+    )
+
+
+def require_sha256(value, message):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        fail(message)
+
+
+def require_positive_int(value, message):
+    if not isinstance(value, int) or value <= 0:
+        fail(message)
+
+
 if mode not in {"dry_run", "execute"}:
     fail("mode is invalid")
 if not re.fullmatch(r"v[0-9]+[.][0-9]+[.][0-9]+", version):
@@ -127,16 +153,92 @@ if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
     fail("repo must look like OWNER/REPO")
 
 artifact_raw = artifact_manifest.read_bytes()
+publication_raw = publication_evidence.read_bytes()
 try:
     artifacts_report = json.loads(artifact_raw)
-    publication_report = json.loads(publication_evidence.read_text(encoding="utf-8"))
+    publication_report = json.loads(publication_raw)
 except json.JSONDecodeError as error:
     fail(f"release publication input is not valid JSON: {error.msg}")
 
+if not isinstance(artifacts_report, dict):
+    fail("artifact manifest root must be an object")
+require_allowed_keys(
+    artifacts_report,
+    {
+        "schema_version",
+        "version",
+        "packaging_status",
+        "artifacts",
+        "runtime_bundle_manifests",
+        "blocked_release_steps",
+        "notes",
+    },
+    "artifact manifest root",
+)
 if artifacts_report.get("schema_version") != "release.artifacts.v1":
     fail("artifact manifest schema_version must be release.artifacts.v1")
 if artifacts_report.get("version") != version:
     fail("artifact manifest version does not match requested version")
+if artifacts_report.get("packaging_status") != "blocked":
+    fail("artifact manifest packaging_status must be blocked")
+
+runtime_bundle_manifests = artifacts_report.get("runtime_bundle_manifests")
+if runtime_bundle_manifests is not None:
+    if not isinstance(runtime_bundle_manifests, list) or not runtime_bundle_manifests:
+        fail("artifact manifest runtime bundle manifests are invalid")
+    for runtime_bundle in runtime_bundle_manifests:
+        if not isinstance(runtime_bundle, dict):
+            fail("artifact manifest runtime bundle entries must be objects")
+        require_allowed_keys(
+            runtime_bundle,
+            {
+                "file",
+                "sha256",
+                "bytes",
+                "schema_version",
+                "runtime_distribution_mode",
+                "runtime_package_binaries_included",
+                "runtime_binaries_included",
+            },
+            "artifact manifest runtime bundle",
+        )
+        if not is_basename(runtime_bundle.get("file")):
+            fail("runtime bundle manifest file must be a basename")
+        require_sha256(
+            runtime_bundle.get("sha256"),
+            "runtime bundle manifest sha256 must be lowercase hex",
+        )
+        require_positive_int(
+            runtime_bundle.get("bytes"),
+            "runtime bundle manifest bytes must be a positive integer",
+        )
+        if runtime_bundle.get("schema_version") != "release.runtime_bundle.v1":
+            fail("runtime bundle manifest schema_version must be release.runtime_bundle.v1")
+        if runtime_bundle.get("runtime_distribution_mode") != "bundled":
+            fail("runtime bundle manifest distribution mode must be bundled")
+        if runtime_bundle.get("runtime_package_binaries_included") is not True:
+            fail("runtime bundle manifest must include package binaries")
+        if runtime_bundle.get("runtime_binaries_included") is not False:
+            fail("runtime bundle manifest must not include raw runtime binaries")
+
+if not isinstance(publication_report, dict):
+    fail("publication evidence root must be an object")
+require_allowed_keys(
+    publication_report,
+    {
+        "schema_version",
+        "version",
+        "publication_status",
+        "evidence_boundary",
+        "artifact_manifest_sha256",
+        "artifacts",
+        "required_evidence",
+        "blocked_release_steps",
+        "prohibited_public_material",
+        "notes",
+    },
+    "publication evidence root",
+)
 if publication_report.get("schema_version") != "release.publication_evidence.v1":
     fail("publication evidence schema_version must be release.publication_evidence.v1")
 if publication_report.get("version") != version:
@@ -149,22 +251,55 @@ if publication_report.get("artifact_manifest_sha256") != hashlib.sha256(artifact
     fail("publication evidence artifact manifest digest does not match")
 
 required_names = {"resume-cli", "resume-daemon", "resume-benchmark"}
+publication_artifacts = publication_report.get("artifacts")
+if not isinstance(publication_artifacts, list) or not publication_artifacts:
+    fail("publication evidence must contain artifacts")
+seen_publication = set()
+for artifact in publication_artifacts:
+    if not isinstance(artifact, dict):
+        fail("publication evidence artifact entries must be objects")
+    require_allowed_keys(
+        artifact,
+        {"name", "file", "artifact_sha256", "bytes", "upload_status"},
+        "publication evidence artifact",
+    )
+    name = artifact.get("name")
+    file_name = artifact.get("file")
+    sha256 = artifact.get("artifact_sha256")
+    bytes_count = artifact.get("bytes")
+    if name not in required_names:
+        fail("publication evidence artifact name is not a required release binary")
+    if not is_basename(file_name):
+        fail("publication evidence artifact file must be a basename")
+    require_sha256(sha256, "publication evidence artifact sha256 must be lowercase hex")
+    require_positive_int(
+        bytes_count,
+        "publication evidence artifact bytes must be a positive integer",
+    )
+    if artifact.get("upload_status") != "blocked":
+        fail("publication evidence artifact upload_status must be blocked")
+    seen_publication.add(name)
+if sorted(required_names - seen_publication):
+    fail("publication evidence is missing required release binaries")
+
+source_artifacts = artifacts_report.get("artifacts")
+if not isinstance(source_artifacts, list) or not source_artifacts:
+    fail("artifact manifest must contain artifacts")
 artifacts = []
-for artifact in artifacts_report.get("artifacts", []):
+for artifact in source_artifacts:
     if not isinstance(artifact, dict):
         fail("artifact entries must be objects")
+    require_allowed_keys(artifact, {"name", "file", "sha256", "bytes"}, "artifact manifest artifact")
     name = artifact.get("name")
     file_name = artifact.get("file")
     sha256 = artifact.get("sha256")
     bytes_count = artifact.get("bytes")
     if name not in required_names:
         fail("artifact name is not a required release binary")
-    if not isinstance(file_name, str) or "/" in file_name or "\\" in file_name or ":" in file_name:
+    if not is_basename(file_name):
         fail("artifact file must be a basename")
-    if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
-        fail("artifact sha256 must be lowercase hex")
-    if not isinstance(bytes_count, int) or bytes_count <= 0:
-        fail("artifact bytes must be a positive integer")
+    require_sha256(sha256, "artifact sha256 must be lowercase hex")
+    require_positive_int(bytes_count, "artifact bytes must be a positive integer")
     artifacts.append(
         {
             "name": name,
@@ -189,9 +324,7 @@ document = {
     "approval_gate": "human_release_approval_required",
     "secret_interface": "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute",
     "artifact_manifest_sha256": hashlib.sha256(artifact_raw).hexdigest(),
-    "publication_evidence_sha256": hashlib.sha256(
-        publication_evidence.read_bytes()
-    ).hexdigest(),
+    "publication_evidence_sha256": hashlib.sha256(publication_raw).hexdigest(),
     "planned_steps": [
         "validate_release_artifact_manifest",
         "validate_publication_evidence_manifest",

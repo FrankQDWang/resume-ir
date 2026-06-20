@@ -82,6 +82,25 @@ if "$script" --version 0.0.0 --artifact-manifest "$artifact_manifest" --out-dir 
   fail "release publication evidence accepted an invalid version"
 fi
 
+artifact_manifest_unknown="$tmpdir/release-artifacts-unknown-field.json"
+cat > "$artifact_manifest_unknown" <<JSON
+{
+  "schema_version": "release.artifacts.v1",
+  "version": "v0.0.0",
+  "packaging_status": "blocked",
+  "artifacts": [
+    {"name": "resume-cli", "file": "resume-cli", "local_probe_path": "$tmpdir/PRIVATE-release-cache", "sha256": "1111111111111111111111111111111111111111111111111111111111111111", "bytes": 101},
+    {"name": "resume-daemon", "file": "resume-daemon", "sha256": "2222222222222222222222222222222222222222222222222222222222222222", "bytes": 202},
+    {"name": "resume-benchmark", "file": "resume-benchmark", "sha256": "3333333333333333333333333333333333333333333333333333333333333333", "bytes": 303}
+  ],
+  "blocked_release_steps": ["packaging", "signing", "notarization", "github_release_upload"],
+  "notes": "Synthetic dry-run fixture only."
+}
+JSON
+if "$script" --version v0.0.0 --artifact-manifest "$artifact_manifest_unknown" --out-dir "$out_dir/unknown-artifact" >/dev/null 2>&1; then
+  fail "release publication evidence accepted an unknown artifact manifest field"
+fi
+
 "$publish_script" \
   --dry-run \
   --version v0.0.0 \
@@ -101,6 +120,27 @@ require_text "$gate" '"gh_release_upload"'
 require_text "$gate" '"gh_release_download_verify"'
 if grep -Fq "$tmpdir" "$gate"; then
   fail "GitHub Release publication gate leaked an absolute temp path"
+fi
+publication_unknown="$tmpdir/release-publication-evidence-unknown-field.json"
+python3 - "$manifest" "$publication_unknown" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+document = json.loads(source.read_text(encoding="utf-8"))
+document["artifacts"][0]["local_probe_path"] = "PRIVATE-release-cache"
+target.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+PY
+if "$publish_script" \
+  --dry-run \
+  --version v0.0.0 \
+  --repo FrankQDWang/resume-ir \
+  --artifact-manifest "$artifact_manifest" \
+  --publication-evidence "$publication_unknown" \
+  --out-dir "$out_dir/unknown-publication" >/dev/null 2>&1; then
+  fail "GitHub Release publication gate accepted an unknown publication evidence field"
 fi
 if "$publish_script" --execute --version v0.0.0 --repo FrankQDWang/resume-ir --artifact-manifest "$artifact_manifest" --publication-evidence "$manifest" --out-dir "$out_dir/execute" >/dev/null 2>&1; then
   fail "GitHub Release publication execute mode passed without explicit approval"
