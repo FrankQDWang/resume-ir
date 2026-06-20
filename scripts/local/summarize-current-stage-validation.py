@@ -187,6 +187,10 @@ def observability(document: dict[str, Any], schema: str) -> dict[str, Any]:
         "ingest_job_status_counts",
         "ingest_job_kind_status_counts",
         "ingest_job_failure_counts",
+        "contains_raw_resume_text",
+        "contains_resume_paths",
+        "contains_queries",
+        "contains_sample_ids",
     }
     return {key: value[key] for key in sorted(allowed) if key in value}
 

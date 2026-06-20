@@ -108,7 +108,11 @@ cat > "$smoke_summary" <<'JSON'
     },
     "ingest_job_failure_counts": {
       "ocr_page_budget_exceeded": 1
-    }
+    },
+    "contains_raw_resume_text": false,
+    "contains_resume_paths": false,
+    "contains_queries": false,
+    "contains_sample_ids": false
   },
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
@@ -245,7 +249,11 @@ cat > "$blocked_summary" <<'JSON'
         "completed": 200
       }
     },
-    "ingest_job_failure_counts": {}
+    "ingest_job_failure_counts": {},
+    "contains_raw_resume_text": false,
+    "contains_resume_paths": false,
+    "contains_queries": false,
+    "contains_sample_ids": false
   },
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
@@ -330,7 +338,11 @@ cat > "$full_evidence" <<'JSON'
         "completed": 8000
       }
     },
-    "ingest_job_failure_counts": {}
+    "ingest_job_failure_counts": {},
+    "contains_raw_resume_text": false,
+    "contains_resume_paths": false,
+    "contains_queries": false,
+    "contains_sample_ids": false
   },
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
