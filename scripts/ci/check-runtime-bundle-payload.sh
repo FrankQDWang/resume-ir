@@ -59,6 +59,7 @@ mkdir -p "$component_dir" "$out_dir" "$target_dir"
 printf 'synthetic tesseract runtime binary\n' > "$component_dir/tesseract"
 printf 'synthetic English tessdata payload\n' > "$component_dir/eng.traineddata"
 printf 'synthetic PDF renderer runtime binary\n' > "$component_dir/pdftoppm"
+printf 'synthetic reviewed embedding model payload\n' > "$component_dir/model.onnx"
 printf 'synthetic source offer archive\n' > "$component_dir/source-offer.tar.gz"
 printf 'synthetic notice text\n' > "$component_dir/NOTICE.txt"
 for binary in resume-cli resume-daemon resume-benchmark; do
@@ -86,6 +87,7 @@ fi
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$component_dir/tesseract" \
   --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$component_dir/eng.traineddata" \
   --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$component_dir/pdftoppm" \
+  --component "all-minilm-l6-v2|embedding-model|Apache-2.0|https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2|$component_dir/model.onnx" \
   --reviewed \
   --out-dir "$out_dir" \
   > "$tmpdir/assemble.stdout"
@@ -106,6 +108,7 @@ require_dir "$evidence_dir"
 require_file "$runtime_dir/tesseract"
 require_file "$runtime_dir/eng.traineddata"
 require_file "$runtime_dir/pdftoppm"
+require_file "$runtime_dir/model.onnx"
 require_file "$evidence_dir/source-offer.tar.gz"
 require_file "$evidence_dir/NOTICE.txt"
 
@@ -119,6 +122,8 @@ require_text "$manifest" '"components"'
 require_text "$manifest" '"file": "tesseract"'
 require_text "$manifest" '"file": "eng.traineddata"'
 require_text "$manifest" '"file": "pdftoppm"'
+require_text "$manifest" '"file": "model.onnx"'
+require_text "$manifest" '"kind": "embedding-model"'
 if grep -Eq "$tmpdir|PRIVATE-runtime-components|raw_path|/Users/|local-data|diagnostics|model-cache|resume text" "$manifest"; then
   fail "runtime bundle assembly manifest leaked a local path or runtime-data marker"
 fi
@@ -154,6 +159,7 @@ SH
     require_text "$package_manifest" '"file": "tesseract"'
     require_text "$package_manifest" '"file": "eng.traineddata"'
     require_text "$package_manifest" '"file": "pdftoppm"'
+    require_text "$package_manifest" '"file": "model.onnx"'
     if grep -Fq "$tmpdir" "$package_manifest"; then
       fail "runtime package manifest leaked assembled payload path"
     fi

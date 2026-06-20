@@ -51,6 +51,7 @@ mkdir -p "$private_component_dir" "$target_dir" "$out_dir"
 printf 'synthetic tesseract bytes\n' > "$private_component_dir/tesseract"
 printf 'synthetic tessdata bytes\n' > "$private_component_dir/eng.traineddata"
 printf 'synthetic pdf renderer bytes\n' > "$private_component_dir/pdftoppm"
+printf 'synthetic reviewed embedding model bytes\n' > "$private_component_dir/model.onnx"
 printf 'source offer text\n' > "$private_component_dir/source-offer.txt"
 printf 'notice text\n' > "$private_component_dir/NOTICE.txt"
 for binary in resume-cli resume-daemon resume-benchmark; do
@@ -79,6 +80,7 @@ fi
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
   --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$private_component_dir/eng.traineddata" \
   --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$private_component_dir/pdftoppm" \
+  --component "all-minilm-l6-v2|embedding-model|Apache-2.0|https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2|$private_component_dir/model.onnx" \
   --reviewed \
   --out-dir "$out_dir" \
   > "$tmpdir/runtime-bundle.stdout"
@@ -102,6 +104,8 @@ require_text "$manifest" '"components"'
 require_text "$manifest" '"tesseract"'
 require_text "$manifest" '"eng.traineddata"'
 require_text "$manifest" '"pdftoppm"'
+require_text "$manifest" '"model.onnx"'
+require_text "$manifest" '"embedding-model"'
 require_text "$manifest" '"sha256"'
 require_text "$manifest" '"bytes"'
 

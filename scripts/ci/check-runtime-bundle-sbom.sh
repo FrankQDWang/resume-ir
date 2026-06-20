@@ -43,6 +43,7 @@ mkdir -p "$private_component_dir" "$out_dir"
 printf 'synthetic tesseract bytes\n' > "$private_component_dir/tesseract"
 printf 'synthetic tessdata bytes\n' > "$private_component_dir/eng.traineddata"
 printf 'synthetic pdf renderer bytes\n' > "$private_component_dir/pdftoppm"
+printf 'synthetic reviewed embedding model bytes\n' > "$private_component_dir/model.onnx"
 printf 'source offer text\n' > "$private_component_dir/source-offer.txt"
 printf 'notice text\n' > "$private_component_dir/NOTICE.txt"
 
@@ -55,6 +56,7 @@ printf 'notice text\n' > "$private_component_dir/NOTICE.txt"
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
   --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$private_component_dir/eng.traineddata" \
   --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$private_component_dir/pdftoppm" \
+  --component "all-minilm-l6-v2|embedding-model|Apache-2.0|https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2|$private_component_dir/model.onnx" \
   --reviewed \
   --out-dir "$out_dir/bundle" \
   > "$tmpdir/runtime-bundle.stdout"
@@ -72,6 +74,7 @@ require_text "$sbom" '"name": "resume-ir-v0.0.0"'
 require_text "$sbom" '"name": "tesseract"'
 require_text "$sbom" '"name": "eng-tessdata"'
 require_text "$sbom" '"name": "poppler-pdftoppm"'
+require_text "$sbom" '"name": "all-minilm-l6-v2"'
 require_text "$sbom" '"licenseDeclared": "Apache-2.0"'
 require_text "$sbom" '"licenseDeclared": "GPL-3.0-or-later"'
 require_text "$sbom" '"runtime_distribution_mode=bundled"'
@@ -103,7 +106,7 @@ runtime_packages = {
         for annotation in package.get("annotations", [])
     )
 }
-required = {"tesseract", "eng-tessdata", "poppler-pdftoppm"}
+required = {"tesseract", "eng-tessdata", "poppler-pdftoppm", "all-minilm-l6-v2"}
 if set(runtime_packages) != required:
     raise SystemExit("runtime package set is incomplete")
 for name, package in runtime_packages.items():

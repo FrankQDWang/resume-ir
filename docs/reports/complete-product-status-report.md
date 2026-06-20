@@ -16,7 +16,7 @@ follow-up goals that must happen before the product can be called complete.
 | P0_foundation | production complete, covered by local/CI verification | Rust workspace, local daemon, CLI, metadata store, task queue, local IPC, SQLCipher metadata, status/doctor/diagnostics, kill/restart recovery |
 | P1_text_import_fulltext | production complete, covered by local/CI verification | local file scanning, DOCX/PDF/DOC/TXT parsing, scanned PDF detection, persistent Tantivy full-text index, snippets, deletion hiding, index recovery |
 | P2_fields_dedupe | implementation production complete, release evidence blocked | email/phone/contact redaction, school, degree, major, company, title, skills, certificate, location, date ranges, confidence/evidence, filters, candidate folding, soft dedupe |
-| P3_semantic_vector | implementation production complete, release evidence blocked | local embedding command protocol, model manifest/preflight, persistent vector snapshot, semantic search, hybrid search, RRF, query embedding attestation |
+| P3_semantic_vector | implementation production complete, release evidence blocked | local embedding command protocol, model manifest/preflight, persistent vector snapshot, semantic search, hybrid search, RRF, query embedding attestation; runtime bundle guards now require packaged `embedding-model` payload/SBOM coverage |
 | P4_ocr | implementation production complete, release evidence blocked | scanned PDF OCR queue, pdftoppm renderer path, Tesseract worker path, OCR cache, page budget, pause/resume, retry, OCR result indexing, runtime manifest/preflight |
 | P5_cross_platform_release | automation production complete, release evidence blocked | macOS/Windows package dry-runs, install/upgrade/uninstall/rollback plans, Windows service dry-run plan, signing/notarization fail-closed gates, SBOM/runtime bundle checks |
 
@@ -48,7 +48,7 @@ follow-up goals that must happen before the product can be called complete.
 | vector quality | Private labeled query set with recall@k, MRR, NDCG@k, and zero-recall evidence. |
 | OCR throughput | Follow-up performance optimization goal: representative OCR throughput run with page latency percentiles and pages/sec. |
 | OCR runtime manifest/dependency evidence | Reviewed Tesseract/tessdata/PDF renderer runtime manifests, checksums, licenses, notices, source-offer obligations, SBOM, and package composition evidence. |
-| embedding model license/distribution | Approved local embedding model, model artifact manifest, offline distribution plan, checksum, and license review. |
+| embedding model license/distribution | Approved local embedding model, model artifact manifest, checksum, license review, and matching `embedding-model` component in the reviewed runtime package payload/SBOM. |
 | cross-platform release validation | Fresh macOS and Windows release-platform validation over release artifacts. |
 | redacted diagnostics evidence | Run `export-diagnostics --redact` on the validation data directory and pass the redacted aggregate report to `release-readiness --json`. |
 | hardware fault drills | Actual release-platform transcripts for ENOSPC, service kill, battery-mode, and external-drive disconnect. |

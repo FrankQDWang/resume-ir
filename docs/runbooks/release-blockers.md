@@ -1182,6 +1182,7 @@ scripts/release/assemble-runtime-bundle.sh \
   --component tesseract\|ocr-engine\|Apache-2.0\|https://github.com/tesseract-ocr/tesseract\|<local-tesseract-binary> \
   --component eng-tessdata\|ocr-language-pack\|Apache-2.0\|https://github.com/tesseract-ocr/tessdata\|<local-eng-traineddata> \
   --component pdf-renderer\|pdf-renderer\|<reviewed-renderer-license>\|<reviewed-renderer-source>\|<local-pdf-renderer-binary> \
+  --component embedding-model\|embedding-model\|<reviewed-model-license>\|<reviewed-model-source>\|<local-model-artifact> \
   --out-dir <local-runtime-bundle-out> \
   --reviewed
 ```
@@ -1190,6 +1191,10 @@ The helper prints only redacted output. It does not download dependencies,
 perform legal review, sign, notarize, publish, upload, or commit runtime
 binaries. If legal review is incomplete, omit `--reviewed`; the helper must
 fail closed and the runtime distribution remains BLOCKED.
+For bundled-first releases, include the reviewed embedding model as an
+`embedding-model` component in the same runtime bundle. Keeping the model only
+as an external command/runtime manifest is allowed for local development, but it
+does not clear the offline packaged model distribution blocker.
 `scripts/release/create-runtime-bundle-manifest.sh` remains the lower-level
 manifest writer used by the assembly helper and CI guards; release operators
 should prefer the assembly helper so package payloads and manifests are derived

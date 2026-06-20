@@ -58,6 +58,7 @@ mkdir -p "$runtime_dir" "$out_dir"
 printf '%s\n' 'synthetic tesseract runtime binary' > "$runtime_dir/tesseract"
 printf '%s\n' 'synthetic English tessdata payload' > "$runtime_dir/eng.traineddata"
 printf '%s\n' 'synthetic PDF renderer runtime binary' > "$runtime_dir/pdftoppm"
+printf '%s\n' 'synthetic reviewed embedding model payload' > "$runtime_dir/model.onnx"
 printf '%s\n' 'synthetic source offer archive' > "$runtime_dir/source-offer.tar.gz"
 
 "$runtime_bundle_script" \
@@ -68,6 +69,7 @@ printf '%s\n' 'synthetic source offer archive' > "$runtime_dir/source-offer.tar.
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$runtime_dir/tesseract" \
   --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$runtime_dir/eng.traineddata" \
   --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$runtime_dir/pdftoppm" \
+  --component "all-minilm-l6-v2|embedding-model|Apache-2.0|https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2|$runtime_dir/model.onnx" \
   --out-dir "$out_dir" \
   --reviewed \
   > "$tmpdir/runtime-bundle.stdout"
@@ -116,11 +118,13 @@ SH
     require_text "$manifest" '"file": "tesseract"'
     require_text "$manifest" '"file": "eng.traineddata"'
     require_text "$manifest" '"file": "pdftoppm"'
+    require_text "$manifest" '"file": "model.onnx"'
     if pkgutil --payload-files "$pkg" >/dev/null 2>&1; then
       pkgutil --payload-files "$pkg" > "$tmpdir/payload-files.txt"
       require_text "$tmpdir/payload-files.txt" "usr/local/lib/resume-ir/runtime/tesseract"
       require_text "$tmpdir/payload-files.txt" "usr/local/lib/resume-ir/runtime/eng.traineddata"
       require_text "$tmpdir/payload-files.txt" "usr/local/lib/resume-ir/runtime/pdftoppm"
+      require_text "$tmpdir/payload-files.txt" "usr/local/lib/resume-ir/runtime/model.onnx"
     fi
     ;;
   *)
