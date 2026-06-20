@@ -151,6 +151,7 @@ gate="$out_dir/github-release-publication-gate.json"
 require_file "$gate"
 require_text "$gate" '"schema_version": "release.github_publication_gate.v1"'
 require_text "$gate" '"execution_mode": "dry_run"'
+require_text "$gate" '"evidence_boundary": "blocked_release_evidence_manifest"'
 require_text "$gate" '"publication_status": "blocked"'
 require_text "$gate" '"approval_gate": "human_release_approval_required"'
 require_text "$gate" '"secret_interface": "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute"'
@@ -403,6 +404,7 @@ FAKE_RELEASE_ARTIFACT_DIR="$execute_artifact_dir" \
     --out-dir "$out_dir/execute-with-download" >/dev/null
 require_file "$out_dir/execute-with-download/github-release-publication-gate.json"
 require_text "$out_dir/execute-with-download/github-release-publication-gate.json" '"execution_mode": "execute"'
+require_text "$out_dir/execute-with-download/github-release-publication-gate.json" '"evidence_boundary": "verified_release_evidence_manifest"'
 require_text "$out_dir/execute-with-download/github-release-publication-gate.json" '"publication_status": "published_verified"'
 require_text "$out_dir/execute-with-download/github-release-publication-gate.json" '"publish_status": "uploaded_verified"'
 require_text "$fake_log" "release upload"

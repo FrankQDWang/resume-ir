@@ -1771,6 +1771,7 @@ fn validate_github_release_publication_gate_report(
             "version",
             "repo",
             "execution_mode",
+            "evidence_boundary",
             "publication_status",
             "approval_gate",
             "secret_interface",
@@ -1814,6 +1815,7 @@ fn validate_github_release_publication_gate_report(
         ),
         _ => return Err(release_evidence_invalid(CONTEXT, "execution_mode")),
     };
+    require_release_evidence_string(object, "evidence_boundary", privacy_boundary, CONTEXT)?;
     require_release_evidence_string(object, "publication_status", publication_status, CONTEXT)?;
     require_release_evidence_string(
         object,

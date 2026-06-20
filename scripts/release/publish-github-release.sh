@@ -401,6 +401,11 @@ document = {
     "version": version,
     "repo": repo,
     "execution_mode": mode,
+    "evidence_boundary": (
+        "blocked_release_evidence_manifest"
+        if mode == "dry_run"
+        else "verified_release_evidence_manifest"
+    ),
     "publication_status": "blocked" if mode == "dry_run" else "published_verified",
     "approval_gate": "human_release_approval_required",
     "secret_interface": "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute",
