@@ -191,6 +191,81 @@ def observability(document: dict[str, Any], schema: str) -> dict[str, Any]:
     return {key: value[key] for key in sorted(allowed) if key in value}
 
 
+def int_at(value: Any, key: str) -> int:
+    if not isinstance(value, dict):
+        return 0
+    item = value.get(key)
+    if isinstance(item, int) and item > 0:
+        return item
+    return 0
+
+
+def nested_int_at(value: Any, parent: str, key: str) -> int:
+    if not isinstance(value, dict):
+        return 0
+    return int_at(value.get(parent), key)
+
+
+def derived_blockers(observability_value: dict[str, Any]) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    status_counts = observability_value.get("document_status_counts")
+    job_kind_counts = observability_value.get("ingest_job_kind_status_counts")
+
+    failed_permanent = int_at(status_counts, "failed_permanent")
+    if failed_permanent > 0:
+        blockers.append(
+            {
+                "kind": "derived_blocker",
+                "category": "import/parser",
+                "reason": "failed_permanent_documents_present",
+                "count": failed_permanent,
+                "next_action": "inspect redacted diagnostics and fix parser/import failure classes",
+            }
+        )
+
+    ocr_required = int_at(status_counts, "ocr_required")
+    queued_ocr = nested_int_at(job_kind_counts, "ocr_document", "queued")
+    running_ocr = nested_int_at(job_kind_counts, "ocr_document", "running")
+    if ocr_required > 0 or queued_ocr > 0 or running_ocr > 0:
+        blockers.append(
+            {
+                "kind": "derived_blocker",
+                "category": "ocr",
+                "reason": "ocr_backlog_present",
+                "document_count": ocr_required,
+                "queued_jobs": queued_ocr,
+                "running_jobs": running_ocr,
+                "next_action": "continue bounded OCR validation or carry backlog to performance/runtime follow-up",
+            }
+        )
+
+    searchable = int_at(observability_value, "searchable_document_count")
+    vector_indexed = int_at(observability_value, "vector_indexed_document_count")
+    if searchable > 0 and vector_indexed < searchable:
+        blockers.append(
+            {
+                "kind": "derived_blocker",
+                "category": "embedding",
+                "reason": "vector_index_backlog_present",
+                "searchable_document_count": searchable,
+                "vector_indexed_document_count": vector_indexed,
+                "next_action": "continue bounded embedding/index validation with reviewed local model runtime",
+            }
+        )
+
+    if observability_value.get("hot_index_fully_covered") is False:
+        blockers.append(
+            {
+                "kind": "derived_blocker",
+                "category": "benchmark",
+                "reason": "hot_index_not_fully_covered",
+                "next_action": "do not claim full baseline; rerun full validation after OCR/vector coverage is sufficient",
+            }
+        )
+
+    return blockers
+
+
 def preflight_probes(document: dict[str, Any]) -> dict[str, str]:
     value = document.get("preflight_probes", {})
     if not isinstance(value, dict):
@@ -265,6 +340,8 @@ def build_handoff(document: dict[str, Any]) -> dict[str, Any]:
             "private_corpus_read": bool_field(document, "private_corpus_read"),
         }
 
+    observability_value = observability(document, schema)
+
     return {
         "schema_version": HANDOFF_SCHEMA,
         "privacy_boundary": HANDOFF_PRIVACY_BOUNDARY,
@@ -281,7 +358,8 @@ def build_handoff(document: dict[str, Any]) -> dict[str, Any]:
         "preflight_probes": preflight_probes(document),
         "blocked": blocked,
         "next_action": next_action(document, schema),
-        "observability": observability(document, schema),
+        "observability": observability_value,
+        "derived_blockers": derived_blockers(observability_value),
         "completed_steps": completed_steps(document),
         "blocked_or_not_complete": not_complete_items(document),
         "must_not_upload": must_not_upload(document),

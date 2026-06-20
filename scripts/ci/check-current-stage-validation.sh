@@ -44,6 +44,7 @@ require_current_stage_handoff() {
   require_text "$handoff" "\"current_stage_status\": \"$expected_status\""
   require_text "$handoff" '"complete_product": false'
   require_text "$handoff" '"performance_optimization_deferred": true'
+  require_text "$handoff" '"derived_blockers"'
   require_text "$handoff" '"must_not_upload"'
   reject_text "$handoff" "$tmpdir"
   reject_text "$handoff" "PRIVATE-current-stage"
@@ -941,6 +942,12 @@ require_partial_hot_index_observability "$smoke_low_hot_summary"
 require_current_stage_handoff \
   "smoke_satisfied" \
   "resume-ir.current-stage-smoke-summary.v1"
+handoff="$execute_out_dir/current-stage-handoff.json"
+require_text "$handoff" '"kind": "derived_blocker"'
+require_text "$handoff" '"category": "ocr"'
+require_text "$handoff" '"reason": "ocr_backlog_present"'
+require_text "$handoff" '"category": "import/parser"'
+require_text "$handoff" '"reason": "failed_permanent_documents_present"'
 reject_text "$smoke_low_hot_summary" "$tmpdir"
 reject_text "$smoke_low_hot_summary" "PRIVATE-current-stage"
 reject_text "$smoke_low_hot_summary" "private fake query"
