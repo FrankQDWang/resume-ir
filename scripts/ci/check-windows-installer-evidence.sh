@@ -68,6 +68,49 @@ cat > "$package_manifest" <<'EOF'
   "installer_kind": "msi",
   "install_location": "ProgramFilesFolder/resume-ir",
   "signing_status": "unsigned",
+  "runtime_payload": {
+    "schema_version": "release.runtime_package_payload.v1",
+    "runtime_distribution_mode": "bundled",
+    "runtime_package_binaries_included": true,
+    "runtime_binaries_included_in_manifest": false,
+    "install_location": "ProgramFilesFolder/resume-ir/runtime",
+    "runtime_bundle_manifest": {
+      "file": "runtime-bundle-manifest.json",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bytes": 654,
+      "schema_version": "release.runtime_bundle.v1",
+      "runtime_distribution_mode": "bundled"
+    },
+    "components": [
+      {
+        "id": "synthetic-tesseract",
+        "kind": "ocr-engine",
+        "file": "tesseract.exe",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bytes": 101,
+        "license": "Apache-2.0",
+        "source": "synthetic-reviewed-source"
+      },
+      {
+        "id": "synthetic-pdftoppm",
+        "kind": "pdf-renderer",
+        "file": "pdftoppm.exe",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "bytes": 202,
+        "license": "GPL-compatible-reviewed",
+        "source": "synthetic-reviewed-source"
+      },
+      {
+        "id": "synthetic-tessdata-eng",
+        "kind": "ocr-language-pack",
+        "file": "eng.traineddata",
+        "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "bytes": 303,
+        "license": "Apache-2.0",
+        "source": "synthetic-reviewed-source"
+      }
+    ]
+  },
   "artifacts": [
     {
       "kind": "msi",
@@ -128,6 +171,28 @@ fi
 
 if "$installer_script" --version v0.0.1 --windows-package-manifest "$package_manifest" --out-dir "$out_dir/mismatch" >/dev/null 2>&1; then
   fail "Windows installer evidence script accepted a mismatched package manifest version"
+fi
+
+unknown_manifest="$tmpdir/windows-package-unknown-field.json"
+python3 - "$package_manifest" "$unknown_manifest" <<'PY'
+import json
+import sys
+
+source = sys.argv[1]
+target = sys.argv[2]
+
+with open(source, "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+
+document["artifacts"][0]["local_probe_path"] = "PRIVATE-windows-installer-cache"
+
+with open(target, "w", encoding="utf-8") as handle:
+    json.dump(document, handle)
+    handle.write("\n")
+PY
+
+if "$installer_script" --version v0.0.0 --windows-package-manifest "$unknown_manifest" --out-dir "$out_dir/unknown" >/dev/null 2>&1; then
+  fail "Windows installer evidence script accepted an unknown Windows package manifest field"
 fi
 
 require_text "$verify_script" "./scripts/ci/check-windows-installer-evidence.sh"
