@@ -387,7 +387,7 @@ for artifact in source_artifacts:
             "file": file_name,
             "artifact_sha256": sha256,
             "bytes": bytes_count,
-            "publish_status": "blocked" if mode == "dry_run" else "pending_execute",
+            "publish_status": "blocked" if mode == "dry_run" else "uploaded_verified",
         }
     )
 
@@ -401,7 +401,7 @@ document = {
     "version": version,
     "repo": repo,
     "execution_mode": mode,
-    "publication_status": "blocked" if mode == "dry_run" else "ready_for_execute",
+    "publication_status": "blocked" if mode == "dry_run" else "published_verified",
     "approval_gate": "human_release_approval_required",
     "secret_interface": "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute",
     "artifact_manifest_sha256": hashlib.sha256(artifact_raw).hexdigest(),

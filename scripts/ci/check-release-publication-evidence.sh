@@ -403,7 +403,8 @@ FAKE_RELEASE_ARTIFACT_DIR="$execute_artifact_dir" \
     --out-dir "$out_dir/execute-with-download" >/dev/null
 require_file "$out_dir/execute-with-download/github-release-publication-gate.json"
 require_text "$out_dir/execute-with-download/github-release-publication-gate.json" '"execution_mode": "execute"'
-require_text "$out_dir/execute-with-download/github-release-publication-gate.json" '"publication_status": "ready_for_execute"'
+require_text "$out_dir/execute-with-download/github-release-publication-gate.json" '"publication_status": "published_verified"'
+require_text "$out_dir/execute-with-download/github-release-publication-gate.json" '"publish_status": "uploaded_verified"'
 require_text "$fake_log" "release upload"
 if ! grep -Fq "release download" "$fake_log"; then
   fail "GitHub Release publication execute mode did not download uploaded artifacts for verification"
