@@ -38,7 +38,7 @@
    记录和失败闭环；若模型权重 license 未确认，标为 external/legal
    blocked，不伪造完成。
 
-以上是上一 current-stage 收口边界，不是下一阶段性能目标的降级口径。full hot-index baseline 压实、500-query 私有 benchmark、百万级真实语料验证、P95/P99 压低、查询热路径极限调优和可视化 UI 已迁入下面的活跃后续目标。
+以上是上一 current-stage 收口边界，不是下一阶段“性能极致优化”目标的降级口径。full hot-index baseline 压实、500-query 私有 benchmark、百万级真实语料验证、P95/P99 压低、查询热路径极限调优和可视化 UI 已迁入下面的活跃后续目标。
 
 ## 当前活跃后续目标
 
