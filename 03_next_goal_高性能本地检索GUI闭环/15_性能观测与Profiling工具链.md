@@ -9,6 +9,7 @@
 3. 所有性能声明必须绑定 evidence lane：`smoke`、`W0`、`W1`、`soak/fault` 或 `GUI/manual`。
 4. 私有 W1 只提交 redacted aggregate，不提交 raw query、真实简历、路径、trace 原文或 diagnostics package。
 5. profiler 结果只能提交符号化摘要和本地文件 hash，不提交本机路径。
+6. 性能报告必须说明 release build、warmup、重复次数、open-loop/closed-loop 方法、容量点和 coordinated omission 处理方式。
 
 ## 2. Instrumentation Contract
 
@@ -25,6 +26,15 @@ Rust 实现必须在热路径保留结构化 span 和 stage metrics：
 | snippet | `snippet_count`, `elapsed_ms`, `partial_reason` | raw snippet text in committed evidence |
 
 每个 stage 必须能汇总到 histogram。W1 报告至少包含 P50/P95/P99、stage P95、RSS peak、CPU aggregate、disk read/write aggregate。
+
+Methodology hard rules:
+
+1. 使用 release build；debug/dev build 只能作为 smoke。
+2. warmup 至少 30 秒，正式测量至少 5 次重复，报告 median run 和 worst valid run。
+3. 同时记录 closed-loop latency 和 open-loop arrival latency；只用 closed-loop 不能证明 overload 行为。
+4. 必须覆盖 30%、70%、100%、120% 四个 capacity points；benchmark/codex/background lane 还要记录 admission/rejection。
+5. 需要明确 coordinated omission 修正方式；没有修正时该报告不能用于完成声明。
+6. profiler overhead 必须 <= 3%，否则 profiler run 只能定位热点，不能作为最终 latency 证据。
 
 ## 3. Toolchain
 
@@ -48,7 +58,8 @@ Rust 实现必须在热路径保留结构化 span 和 stage metrics：
 3. 对 W1 私有目标，运行 resident daemon baseline，禁止 per-query process spawn。
 4. 捕获 stage histogram、resource aggregate 和 profiler summary。
 5. 在 Loop 状态中进入 `baseline_validated`，再进入 `profile_captured`。
-6. 按 hotspot 优先级选择单个优化切片。
+6. 记录可证伪 hypothesis：预期改善的 stage、预期幅度、正确性风险和 rollback trigger。
+7. 按 hotspot 优先级选择单个优化切片。
 
 ## 5. Completion Redlines
 
@@ -61,6 +72,8 @@ Rust 实现必须在热路径保留结构化 span 和 stage metrics：
 5. 没有证明 hot path 中 OCR、全文解析、重模型推理为 false。
 6. 没有说明 query semantics 版本。
 7. smoke 或 synthetic 结果被当成 W1 私有基线。
+8. 没有 release/warmup/repetition/capacity/coordinated-omission 方法说明。
+9. D10K 或 D100K 结果被当成完整 `goal_complete` 证据。
 
 ## 6. Evidence Shape
 

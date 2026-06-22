@@ -52,7 +52,27 @@ Fallback 不是失败沉默模式。它必须：
 3. 把 root 状态暴露给 daemon status 和 GUI。
 4. 对同一 dirty subtree 的重复失败进入 Loop blocked 证据，而不是无限重试。
 
-## 6. Acceptance
+## 6. First-Scan No-Miss Baseline
+
+首次全量发现不是 watcher 测试。每个平台都必须先建立 no-miss baseline：
+
+1. 在 synthetic root set 中放置普通文件、深层目录、rename、replacement、symlink/reparse、cloud placeholder、permission-denied、locked file 和 external volume/offline fixture。
+2. 首次 traversal 产生 manifest rows、root aggregate、skipped classes 和 redacted diagnostics。
+3. 第二次零变更 traversal 必须满足 `changed_manifest_rows=0`、`reparse_count=0`、`full_rebuilds=0`。
+4. 对每类不可读或 placeholder 只记录 class/count/hash，不提交路径。
+5. 首次 no-miss baseline 通过后，才允许把 FSEvents/USN 作为增量信号接入。
+
+## 7. Incremental Journal Acceptance
+
+macOS 和 Windows 必须分别证明：
+
+1. create/modify/delete/rename/replacement 进入 mutation batch。
+2. journal gap 不直接丢事件，而是转为 dirty subtree reconciliation。
+3. watcher unavailable 会进入 degraded periodic manifest diff。
+4. rename/hardlink/replacement 不只靠 path event 判断，必须通过 stable identity/content fingerprint/path alias 对账。
+5. external volume offline 不批量 tombstone，重新 online 后才 reconcile。
+
+## 8. Acceptance
 
 后续 P5 平台 journal 切片必须至少覆盖：
 

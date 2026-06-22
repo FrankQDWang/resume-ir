@@ -42,10 +42,12 @@
 ## 2.1 Transport and Framing
 
 1. 默认 transport 是本机 Unix domain socket 或 Windows named pipe；loopback TCP 只能作为显式开发模式。
-2. 每条消息使用 length-prefixed UTF-8 JSON envelope，最大 request body 由 contract 限制；超过限制返回 `REQUEST_TOO_LARGE`。
+2. 每条消息使用 length-prefixed UTF-8 JSON envelope，最大 request body 是 65536 bytes；超过限制返回 `REQUEST_TOO_LARGE`。
 3. IPC payload 可以在内存中携带 interactive raw query，但 daemon 禁止把 raw query 写入日志、diagnostics、trace、benchmark summary 或 git。
 4. benchmark batch 不通过 diagnostics 传 raw query。客户端先注册本地 query stream，daemon 返回 `query_set_id`，后续 batch 只引用 `query_id`、shape、hash 和 `query_set_id`。
 5. cancel request 必须能取消 queued、running 和 batch child request；已完成请求返回 idempotent cancelled/complete 状态。
+6. 单个 batch 最多 64 个 query references；interactive search in-flight 上限 8，Codex validation 上限 2，benchmark 上限 1，background 上限 4。
+7. queued cancel acknowledgement P95 必须 <= 200ms；running cancel 必须在下一安全 checkpoint 之前进入 cancelled 或 complete。
 
 ## 3. Status Contract
 
@@ -107,11 +109,15 @@ Benchmark registration:
   "client_capability": "benchmark",
   "query_set_sha256": "hex",
   "query_count": 500,
+  "request_sample_count": 25000,
   "bucket_counts": {
-    "keyword": 150,
-    "field_filter": 100,
-    "hybrid": 150,
-    "semantic": 75,
+    "single_term": 50,
+    "and_2": 75,
+    "and_3_5": 125,
+    "and_6_16": 50,
+    "field_filter": 75,
+    "hybrid": 75,
+    "semantic": 25,
     "extreme": 25
   },
   "contains_raw_query_in_diagnostics": false
@@ -179,12 +185,15 @@ Diagnostics 必须默认脱敏：
   "contains_queries": false,
   "contains_resume_paths": false,
   "contains_candidate_results": false,
+  "contains_snippet_text": false,
   "visible_epoch": 42,
   "metrics": {},
   "error_counts": {},
   "benchmark_refs": []
 }
 ```
+
+Diagnostics 只允许输出 aggregate metrics、bucket counts、hash/ref、redaction flags、error class、queue depth 和 redacted partial reason。不得输出 raw query、raw snippet、resume path、candidate identity、local capture path、token、cookie 或 diagnostics package 原文。
 
 ## 7. GUI 依赖面
 

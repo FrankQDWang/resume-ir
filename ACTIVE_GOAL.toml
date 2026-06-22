@@ -1,6 +1,6 @@
 schema_version = "resume-ir.active-goal.v1"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-status = "request_changes_repair_pending_review"
+status = "request_changes_contract_repair_pending_review"
 date = "2026-06-22"
 
 [authority]
@@ -13,23 +13,25 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.current_pr]
-docs_only = true
+docs_only = false
 production_code_allowed = false
 private_benchmark_allowed = false
 allowed_paths = [
   "GOAL.md",
   "MANIFEST.md",
   "ACTIVE_GOAL.toml",
+  ".github/workflows/pr.yml",
   "03_next_goal_高性能本地检索GUI闭环/",
   "docs/superpowers/",
   "perf/",
+  "scripts/ci/check-performance-contracts.py",
 ]
 
 [contracts]
 query_semantics = "simple_text_required_all_terms_v1"
 ipc_contract = "resume-ir.ipc.v2"
 diagnostics_contract = "resume-ir.diagnostics.v2"
-evidence_matrix = "resume-ir.perf.acceptance-matrix.v1"
+evidence_matrix = "resume-ir.perf.acceptance-matrix.v2"
 loop_state_schema = "perf/loop-state.schema.json"
 experiment_report_schema = "perf/experiment-report.schema.json"
 

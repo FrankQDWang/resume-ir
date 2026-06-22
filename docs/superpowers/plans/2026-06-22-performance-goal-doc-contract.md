@@ -4,7 +4,7 @@
 **Date:** 2026-06-22
 **Linked spec:** `docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md`
 **Execution owner:** `fw-build`
-**Scope:** documentation and public machine-readable contract files only
+**Scope:** documentation, public machine-readable contract files, and public CI contract gate only
 
 ## Goal
 
@@ -21,11 +21,13 @@ This plan repairs the request-changes review findings without starting productio
 - `docs/superpowers/specs/`
 - `docs/superpowers/plans/`
 - `perf/`
+- `scripts/ci/check-performance-contracts.py`
+- `.github/workflows/pr.yml`
 
 ## Explicitly Out of Scope
 
 - `crates/`
-- `scripts/`
+- production/runtime scripts other than `scripts/ci/check-performance-contracts.py`
 - `Cargo.toml`
 - `Cargo.lock`
 - test source files
@@ -65,11 +67,11 @@ This plan repairs the request-changes review findings without starting productio
 
 - [x] **Task 7: W0/W1 acceptance matrix**
 
-  Updated `14_W0_W1验收矩阵与证据协议.md` with TOML/JSON parse gates, W1 10k/8k/500-query redlines, bucket P95/P99 thresholds, stage thresholds, hot-path flags, zero-change incremental redlines, and GUI bakeoff pressure criteria.
+  Updated `14_W0_W1验收矩阵与证据协议.md` with public contract CI gates, D10K/D100K/D1M scale gates, bucket P95/P99 thresholds, stage thresholds, hot-path flags, zero-change incremental redlines, and GUI bakeoff pressure criteria.
 
 - [x] **Task 8: GUI bakeoff redlines**
 
-  Updated `07_GUI与手工Codex闭环.md` to require 100000 logical rows, at least 100 visible rows, 10Hz update pressure, 10qps interactive search mock, stable row height, and responsive/a11y coverage.
+  Updated `07_GUI与手工Codex闭环.md` to require 100000 logical rows, 20-60 viewport-visible rows, overscan <= 2x visible rows, 10Hz update pressure, 10qps interactive search mock, stable row height, and responsive/a11y coverage.
 
 - [x] **Task 9: Security, encryption, and machine enforcement**
 
@@ -89,29 +91,25 @@ This plan repairs the request-changes review findings without starting productio
 
 - [x] **Task 13: Machine-readable protocol doc**
 
-  Added `17_机器可读Goal与Experiment协议.md` explaining active goal lock, experiment report rules, review closure, and parse gates.
+  Added `17_机器可读Goal与Experiment协议.md` explaining active goal lock, experiment report rules, review closure, and CI contract gates.
 
 - [x] **Task 14: Public machine contracts**
 
   Added `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, `perf/loop-state.schema.json`, `perf/experiment-report.schema.json`, and `perf/README.md`.
+
+- [x] **Task 15: Public contract validator and CI gate**
+
+  Added `scripts/ci/check-performance-contracts.py`, `perf/current-loop-state.json`, positive/negative synthetic fixtures, and the PR workflow Performance contract check.
 
 ## Verification Plan
 
 Run before commit:
 
 ```bash
-python3 - <<'PY'
-import json
-import pathlib
-import tomllib
+python3 scripts/ci/check-performance-contracts.py
+python3 -m py_compile scripts/ci/check-performance-contracts.py
 
-tomllib.loads(pathlib.Path("ACTIVE_GOAL.toml").read_text())
-tomllib.loads(pathlib.Path("perf/acceptance-matrix.toml").read_text())
-json.loads(pathlib.Path("perf/loop-state.schema.json").read_text())
-json.loads(pathlib.Path("perf/experiment-report.schema.json").read_text())
-PY
-
-git diff --check -- GOAL.md MANIFEST.md ACTIVE_GOAL.toml docs/superpowers 03_next_goal_高性能本地检索GUI闭环 perf
+git diff --check -- GOAL.md MANIFEST.md ACTIVE_GOAL.toml docs/superpowers 03_next_goal_高性能本地检索GUI闭环 perf scripts/ci/check-performance-contracts.py .github/workflows/pr.yml
 
 {
   git diff --name-only origin/main...HEAD
@@ -125,9 +123,9 @@ git diff --check -- GOAL.md MANIFEST.md ACTIVE_GOAL.toml docs/superpowers 03_nex
 
 Expected:
 
-1. TOML and JSON parse.
+1. Public performance contract validator passes, including negative fixtures.
 2. diff whitespace check passes.
-3. changed paths stay inside allowed docs/data scope.
+3. changed paths stay inside allowed target-docs/public-contract-gate scope.
 4. public repository guard passes.
 
 ## Review Handoff
@@ -138,7 +136,7 @@ After this plan is implemented, use `fw-review` for PR #10. Keep PR #10 as Draft
 
 | Review | Trigger | Status | Findings |
 |---|---|---|---|
-| CEO Review | `fw-ceo-review` | CLEAR | Direction accepted earlier for docs-only contract hardening before broad performance/GUI work |
-| Eng Review | `fw-plan-review` | CLEAR | Earlier plan issues folded into docs-only hardening scope |
+| CEO Review | `fw-ceo-review` | CLEAR | Direction accepted earlier for contract hardening before broad performance/GUI work |
+| Eng Review | `fw-plan-review` | CLEAR | Earlier plan issues folded into target-docs/public-contract-gate scope |
 | Design Review | `fw-plan-review` | CLEAR | GUI IA, state matrix, journey, responsive/a11y, and design-token constraints included |
-| Request-changes Repair | external PR review | IMPLEMENTED | Machine contracts, W1 thresholds, Loop experiment states, profiling, full-computer/journal, IPC fairness, and review closure fields added |
+| Request-changes Repair | external PR review | IMPLEMENTED | Machine contracts, D10K/D100K/D1M thresholds, Loop experiment states, profiling, full-computer/journal, IPC fairness, and review closure fields added |

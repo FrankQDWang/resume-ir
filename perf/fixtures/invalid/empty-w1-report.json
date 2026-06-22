@@ -1,0 +1,62 @@
+{
+  "schema_version": "resume-ir.experiment-report.v2",
+  "goal_id": "resume-ir.performance-gui-loop.2026-06",
+  "report_kind": "schema_fixture",
+  "claim": "goal_complete",
+  "evidence_lane": "w1_private",
+  "contract_pins": {
+    "active_goal_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "acceptance_matrix_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "loop_state_schema_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "experiment_report_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "git_head_sha": "working-tree"
+  },
+  "dataset": {
+    "dataset_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "scale_gate": "D10K_private_calibration",
+    "document_count": 0,
+    "searchable_document_count": 0
+  },
+  "query_set": {
+    "query_set_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "tune_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "holdout_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "query_count": 0,
+    "request_sample_count": 0,
+    "bucket_counts": {
+      "single_term": 0,
+      "and_2": 0,
+      "and_3_5": 0,
+      "and_6_16": 0,
+      "field_filter": 0,
+      "hybrid": 0,
+      "semantic": 0,
+      "extreme": 0
+    },
+    "samples_per_bucket": {
+      "single_term": 0,
+      "and_2": 0,
+      "and_3_5": 0,
+      "and_6_16": 0,
+      "field_filter": 0,
+      "hybrid": 0,
+      "semantic": 0,
+      "extreme": 0
+    }
+  },
+  "thresholds": {
+    "matrix": "perf/acceptance-matrix.toml",
+    "matrix_schema_version": "resume-ir.perf.acceptance-matrix.v2",
+    "passed": true,
+    "failed_redlines": []
+  },
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false,
+    "trace_summary_redacted": true
+  }
+}

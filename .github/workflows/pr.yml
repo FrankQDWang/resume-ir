@@ -70,6 +70,9 @@ jobs:
       - name: Workflow check
         run: ./scripts/ci/check-workflows.sh
 
+      - name: Performance contract check
+        run: python3 scripts/ci/check-performance-contracts.py
+
       - name: Benchmark smoke
         run: ./scripts/ci/check-benchmark-smoke.sh
 

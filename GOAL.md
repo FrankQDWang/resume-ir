@@ -44,7 +44,7 @@
 
 当前活跃后续目标是 `03_next_goal_高性能本地检索GUI闭环/`：在本地隐私边界内完成高性能检索、GUI、手工/Codex 结对闭环验证的执行合同和后续实现。
 
-机器可读目标锁是 `ACTIVE_GOAL.toml`；性能验收红线是 `perf/acceptance-matrix.toml`。两者只定义公开可提交的合同与 redacted aggregate 证据形状，不授权提交私有 benchmark 数据。
+机器可读目标锁是 `ACTIVE_GOAL.toml`；性能验收红线是 `perf/acceptance-matrix.toml`。两者只定义公开可提交的合同与 redacted aggregate 证据形状，不授权提交私有 benchmark 数据。公开合同必须由 `python3 scripts/ci/check-performance-contracts.py` 和 PR CI 校验，不能只依赖 prose review。
 
 权威顺序：
 
@@ -61,3 +61,4 @@
 3. daemon IPC/diagnostics contract 必须先版本化，GUI 只能依赖版本化 contract。
 4. benchmark 证据必须区分 smoke、W0、W1、本机私有、soak/fault 和 GUI/manual，不得混用。
 5. 真实简历、raw query、候选结果、路径、token、trace、diagnostics package 和模型缓存不得提交。
+6. 10k 私有导入/查询只能作为 D10K calibration；完整 `goal_complete` 必须同时有 D10K、D100K、D1M、soak/fault 和 GUI/manual 证据。

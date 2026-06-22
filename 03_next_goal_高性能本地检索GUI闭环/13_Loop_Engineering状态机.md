@@ -28,11 +28,11 @@ active_goal_id: resume-ir.performance-gui-loop.2026-06
 spec_path: docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md
 plan_path: docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md
 goal_docs_root: 03_next_goal_高性能本地检索GUI闭环
-allowed_paths_for_current_pr: GOAL.md, MANIFEST.md, ACTIVE_GOAL.toml, 03_next_goal_高性能本地检索GUI闭环, docs/superpowers, perf
+allowed_paths_for_current_pr: GOAL.md, MANIFEST.md, ACTIVE_GOAL.toml, .github/workflows/pr.yml, 03_next_goal_高性能本地检索GUI闭环, docs/superpowers, perf, scripts/ci/check-performance-contracts.py
 privacy_boundary: no raw resume text, raw query, candidate result, path, token, trace, diagnostics package, or model cache in git
 ```
 
-当前 PR 的目标锁以 `ACTIVE_GOAL.toml` 为准。未来 Rust、GUI 或脚本实现必须通过新的 linked plan 扩展允许路径，不能复用当前 docs-only 允许范围。
+当前 PR 的目标锁以 `ACTIVE_GOAL.toml` 为准。当前允许公开 CI 合同校验脚本和 workflow gate，但不允许生产 Rust、GUI、daemon、benchmark runner 或私有数据执行实现。未来生产实现必须通过新的 linked plan 扩展允许路径，不能复用当前 contract-only 允许范围。
 
 ## 3. Performance Experiment State
 
@@ -43,17 +43,20 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 | `not_started` | 尚未选择性能切片 | `contract_locked` | active goal 和 acceptance matrix |
 | `contract_locked` | P0 contract 通过 W0 | `baseline_validated` | query semantics、IPC、matrix、loop schema |
 | `baseline_validated` | baseline 已运行 | `profile_captured` 或 `blocked` | resident daemon baseline、histogram、resource aggregate |
-| `profile_captured` | profiler summary 已记录 | `hotspot_prioritized` | flamegraph/sample summary、stage hotspot |
-| `hotspot_prioritized` | 单个 hotspot 被选择 | `optimization_slice_active` | slice scope、expected red/green check |
-| `optimization_slice_active` | 正在优化单一 hotspot | `regression_checked` 或 `blocked` | diff、focused tests、stage metrics |
-| `regression_checked` | 语义和性能回归检查完成 | `w1_accepted` 或 `optimization_slice_active` | metamorphic checks、P95/P99、hot path flags |
-| `w1_accepted` | W1 私有 redlines 通过 | `soak_accepted` | redacted W1 report |
-| `soak_accepted` | long-run/fault redlines 通过 | `gui_accepted` | soak/fault aggregate |
-| `gui_accepted` | GUI/manual redlines 通过 | `complete` | manual/Codex checklist |
-| `blocked` | 同一 blocker 连续 3 次且无新证据路径 | `contract_locked` 或 `hotspot_prioritized` | blocked report |
+| `profile_captured` | profiler summary 已记录 | `bottleneck_selected` | flamegraph/sample summary、stage hotspot |
+| `bottleneck_selected` | 单个 bottleneck 被选择 | `hypothesis_registered` | slice scope、expected red/green check |
+| `hypothesis_registered` | 已记录可证伪假设 | `optimization_slice_active` | hypothesis、expected metric delta、rollback trigger |
+| `optimization_slice_active` | 正在优化单一 hotspot | `correctness_passed` 或 `blocked` | diff、focused tests、stage metrics |
+| `correctness_passed` | 语义、隐私和回归检查完成 | `perf_measured` 或 `reverted` | metamorphic checks、privacy flags、focused tests |
+| `perf_measured` | 优化后性能已测 | `reprofiled`、`reverted` 或 `optimization_slice_active` | P95/P99、stage latency、resource aggregate |
+| `reprofiled` | profiler 已确认瓶颈变化 | `accepted`、`reverted` 或 `bottleneck_selected` | before/after profiler refs、overhead <= 3% |
+| `accepted` | 当前 scale cell redlines 通过 | `baseline_validated`、`cross_os_passed` 或 `complete` | accepted_cells、contract pins、redacted report |
+| `reverted` | 假设失败或副作用超限 | `bottleneck_selected` 或 `blocked` | revert evidence、failed hypothesis |
+| `cross_os_passed` | macOS/Windows 必需切片通过 | `complete` 或 `baseline_validated` | platform aggregate |
+| `blocked` | 同一 blocker 连续 3 次且无新证据路径 | `contract_locked` 或 `bottleneck_selected` | blocked report |
 | `complete` | 所有 evidence lanes 通过 | none | final redacted aggregate |
 
-性能实现不得从 `contract_locked` 直接跳到 `optimization_slice_active`。没有 baseline 和 profiler evidence，只能做合同修复或观测面实现，不能声明优化成功。
+性能实现不得从 `contract_locked` 直接跳到 `optimization_slice_active`。没有 baseline、profiler evidence 和可证伪 hypothesis，只能做合同修复或观测面实现，不能声明优化成功。任何 `goal_complete` 状态必须在 `perf/loop-state.schema.json` 中包含 W0、D10K、D100K、D1M、soak/fault、GUI/manual accepted cells。
 
 ## 4. Drift Checks
 
@@ -66,6 +69,7 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 5. 当前 daemon contract 是否仍通过版本化 IPC/diagnostics 暴露。
 6. 当前 Loop state report 是否能通过 `perf/loop-state.schema.json`。
 7. 当前实验报告是否能通过 `perf/experiment-report.schema.json`，除非该切片不是实验切片。
+8. `perf/current-loop-state.json` 是否仍反映当前 PR 的 evidence lane、允许路径和 claim 状态。
 
 ## 5. Blocked Stop Rule
 
@@ -83,4 +87,4 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 
 只有当目标文档、验收矩阵、隐私边界、query 语义、IPC contract 和 reviewer ledger 均有对应证据时，docs-hardening 切片才可进入 `slice_complete`。
 
-完整 performance + GUI 目标只有在 W0、W1、soak/fault、GUI/manual 均有 redacted evidence，且 review ledger 无 `open` blocker 后，才可进入 `goal_complete`。
+完整 performance + GUI 目标只有在 W0、D10K、D100K、D1M、soak/fault、GUI/manual 均有 redacted evidence，且 review ledger 无 `open` blocker 后，才可进入 `goal_complete`。

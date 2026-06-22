@@ -39,7 +39,7 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
 {
   "schema_version": "resume-ir.query-set.jsonl.v2",
   "sample_id": "local-query-000001",
-  "bucket": "keyword|field_filter|hybrid|semantic|extreme",
+  "bucket": "single_term|and_2|and_3_5|and_6_16|field_filter|hybrid|semantic|extreme",
   "query": "<private local query text>",
   "source_kind": "artifact_query|artifact_terms|local_field|synthetic_edge",
   "query_shape": {
@@ -61,12 +61,16 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
   "schema_version": "resume-ir.query-set-summary.v1",
   "privacy_boundary": "redacted_local_aggregate",
   "query_set_sha256": "<sha256>",
-  "sample_count": 500,
+  "query_count": 500,
+  "request_sample_count": 25000,
   "bucket_counts": {
-    "keyword": 150,
-    "field_filter": 100,
-    "hybrid": 150,
-    "semantic": 75,
+    "single_term": 50,
+    "and_2": 75,
+    "and_3_5": 125,
+    "and_6_16": 50,
+    "field_filter": 75,
+    "hybrid": 75,
+    "semantic": 25,
     "extreme": 25
   },
   "contains_queries": false,
@@ -80,7 +84,10 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
 
 | Bucket | 目标 | 示例形态 |
 |---|---|---|
-| keyword | 验证全文主路径 | 2-5 个技术/岗位/行业词 |
+| single_term | 验证最短全文主路径和冷/热 term | 1 个技术、岗位、行业或地点词 |
+| and_2 | 验证 simple text required-all 双 term | 2 个技术/岗位/地点词 |
+| and_3_5 | 验证常见多 term AND query | 3-5 个技能、岗位、行业、地点、学历词 |
+| and_6_16 | 验证长 AND query 和候选收缩 | 6-16 个组合词 |
 | field_filter | 验证字段前置过滤 | 技能 + 地点 + 学历/年限 |
 | hybrid | 验证 BM25 + field + semantic/fusion | 多 term + 条件 + 语义表达 |
 | semantic | 验证 semantic recall 和 partial | 自然语言能力描述 |
@@ -96,6 +103,8 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
 4. 字段过滤是 hard filter，必须先于 ranking、fusion、rerank 和 snippet 执行。
 5. 空 query、超长 query、互斥 query、极冷词 query 必须有有界响应和可解释 partial/zero-result 状态。
 6. benchmark 调优不得改变 simple text、phrase、field filter、explicit OR 的语义。
+7. query input 先做 Unicode NFKC normalization，再 dedupe normalized duplicate terms；最大输入为 4096 bytes、16 terms。
+8. stopword/synonym/stemming/typo/semantic expansion 默认关闭，除非进入新的显式语义版本。
 
 Stopword、synonym、stemming、typo expansion 和 semantic expansion 都不是 simple text 默认语义的一部分。若后续产品要支持，必须作为显式 mode 或独立语义版本进入 spec/plan/review，不能在性能优化中静默启用。
 
@@ -128,26 +137,28 @@ Stopword、synonym、stemming、typo expansion 和 semantic expansion 都不是 
 每个 bucket 必须输出：
 
 1. query_count。
-2. zero_result_queries。
-3. partial_queries。
-4. p50/p95/p99。
-5. query_parse_ms。
-6. prefilter_ms。
-7. bm25_ms。
-8. ann_ms。
-9. fusion_ms。
-10. bulk_hydrate_ms。
-11. snippet_ms。
-12. rss_delta_mb。
-13. hot_path_ocr=false。
-14. hot_path_parsing=false。
-15. hot_path_heavy_model_inference=false。
+2. request_sample_count。
+3. zero_result_queries。
+4. partial_queries。
+5. p50/p95/p99。
+6. query_parse_ms。
+7. prefilter_ms。
+8. bm25_ms。
+9. ann_ms。
+10. fusion_ms。
+11. bulk_hydrate_ms。
+12. snippet_ms。
+13. rss_delta_mb。
+14. hot_path_ocr=false。
+15. hot_path_parsing=false。
+16. hot_path_heavy_model_inference=false。
+17. spawn_per_query=false。
 
 ## 8. 验收红线
 
 1. 任何 stdout/stderr、summary、diagnostics 中出现 raw query 内容，失败。
 2. 任何提交文件中出现 private artifact path、resume path、candidate text，失败。
-3. 500-query benchmark 不足 500 条时，不得声称完整性能基线完成。
+3. 500-query benchmark 不足 500 条时，不得声称任何 scale gate accepted；D1M 完成声明还必须有至少 25000 request samples。
 4. smoke profile 可以小样本，但必须标明 `percentile_confidence=smoke`。
 5. W1 私有 query set 必须分为 tune 与 holdout，公开证据只提交各自 hash、count 和 bucket count。
 6. 调参只能读取 tune aggregate；最终完成声明必须包含 holdout aggregate，并通过同一语义版本。

@@ -1,0 +1,43 @@
+{
+  "schema_version": "resume-ir.experiment-report.v2",
+  "goal_id": "resume-ir.performance-gui-loop.2026-06",
+  "report_kind": "schema_fixture",
+  "claim": "slice_complete",
+  "evidence_lane": "w0_docs",
+  "contract_pins": {
+    "active_goal_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "acceptance_matrix_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "loop_state_schema_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "experiment_report_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "git_head_sha": "working-tree"
+  },
+  "docs_gate": {
+    "commands": [
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "schema fixture"
+      }
+    ],
+    "changed_paths": [
+      "GOAL.md",
+      "perf/acceptance-matrix.toml"
+    ],
+    "private_data_in_git": false
+  },
+  "thresholds": {
+    "matrix": "perf/acceptance-matrix.toml",
+    "matrix_schema_version": "resume-ir.perf.acceptance-matrix.v2",
+    "passed": true,
+    "failed_redlines": []
+  },
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false,
+    "trace_summary_redacted": true
+  }
+}

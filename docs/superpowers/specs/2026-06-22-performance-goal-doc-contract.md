@@ -3,7 +3,7 @@
 Status: request-changes repair implemented; pending fw-review
 Date: 2026-06-22
 Linked plan: `../plans/2026-06-22-performance-goal-doc-contract.md`
-Execution scope: documentation contract only
+Execution scope: target documentation plus public contract CI gate
 
 ## Background
 
@@ -26,8 +26,9 @@ Repository facts from the original fw-office-hours and fw-ceo-review read-only a
 Request-changes repair facts:
 
 - PR #10 remains draft/open while documentation blockers are repaired.
-- The repair explicitly adds machine-readable public contract files: `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, `perf/loop-state.schema.json`, and `perf/experiment-report.schema.json`.
-- The repair remains docs/data only. It does not touch `crates/`, `scripts/`, `Cargo.toml`, `Cargo.lock`, tests, private resumes, raw query files, local artifacts, diagnostics packages, or model caches.
+- The repair explicitly adds machine-readable public contract files: `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, `perf/current-loop-state.json`, `perf/loop-state.schema.json`, `perf/experiment-report.schema.json`, and synthetic positive/negative fixtures.
+- The repair adds a standard-library-only public CI guard at `scripts/ci/check-performance-contracts.py` and wires it into `.github/workflows/pr.yml`.
+- The repair does not touch `crates/`, production daemon/index/query/GUI code, `Cargo.toml`, `Cargo.lock`, test source files, private resumes, raw query files, local artifacts, diagnostics packages, or model caches.
 - Current `tokei` baseline excluding `target`, `.git`, `local-data`, `artifacts`, and `.worktrees`: 236 total files, 154,006 total lines; 89 Rust files, 100,361 Rust lines; 58 Markdown files, 27,738 Markdown lines.
 
 Technical evidence behind the documentation risk:
@@ -63,11 +64,13 @@ In scope for the planned change:
 - `docs/superpowers/specs/`
 - `docs/superpowers/plans/`
 - `perf/`
+- `scripts/ci/check-performance-contracts.py`
+- `.github/workflows/pr.yml`
 
 Out of scope for the planned change:
 
 - Any file under `crates/`
-- Any file under `scripts/`
+- Any production/runtime script other than `scripts/ci/check-performance-contracts.py`
 - `Cargo.toml`
 - `Cargo.lock`
 - Test source files
@@ -94,7 +97,7 @@ Out of scope for the planned change:
 - This change does not stream encrypted snapshot publishing.
 - This change does not create a GUI.
 - This change does not run private benchmark data.
-- This change does not add new CI scripts or production code.
+- This change adds a public CI contract validator, but no production code and no private benchmark runner.
 - This change does not claim W1, soak/fault, or GUI/manual evidence is complete.
 
 ## Required Documentation Contract
@@ -107,7 +110,7 @@ The planned documentation change must make the relationship among root `GOAL.md`
 - `03_next_goal_高性能本地检索GUI闭环/` becomes the active execution contract for the performance + GUI + closed-loop phase after current-stage closure.
 - `docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md` and its linked plan are the planning artifacts for fixing this PR's documentation contract.
 
-The request-changes repair explicitly creates root and `perf/` machine-readable contract files because review found that prose-only contracts were not tight enough. These files are public docs/data artifacts; they do not authorize production code changes or private benchmark execution.
+The request-changes repair explicitly creates root and `perf/` machine-readable contract files because review found that prose-only contracts were not tight enough. These files are public contract artifacts; they do not authorize production code changes or private benchmark execution.
 
 ### 2. Reviewer Issue Mapping
 
@@ -170,12 +173,15 @@ It must also define the performance experiment state sequence:
 - `contract_locked`
 - `baseline_validated`
 - `profile_captured`
-- `hotspot_prioritized`
+- `bottleneck_selected`
+- `hypothesis_registered`
 - `optimization_slice_active`
-- `regression_checked`
-- `w1_accepted`
-- `soak_accepted`
-- `gui_accepted`
+- `correctness_passed`
+- `perf_measured`
+- `reprofiled`
+- `accepted`
+- `reverted`
+- `cross_os_passed`
 - `blocked`
 - `complete`
 
@@ -246,7 +252,7 @@ Acceptance must distinguish:
 - Evidence required to mark each implementation slice complete.
 - Evidence required to declare the whole performance + GUI goal complete.
 
-W1 must include concrete redlines for minimum local document count, searchable count, query count, resident daemon batch execution, no process-spawn-per-query, P95/P99 per query bucket, stage P95, hot-path false flags, zero-change incremental, and privacy booleans.
+Scale gates must include concrete redlines for D10K calibration, D100K weak-host, D1M completion scale, minimum local document count, searchable count, query count, request sample count, resident daemon batch execution, no process-spawn-per-query, P95/P99 per query bucket, stage P95, hot-path false flags, zero-change incremental, and privacy booleans. D10K and D100K must not be allowed to claim `goal_complete`.
 
 ### 7. Security and Privacy
 
@@ -273,10 +279,14 @@ The docs-hardening repair must add:
 
 - `ACTIVE_GOAL.toml`
 - `perf/acceptance-matrix.toml`
+- `perf/current-loop-state.json`
 - `perf/loop-state.schema.json`
 - `perf/experiment-report.schema.json`
+- `perf/fixtures/valid/*.json`
+- `perf/fixtures/invalid/*.json`
+- `scripts/ci/check-performance-contracts.py`
 
-These files must parse as TOML/JSON and must encode the public privacy boundary.
+These files must parse as TOML/JSON, encode the public privacy boundary, and pass the public contract validator.
 
 ## Acceptance Criteria for the Planned Docs Change
 
@@ -290,9 +300,9 @@ The future docs-hardening implementation is acceptable when:
 6. Daemon IPC and diagnostics contract includes deadline, cancel, batch, overload, fairness, and redaction fields.
 7. Implementation slicing starts with P0 contract/semantics/acceptance and defers code changes until after fw-plan-review.
 8. Profiling and platform journal contracts exist before performance implementation starts.
-9. Machine-readable goal, acceptance, loop-state, and experiment-report contracts exist and parse.
-10. Verification confirms no planned docs-hardening diff touches implementation code paths.
-11. `git diff --check` passes for the touched documentation files.
+9. Machine-readable goal, acceptance, current loop-state, loop-state schema, experiment-report schema, and fixtures exist and pass `python3 scripts/ci/check-performance-contracts.py`.
+10. Verification confirms no planned docs-hardening diff touches production implementation code paths.
+11. `git diff --check` passes for the touched documentation and public contract-gate files.
 12. `./scripts/ci/guard-public-repo.sh` passes before any public push.
 
 ## Handoff

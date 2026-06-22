@@ -1,0 +1,40 @@
+{
+  "schema_version": "resume-ir.loop-state-report.v2",
+  "goal_id": "resume-ir.performance-gui-loop.2026-06",
+  "workflow_state": "goal_complete",
+  "experiment_state": "complete",
+  "evidence_lane": "w0_docs",
+  "contract_pins": {
+    "active_goal_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "acceptance_matrix_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "loop_state_schema_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "experiment_report_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "git_head_sha": "working-tree"
+  },
+  "allowed_paths": [
+    "GOAL.md"
+  ],
+  "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "goal_complete",
+      "evidence_ref": "invalid fixture"
+    }
+  ],
+  "accepted_cells": [
+    "w0_docs"
+  ],
+  "verification": {
+    "commands": [],
+    "all_required_commands_ran": false,
+    "claim": "partial"
+  },
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false
+  }
+}
