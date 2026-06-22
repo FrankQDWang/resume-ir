@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
@@ -11,44 +11,63 @@ use std::sync::{
     Arc,
 };
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use embedder::{
     Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
     LocalEmbeddingCommandSpec,
 };
 use import_pipeline::{
-    import_root_with_options, index_ocr_text, rebuild_full_text_index, ImportOptions,
-    ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
+    detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
+    ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary,
+    ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, redact_contact_values, FullTextIndex, SearchHit, SearchQuery,
     SnapshotReadTarget, SnapshotRootState,
 };
-use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
+use index_vector::{
+    inspect_persistent_vector_snapshot, reset_persistent_vector_snapshots_for_rebuild,
+    PersistentVectorIndex, PersistentVectorSnapshotState, QueryVector, VectorDocument, VectorHit,
+    VectorIndex,
+};
 use meta_store::{
-    DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension, ImportRootKind,
-    ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask,
-    ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobKind, IngestJobStatus,
-    MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion,
-    ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
+    ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
+    ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobFailureKind,
+    IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey,
+    OcrPageCacheStatus, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    WorkerTaskKind,
+};
+use notify::{
+    event::EventKind as NotifyEventKind, Config as NotifyConfig, Event as NotifyEvent,
+    RecommendedWatcher, RecursiveMode, Watcher,
 };
 use ocr_client::{
-    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
-    OcrPageRequest, OcrWorkerBudget, RenderedPage,
+    inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
+    LocalOcrCommandSpec, LocalPdfRenderCommandClient, LocalPdfRenderCommandSpec, OcrClient,
+    OcrOptions, OcrPageRequest, OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec,
+    RenderedPage, TesseractLanguageAvailability, TesseractOcrClient, TesseractOcrSpec,
 };
-use rank_fusion::{DegreeLevel, ResumeProfile, SearchFilters};
+use rank_fusion::{
+    fuse_hybrid_rrf, soft_dedupe_score, DateRange, DedupeProfile, DegreeLevel, HybridRecall,
+    RankedHit, ResumeProfile, SchoolTier, SearchFilters,
+};
 use search_planner::plan_search;
 use sectionizer::Sectionizer;
 
 const IMPORT_RETRY_BACKOFF_SECONDS: i64 = 60;
+const DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS: i64 = 300;
 const IMPORT_TASK_HEARTBEAT_SECONDS: u64 = 30;
 const STALE_IMPORT_TASK_SECONDS: i64 = 15 * 60;
+const STALE_INGEST_JOB_SECONDS: i64 = 15 * 60;
 const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
 const IPC_ENDPOINT_FILE: &str = "ipc.endpoints.json";
 const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
 const IPC_AUTH_TOKEN_BYTES: usize = 32;
 const IPC_MAX_REQUEST_BYTES: usize = 64 * 1024;
+const IPC_METADATA_READ_ATTEMPTS: usize = 40;
+const IPC_METADATA_READ_RETRY_MS: u64 = 25;
 const IMPORT_PROGRESS_STREAM_EVENTS: usize = 3;
 const IMPORT_PROGRESS_STREAM_INTERVAL_MS: u64 = 25;
 const DEFAULT_OCR_ENGINE_PROFILE: &str = "local-command";
@@ -56,9 +75,16 @@ const DEFAULT_OCR_LANG: &str = "eng";
 const DEFAULT_OCR_PROFILE: &str = "balanced";
 const DEFAULT_OCR_RENDER_DPI: u32 = 300;
 const DEFAULT_OCR_PAGE_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
+const DEFAULT_OCR_JOBS_PER_TICK: usize = 1;
+const OCR_PAGE_BUDGET_REMEDIATION: &str =
+    "raise OCR max pages per document or skip oversized scanned PDFs";
+const OCR_LANGUAGE_REMEDIATION: &str =
+    "install requested OCR language packs or choose an installed OCR language";
 const DEFAULT_EMBEDDING_MAX_DOCS: usize = 64;
 const DEFAULT_EMBEDDING_MAX_TEXT_BYTES: usize = 1_000_000;
 const DEFAULT_EMBEDDING_TIMEOUT_MS: u64 = 30_000;
+const FIELD_CONFIDENCE_THRESHOLD: f32 = 0.75;
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -173,11 +199,43 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: choose either --work-index or --work-index-once",
         ));
     }
-    if (options.worker_interval_ms.is_some() || options.max_worker_ticks.is_some())
+    if (options.worker_interval_ms.is_some()
+        || options.max_worker_ticks.is_some()
+        || options.ocr_jobs_per_tick.is_some())
         && !options.has_worker_loop()
     {
         return Err(DaemonError::usage(
             "usage: worker loop options require --work-imports, --work-ocr, --work-embeddings, or --work-index",
+        ));
+    }
+    if options.ocr_jobs_per_tick.is_some() && !options.work_ocr {
+        return Err(DaemonError::usage(
+            "usage: --ocr-jobs-per-tick requires --work-ocr",
+        ));
+    }
+    if options.import_rescan_min_age_seconds.is_some() && !options.rescan_completed_imports {
+        return Err(DaemonError::usage(
+            "usage: --import-rescan-min-age-seconds requires --rescan-completed-imports",
+        ));
+    }
+    if options.stale_import_task_seconds.is_some() && !options.work_imports {
+        return Err(DaemonError::usage(
+            "usage: --stale-import-task-seconds requires --work-imports",
+        ));
+    }
+    if options.import_retry_backoff_seconds.is_some() && !options.work_imports {
+        return Err(DaemonError::usage(
+            "usage: --import-retry-backoff-seconds requires --work-imports",
+        ));
+    }
+    if options.rescan_completed_imports && !options.work_imports {
+        return Err(DaemonError::usage(
+            "usage: import rescan options require --work-imports",
+        ));
+    }
+    if options.watch_import_roots && !options.work_imports {
+        return Err(DaemonError::usage(
+            "usage: import watcher options require --work-imports",
         ));
     }
     if options.has_worker_loop()
@@ -188,7 +246,10 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: --max-worker-ticks cannot be combined with --ipc-listen",
         ));
     }
-    if (options.work_ocr_once || options.work_ocr) && options.ocr_command.is_none() {
+    if (options.work_ocr_once || options.work_ocr)
+        && options.ocr_command.is_none()
+        && options.ocr_tesseract_command.is_none()
+    {
         return Err(DaemonError::user(
             "ocr worker blocked: local OCR command not configured",
         ));
@@ -247,7 +308,7 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Ok(());
     }
     if let Some(ipc_addr) = options.ipc_listen {
-        serve_ipc(data_dir, ipc_addr, options.max_requests)?;
+        serve_ipc(data_dir, ipc_addr, options.max_requests, &options)?;
         if options.max_requests.is_some() {
             return Ok(());
         }
@@ -300,6 +361,29 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 options.work_imports = true;
                 index += 1;
             }
+            "--rescan-completed-imports" => {
+                options.rescan_completed_imports = true;
+                index += 1;
+            }
+            "--watch-import-roots" => {
+                options.watch_import_roots = true;
+                index += 1;
+            }
+            "--import-rescan-min-age-seconds" => {
+                options.import_rescan_min_age_seconds =
+                    Some(parse_nonnegative_i64_run_value(args.get(index + 1))?);
+                index += 2;
+            }
+            "--stale-import-task-seconds" => {
+                options.stale_import_task_seconds =
+                    Some(parse_nonnegative_i64_run_value(args.get(index + 1))?);
+                index += 2;
+            }
+            "--import-retry-backoff-seconds" => {
+                options.import_retry_backoff_seconds =
+                    Some(parse_nonnegative_i64_run_value(args.get(index + 1))?);
+                index += 2;
+            }
             "--work-ocr-once" => {
                 options.work_ocr_once = true;
                 index += 1;
@@ -334,6 +418,36 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 options.ocr_command = Some(PathBuf::from(value));
                 index += 2;
             }
+            "--ocr-tesseract-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                if options.ocr_tesseract_command.is_some() {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.ocr_tesseract_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-render-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                if options.ocr_render_command.is_some() {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.ocr_render_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-pdftoppm-command" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                if options.ocr_pdftoppm_command.is_some() {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.ocr_pdftoppm_command = Some(PathBuf::from(value));
+                index += 2;
+            }
             "--ocr-engine-profile" => {
                 options.ocr_engine_profile = parse_non_empty_run_value(args.get(index + 1))?;
                 index += 2;
@@ -366,6 +480,24 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                     .ok()
                     .filter(|value| *value > 0)
                     .ok_or_else(|| DaemonError::usage(run_usage()))?;
+                index += 2;
+            }
+            "--ocr-max-pages-per-document" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.ocr_max_pages_per_document = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| DaemonError::usage(run_usage()))?;
+                index += 2;
+            }
+            "--ocr-jobs-per-tick" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(DaemonError::usage(run_usage()));
+                };
+                options.ocr_jobs_per_tick = Some(parse_positive_usize_run_value(value)?);
                 index += 2;
             }
             "--embedding-command" => {
@@ -453,12 +585,18 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
             "usage: --max-requests requires --ipc-listen",
         ));
     }
+    if options.ocr_command.is_some() && options.ocr_tesseract_command.is_some() {
+        return Err(DaemonError::usage(run_usage()));
+    }
+    if options.ocr_render_command.is_some() && options.ocr_pdftoppm_command.is_some() {
+        return Err(DaemonError::usage(run_usage()));
+    }
 
     Ok(options)
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>] [--stale-import-task-seconds <n>] [--import-retry-backoff-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--ocr-jobs-per-tick <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -479,6 +617,15 @@ fn parse_positive_usize_run_value(value: &str) -> Result<usize> {
         .ok_or_else(|| DaemonError::usage(run_usage()))
 }
 
+fn parse_nonnegative_i64_run_value(value: Option<&String>) -> Result<i64> {
+    value
+        .ok_or_else(|| DaemonError::usage(run_usage()))?
+        .parse::<i64>()
+        .ok()
+        .filter(|value| *value >= 0)
+        .ok_or_else(|| DaemonError::usage(run_usage()))
+}
+
 fn valid_run_identifier(value: &str) -> bool {
     !value.trim().is_empty()
         && !value.contains('\n')
@@ -494,6 +641,7 @@ fn run_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
     listener
         .set_nonblocking(true)
         .map_err(|_| DaemonError::user("unable to configure daemon ipc listener"))?;
+    let ipc_store = open_store(data_dir)?;
     let stop_worker = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop_worker);
     let worker_data_dir = data_dir.to_path_buf();
@@ -509,8 +657,10 @@ fn run_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
 
     let ipc_result = serve_ipc_listener_with_worker_monitor(
         data_dir,
+        &ipc_store,
         &listener,
         options.max_requests,
+        options,
         &worker_result_receiver,
     );
     remove_ipc_endpoint_manifest(data_dir);
@@ -529,6 +679,11 @@ fn run_worker_loop(
 ) -> Result<()> {
     let interval = Duration::from_millis(options.worker_interval_ms.unwrap_or(1_000));
     let mut ticks = 0_usize;
+    let mut import_watcher = if options.watch_import_roots {
+        Some(ImportWatcher::new()?)
+    } else {
+        None
+    };
 
     loop {
         if stop_signal
@@ -541,20 +696,50 @@ fn run_worker_loop(
         if options.work_imports {
             let now = current_timestamp()?;
             let mut import_summary = ImportWorkerSummary {
-                stale_recovered: recover_stale_import_tasks(store, now)?,
+                stale_recovered: recover_stale_import_tasks(
+                    store,
+                    now,
+                    options
+                        .stale_import_task_seconds
+                        .unwrap_or(STALE_IMPORT_TASK_SECONDS),
+                )?,
                 ..ImportWorkerSummary::default()
             };
+            if options.rescan_completed_imports {
+                import_summary.completed_requeued = requeue_completed_imports(
+                    store,
+                    now,
+                    options
+                        .import_rescan_min_age_seconds
+                        .unwrap_or(DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS),
+                )?;
+            }
+            if let Some(watcher) = import_watcher.as_mut() {
+                import_summary.extend_watcher(watcher.sync_and_requeue(store, now)?);
+            }
             import_summary.extend(run_import_worker_once_with_retry_due(
                 data_dir,
                 store,
-                timestamp_minus_seconds(now, IMPORT_RETRY_BACKOFF_SECONDS),
+                timestamp_minus_seconds(
+                    now,
+                    options
+                        .import_retry_backoff_seconds
+                        .unwrap_or(IMPORT_RETRY_BACKOFF_SECONDS),
+                ),
             )?);
             if import_summary.has_activity() {
                 print_import_worker_summary(&import_summary)?;
             }
         }
         if options.work_ocr {
-            let ocr_summary = run_ocr_worker_once(data_dir, store, options)?;
+            let ocr_summary = run_ocr_worker_batch(
+                data_dir,
+                store,
+                options,
+                options
+                    .ocr_jobs_per_tick
+                    .unwrap_or(DEFAULT_OCR_JOBS_PER_TICK),
+            )?;
             if ocr_summary.has_activity() {
                 print_ocr_worker_summary(&ocr_summary)?;
             }
@@ -692,7 +877,7 @@ fn run_import_worker_once_with_retry_due(
         };
 
         let finished_at = current_timestamp()?;
-        upsert_scope_summary(store, scope, import_summary, finished_at)?;
+        upsert_scope_summary(store, scope, &import_summary, finished_at)?;
         worker_summary.processed += 1;
         worker_summary.searchable_documents += import_summary.searchable_documents;
         worker_summary.ocr_jobs_queued += import_summary.ocr_jobs_queued;
@@ -718,20 +903,44 @@ fn run_ocr_worker_once(
         });
     }
 
-    let Some(command) = options.ocr_command.clone() else {
+    if options.ocr_command.is_none() && options.ocr_tesseract_command.is_none() {
         return Err(DaemonError::user(
             "ocr worker blocked: local OCR command not configured",
         ));
-    };
+    }
 
+    let stale_recovered = recover_stale_ingest_jobs(store, now)?;
     let Some(job) = store
         .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
         .map_err(DaemonError::store)?
     else {
-        return Ok(OcrWorkerSummary::default());
+        return Ok(OcrWorkerSummary {
+            stale_recovered,
+            ..OcrWorkerSummary::default()
+        });
     };
 
-    run_claimed_ocr_job(data_dir, store, &job, options, command, now)
+    let mut summary = run_claimed_ocr_job(data_dir, store, &job, options, now)?;
+    summary.stale_recovered = stale_recovered;
+    Ok(summary)
+}
+
+fn run_ocr_worker_batch(
+    data_dir: &Path,
+    store: &MetaStore,
+    options: &RunOptions,
+    jobs_per_tick: usize,
+) -> Result<OcrWorkerSummary> {
+    let mut aggregate = OcrWorkerSummary::default();
+    for _ in 0..jobs_per_tick {
+        let summary = run_ocr_worker_once(data_dir, store, options)?;
+        let stop_after_summary = summary.paused || (summary.processed == 0 && summary.failed == 0);
+        aggregate.extend(summary);
+        if stop_after_summary {
+            break;
+        }
+    }
+    Ok(aggregate)
 }
 
 fn run_claimed_ocr_job(
@@ -739,10 +948,9 @@ fn run_claimed_ocr_job(
     store: &MetaStore,
     job: &IngestJob,
     options: &RunOptions,
-    command: PathBuf,
     now: UnixTimestamp,
 ) -> Result<OcrWorkerSummary> {
-    let Some(mut document) = store
+    let Some(document) = store
         .document_by_id(&job.document_id)
         .map_err(DaemonError::store)?
     else {
@@ -759,43 +967,6 @@ fn run_claimed_ocr_job(
             ..OcrWorkerSummary::default()
         });
     };
-    let cache_key = OcrPageCacheKey::new(
-        content_hash,
-        1,
-        options.ocr_render_dpi,
-        options.ocr_lang.as_str(),
-        options.ocr_profile.as_str(),
-    )
-    .map_err(DaemonError::store)?;
-
-    if let Some(entry) = store
-        .ocr_page_cache_entry(&cache_key)
-        .map_err(DaemonError::store)?
-        .filter(|entry| entry.status() == OcrPageCacheStatus::Succeeded)
-    {
-        if let Some(text) = entry.text() {
-            if let Err(error) =
-                index_ocr_text(data_dir, store, &document.id, text, entry.confidence(), now)
-            {
-                let _ = mark_ocr_job_failed_retryable(store, job, now);
-                return Err(DaemonError::import(error));
-            }
-        } else {
-            document.status = DocumentStatus::OcrDone;
-            document.updated_at = now;
-            store
-                .upsert_document(&document)
-                .map_err(DaemonError::store)?;
-        }
-        store
-            .update_job_status(&job.id, IngestJobStatus::Completed, now)
-            .map_err(DaemonError::store)?;
-        return Ok(OcrWorkerSummary {
-            processed: 1,
-            cache_hits: 1,
-            ..OcrWorkerSummary::default()
-        });
-    }
 
     let bytes = match fs::read(&document.normalized_path) {
         Ok(bytes) => bytes,
@@ -807,73 +978,290 @@ fn run_claimed_ocr_job(
             });
         }
     };
-    let client = LocalOcrCommandClient::new(
-        LocalOcrCommandSpec::new(
-            command,
-            Vec::<String>::new(),
-            options.ocr_engine_profile.as_str(),
-        )
-        .map_err(DaemonError::ocr)?,
-    );
-    let request = OcrPageRequest::new(
-        RenderedPage::new(1, options.ocr_render_dpi, bytes).map_err(DaemonError::ocr)?,
-        OcrOptions::new(options.ocr_lang.as_str(), options.ocr_profile.as_str())
-            .map_err(DaemonError::ocr)?,
-    )
-    .map_err(DaemonError::ocr)?;
-
-    match client.recognize_page(
-        request,
-        OcrWorkerBudget::new(options.ocr_page_timeout_ms).map_err(DaemonError::ocr)?,
-        &CancellationToken::new(),
-    ) {
-        Ok(page) => {
-            let entry = OcrPageCacheEntry::succeeded(
-                cache_key,
-                page.text(),
-                page.confidence(),
-                page.engine_profile(),
-                page.duration_ms(),
-                now,
-            )
-            .map_err(DaemonError::store)?;
-            store
-                .upsert_ocr_page_cache_entry(&entry)
-                .map_err(DaemonError::store)?;
-            if let Err(error) = index_ocr_text(
-                data_dir,
-                store,
-                &document.id,
-                page.text(),
-                Some(page.confidence()),
-                now,
-            ) {
-                let _ = mark_ocr_job_failed_retryable(store, job, now);
-                return Err(DaemonError::import(error));
-            }
-            store
-                .update_job_status(&job.id, IngestJobStatus::Completed, now)
-                .map_err(DaemonError::store)?;
-            Ok(OcrWorkerSummary {
-                processed: 1,
-                cache_writes: 1,
-                ..OcrWorkerSummary::default()
-            })
-        }
+    let page_count = match detect_ocr_page_count(&document.extension, &bytes) {
+        Ok(page_count) => page_count,
         Err(error) => {
-            let entry =
-                OcrPageCacheEntry::failed_retryable(cache_key, format!("{:?}", error.kind()), now)
-                    .map_err(DaemonError::store)?;
-            store
-                .upsert_ocr_page_cache_entry(&entry)
-                .map_err(DaemonError::store)?;
             mark_ocr_job_failed_retryable(store, job, now)?;
-            Ok(OcrWorkerSummary {
-                failed: 1,
-                ..OcrWorkerSummary::default()
-            })
+            return Err(DaemonError::import(error));
         }
+    };
+    if page_count > options.ocr_max_pages_per_document {
+        mark_ocr_job_failed_retryable_with_failure_kind(
+            store,
+            job,
+            IngestJobFailureKind::OcrPageBudgetExceeded,
+            now,
+        )?;
+        return Ok(OcrWorkerSummary {
+            failed: 1,
+            ..OcrWorkerSummary::default()
+        });
     }
+    let budget = OcrWorkerBudget::new(options.ocr_page_timeout_ms).map_err(DaemonError::ocr)?;
+    let cancellation = CancellationToken::new();
+    let ocr_options = OcrOptions::new(options.ocr_lang.as_str(), options.ocr_profile.as_str())
+        .map_err(DaemonError::ocr)?;
+    let command_client = options
+        .ocr_command
+        .clone()
+        .map(|command| {
+            LocalOcrCommandSpec::new(
+                command,
+                Vec::<String>::new(),
+                options.ocr_engine_profile.as_str(),
+            )
+            .map(LocalOcrCommandClient::new)
+            .map_err(DaemonError::ocr)
+        })
+        .transpose()?;
+    let tesseract_client = options
+        .ocr_tesseract_command
+        .clone()
+        .map(|tesseract_command| {
+            TesseractOcrSpec::new(tesseract_command, options.ocr_engine_profile.as_str())
+                .map(TesseractOcrClient::new)
+                .map_err(DaemonError::ocr)
+        })
+        .transpose()?;
+    let renderer = options
+        .ocr_render_command
+        .clone()
+        .map(|render_command| {
+            LocalPdfRenderCommandSpec::new(render_command, Vec::<String>::new())
+                .map(LocalPdfRenderCommandClient::new)
+                .map_err(DaemonError::ocr)
+        })
+        .transpose()?;
+    let pdftoppm_renderer = options
+        .ocr_pdftoppm_command
+        .clone()
+        .map(|pdftoppm_command| {
+            PdftoppmRenderSpec::new(pdftoppm_command)
+                .map(PdftoppmPdfRenderer::new)
+                .map_err(DaemonError::ocr)
+        })
+        .transpose()?;
+
+    let mut page_texts = Vec::new();
+    let mut confidence_sum = 0.0_f32;
+    let mut confidence_count = 0_usize;
+    let mut cache_writes = 0_usize;
+    let mut cache_hits = 0_usize;
+
+    for page_no in 1..=page_count {
+        let cache_key = OcrPageCacheKey::new(
+            content_hash.clone(),
+            page_no,
+            options.ocr_render_dpi,
+            options.ocr_lang.as_str(),
+            options.ocr_profile.as_str(),
+        )
+        .map_err(DaemonError::store)?;
+
+        if let Some(entry) = store
+            .ocr_page_cache_entry(&cache_key)
+            .map_err(DaemonError::store)?
+            .filter(|entry| entry.status() == OcrPageCacheStatus::Succeeded)
+        {
+            page_texts.push(entry.text().unwrap_or("").to_string());
+            if let Some(confidence) = entry.confidence() {
+                confidence_sum += confidence;
+                confidence_count += 1;
+            }
+            cache_hits += 1;
+            continue;
+        }
+
+        if command_client.is_none() {
+            if let Some(tesseract_command) = options.ocr_tesseract_command.as_ref() {
+                match inspect_tesseract_language_availability(
+                    tesseract_command,
+                    options.ocr_lang.as_str(),
+                ) {
+                    TesseractLanguageAvailability::Available => {}
+                    TesseractLanguageAvailability::Missing => {
+                        let entry = OcrPageCacheEntry::failed_retryable(
+                            cache_key,
+                            "LanguageUnavailable",
+                            now,
+                        )
+                        .map_err(DaemonError::store)?;
+                        store
+                            .upsert_ocr_page_cache_entry(&entry)
+                            .map_err(DaemonError::store)?;
+                        mark_ocr_job_failed_retryable(store, job, now)?;
+                        return Ok(OcrWorkerSummary {
+                            failed: 1,
+                            ..OcrWorkerSummary::default()
+                        });
+                    }
+                    TesseractLanguageAvailability::Unknown => {
+                        let entry = OcrPageCacheEntry::failed_retryable(
+                            cache_key,
+                            "WorkerUnavailable",
+                            now,
+                        )
+                        .map_err(DaemonError::store)?;
+                        store
+                            .upsert_ocr_page_cache_entry(&entry)
+                            .map_err(DaemonError::store)?;
+                        mark_ocr_job_failed_retryable(store, job, now)?;
+                        return Ok(OcrWorkerSummary {
+                            failed: 1,
+                            ..OcrWorkerSummary::default()
+                        });
+                    }
+                }
+            }
+        }
+
+        let rendered_page = if let Some(renderer) = &renderer {
+            match renderer.render_page(
+                &bytes,
+                page_no,
+                options.ocr_render_dpi,
+                budget,
+                &cancellation,
+            ) {
+                Ok(rendered_page) => rendered_page,
+                Err(error) => {
+                    let entry = OcrPageCacheEntry::failed_retryable(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
+                    .map_err(DaemonError::store)?;
+                    store
+                        .upsert_ocr_page_cache_entry(&entry)
+                        .map_err(DaemonError::store)?;
+                    mark_ocr_job_failed_retryable(store, job, now)?;
+                    return Ok(OcrWorkerSummary {
+                        failed: 1,
+                        ..OcrWorkerSummary::default()
+                    });
+                }
+            }
+        } else if let Some(renderer) = &pdftoppm_renderer {
+            match renderer.render_page(
+                &bytes,
+                page_no,
+                options.ocr_render_dpi,
+                budget,
+                &cancellation,
+            ) {
+                Ok(rendered_page) => rendered_page,
+                Err(error) => {
+                    let entry = OcrPageCacheEntry::failed_retryable(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
+                    .map_err(DaemonError::store)?;
+                    store
+                        .upsert_ocr_page_cache_entry(&entry)
+                        .map_err(DaemonError::store)?;
+                    mark_ocr_job_failed_retryable(store, job, now)?;
+                    return Ok(OcrWorkerSummary {
+                        failed: 1,
+                        ..OcrWorkerSummary::default()
+                    });
+                }
+            }
+        } else {
+            RenderedPage::new(page_no, options.ocr_render_dpi, bytes.clone())
+                .map_err(DaemonError::ocr)?
+        };
+        let request =
+            OcrPageRequest::new(rendered_page, ocr_options.clone()).map_err(DaemonError::ocr)?;
+
+        let page_result = if let Some(client) = &command_client {
+            client.recognize_page(request, budget, &cancellation)
+        } else if let Some(client) = &tesseract_client {
+            client.recognize_page(request, budget, &cancellation)
+        } else {
+            return Err(DaemonError::user(
+                "ocr worker blocked: local OCR command not configured",
+            ));
+        };
+        let page = match page_result {
+            Ok(page) => page,
+            Err(error) => {
+                let entry = OcrPageCacheEntry::failed_retryable(
+                    cache_key,
+                    format!("{:?}", error.kind()),
+                    now,
+                )
+                .map_err(DaemonError::store)?;
+                store
+                    .upsert_ocr_page_cache_entry(&entry)
+                    .map_err(DaemonError::store)?;
+                mark_ocr_job_failed_retryable(store, job, now)?;
+                return Ok(OcrWorkerSummary {
+                    failed: 1,
+                    ..OcrWorkerSummary::default()
+                });
+            }
+        };
+        let word_boxes = ocr_word_boxes_for_cache(&page)?;
+        let entry = OcrPageCacheEntry::succeeded_with_word_boxes(
+            cache_key,
+            page.text(),
+            page.confidence(),
+            page.engine_profile(),
+            page.duration_ms(),
+            word_boxes,
+            now,
+        )
+        .map_err(DaemonError::store)?;
+        store
+            .upsert_ocr_page_cache_entry(&entry)
+            .map_err(DaemonError::store)?;
+        page_texts.push(page.text().to_string());
+        confidence_sum += page.confidence();
+        confidence_count += 1;
+        cache_writes += 1;
+    }
+
+    let combined_text = page_texts.join("\n");
+    let confidence = (confidence_count > 0).then_some(confidence_sum / confidence_count as f32);
+    if let Err(error) = index_ocr_text(
+        data_dir,
+        store,
+        &document.id,
+        &combined_text,
+        confidence,
+        Some(page_count),
+        now,
+    ) {
+        let _ = mark_ocr_job_failed_retryable(store, job, now);
+        return Err(DaemonError::import(error));
+    }
+    store
+        .update_job_status(&job.id, IngestJobStatus::Completed, now)
+        .map_err(DaemonError::store)?;
+    Ok(OcrWorkerSummary {
+        processed: 1,
+        cache_writes,
+        cache_hits,
+        ..OcrWorkerSummary::default()
+    })
+}
+
+fn ocr_word_boxes_for_cache(page: &ocr_client::OcrPage) -> Result<Vec<meta_store::OcrWordBox>> {
+    page.word_boxes()
+        .iter()
+        .map(|word_box| {
+            meta_store::OcrWordBox::new(
+                word_box.text(),
+                word_box.left(),
+                word_box.top(),
+                word_box.width(),
+                word_box.height(),
+                word_box.confidence(),
+            )
+            .map_err(DaemonError::store)
+        })
+        .collect()
 }
 
 fn mark_ocr_job_failed_retryable(
@@ -883,6 +1271,22 @@ fn mark_ocr_job_failed_retryable(
 ) -> Result<()> {
     store
         .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+        .map_err(DaemonError::store)
+}
+
+fn mark_ocr_job_failed_retryable_with_failure_kind(
+    store: &MetaStore,
+    job: &IngestJob,
+    failure_kind: IngestJobFailureKind,
+    now: UnixTimestamp,
+) -> Result<()> {
+    store
+        .update_job_status_with_failure_kind(
+            &job.id,
+            IngestJobStatus::FailedRetryable,
+            Some(failure_kind),
+            now,
+        )
         .map_err(DaemonError::store)
 }
 
@@ -914,6 +1318,19 @@ fn run_embedding_worker_once(
         .embedding_dimension
         .ok_or_else(|| DaemonError::usage(run_usage()))?;
     let now = current_timestamp()?;
+    let stale_recovered = recover_stale_ingest_jobs(store, now)?;
+    let rebuild_vector_snapshot = vector_snapshot_requires_embedding_rebuild(data_dir);
+    let completed_requeued = if rebuild_vector_snapshot {
+        store
+            .requeue_completed_embedding_jobs_for_model(model_id, dimension, now)
+            .map_err(DaemonError::store)?
+    } else {
+        0
+    };
+    if rebuild_vector_snapshot {
+        reset_persistent_vector_snapshots_for_rebuild(data_dir.join("vector-index"))
+            .map_err(DaemonError::vector)?;
+    }
     enqueue_embedding_jobs_for_candidates(
         store,
         options.embedding_max_docs,
@@ -924,7 +1341,11 @@ fn run_embedding_worker_once(
     let jobs = claim_embedding_jobs(store, options.embedding_max_docs, model_id, dimension, now)?;
     let documents_considered = jobs.len();
     if jobs.is_empty() {
-        return Ok(EmbeddingWorkerSummary::default());
+        return Ok(EmbeddingWorkerSummary {
+            stale_recovered,
+            completed_requeued,
+            ..EmbeddingWorkerSummary::default()
+        });
     }
 
     let mut candidates = Vec::new();
@@ -938,6 +1359,8 @@ fn run_embedding_worker_once(
     }
     if candidates.is_empty() {
         return Ok(EmbeddingWorkerSummary {
+            stale_recovered,
+            completed_requeued,
             documents_considered,
             processed: 0,
             vector_writes: 0,
@@ -999,11 +1422,37 @@ fn run_embedding_worker_once(
     }
 
     Ok(EmbeddingWorkerSummary {
+        stale_recovered,
+        completed_requeued,
         documents_considered,
         processed: candidates.len(),
         vector_writes,
         failed: 0,
     })
+}
+
+fn recover_stale_ingest_jobs(store: &MetaStore, now: UnixTimestamp) -> Result<usize> {
+    store
+        .recover_stale_running_ingest_jobs(
+            now,
+            timestamp_minus_seconds(now, STALE_INGEST_JOB_SECONDS),
+        )
+        .map_err(DaemonError::store)
+}
+
+fn vector_snapshot_requires_embedding_rebuild(data_dir: &Path) -> bool {
+    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
+    match (inspection.state(), inspection.snapshot()) {
+        (PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered, _) => {
+            false
+        }
+        (
+            PersistentVectorSnapshotState::Missing
+            | PersistentVectorSnapshotState::Corrupt
+            | PersistentVectorSnapshotState::Unreadable,
+            _,
+        ) => true,
+    }
 }
 
 fn enqueue_embedding_jobs_for_candidates(
@@ -1217,13 +1666,265 @@ fn mark_embedding_jobs_failed_retryable(
     Ok(())
 }
 
-fn recover_stale_import_tasks(store: &MetaStore, now: UnixTimestamp) -> Result<usize> {
+fn recover_stale_import_tasks(
+    store: &MetaStore,
+    now: UnixTimestamp,
+    stale_seconds: i64,
+) -> Result<usize> {
     store
-        .recover_stale_running_import_tasks(
-            now,
-            timestamp_minus_seconds(now, STALE_IMPORT_TASK_SECONDS),
-        )
+        .recover_stale_running_import_tasks(now, timestamp_minus_seconds(now, stale_seconds))
         .map_err(DaemonError::store)
+}
+
+fn requeue_completed_imports(
+    store: &MetaStore,
+    now: UnixTimestamp,
+    min_age_seconds: i64,
+) -> Result<usize> {
+    let due_before = timestamp_minus_seconds(now, min_age_seconds);
+    let scopes = store
+        .completed_import_scan_scopes_due_for_requeue(due_before)
+        .map_err(DaemonError::store)?;
+    let mut requeued = 0_usize;
+
+    for (index, scope) in scopes.into_iter().enumerate() {
+        let task_id = new_import_task_id(index)?;
+        enqueue_import_from_completed_scope(store, scope, task_id, now)?;
+        requeued += 1;
+    }
+
+    Ok(requeued)
+}
+
+fn enqueue_import_from_completed_scope(
+    store: &MetaStore,
+    scope: ImportScanScope,
+    task_id: ImportTaskId,
+    now: UnixTimestamp,
+) -> Result<()> {
+    let task = ImportTask {
+        id: task_id.clone(),
+        root_path: scope.canonical_root_path.clone(),
+        status: ImportTaskStatus::Queued,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    };
+    let next_scope = ImportScanScope {
+        import_task_id: task_id,
+        root_kind: scope.root_kind,
+        root_preset: scope.root_preset,
+        scan_profile: scope.scan_profile,
+        requested_root_path: scope.requested_root_path,
+        canonical_root_path: scope.canonical_root_path,
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: scope.scan_budget_kind,
+        scan_budget_limit: scope.scan_budget_limit,
+        scan_budget_observed: scope.scan_budget_limit.map(|_| 0),
+        scan_budget_exhausted: false,
+        updated_at: now,
+    };
+
+    store
+        .insert_import_task_with_scan_scope(&task, &next_scope)
+        .map_err(DaemonError::store)
+}
+
+struct ImportWatcher {
+    watcher: RecommendedWatcher,
+    receiver: Receiver<notify::Result<NotifyEvent>>,
+    watched_roots: BTreeSet<String>,
+    watched_root_mtimes: BTreeMap<String, Option<u128>>,
+    pending_roots: BTreeSet<String>,
+}
+
+impl ImportWatcher {
+    fn new() -> Result<Self> {
+        let (sender, receiver) = mpsc::channel();
+        let watcher = RecommendedWatcher::new(
+            move |event| {
+                let _ = sender.send(event);
+            },
+            NotifyConfig::default(),
+        )
+        .map_err(|_| DaemonError::user("import watcher blocked: local watcher unavailable"))?;
+
+        Ok(Self {
+            watcher,
+            receiver,
+            watched_roots: BTreeSet::new(),
+            watched_root_mtimes: BTreeMap::new(),
+            pending_roots: BTreeSet::new(),
+        })
+    }
+
+    fn sync_and_requeue(
+        &mut self,
+        store: &MetaStore,
+        now: UnixTimestamp,
+    ) -> Result<ImportWatcherSummary> {
+        let scopes = store
+            .completed_import_scan_scopes_due_for_requeue(now)
+            .map_err(DaemonError::store)?;
+        let scopes_by_root = scopes
+            .into_iter()
+            .map(|scope| (scope.canonical_root_path.clone(), scope))
+            .collect::<BTreeMap<_, _>>();
+        let roots = scopes_by_root.keys().cloned().collect::<BTreeSet<_>>();
+        let mut summary = self.sync_watched_roots(&roots);
+        self.drain_events(&scopes_by_root, &mut summary);
+        self.poll_changed_roots(&roots, &mut summary);
+        let pending_roots = std::mem::take(&mut self.pending_roots);
+
+        for (index, root) in pending_roots.into_iter().enumerate() {
+            let Some(scope) = scopes_by_root.get(&root).cloned() else {
+                continue;
+            };
+            if store
+                .pending_import_task_by_root(&root)
+                .map_err(DaemonError::store)?
+                .is_some()
+            {
+                continue;
+            }
+            enqueue_import_from_completed_scope(store, scope, new_import_task_id(index)?, now)?;
+            summary.requeued += 1;
+        }
+
+        Ok(summary)
+    }
+
+    fn sync_watched_roots(&mut self, roots: &BTreeSet<String>) -> ImportWatcherSummary {
+        let previous_roots = self.watched_roots.clone();
+        let mut next_roots = BTreeSet::new();
+        let mut event_errors = 0_usize;
+
+        for root in previous_roots.difference(roots) {
+            if self.watcher.unwatch(Path::new(root)).is_err() {
+                event_errors += 1;
+            }
+            self.watched_root_mtimes.remove(root);
+        }
+
+        for root in roots {
+            if previous_roots.contains(root) {
+                next_roots.insert(root.clone());
+                continue;
+            }
+            if !Path::new(root).exists() {
+                event_errors += 1;
+                continue;
+            }
+            if self
+                .watcher
+                .watch(Path::new(root), RecursiveMode::Recursive)
+                .is_ok()
+            {
+                self.watched_root_mtimes
+                    .insert(root.clone(), import_watcher_root_mtime(root));
+                next_roots.insert(root.clone());
+            } else {
+                event_errors += 1;
+            }
+        }
+
+        self.watched_roots = next_roots;
+        ImportWatcherSummary {
+            active_roots: (self.watched_roots != previous_roots)
+                .then_some(self.watched_roots.len()),
+            event_errors,
+            ..ImportWatcherSummary::default()
+        }
+    }
+
+    fn drain_events(
+        &mut self,
+        scopes_by_root: &BTreeMap<String, ImportScanScope>,
+        summary: &mut ImportWatcherSummary,
+    ) {
+        loop {
+            match self.receiver.try_recv() {
+                Ok(Ok(event)) => {
+                    if !import_watcher_event_is_relevant(&event) {
+                        continue;
+                    }
+                    summary.events += 1;
+                    for path in event.paths {
+                        if let Some(root) = import_watcher_root_for_path(scopes_by_root, &path) {
+                            self.pending_roots.insert(root.to_string());
+                        }
+                    }
+                }
+                Ok(Err(_)) => {
+                    summary.event_errors += 1;
+                }
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => {
+                    summary.event_errors += 1;
+                    return;
+                }
+            }
+        }
+    }
+
+    fn poll_changed_roots(&mut self, roots: &BTreeSet<String>, summary: &mut ImportWatcherSummary) {
+        for root in roots {
+            if !self.watched_roots.contains(root) {
+                continue;
+            }
+            let previous_mtime = self.watched_root_mtimes.get(root).copied().flatten();
+            let current_mtime = import_watcher_root_mtime(root);
+            self.watched_root_mtimes.insert(root.clone(), current_mtime);
+            if previous_mtime.is_some() && current_mtime != previous_mtime {
+                summary.events += 1;
+                self.pending_roots.insert(root.clone());
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct ImportWatcherSummary {
+    active_roots: Option<usize>,
+    events: usize,
+    requeued: usize,
+    event_errors: usize,
+}
+
+fn import_watcher_event_is_relevant(event: &NotifyEvent) -> bool {
+    matches!(
+        event.kind,
+        NotifyEventKind::Any
+            | NotifyEventKind::Create(_)
+            | NotifyEventKind::Modify(_)
+            | NotifyEventKind::Remove(_)
+    )
+}
+
+fn import_watcher_root_for_path<'a>(
+    scopes_by_root: &'a BTreeMap<String, ImportScanScope>,
+    event_path: &Path,
+) -> Option<&'a str> {
+    scopes_by_root
+        .keys()
+        .find(|root| event_path.starts_with(Path::new(root.as_str())))
+        .map(String::as_str)
+}
+
+fn import_watcher_root_mtime(root: &str) -> Option<u128> {
+    fs::metadata(root)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
 }
 
 fn mark_import_task_failed_permanent(
@@ -1262,7 +1963,7 @@ fn import_options_from_scope(scope: &ImportScanScope) -> Result<ImportOptions> {
 fn upsert_scope_summary(
     store: &MetaStore,
     mut scope: ImportScanScope,
-    summary: ImportSummary,
+    summary: &ImportSummary,
     now: UnixTimestamp,
 ) -> Result<()> {
     scope.files_discovered = usize_to_u64(summary.files_discovered)?;
@@ -1321,9 +2022,14 @@ fn parse_loopback_addr(value: &str) -> Result<SocketAddr> {
     Ok(addr)
 }
 
-fn serve_ipc(data_dir: &Path, addr: SocketAddr, max_requests: Option<usize>) -> Result<()> {
+fn serve_ipc(
+    data_dir: &Path,
+    addr: SocketAddr,
+    max_requests: Option<usize>,
+    options: &RunOptions,
+) -> Result<()> {
     let listener = bind_ipc_listener(data_dir, addr)?;
-    let result = serve_ipc_listener(data_dir, &listener, max_requests);
+    let result = serve_ipc_listener(data_dir, &listener, max_requests, options);
     remove_ipc_endpoint_manifest(data_dir);
     result
 }
@@ -1354,6 +2060,7 @@ fn write_ipc_endpoint_manifest(data_dir: &Path, addr: SocketAddr) -> Result<()> 
         "import_progress": format!("http://{addr}/imports/progress"),
         "search": format!("http://{addr}/search"),
         "details": format!("http://{addr}/details"),
+        "delete": format!("http://{addr}/delete"),
     })
     .to_string();
     let path = data_dir.join(IPC_ENDPOINT_FILE);
@@ -1424,13 +2131,15 @@ fn serve_ipc_listener(
     data_dir: &Path,
     listener: &TcpListener,
     max_requests: Option<usize>,
+    options: &RunOptions,
 ) -> Result<()> {
     let request_limit = max_requests.unwrap_or(usize::MAX);
+    let ipc_store = open_store(data_dir)?;
     for _ in 0..request_limit {
         let (stream, _) = listener
             .accept()
             .map_err(|_| DaemonError::user("unable to accept daemon ipc request"))?;
-        handle_ipc_stream(data_dir, stream)?;
+        handle_ipc_stream(data_dir, &ipc_store, stream, options)?;
     }
 
     Ok(())
@@ -1438,8 +2147,10 @@ fn serve_ipc_listener(
 
 fn serve_ipc_listener_with_worker_monitor(
     data_dir: &Path,
+    ipc_store: &MetaStore,
     listener: &TcpListener,
     max_requests: Option<usize>,
+    options: &RunOptions,
     worker_result_receiver: &Receiver<Result<()>>,
 ) -> Result<()> {
     let request_limit = max_requests.unwrap_or(usize::MAX);
@@ -1463,7 +2174,7 @@ fn serve_ipc_listener_with_worker_monitor(
 
         match listener.accept() {
             Ok((stream, _)) => {
-                handle_ipc_stream(data_dir, stream)?;
+                handle_ipc_stream(data_dir, ipc_store, stream, options)?;
                 handled_requests += 1;
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -1476,7 +2187,12 @@ fn serve_ipc_listener_with_worker_monitor(
     Ok(())
 }
 
-fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
+fn handle_ipc_stream(
+    data_dir: &Path,
+    ipc_store: &MetaStore,
+    mut stream: TcpStream,
+    options: &RunOptions,
+) -> Result<()> {
     stream
         .set_nonblocking(false)
         .map_err(|_| DaemonError::user("unable to configure daemon ipc stream"))?;
@@ -1497,7 +2213,7 @@ fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
         && request.path == "/status"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        let body = status_json(data_dir)?;
+        let body = status_json(ipc_store)?;
         return write_http_response(&mut stream, 200, "application/json", &body);
     }
 
@@ -1526,7 +2242,7 @@ fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
         && request.path == "/search"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        return handle_search_command_ipc(data_dir, &request, &mut stream);
+        return handle_search_command_ipc(data_dir, &request, &mut stream, options);
     }
 
     if request.method == "POST"
@@ -1534,6 +2250,13 @@ fn handle_ipc_stream(data_dir: &Path, mut stream: TcpStream) -> Result<()> {
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
         return handle_detail_command_ipc(data_dir, &request, &mut stream);
+    }
+
+    if request.method == "POST"
+        && request.path == "/delete"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_delete_command_ipc(data_dir, &request, &mut stream);
     }
 
     write_http_response(&mut stream, 404, "text/plain", "not found")
@@ -1779,6 +2502,7 @@ fn handle_search_command_ipc(
     data_dir: &Path,
     request: &IpcRequest,
     stream: &mut TcpStream,
+    options: &RunOptions,
 ) -> Result<()> {
     if !ipc_command_authorized(data_dir, &request.headers)? {
         let body = serde_json::json!({
@@ -1789,7 +2513,7 @@ fn handle_search_command_ipc(
         return write_http_response(stream, 401, "application/json", &body);
     }
 
-    match execute_search_command(data_dir, &request.body) {
+    match execute_search_command(data_dir, &request.body, options) {
         Ok(body) => write_http_response(stream, 200, "application/json", &body),
         Err(IpcCommandError::BadRequest(message)) => {
             let body = serde_json::json!({
@@ -1868,56 +2592,139 @@ fn handle_detail_command_ipc(
     }
 }
 
+fn handle_delete_command_ipc(
+    data_dir: &Path,
+    request: &IpcRequest,
+    stream: &mut TcpStream,
+) -> Result<()> {
+    if !ipc_command_authorized(data_dir, &request.headers)? {
+        let body = serde_json::json!({
+            "schema_version": "daemon.error.v1",
+            "status": "unauthorized",
+        })
+        .to_string();
+        return write_http_response(stream, 401, "application/json", &body);
+    }
+
+    match execute_delete_command(data_dir, &request.body) {
+        Ok(body) => write_http_response(stream, 200, "application/json", &body),
+        Err(IpcCommandError::BadRequest(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "bad_request",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 400, "application/json", &body)
+        }
+        Err(IpcCommandError::Conflict(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "conflict",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 409, "application/json", &body)
+        }
+        Err(IpcCommandError::NotFound(_message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "not_found",
+            })
+            .to_string();
+            write_http_response(stream, 404, "application/json", &body)
+        }
+        Err(IpcCommandError::Internal(error)) => Err(error),
+    }
+}
+
 fn execute_search_command(
     data_dir: &Path,
     body: &[u8],
+    options: &RunOptions,
 ) -> std::result::Result<String, IpcCommandError> {
     let payload = serde_json::from_slice::<serde_json::Value>(body)
         .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
     let args = parse_search_command(&payload)?;
-    if args.mode != "fulltext" {
-        return Err(IpcCommandError::BadRequest(
-            "daemon search ipc supports fulltext mode only",
-        ));
-    }
-
-    let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
-        .map_err(DaemonError::fulltext)
-        .map_err(IpcCommandError::Internal)?
-    else {
-        let body = serde_json::json!({
-            "schema_version": "daemon.search.v1",
-            "status": "ok",
-            "mode": "fulltext",
-            "search_index": "not_ready",
-            "result_count": 0,
-            "results": [],
-        });
-        return Ok(body.to_string());
-    };
+    let query_started = Instant::now();
     let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
-    let hits = daemon_fulltext_search(&index, &store, &args)?;
+    let hits = match args.mode {
+        DaemonSearchMode::FullText => {
+            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+                .map_err(DaemonError::fulltext)
+                .map_err(IpcCommandError::Internal)?
+            else {
+                return Ok(daemon_search_not_ready_body(args.mode));
+            };
+            daemon_fulltext_search(&index, &store, &args)?
+        }
+        DaemonSearchMode::Semantic => {
+            let Some(hits) = daemon_semantic_search(data_dir, &store, &args, options)? else {
+                return Ok(daemon_search_not_ready_body(args.mode));
+            };
+            hits
+        }
+        DaemonSearchMode::Hybrid => {
+            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+                .map_err(DaemonError::fulltext)
+                .map_err(IpcCommandError::Internal)?
+            else {
+                return Ok(daemon_search_not_ready_body(args.mode));
+            };
+            let fulltext_hits = daemon_fulltext_search(&index, &store, &args)?;
+            let Some(vector_hits) = daemon_semantic_search(data_dir, &store, &args, options)?
+            else {
+                return Ok(daemon_search_not_ready_body(args.mode));
+            };
+            daemon_fuse_hybrid_hits(fulltext_hits, vector_hits, args.top_k)
+        }
+    };
+    record_daemon_query_observation(&store, args.mode, query_started.elapsed(), hits.len());
+    Ok(daemon_search_ok_body(args.mode, &hits))
+}
+
+fn daemon_search_not_ready_body(mode: DaemonSearchMode) -> String {
+    serde_json::json!({
+        "schema_version": "daemon.search.v1",
+        "status": "ok",
+        "mode": mode.label(),
+        "search_index": "not_ready",
+        "result_count": 0,
+        "results": [],
+    })
+    .to_string()
+}
+
+fn daemon_search_ok_body(mode: DaemonSearchMode, hits: &[DaemonSearchHit]) -> String {
     let results = hits
         .iter()
         .map(|hit| {
-            serde_json::json!({
+            let mut result = serde_json::json!({
                 "rank": hit.rank,
                 "doc_id": hit.doc_id,
                 "version_id": hit.version_id,
                 "file_name": hit.file_name,
                 "snippet": hit.snippet,
-            })
+            });
+            if let Some(hint) = &hit.soft_dedupe_hint {
+                result["soft_dedupe"] = serde_json::json!({
+                    "suspected_versions": hint.suspected_versions,
+                    "max_confidence": format_confidence(hint.max_confidence),
+                    "folded": false,
+                });
+            }
+            result
         })
         .collect::<Vec<_>>();
-    let body = serde_json::json!({
+    serde_json::json!({
         "schema_version": "daemon.search.v1",
         "status": "ok",
-        "mode": "fulltext",
+        "mode": mode.label(),
         "search_index": "available",
         "result_count": results.len(),
         "results": results,
-    });
-    Ok(body.to_string())
+    })
+    .to_string()
 }
 
 fn parse_search_command(
@@ -1934,8 +2741,9 @@ fn parse_search_command(
     let mode = payload
         .get("mode")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("fulltext")
-        .to_string();
+        .unwrap_or("fulltext");
+    let mode =
+        DaemonSearchMode::parse(mode).ok_or(IpcCommandError::BadRequest("mode is invalid"))?;
     let top_k = match payload.get("top_k") {
         Some(value) => value
             .as_u64()
@@ -1997,6 +2805,196 @@ fn parse_search_filters(
             parsed = parsed.with_skills_any(skills);
         }
     }
+    if let Some(value) = object.get("contact_hashes_any") {
+        if !value.is_null() {
+            let contact_hashes = value.as_array().ok_or(IpcCommandError::BadRequest(
+                "contact_hashes_any must be an array",
+            ))?;
+            if contact_hashes.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many contact hashes"));
+            }
+            let contact_hashes = contact_hashes
+                .iter()
+                .map(|contact_hash| {
+                    let contact_hash = contact_hash.as_str().ok_or(IpcCommandError::BadRequest(
+                        "contact_hashes_any values must be strings",
+                    ))?;
+                    ContactHash::from_keyed_digest(contact_hash.to_string())
+                        .map(|hash| hash.as_str().to_string())
+                        .map_err(|_| {
+                            IpcCommandError::BadRequest(
+                                "contact_hashes_any values must be contact hashes",
+                            )
+                        })
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_contact_hashes_any(contact_hashes);
+        }
+    }
+    if let Some(value) = object.get("school_tiers_any") {
+        if !value.is_null() {
+            let school_tiers = value.as_array().ok_or(IpcCommandError::BadRequest(
+                "school_tiers_any must be an array",
+            ))?;
+            if school_tiers.len() > 16 {
+                return Err(IpcCommandError::BadRequest("too many school tiers"));
+            }
+            let school_tiers = school_tiers
+                .iter()
+                .map(|school_tier| {
+                    school_tier.as_str().and_then(SchoolTier::parse).ok_or(
+                        IpcCommandError::BadRequest("school_tiers_any values are invalid"),
+                    )
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_school_tiers_any(school_tiers);
+        }
+    }
+    if let Some(value) = object.get("names_any") {
+        if !value.is_null() {
+            let names = value
+                .as_array()
+                .ok_or(IpcCommandError::BadRequest("names_any must be an array"))?;
+            if names.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many names"));
+            }
+            let names = names
+                .iter()
+                .map(|name| {
+                    name.as_str().ok_or(IpcCommandError::BadRequest(
+                        "names_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_names_any(names);
+        }
+    }
+    if let Some(value) = object.get("schools_any") {
+        if !value.is_null() {
+            let schools = value
+                .as_array()
+                .ok_or(IpcCommandError::BadRequest("schools_any must be an array"))?;
+            if schools.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many schools"));
+            }
+            let schools = schools
+                .iter()
+                .map(|school| {
+                    school.as_str().ok_or(IpcCommandError::BadRequest(
+                        "schools_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_schools_any(schools);
+        }
+    }
+    if let Some(value) = object.get("majors_any") {
+        if !value.is_null() {
+            let majors = value
+                .as_array()
+                .ok_or(IpcCommandError::BadRequest("majors_any must be an array"))?;
+            if majors.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many majors"));
+            }
+            let majors = majors
+                .iter()
+                .map(|major| {
+                    major.as_str().ok_or(IpcCommandError::BadRequest(
+                        "majors_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_majors_any(majors);
+        }
+    }
+    if let Some(value) = object.get("certificates_any") {
+        if !value.is_null() {
+            let certificates = value.as_array().ok_or(IpcCommandError::BadRequest(
+                "certificates_any must be an array",
+            ))?;
+            if certificates.len() > 32 {
+                return Err(IpcCommandError::BadRequest("too many certificates"));
+            }
+            let certificates = certificates
+                .iter()
+                .map(|certificate| {
+                    certificate.as_str().ok_or(IpcCommandError::BadRequest(
+                        "certificates_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_certificates_any(certificates);
+        }
+    }
+    if let Some(value) = object.get("date_range_overlaps") {
+        if !value.is_null() {
+            let date_range =
+                value
+                    .as_str()
+                    .and_then(DateRange::parse)
+                    .ok_or(IpcCommandError::BadRequest(
+                        "date_range_overlaps is invalid",
+                    ))?;
+            parsed = parsed.with_date_range_overlaps(&date_range.canonical());
+        }
+    }
+    if let Some(value) = object.get("companies_any") {
+        if !value.is_null() {
+            let companies = value.as_array().ok_or(IpcCommandError::BadRequest(
+                "companies_any must be an array",
+            ))?;
+            if companies.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many companies"));
+            }
+            let companies = companies
+                .iter()
+                .map(|company| {
+                    company.as_str().ok_or(IpcCommandError::BadRequest(
+                        "companies_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_companies_any(companies);
+        }
+    }
+    if let Some(value) = object.get("titles_any") {
+        if !value.is_null() {
+            let titles = value
+                .as_array()
+                .ok_or(IpcCommandError::BadRequest("titles_any must be an array"))?;
+            if titles.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many titles"));
+            }
+            let titles = titles
+                .iter()
+                .map(|title| {
+                    title.as_str().ok_or(IpcCommandError::BadRequest(
+                        "titles_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_titles_any(titles);
+        }
+    }
+    if let Some(value) = object.get("locations_any") {
+        if !value.is_null() {
+            let locations = value.as_array().ok_or(IpcCommandError::BadRequest(
+                "locations_any must be an array",
+            ))?;
+            if locations.len() > 64 {
+                return Err(IpcCommandError::BadRequest("too many locations"));
+            }
+            let locations = locations
+                .iter()
+                .map(|location| {
+                    location.as_str().ok_or(IpcCommandError::BadRequest(
+                        "locations_any values must be strings",
+                    ))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            parsed = parsed.with_locations_any(locations);
+        }
+    }
     if let Some(value) = object.get("years_experience_min") {
         if !value.is_null() {
             let years = value
@@ -2019,11 +3017,462 @@ fn daemon_fulltext_search(
     let candidate_limit = args.top_k.saturating_mul(5).clamp(args.top_k, 100);
     let plan = plan_search(&args.query, candidate_limit)
         .map_err(|_| IpcCommandError::BadRequest("query must have searchable terms"))?;
-    let hits = index
-        .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
-        .map_err(DaemonError::fulltext)
-        .map_err(IpcCommandError::Internal)?;
+    let allowed_doc_ids = daemon_field_filter_doc_id_prefilter(store, &args.filters)?;
+    let query = SearchQuery::new(plan.query_text()).with_limit(plan.limit());
+    let hits = match &allowed_doc_ids {
+        Some(doc_ids) => index.search_allowed_doc_ids(query, doc_ids),
+        None => index.search(query),
+    }
+    .map_err(DaemonError::fulltext)
+    .map_err(IpcCommandError::Internal)?;
     daemon_visible_hits(store, hits, &args.filters, args.top_k)
+}
+
+fn daemon_semantic_search(
+    data_dir: &Path,
+    store: &MetaStore,
+    args: &DaemonSearchArgs,
+    options: &RunOptions,
+) -> std::result::Result<Option<Vec<DaemonSearchHit>>, IpcCommandError> {
+    let Some(snapshot_dimension) = daemon_vector_snapshot_dimension(data_dir) else {
+        return Ok(None);
+    };
+    let command = options
+        .embedding_command
+        .clone()
+        .ok_or(IpcCommandError::BadRequest(
+            "semantic search blocked: local embedding command not configured",
+        ))?;
+    let model_id = options
+        .embedding_model_id
+        .as_deref()
+        .ok_or(IpcCommandError::BadRequest(
+            "semantic search blocked: embedding model id not configured",
+        ))?;
+    let dimension = options
+        .embedding_dimension
+        .ok_or(IpcCommandError::BadRequest(
+            "semantic search blocked: embedding dimension not configured",
+        ))?;
+    if dimension != snapshot_dimension {
+        return Err(IpcCommandError::BadRequest(
+            "semantic search blocked: embedding dimension does not match vector index",
+        ));
+    }
+
+    let embedder = LocalEmbeddingCommandEmbedder::new(
+        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
+            .map_err(DaemonError::embedding)
+            .map_err(IpcCommandError::Internal)?
+            .with_timeout_ms(options.embedding_timeout_ms)
+            .map_err(DaemonError::embedding)
+            .map_err(IpcCommandError::Internal)?,
+    );
+    let input = EmbeddingInput::new("query", args.query.as_str());
+    let query_vectors = embedder
+        .embed_batch(&[input], EmbeddingBudget::new(1, args.query.len().max(1)))
+        .map_err(DaemonError::embedding)
+        .map_err(IpcCommandError::Internal)?;
+    let query_vector = query_vectors
+        .into_iter()
+        .next()
+        .ok_or(IpcCommandError::BadRequest(
+            "semantic search query embedding is unavailable",
+        ))?;
+    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
+        .map_err(DaemonError::vector)
+        .map_err(IpcCommandError::Internal)?;
+    let candidate_limit = args.top_k.saturating_mul(5).clamp(args.top_k, 100);
+    let allowed_doc_ids = daemon_field_filter_doc_id_prefilter(store, &args.filters)?;
+    let vector_hits = vector_index
+        .knn_for_model(
+            QueryVector::new(query_vector.values().to_vec())
+                .map_err(DaemonError::vector)
+                .map_err(IpcCommandError::Internal)?,
+            candidate_limit,
+            model_id,
+        )
+        .map_err(DaemonError::vector)
+        .map_err(IpcCommandError::Internal)?;
+
+    daemon_vector_hits(
+        store,
+        vector_hits,
+        &args.filters,
+        allowed_doc_ids.as_ref(),
+        args.top_k,
+    )
+    .map(Some)
+}
+
+fn daemon_vector_snapshot_dimension(data_dir: &Path) -> Option<usize> {
+    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
+    match (inspection.state(), inspection.snapshot()) {
+        (
+            PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered,
+            Some(snapshot),
+        ) => Some(snapshot.dimension()),
+        _ => None,
+    }
+}
+
+fn daemon_vector_hits(
+    store: &MetaStore,
+    hits: Vec<VectorHit>,
+    filters: &SearchFilters,
+    allowed_doc_ids: Option<&BTreeSet<String>>,
+    top_k: usize,
+) -> std::result::Result<Vec<DaemonSearchHit>, IpcCommandError> {
+    let mut visible = Vec::new();
+    let mut seen_candidate_keys = BTreeSet::new();
+
+    for (rank, hit) in hits.into_iter().enumerate() {
+        if let Some(allowed_doc_ids) = allowed_doc_ids {
+            if !allowed_doc_ids.contains(hit.doc_id()) {
+                continue;
+            }
+        }
+        let Some((document, version)) =
+            daemon_hydrate_visible_document_version(store, hit.doc_id())?
+        else {
+            continue;
+        };
+        if !filters.is_empty()
+            && !filters.matches(&daemon_persisted_profile(store, hit.doc_id(), &version)?)
+        {
+            continue;
+        }
+        let candidate_key = daemon_candidate_fold_key(&version);
+        if !seen_candidate_keys.insert(candidate_key.clone()) {
+            continue;
+        }
+
+        visible.push(DaemonSearchHit {
+            rank: rank + 1,
+            score: hit.score(),
+            doc_id: document.id.to_string(),
+            version_id: version.id.to_string(),
+            file_name: redact_contact_values(&document.file_name),
+            snippet: "semantic match".to_string(),
+            candidate_key,
+            soft_dedupe_hint: None,
+        });
+        if visible.len() == top_k {
+            break;
+        }
+    }
+
+    daemon_attach_soft_dedupe_hints(store, daemon_rerank_search_hits(visible))
+}
+
+fn daemon_fuse_hybrid_hits(
+    fulltext_hits: Vec<DaemonSearchHit>,
+    vector_hits: Vec<DaemonSearchHit>,
+    top_k: usize,
+) -> Vec<DaemonSearchHit> {
+    let mut by_doc = BTreeMap::<String, DaemonSearchHit>::new();
+    for hit in vector_hits.iter().chain(fulltext_hits.iter()) {
+        by_doc.insert(hit.doc_id.clone(), hit.clone());
+    }
+    let fused = fuse_hybrid_rrf(
+        HybridRecall::new(
+            daemon_ranked_hits_from_output(&fulltext_hits),
+            daemon_ranked_hits_from_output(&vector_hits),
+        ),
+        60.0,
+        top_k.saturating_mul(5).max(top_k),
+    );
+    let mut output = Vec::new();
+    let mut seen_candidate_keys = BTreeSet::new();
+    for ranked in fused {
+        let Some(hit) = by_doc.get(ranked.doc_id()) else {
+            continue;
+        };
+        if !seen_candidate_keys.insert(hit.candidate_key.clone()) {
+            continue;
+        }
+        let mut hit = hit.clone();
+        hit.rank = output.len() + 1;
+        hit.score = ranked.score();
+        output.push(hit);
+        if output.len() == top_k {
+            break;
+        }
+    }
+    output
+}
+
+fn daemon_ranked_hits_from_output(hits: &[DaemonSearchHit]) -> Vec<RankedHit> {
+    hits.iter()
+        .enumerate()
+        .map(|(index, hit)| {
+            RankedHit::new(hit.doc_id.clone(), index + 1, hit.score)
+                .with_candidate_key(hit.candidate_key.clone())
+        })
+        .collect()
+}
+
+fn daemon_field_filter_doc_id_prefilter(
+    store: &MetaStore,
+    filters: &SearchFilters,
+) -> std::result::Result<Option<BTreeSet<String>>, IpcCommandError> {
+    if filters.is_empty() {
+        return Ok(None);
+    }
+
+    let mut allowed_doc_ids = None;
+    if let Some(degree_min) = filters.degree_min() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Degree,
+                    &daemon_degree_filter_values(degree_min),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    false,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.names_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Name,
+                    filters.names_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.school_tiers_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            daemon_school_tier_filter_doc_ids(store, filters.school_tiers_any())
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.schools_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::School,
+                    filters.schools_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.majors_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Major,
+                    filters.majors_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.certificates_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Certificate,
+                    filters.certificates_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if let Some(date_range) = filters.date_range_overlaps() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_date_range_overlap(
+                    date_range.start_month(),
+                    date_range.end_month(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.companies_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Company,
+                    filters.companies_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.titles_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Title,
+                    filters.titles_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.locations_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Location,
+                    filters.locations_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.skills_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Skill,
+                    filters.skills_any(),
+                    FIELD_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if !filters.contact_hashes_any().is_empty() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_contact_hashes(&daemon_contact_hash_filter_values(
+                    filters.contact_hashes_any(),
+                )?)
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+    if let Some(years_min) = filters.years_experience_min() {
+        daemon_merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_numeric_entity_min(
+                    EntityType::YearsExperience,
+                    years_min,
+                    FIELD_CONFIDENCE_THRESHOLD,
+                )
+                .map_err(DaemonError::store)
+                .map_err(IpcCommandError::Internal)?,
+        );
+    }
+
+    Ok(allowed_doc_ids)
+}
+
+fn daemon_contact_hash_filter_values(
+    contact_hashes: &[String],
+) -> std::result::Result<Vec<ContactHash>, IpcCommandError> {
+    contact_hashes
+        .iter()
+        .map(|contact_hash| {
+            ContactHash::from_keyed_digest(contact_hash.clone()).map_err(|_| {
+                IpcCommandError::BadRequest("contact_hashes_any values must be contact hashes")
+            })
+        })
+        .collect()
+}
+
+fn daemon_school_tier_filter_doc_ids(
+    store: &MetaStore,
+    school_tiers: &[SchoolTier],
+) -> meta_store::Result<Vec<DocumentId>> {
+    let known_values = school_tiers
+        .iter()
+        .filter(|school_tier| **school_tier != SchoolTier::Unknown)
+        .map(|school_tier| school_tier.canonical().to_string())
+        .collect::<Vec<_>>();
+    let mut document_ids = Vec::new();
+    if !known_values.is_empty() {
+        document_ids.extend(store.searchable_document_ids_with_entity_values(
+            EntityType::SchoolTier,
+            &known_values,
+            FIELD_CONFIDENCE_THRESHOLD,
+            false,
+        )?);
+    }
+    if school_tiers.contains(&SchoolTier::Unknown) {
+        document_ids.extend(store.searchable_document_ids_without_entity_type(
+            EntityType::SchoolTier,
+            FIELD_CONFIDENCE_THRESHOLD,
+        )?);
+    }
+    Ok(document_ids)
+}
+
+fn daemon_merge_filter_doc_ids(current: &mut Option<BTreeSet<String>>, next: Vec<DocumentId>) {
+    let next = next
+        .into_iter()
+        .map(|document_id| document_id.to_string())
+        .collect::<BTreeSet<_>>();
+    match current {
+        Some(current) => {
+            *current = current.intersection(&next).cloned().collect();
+        }
+        None => *current = Some(next),
+    }
+}
+
+fn daemon_degree_filter_values(min_degree: DegreeLevel) -> Vec<String> {
+    [
+        DegreeLevel::HighSchool,
+        DegreeLevel::Associate,
+        DegreeLevel::Bachelor,
+        DegreeLevel::Master,
+        DegreeLevel::Doctor,
+    ]
+    .into_iter()
+    .filter(|degree| *degree >= min_degree)
+    .map(|degree| degree.canonical().to_string())
+    .collect()
+}
+
+fn record_daemon_query_observation(
+    store: &MetaStore,
+    mode: DaemonSearchMode,
+    duration: Duration,
+    result_count: usize,
+) {
+    let Ok(observed_at) = current_timestamp() else {
+        return;
+    };
+    let _ = store.record_query_observation(mode.label(), duration, result_count, observed_at);
 }
 
 fn daemon_visible_hits(
@@ -2045,23 +3494,197 @@ fn daemon_visible_hits(
             continue;
         }
         let candidate_key = daemon_candidate_fold_key(&version);
-        if !seen_candidate_keys.insert(candidate_key) {
+        if !seen_candidate_keys.insert(candidate_key.clone()) {
             continue;
         }
 
         visible.push(DaemonSearchHit {
             rank: visible.len() + 1,
+            score: hit.score,
             doc_id: hit.doc_id,
             version_id: hit.version_id,
             file_name: redact_contact_values(&hit.file_name),
             snippet: redact_contact_values(&hit.snippet),
+            candidate_key,
+            soft_dedupe_hint: None,
         });
         if visible.len() == top_k {
             break;
         }
     }
 
-    Ok(visible)
+    daemon_attach_soft_dedupe_hints(store, visible)
+}
+
+fn daemon_rerank_search_hits(mut hits: Vec<DaemonSearchHit>) -> Vec<DaemonSearchHit> {
+    for (index, hit) in hits.iter_mut().enumerate() {
+        hit.rank = index + 1;
+    }
+    hits
+}
+
+fn daemon_attach_soft_dedupe_hints(
+    store: &MetaStore,
+    mut hits: Vec<DaemonSearchHit>,
+) -> std::result::Result<Vec<DaemonSearchHit>, IpcCommandError> {
+    let hints = hits
+        .iter()
+        .map(|hit| daemon_soft_dedupe_hint_for_hit(store, hit))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for (hit, hint) in hits.iter_mut().zip(hints) {
+        hit.soft_dedupe_hint = hint;
+    }
+    Ok(hits)
+}
+
+fn daemon_soft_dedupe_hint_for_hit(
+    store: &MetaStore,
+    hit: &DaemonSearchHit,
+) -> std::result::Result<Option<DaemonSoftDedupeHint>, IpcCommandError> {
+    if hit.candidate_key.starts_with("candidate:") {
+        return Ok(None);
+    }
+    let Some(profile) = daemon_dedupe_profile_for_hit(store, hit)? else {
+        return Ok(None);
+    };
+    let Some(name) = profile.name() else {
+        return Ok(None);
+    };
+    let candidate_doc_ids = store
+        .searchable_document_ids_with_entity_values(
+            EntityType::Name,
+            &[name.to_string()],
+            FIELD_CONFIDENCE_THRESHOLD,
+            true,
+        )
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?;
+    let mut suspected_versions = 0_usize;
+    let mut max_confidence = 0.0_f32;
+
+    for candidate_doc_id in candidate_doc_ids.into_iter().take(64) {
+        if candidate_doc_id.as_str() == hit.doc_id {
+            continue;
+        }
+        let versions = store
+            .resume_versions_for_document(&candidate_doc_id)
+            .map_err(DaemonError::store)
+            .map_err(IpcCommandError::Internal)?;
+        for version in versions {
+            if version.id.as_str() == hit.version_id
+                || version.visibility != ResumeVisibility::Searchable
+                || version.candidate_id.is_some()
+            {
+                continue;
+            }
+            let other_hit = DaemonSearchHit {
+                rank: 0,
+                score: 0.0,
+                doc_id: version.document_id.to_string(),
+                version_id: version.id.to_string(),
+                file_name: String::new(),
+                snippet: String::new(),
+                candidate_key: daemon_candidate_fold_key(&version),
+                soft_dedupe_hint: None,
+            };
+            let Some(other_profile) = daemon_dedupe_profile_for_hit(store, &other_hit)? else {
+                continue;
+            };
+            if let Some(score) = soft_dedupe_score(&profile, &other_profile) {
+                suspected_versions += 1;
+                max_confidence = max_confidence.max(score.confidence());
+            }
+        }
+    }
+
+    Ok((suspected_versions > 0).then_some(DaemonSoftDedupeHint {
+        suspected_versions,
+        max_confidence,
+    }))
+}
+
+fn daemon_dedupe_profile_for_hit(
+    store: &MetaStore,
+    hit: &DaemonSearchHit,
+) -> std::result::Result<Option<DedupeProfile>, IpcCommandError> {
+    let Ok(version_id) = ResumeVersionId::from_str(&hit.version_id) else {
+        return Ok(None);
+    };
+    let Some(version) = store
+        .resume_version_by_id(&version_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Ok(None);
+    };
+    if version.document_id.as_str() != hit.doc_id || version.candidate_id.is_some() {
+        return Ok(None);
+    }
+    let mentions = store
+        .entity_mentions_for_version(&version.id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?;
+    let Some(name) = daemon_best_normalized_entity_value(&mentions, EntityType::Name) else {
+        return Ok(None);
+    };
+    let profile = DedupeProfile::new(hit.doc_id.clone())
+        .with_name(&name)
+        .with_schools(daemon_normalized_entity_values(
+            &mentions,
+            EntityType::School,
+        ))
+        .with_companies(daemon_normalized_entity_values(
+            &mentions,
+            EntityType::Company,
+        ))
+        .with_skills(daemon_normalized_entity_values(
+            &mentions,
+            EntityType::Skill,
+        ));
+
+    Ok(Some(profile))
+}
+
+fn daemon_best_normalized_entity_value(
+    mentions: &[EntityMention],
+    entity_type: EntityType,
+) -> Option<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type && mention.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| {
+            Some((
+                mention.normalized_value.as_deref()?.to_string(),
+                mention.confidence,
+                mention.span_start.unwrap_or(usize::MAX),
+            ))
+        })
+        .max_by(|left, right| {
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.2.cmp(&left.2))
+                .then_with(|| right.0.cmp(&left.0))
+        })
+        .map(|candidate| candidate.0)
+}
+
+fn daemon_normalized_entity_values(
+    mentions: &[EntityMention],
+    entity_type: EntityType,
+) -> Vec<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type && mention.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| mention.normalized_value.as_deref())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn daemon_hydrate_visible_version(
@@ -2104,6 +3727,41 @@ fn daemon_hydrate_visible_version(
     Ok(Some(version))
 }
 
+fn daemon_hydrate_visible_document_version(
+    store: &MetaStore,
+    doc_id: &str,
+) -> std::result::Result<Option<(Document, ResumeVersion)>, IpcCommandError> {
+    let Ok(document_id) = DocumentId::from_str(doc_id) else {
+        return Ok(None);
+    };
+    let Some(document) = store
+        .document_by_id(&document_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Ok(None);
+    };
+    if document.is_deleted
+        || !matches!(
+            document.status,
+            DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+        )
+    {
+        return Ok(None);
+    }
+    let Some(version) = store
+        .latest_visible_resume_version_for_document(&document_id)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Ok(None);
+    };
+    if version.visibility != ResumeVisibility::Searchable {
+        return Ok(None);
+    }
+    Ok(Some((document, version)))
+}
+
 fn daemon_persisted_profile(
     store: &MetaStore,
     doc_id: &str,
@@ -2113,25 +3771,110 @@ fn daemon_persisted_profile(
         .entity_mentions_for_version(&version.id)
         .map_err(DaemonError::store)
         .map_err(IpcCommandError::Internal)?;
+    let names = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::Name && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let degree = fields
         .iter()
-        .filter(|field| field.entity_type == EntityType::Degree && field.confidence >= 0.75)
+        .filter(|field| {
+            field.entity_type == EntityType::Degree
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
         .filter_map(|field| DegreeLevel::parse(field.normalized_value.as_deref()?))
         .max();
     let skills = fields
         .iter()
-        .filter(|field| field.entity_type == EntityType::Skill && field.confidence >= 0.75)
+        .filter(|field| {
+            field.entity_type == EntityType::Skill && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
         .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let certificates = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::Certificate
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let date_ranges = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::DateRange
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let schools = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::School
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let majors = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::Major && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let companies = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::Company
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let titles = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::Title && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let locations = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::Location
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let school_tiers = fields
+        .iter()
+        .filter(|field| {
+            field.entity_type == EntityType::SchoolTier
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|field| SchoolTier::parse(field.normalized_value.as_deref()?))
         .collect::<Vec<_>>();
     let years_experience = fields
         .iter()
         .filter(|field| {
-            field.entity_type == EntityType::YearsExperience && field.confidence >= 0.75
+            field.entity_type == EntityType::YearsExperience
+                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
         })
         .filter_map(|field| field.normalized_value.as_deref()?.parse::<f32>().ok())
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut profile = ResumeProfile::new(doc_id).with_skills(skills);
+    let mut profile = ResumeProfile::new(doc_id)
+        .with_names(names)
+        .with_school_tiers(school_tiers)
+        .with_schools(schools)
+        .with_majors(majors)
+        .with_certificates(certificates)
+        .with_date_ranges(date_ranges)
+        .with_companies(companies)
+        .with_titles(titles)
+        .with_locations(locations)
+        .with_skills(skills);
     if let Some(degree) = degree {
         profile = profile.with_degree(degree);
     }
@@ -2180,6 +3923,45 @@ fn execute_detail_command(
         }
     });
     Ok(body.to_string())
+}
+
+fn execute_delete_command(
+    data_dir: &Path,
+    body: &[u8],
+) -> std::result::Result<String, IpcCommandError> {
+    let payload = serde_json::from_slice::<serde_json::Value>(body)
+        .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
+    let document_id = parse_delete_command(&payload)?;
+    let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
+    let now = current_timestamp().map_err(IpcCommandError::Internal)?;
+    let Some(deleted_document) = store
+        .mark_document_deleted(&document_id, now)
+        .map_err(DaemonError::store)
+        .map_err(IpcCommandError::Internal)?
+    else {
+        return Err(IpcCommandError::NotFound("delete document was not found"));
+    };
+    let rebuild = rebuild_full_text_index(data_dir, &store, now)
+        .map_err(DaemonError::import)
+        .map_err(IpcCommandError::Internal)?;
+    Ok(serde_json::json!({
+        "schema_version": "daemon.delete.v1",
+        "status": "ok",
+        "doc_id": deleted_document.id.as_str(),
+        "index_rebuilt": true,
+        "indexed_documents": rebuild.indexed_documents,
+    })
+    .to_string())
+}
+
+fn parse_delete_command(
+    payload: &serde_json::Value,
+) -> std::result::Result<DocumentId, IpcCommandError> {
+    let value = payload
+        .get("doc_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(IpcCommandError::BadRequest("doc_id is required"))?;
+    DocumentId::from_str(value).map_err(|_| IpcCommandError::BadRequest("doc_id is invalid"))
 }
 
 fn cancel_import_command(
@@ -2335,6 +4117,10 @@ fn daemon_candidate_fold_key(version: &ResumeVersion) -> String {
         .as_ref()
         .map(|candidate_id| format!("candidate:{}", candidate_id.as_str()))
         .unwrap_or_else(|| format!("doc:{}", version.document_id.as_str()))
+}
+
+fn format_confidence(value: f32) -> f64 {
+    f64::from((value.clamp(0.0, 1.0) * 100.0).round() / 100.0)
 }
 
 fn enqueue_import_command(
@@ -2748,17 +4534,53 @@ struct CanonicalImportRoot {
 
 struct DaemonSearchArgs {
     query: String,
-    mode: String,
+    mode: DaemonSearchMode,
     top_k: usize,
     filters: SearchFilters,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DaemonSearchMode {
+    FullText,
+    Semantic,
+    Hybrid,
+}
+
+impl DaemonSearchMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "fulltext" | "keyword" => Some(Self::FullText),
+            "semantic" => Some(Self::Semantic),
+            "hybrid" => Some(Self::Hybrid),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::FullText => "fulltext",
+            Self::Semantic => "semantic",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}
+
+#[derive(Clone)]
 struct DaemonSearchHit {
     rank: usize,
+    score: f32,
     doc_id: String,
     version_id: String,
     file_name: String,
     snippet: String,
+    candidate_key: String,
+    soft_dedupe_hint: Option<DaemonSoftDedupeHint>,
+}
+
+#[derive(Clone)]
+struct DaemonSoftDedupeHint {
+    suspected_versions: usize,
+    max_confidence: f32,
 }
 
 struct DaemonDetailArgs {
@@ -2785,8 +4607,11 @@ struct DaemonResumeDetailField {
     extractor: String,
 }
 
-fn status_json(data_dir: &Path) -> Result<String> {
-    let store = open_store(data_dir)?;
+fn status_json(store: &MetaStore) -> Result<String> {
+    retry_ipc_metadata_read(|| status_json_once(store))
+}
+
+fn status_json_once(store: &MetaStore) -> Result<String> {
     let summary = store.status_summary().map_err(DaemonError::store)?;
     let latest_import_scan = store
         .latest_import_scan_scope()
@@ -2804,6 +4629,18 @@ fn status_json(data_dir: &Path) -> Result<String> {
         "recovery_queue_depth": summary.recovery_queue_depth,
         "ocr_queue_depth": summary.ocr_queue_depth,
         "ocr_jobs_queued": summary.ocr_jobs_queued,
+        "ocr_page_budget_blocked": summary.ocr_page_budget_blocked,
+        "ocr_remediation": if summary.ocr_page_budget_blocked > 0 {
+            OCR_PAGE_BUDGET_REMEDIATION
+        } else {
+            "none"
+        },
+        "ocr_language_unavailable": summary.ocr_language_unavailable,
+        "ocr_language_remediation": if summary.ocr_language_unavailable > 0 {
+            OCR_LANGUAGE_REMEDIATION
+        } else {
+            "none"
+        },
         "embedding_queue_depth": summary.embedding_queue_depth,
         "entity_mentions": summary.entity_mentions,
         "import_tasks_queued": summary.import_tasks_queued,
@@ -2811,12 +4648,39 @@ fn status_json(data_dir: &Path) -> Result<String> {
         "import_tasks_cancelled": summary.import_tasks_cancelled,
         "import_scan_scopes": summary.import_scan_scopes,
         "import_scan_errors": summary.import_scan_errors,
+        "query_latency": {
+            "sample_count": summary.query_latency.sample_count,
+            "p50_ms": summary.query_latency.p50_ms,
+            "p95_ms": summary.query_latency.p95_ms,
+            "p99_ms": summary.query_latency.p99_ms,
+            "last_result_count": summary.query_latency.last_result_count,
+            "raw_queries": "<redacted>",
+        },
         "latest_import_scan": latest_import_scan,
         "active_profile": "balanced",
         "index_health": index_health_label(summary.index_health),
         "snapshot_present": summary.last_snapshot_id.is_some(),
     });
     Ok(body.to_string())
+}
+
+fn retry_ipc_metadata_read<T>(mut read: impl FnMut() -> Result<T>) -> Result<T> {
+    let mut last_error = None;
+    for attempt in 1..=IPC_METADATA_READ_ATTEMPTS {
+        match read() {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if error.is_metadata_store_storage_error()
+                    && attempt < IPC_METADATA_READ_ATTEMPTS =>
+            {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(IPC_METADATA_READ_RETRY_MS));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last_error.expect("metadata read retry loop records a failed attempt"))
 }
 
 fn import_progress_stream_event_json(data_dir: &Path) -> Result<String> {
@@ -2883,6 +4747,11 @@ struct RunOptions {
     max_requests: Option<usize>,
     work_imports_once: bool,
     work_imports: bool,
+    rescan_completed_imports: bool,
+    watch_import_roots: bool,
+    import_rescan_min_age_seconds: Option<i64>,
+    stale_import_task_seconds: Option<i64>,
+    import_retry_backoff_seconds: Option<i64>,
     work_ocr_once: bool,
     work_ocr: bool,
     work_embeddings_once: bool,
@@ -2890,11 +4759,16 @@ struct RunOptions {
     work_index_once: bool,
     work_index: bool,
     ocr_command: Option<PathBuf>,
+    ocr_tesseract_command: Option<PathBuf>,
+    ocr_render_command: Option<PathBuf>,
+    ocr_pdftoppm_command: Option<PathBuf>,
     ocr_engine_profile: String,
     ocr_lang: String,
     ocr_profile: String,
     ocr_render_dpi: u32,
     ocr_page_timeout_ms: u64,
+    ocr_max_pages_per_document: u32,
+    ocr_jobs_per_tick: Option<usize>,
     embedding_command: Option<PathBuf>,
     embedding_model_id: Option<String>,
     embedding_dimension: Option<usize>,
@@ -2914,6 +4788,11 @@ impl Default for RunOptions {
             max_requests: None,
             work_imports_once: false,
             work_imports: false,
+            rescan_completed_imports: false,
+            watch_import_roots: false,
+            import_rescan_min_age_seconds: None,
+            stale_import_task_seconds: None,
+            import_retry_backoff_seconds: None,
             work_ocr_once: false,
             work_ocr: false,
             work_embeddings_once: false,
@@ -2921,11 +4800,16 @@ impl Default for RunOptions {
             work_index_once: false,
             work_index: false,
             ocr_command: None,
+            ocr_tesseract_command: None,
+            ocr_render_command: None,
+            ocr_pdftoppm_command: None,
             ocr_engine_profile: DEFAULT_OCR_ENGINE_PROFILE.to_string(),
             ocr_lang: DEFAULT_OCR_LANG.to_string(),
             ocr_profile: DEFAULT_OCR_PROFILE.to_string(),
             ocr_render_dpi: DEFAULT_OCR_RENDER_DPI,
             ocr_page_timeout_ms: DEFAULT_OCR_PAGE_TIMEOUT_MS,
+            ocr_max_pages_per_document: DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT,
+            ocr_jobs_per_tick: None,
             embedding_command: None,
             embedding_model_id: None,
             embedding_dimension: None,
@@ -2947,6 +4831,11 @@ impl RunOptions {
 #[derive(Default)]
 struct ImportWorkerSummary {
     stale_recovered: usize,
+    completed_requeued: usize,
+    watcher_active_roots: Option<usize>,
+    watcher_events: usize,
+    watcher_requeued: usize,
+    watcher_event_errors: usize,
     processed: usize,
     cancelled: usize,
     failed: usize,
@@ -2957,6 +4846,11 @@ struct ImportWorkerSummary {
 impl ImportWorkerSummary {
     fn has_activity(&self) -> bool {
         self.stale_recovered > 0
+            || self.completed_requeued > 0
+            || self.watcher_active_roots.is_some()
+            || self.watcher_events > 0
+            || self.watcher_requeued > 0
+            || self.watcher_event_errors > 0
             || self.processed > 0
             || self.cancelled > 0
             || self.failed > 0
@@ -2966,11 +4860,27 @@ impl ImportWorkerSummary {
 
     fn extend(&mut self, other: Self) {
         self.stale_recovered += other.stale_recovered;
+        self.completed_requeued += other.completed_requeued;
+        if other.watcher_active_roots.is_some() {
+            self.watcher_active_roots = other.watcher_active_roots;
+        }
+        self.watcher_events += other.watcher_events;
+        self.watcher_requeued += other.watcher_requeued;
+        self.watcher_event_errors += other.watcher_event_errors;
         self.processed += other.processed;
         self.cancelled += other.cancelled;
         self.failed += other.failed;
         self.searchable_documents += other.searchable_documents;
         self.ocr_jobs_queued += other.ocr_jobs_queued;
+    }
+
+    fn extend_watcher(&mut self, watcher_summary: ImportWatcherSummary) {
+        if watcher_summary.active_roots.is_some() {
+            self.watcher_active_roots = watcher_summary.active_roots;
+        }
+        self.watcher_events += watcher_summary.events;
+        self.watcher_requeued += watcher_summary.requeued;
+        self.watcher_event_errors += watcher_summary.event_errors;
     }
 }
 
@@ -2978,6 +4888,22 @@ fn print_import_worker_summary(import_summary: &ImportWorkerSummary) -> Result<(
     println!(
         "import worker recovered stale running: {}",
         import_summary.stale_recovered
+    );
+    println!(
+        "import worker requeued completed imports: {}",
+        import_summary.completed_requeued
+    );
+    if let Some(active_roots) = import_summary.watcher_active_roots {
+        println!("import watcher active roots: {active_roots}");
+    }
+    println!("import watcher events: {}", import_summary.watcher_events);
+    println!(
+        "import watcher requeued imports: {}",
+        import_summary.watcher_requeued
+    );
+    println!(
+        "import watcher event errors: {}",
+        import_summary.watcher_event_errors
     );
     println!("import worker processed: {}", import_summary.processed);
     println!("import worker cancelled: {}", import_summary.cancelled);
@@ -2997,6 +4923,7 @@ fn print_import_worker_summary(import_summary: &ImportWorkerSummary) -> Result<(
 
 #[derive(Default)]
 struct OcrWorkerSummary {
+    stale_recovered: usize,
     paused: bool,
     processed: usize,
     failed: usize,
@@ -3006,15 +4933,29 @@ struct OcrWorkerSummary {
 
 impl OcrWorkerSummary {
     fn has_activity(&self) -> bool {
-        self.paused
+        self.stale_recovered > 0
+            || self.paused
             || self.processed > 0
             || self.failed > 0
             || self.cache_writes > 0
             || self.cache_hits > 0
     }
+
+    fn extend(&mut self, other: Self) {
+        self.stale_recovered += other.stale_recovered;
+        self.paused = self.paused || other.paused;
+        self.processed += other.processed;
+        self.failed += other.failed;
+        self.cache_writes += other.cache_writes;
+        self.cache_hits += other.cache_hits;
+    }
 }
 
 fn print_ocr_worker_summary(summary: &OcrWorkerSummary) -> Result<()> {
+    println!(
+        "ingest jobs recovered stale running: {}",
+        summary.stale_recovered
+    );
     println!("ocr worker paused: {}", summary.paused);
     println!("ocr worker processed: {}", summary.processed);
     println!("ocr worker cache writes: {}", summary.cache_writes);
@@ -3046,6 +4987,8 @@ impl fmt::Debug for EmbeddingWorkerCandidate {
 
 #[derive(Default)]
 struct EmbeddingWorkerSummary {
+    stale_recovered: usize,
+    completed_requeued: usize,
     documents_considered: usize,
     processed: usize,
     vector_writes: usize,
@@ -3054,7 +4997,9 @@ struct EmbeddingWorkerSummary {
 
 impl EmbeddingWorkerSummary {
     fn has_activity(&self) -> bool {
-        self.documents_considered > 0
+        self.stale_recovered > 0
+            || self.completed_requeued > 0
+            || self.documents_considered > 0
             || self.processed > 0
             || self.vector_writes > 0
             || self.failed > 0
@@ -3062,6 +5007,16 @@ impl EmbeddingWorkerSummary {
 }
 
 fn print_embedding_worker_summary(summary: &EmbeddingWorkerSummary) -> Result<()> {
+    println!(
+        "ingest jobs recovered stale running: {}",
+        summary.stale_recovered
+    );
+    if summary.completed_requeued > 0 {
+        println!(
+            "embedding worker requeued completed: {}",
+            summary.completed_requeued
+        );
+    }
     println!(
         "embedding worker documents considered: {}",
         summary.documents_considered
@@ -3108,7 +5063,7 @@ impl ImportTaskHeartbeat {
     fn start(data_dir: &Path, task_id: ImportTaskId) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
-        let metadata_path = data_dir.join("metadata.sqlite3");
+        let heartbeat_data_dir = data_dir.to_path_buf();
 
         let _ = thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
@@ -3120,7 +5075,7 @@ impl ImportTaskHeartbeat {
                 let Ok(now) = current_timestamp() else {
                     continue;
                 };
-                let Ok(store) = MetaStore::open(&metadata_path) else {
+                let Ok(store) = MetaStore::open_data_dir(&heartbeat_data_dir) else {
                     continue;
                 };
                 if store.run_migrations().is_err() {
@@ -3143,7 +5098,7 @@ impl Drop for ImportTaskHeartbeat {
 fn open_store(data_dir: &Path) -> Result<MetaStore> {
     fs::create_dir_all(data_dir)
         .map_err(|_| DaemonError::user("unable to prepare local metadata directory"))?;
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).map_err(DaemonError::store)?;
+    let store = MetaStore::open_data_dir(data_dir).map_err(DaemonError::store)?;
     store.run_migrations().map_err(DaemonError::store)?;
     Ok(store)
 }
@@ -3202,8 +5157,11 @@ fn entity_type_label(entity_type: &EntityType) -> String {
         EntityType::Name => "name".to_string(),
         EntityType::Email => "email".to_string(),
         EntityType::Phone => "phone".to_string(),
+        EntityType::WeChat => "wechat".to_string(),
         EntityType::School => "school".to_string(),
+        EntityType::SchoolTier => "school_tier".to_string(),
         EntityType::Degree => "degree".to_string(),
+        EntityType::Major => "major".to_string(),
         EntityType::Company => "company".to_string(),
         EntityType::Title => "title".to_string(),
         EntityType::Education => "education".to_string(),
@@ -3285,6 +5243,10 @@ impl DaemonError {
 
     fn exit_code(&self) -> i32 {
         self.exit_code
+    }
+
+    fn is_metadata_store_storage_error(&self) -> bool {
+        self.message == "metadata store operation failed"
     }
 }
 

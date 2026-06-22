@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use index_vector::{inspect_persistent_vector_snapshot, PersistentVectorSnapshotState};
 use meta_store::{
     Document, DocumentId, DocumentStatus, FileExtension, IngestJobId, IngestJobKind,
     IngestJobStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
@@ -43,7 +44,7 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.5,0
 
     assert_vector_snapshot(&data_dir, 4, 2);
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     for (document_id, version_id) in &versions {
         let job_id = embedding_job_id(document_id, version_id, "fixture-local-model", 4);
@@ -100,7 +101,7 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.5,0
 
     assert_vector_snapshot(&data_dir, 4, 3);
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let job_id = embedding_job_id(&document_id, &version_id, "fixture-local-model", 4);
     let job = store
@@ -156,6 +157,147 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
     let second_stdout = String::from_utf8_lossy(&second.stdout);
     assert!(second_stdout.contains("embedding worker processed: 0"));
     assert_eq!(read_counter(&command), 1);
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_embedding_worker_once_recovers_stale_running_job_after_restart() {
+    let data_dir = temp_dir("embedding-jobs-stale-running-recovery-data");
+    let (private_root, document_id, version_id) = seed_sectionized_resume_version(&data_dir);
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    store
+        .enqueue_embedding_job_for_resume_version(
+            &document_id,
+            &version_id,
+            "fixture-local-model",
+            4,
+            UnixTimestamp::from_unix_seconds(1_700_052_000),
+        )
+        .unwrap();
+    let stale_claimed = store
+        .claim_next_embedding_job(
+            "fixture-local-model",
+            4,
+            UnixTimestamp::from_unix_seconds(1_700_052_010),
+        )
+        .unwrap()
+        .expect("seed stale running embedding job");
+    assert_eq!(stale_claimed.status, IngestJobStatus::Running);
+    drop(store);
+
+    let command = write_fixture_executable(
+        "fixture-daemon-embedding-jobs-stale-recovery",
+        r#"#!/bin/sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.75,0.25,0,0\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+
+    let output = run_embedding_worker_once(&data_dir, &command);
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ingest jobs recovered stale running: 1"));
+    assert!(stdout.contains("embedding worker processed: 1"), "{stdout}");
+    assert!(
+        stdout.contains("embedding worker vector writes: 3"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("embedding worker failed: 0"), "{stdout}");
+    assert!(!stdout.contains("S52PrivateMarker"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+    assert!(!stdout.contains(path_str(&command)));
+
+    assert_vector_snapshot(&data_dir, 4, 3);
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let recovered_job = store
+        .ingest_job_by_id(&stale_claimed.id)
+        .unwrap()
+        .expect("recovered embedding job remains persisted");
+    assert_eq!(recovered_job.status, IngestJobStatus::Completed);
+    assert_eq!(recovered_job.attempt_count, 2);
+    assert_eq!(store.status_summary().unwrap().embedding_queue_depth, 0);
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_embedding_worker_once_rebuilds_schema_mismatched_vector_snapshot_from_completed_jobs() {
+    let data_dir = temp_dir("embedding-jobs-schema-mismatch-data");
+    let (_private_root, _versions) = seed_searchable_resume_versions(&data_dir);
+    let command = write_fixture_executable(
+        "fixture-daemon-embedding-jobs-schema-mismatch",
+        r#"#!/bin/sh
+counter="$(dirname "$0")/counter.txt"
+count=0
+if [ -f "$counter" ]; then
+  count="$(cat "$counter")"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$counter"
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0,0\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+
+    let first = run_embedding_worker_once(&data_dir, &command);
+    assert!(
+        first.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(String::from_utf8_lossy(&first.stdout).contains("embedding worker processed: 2"));
+    assert_eq!(read_counter(&command), 1);
+
+    let manifest_path = data_dir
+        .join("vector-index")
+        .join("vector.snapshot.manifest");
+    let manifest = fs::read_to_string(&manifest_path).expect("read vector snapshot manifest");
+    assert!(manifest.contains("\"schema_version\":\"vector.snapshot.v1\""));
+    fs::write(
+        &manifest_path,
+        "{\"schema_version\":\"vector.snapshot.v999\",\"index_schema\":\"future-vector-schema\",\"payload\":\"PRIVATE schema mismatch path\"}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        inspect_persistent_vector_snapshot(data_dir.join("vector-index")).state(),
+        PersistentVectorSnapshotState::Corrupt
+    );
+
+    let second = run_embedding_worker_once(&data_dir, &command);
+    assert!(
+        second.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(stdout.contains("embedding worker requeued completed: 2"));
+    assert!(stdout.contains("embedding worker processed: 2"));
+    assert!(stdout.contains("embedding worker vector writes: 2"));
+    assert!(!stdout.contains("PRIVATE schema mismatch"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert_eq!(read_counter(&command), 2);
+    assert_vector_snapshot(&data_dir, 4, 2);
 
     remove_dir(&data_dir);
 }
@@ -248,7 +390,7 @@ fn seed_searchable_resume_versions(
     let now = UnixTimestamp::from_unix_seconds(1_800_052_000);
     let private_root = data_dir.join("private-resumes");
     fs::create_dir_all(&private_root).unwrap();
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let mut versions = Vec::new();
 
@@ -307,7 +449,7 @@ fn seed_sectionized_resume_version(data_dir: &Path) -> (PathBuf, DocumentId, Res
     let now = UnixTimestamp::from_unix_seconds(1_800_052_100);
     let private_root = data_dir.join("private-section-resumes");
     fs::create_dir_all(&private_root).unwrap();
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
 
     let file_name = "synthetic-s52-section-embedding.pdf";
@@ -374,11 +516,13 @@ fn embedding_job_id(
 fn assert_vector_snapshot(data_dir: &Path, expected_dimension: usize, expected_vectors: usize) {
     let snapshot = fs::read_to_string(data_dir.join("vector-index").join("vector.snapshot"))
         .expect("read vector snapshot");
-    let mut lines = snapshot.lines();
-    let expected_header = format!("resume-ir-vector-index-v2\tdimension\t{expected_dimension}");
-    assert_eq!(lines.next(), Some(expected_header.as_str()));
-    let vectors = lines.filter(|line| line.starts_with("V\t")).count();
-    assert_eq!(vectors, expected_vectors);
+    assert!(snapshot.starts_with("resume-ir-vector-index-encrypted-v1\n"));
+    assert!(!snapshot.contains("resume-ir-vector-index-v2"));
+    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
+    assert_eq!(inspection.state(), PersistentVectorSnapshotState::Ready);
+    let snapshot = inspection.snapshot().unwrap();
+    assert_eq!(snapshot.dimension(), expected_dimension);
+    assert_eq!(snapshot.vector_count(), expected_vectors);
 }
 
 fn read_counter(command: &Path) -> u64 {

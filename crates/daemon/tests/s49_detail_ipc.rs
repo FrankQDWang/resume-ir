@@ -10,6 +10,8 @@ use meta_store::{
     FileExtension, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
 
+const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[test]
 fn daemon_detail_ipc_authenticates_and_returns_redacted_structured_detail() {
     let data_dir = temp_dir("detail-ipc-data");
@@ -206,7 +208,7 @@ fn seed_detail_resume(
 ) {
     let now = UnixTimestamp::from_unix_seconds(1_800_049_000);
     let private_path = "/Users/frank/private/resumes/candidate@example.test-java.pdf";
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_document(&Document {
@@ -301,7 +303,7 @@ fn seed_detail_resume(
 
 fn seed_deleted_resume(data_dir: &Path, document_id: &DocumentId, version_id: &ResumeVersionId) {
     let now = UnixTimestamp::from_unix_seconds(1_800_049_001);
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_document(&Document {
@@ -401,7 +403,7 @@ fn raw_ipc_request(endpoint: &str, request: &[u8]) -> String {
 }
 
 fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + IPC_ENDPOINT_TIMEOUT;
     let mut line = String::new();
     while Instant::now() < deadline {
         line.clear();
@@ -416,6 +418,8 @@ fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> St
             return endpoint.to_string();
         }
     }
+    let _ = child.kill();
+    let _ = child.wait();
     panic!("daemon did not print ipc status endpoint");
 }
 

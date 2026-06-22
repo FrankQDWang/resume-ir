@@ -9,13 +9,13 @@ permissions:
   contents: read
 
 jobs:
-  synthetic-query-smoke:
-    name: synthetic query benchmark smoke
+  synthetic-benchmark-smoke:
+    name: synthetic benchmark smoke
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -26,9 +26,78 @@ jobs:
       - name: Run synthetic benchmark
         run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --documents 1000 --queries 100 --top-k 10 --json > benchmark-smoke.json
 
+      - name: Synthetic benchmark gate
+        run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- gate --report benchmark-smoke.json --allow-synthetic --min-documents 1000 --min-queries 100 --max-p95-ms 500 --max-zero-result-queries 0
+
+      - name: Run synthetic OCR benchmark
+        run: |
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+          printf '%s\n' '#!/usr/bin/env sh' 'printf "resume-ir-ocr-v1\nconfidence=0.97\ntext:\nSynthetic OCR smoke page %s\n" "$RESUME_IR_OCR_PAGE_NO"' > "$tmpdir/ocr-fixture.sh"
+          chmod 700 "$tmpdir/ocr-fixture.sh"
+          cargo run -p benchmark-runner --bin resume-benchmark --locked -- ocr-throughput --command "$tmpdir/ocr-fixture.sh" --pages 25 --page-timeout-ms 5000 --json > ocr-benchmark-smoke.json
+
+      - name: Synthetic OCR benchmark gate
+        run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- ocr-gate --report ocr-benchmark-smoke.json --allow-synthetic --min-pages 25 --max-p95-ms 5000 --min-pages-per-second 0.001
+
+      - name: Labeled vector benchmark smoke
+        run: |
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+          cat > "$tmpdir/embedding-fixture.sh" <<'SH'
+          #!/usr/bin/env sh
+          printf 'resume-ir-embedding-v1\n'
+          printf 'model_id=%s\n' "$RESUME_IR_EMBEDDING_MODEL_ID"
+          printf 'dimension=%s\n' "$RESUME_IR_EMBEDDING_DIMENSION"
+          awk '
+            /^input=/ {
+              split(substr($0, 7), parts, "\t");
+              id = parts[1];
+              if (id ~ /^query-000000/ || id ~ /^candidate-000000-000000/) {
+                vector = "1.0,0.0,0.0";
+              } else if (id ~ /^query-000001/ || id ~ /^candidate-000001-000000/) {
+                vector = "0.0,1.0,0.0";
+              } else {
+                vector = "0.0,0.0,1.0";
+              }
+              printf "vector=%s\t%s\n", id, vector;
+            }
+          ' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+          SH
+          chmod 700 "$tmpdir/embedding-fixture.sh"
+          cat > "$tmpdir/vector-dataset.jsonl" <<'JSONL'
+          {"query":"Backend Java payment search","candidates":[{"id":"java-match","text":"Java payment backend search engineer","relevant":true},{"id":"sales-miss","text":"Sales operations recruiter","relevant":false}]}
+          {"query":"Rust indexing platform","candidates":[{"id":"rust-match","text":"Rust indexing platform engineer","relevant":true},{"id":"hr-miss","text":"HR business partner","relevant":false}]}
+          JSONL
+          cargo run -p benchmark-runner --bin resume-benchmark --locked -- vector-quality --dataset "$tmpdir/vector-dataset.jsonl" --command "$tmpdir/embedding-fixture.sh" --model-id fixture-local-model --dimension 3 --top-k 1 --json > vector-benchmark-smoke.json
+
+      - name: Labeled vector benchmark gate
+        run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- vector-gate --report vector-benchmark-smoke.json --min-samples 2 --min-recall-at-k 0.99 --min-mrr 0.99 --min-ndcg-at-k 0.99 --max-zero-recall-queries 0
+
+      - name: Check benchmark artifact boundary
+        run: |
+          test -f benchmark-smoke.json
+          test -f ocr-benchmark-smoke.json
+          test -f vector-benchmark-smoke.json
+          if grep -Eq '/Users/|/home/|[A-Za-z]:\\|local-data|diagnostics|model-cache' benchmark-smoke.json; then
+            echo "nightly benchmark smoke report leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq '/Users/|/home/|[A-Za-z]:\\|local-data|diagnostics|model-cache' ocr-benchmark-smoke.json; then
+            echo "nightly OCR benchmark smoke report leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq '/Users/|/home/|[A-Za-z]:\\|local-data|diagnostics|model-cache' vector-benchmark-smoke.json; then
+            echo "nightly vector benchmark smoke report leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+
       - name: Upload benchmark smoke artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-smoke
-          path: benchmark-smoke.json
+          path: |
+            benchmark-smoke.json
+            ocr-benchmark-smoke.json
+            vector-benchmark-smoke.json
           if-no-files-found: error

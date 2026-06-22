@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -12,6 +12,16 @@ use meta_store::{
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+
+#[cfg(windows)]
+const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(not(windows))]
+const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(10);
+const IPC_ENDPOINT_POLL_DELAY: Duration = Duration::from_millis(25);
+const IMPORT_WORKER_STATUS_REQUEST_LIMIT: usize = 320;
+const IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS: usize = 260;
+const IMPORT_WORKER_SEARCHABLE_TIMEOUT: Duration = Duration::from_secs(20);
+const IMPORT_WORKER_STATUS_POLL_DELAY: Duration = Duration::from_millis(50);
 
 #[test]
 fn daemon_serves_redacted_status_over_loopback_ipc() {
@@ -28,14 +38,12 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let endpoint_manifest_path = data_dir.join("ipc.endpoints.json");
     let endpoint_manifest =
@@ -80,6 +88,7 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     assert!(response.contains("\"index_health\":\"ready\""));
     assert!(response.contains("\"import_tasks_queued\":0"));
     assert!(response.contains("\"import_tasks_cancelled\":0"));
+    assert!(response.contains("\"ocr_language_unavailable\":0"));
     assert!(response.contains("\"snapshot_present\":true"));
     assert!(!response.contains(path_str(&data_dir)));
     assert!(!response.contains("PRIVATE_SNAPSHOT_TOKEN"));
@@ -118,14 +127,12 @@ fn daemon_streams_redacted_import_progress_over_loopback_ipc() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_get_import_progress(&endpoint, Some(&token));
 
@@ -235,14 +242,12 @@ fn daemon_returns_404_for_non_status_ipc_path() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let response = http_get_path(&endpoint, "/not-status");
 
     assert!(response.contains("HTTP/1.1 404 Not Found"));
@@ -272,14 +277,12 @@ fn daemon_requires_bearer_token_for_import_command_ipc() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let response = http_post_import_command(&endpoint, None, &fixture_root, Some(1));
 
     assert!(response.contains("HTTP/1.1 401 Unauthorized"));
@@ -293,7 +296,7 @@ fn daemon_requires_bearer_token_for_import_command_ipc() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     assert_eq!(store.status_summary().unwrap().import_tasks_queued, 0);
 
@@ -316,14 +319,12 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
             "--max-requests",
             "2",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
     let status_response = http_get(&endpoint);
@@ -352,7 +353,7 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let summary = store.status_summary().unwrap();
     assert_eq!(summary.import_tasks_queued, 1);
@@ -387,20 +388,18 @@ fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
             "--max-requests",
             "2",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let first_response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
     assert!(first_response.contains("HTTP/1.1 202 Accepted"));
     assert!(first_response.contains("\"new_tasks\":1"));
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let first_scope = store.latest_import_scan_scope().unwrap().unwrap();
     store
@@ -451,14 +450,12 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_post_import_command_with_root_preset(
         &endpoint,
@@ -478,7 +475,7 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scope = store.latest_import_scan_scope().unwrap().unwrap();
     assert_eq!(scope.root_kind, ImportRootKind::Preset);
@@ -517,14 +514,12 @@ fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
             "--max-requests",
             "2",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_post_import_cancel_command(&endpoint, Some(&token), &task_id);
     assert!(response.contains("HTTP/1.1 202 Accepted"));
@@ -547,7 +542,7 @@ fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     assert!(store.is_import_task_cancelled(&task_id).unwrap());
     let summary = store.status_summary().unwrap();
@@ -572,14 +567,12 @@ fn daemon_rejects_wrong_bearer_token_for_import_command_ipc() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let response = http_post_import_command(
         &endpoint,
         Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
@@ -595,7 +588,7 @@ fn daemon_rejects_wrong_bearer_token_for_import_command_ipc() {
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     assert_eq!(store.status_summary().unwrap().import_tasks_queued, 0);
 
@@ -616,14 +609,12 @@ fn daemon_rejects_malformed_ipc_request_without_stopping() {
             "--max-requests",
             "2",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let malformed = raw_ipc_request(
         &endpoint,
         b"POST /imports HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: nope\r\n\r\n",
@@ -663,14 +654,12 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
 
@@ -685,7 +674,7 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Running);
@@ -703,7 +692,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     let data_dir = temp_dir("ipc-import-command-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let request_limit = 160_usize;
+    let request_limit = IMPORT_WORKER_STATUS_REQUEST_LIMIT;
     let request_limit_arg = request_limit.to_string();
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
@@ -719,19 +708,23 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
             "--max-requests",
             request_limit_arg.as_str(),
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc plus import worker");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, None);
     assert!(response.contains("HTTP/1.1 202 Accepted"));
 
-    let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 120);
+    let (worker_requests, completed_response) = wait_for_searchable_documents(
+        &mut child,
+        &data_dir,
+        &endpoint,
+        2,
+        IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS,
+    );
     let used_requests = 1 + worker_requests;
     drain_status_requests(&endpoint, request_limit - used_requests);
 
@@ -739,7 +732,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scope = store.latest_import_scan_scope().unwrap().unwrap();
     let task = store
@@ -777,14 +770,12 @@ fn daemon_repairs_existing_weak_ipc_token_permissions() {
             "--max-requests",
             "1",
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let response = http_get(&endpoint);
 
     assert!(response.contains("HTTP/1.1 200 OK"));
@@ -805,7 +796,7 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
     let data_dir = temp_dir("ipc-import-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let request_limit = 80_usize;
+    let request_limit = IMPORT_WORKER_STATUS_REQUEST_LIMIT;
     let request_limit_arg = request_limit.to_string();
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
@@ -821,14 +812,12 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
             "--max-requests",
             request_limit_arg.as_str(),
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon ipc plus import worker");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let initial_response = http_get(&endpoint);
     assert!(initial_response.contains("HTTP/1.1 200 OK"));
     assert!(initial_response.contains("\"searchable_documents\":0"));
@@ -839,7 +828,13 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    let (worker_requests, completed_response) = wait_for_searchable_documents(&endpoint, 2, 39);
+    let (worker_requests, completed_response) = wait_for_searchable_documents(
+        &mut child,
+        &data_dir,
+        &endpoint,
+        2,
+        IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS,
+    );
     let used_requests = 1 + worker_requests;
     drain_status_requests(&endpoint, request_limit - used_requests);
 
@@ -847,7 +842,7 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
@@ -894,7 +889,7 @@ fn daemon_does_not_start_import_worker_when_ipc_bind_fails() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unable to bind daemon ipc listener"));
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Queued);
@@ -928,43 +923,137 @@ fn daemon_rejects_worker_tick_limit_in_combined_ipc_worker_mode() {
     remove_dir(&data_dir);
 }
 
-fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut line = String::new();
+fn read_ipc_endpoint(child: &mut Child, data_dir: &Path) -> String {
+    let deadline = Instant::now() + IPC_ENDPOINT_TIMEOUT;
+    let manifest_path = data_dir.join("ipc.endpoints.json");
+    let mut last_manifest_state = "<not observed>".to_string();
 
     while Instant::now() < deadline {
-        line.clear();
-        let bytes = stdout.read_line(&mut line).expect("read daemon stdout");
-        if bytes == 0 {
-            continue;
+        if let Some(status) = child.try_wait().expect("poll daemon child") {
+            let stderr = read_child_stderr(child);
+            panic!(
+                "daemon exited before ipc status endpoint was discoverable: {status}\nmanifest: {last_manifest_state}\nstderr:\n{stderr}"
+            );
         }
-        if let Some(endpoint) = line.trim().strip_prefix("ipc status endpoint: ") {
-            return endpoint.to_string();
+
+        match fs::read_to_string(&manifest_path) {
+            Ok(body) => {
+                let manifest: serde_json::Value = match serde_json::from_str(&body) {
+                    Ok(manifest) => manifest,
+                    Err(error) => {
+                        last_manifest_state = format!("invalid json: {error}: {body}");
+                        std::thread::sleep(IPC_ENDPOINT_POLL_DELAY);
+                        continue;
+                    }
+                };
+                if let Some(endpoint) = manifest["status"].as_str() {
+                    return endpoint.to_string();
+                }
+                last_manifest_state = format!("missing status endpoint field: {body}");
+            }
+            Err(error) => {
+                last_manifest_state = format!("unavailable: {error}");
+            }
         }
+
+        std::thread::sleep(IPC_ENDPOINT_POLL_DELAY);
+    }
+
+    if let Some(status) = child.try_wait().expect("poll daemon child") {
+        let stderr = read_child_stderr(child);
+        panic!(
+            "daemon exited before ipc status endpoint was discoverable: {status}\nmanifest: {last_manifest_state}\nstderr:\n{stderr}"
+        );
     }
 
     let _ = child.kill();
     let _ = child.wait();
-    panic!("daemon did not print ipc status endpoint");
+    let stderr = read_child_stderr(child);
+    panic!(
+        "daemon did not make ipc status endpoint discoverable within {:?}\nmanifest: {last_manifest_state}\nstderr:\n{stderr}",
+        IPC_ENDPOINT_TIMEOUT
+    );
 }
 
 fn wait_for_searchable_documents(
+    child: &mut Child,
+    data_dir: &Path,
     endpoint: &str,
     expected: usize,
     max_requests: usize,
 ) -> (usize, String) {
+    let deadline = Instant::now() + IMPORT_WORKER_SEARCHABLE_TIMEOUT;
+    let mut last_response = String::new();
     for request_count in 1..=max_requests {
-        let response = http_get(endpoint);
-        assert!(response.contains("HTTP/1.1 200 OK"));
+        if let Some(status) = child.try_wait().expect("poll daemon child") {
+            let stderr = read_child_stderr(child);
+            let store_state = describe_store_state(data_dir);
+            panic!(
+                "daemon exited before searchable document count {expected}: {status}\n{stderr}\n{store_state}"
+            );
+        }
+        let response = match try_http_get(endpoint) {
+            Ok(response) if response.is_empty() => {
+                last_response = "<empty status response>".to_string();
+                std::thread::sleep(IMPORT_WORKER_STATUS_POLL_DELAY);
+                continue;
+            }
+            Ok(response) => response,
+            Err(_) => {
+                last_response = "<status request unavailable>".to_string();
+                std::thread::sleep(IMPORT_WORKER_STATUS_POLL_DELAY);
+                continue;
+            }
+        };
+        last_response = response.clone();
+        if !response.contains("HTTP/1.1 200 OK") {
+            let _ = child.kill();
+            let _ = child.wait();
+            let stderr = read_child_stderr(child);
+            panic!("unexpected status response: {response}\nstderr:\n{stderr}");
+        }
         if response.contains(&format!("\"searchable_documents\":{expected}")) {
             assert!(response.contains("\"import_tasks_queued\":0"));
             assert!(!response.contains("raw_resume_text"));
             return (request_count, response);
         }
-        std::thread::sleep(Duration::from_millis(25));
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(IMPORT_WORKER_STATUS_POLL_DELAY);
     }
 
-    panic!("daemon status did not report searchable document count {expected}");
+    let _ = child.kill();
+    let _ = child.wait();
+    let stderr = read_child_stderr(child);
+    let store_state = describe_store_state(data_dir);
+    panic!(
+        "daemon status did not report searchable document count {expected} within {max_requests} requests or {:?}\nlast response:\n{last_response}\nstderr:\n{stderr}\n{store_state}",
+        IMPORT_WORKER_SEARCHABLE_TIMEOUT
+    );
+}
+
+fn describe_store_state(data_dir: &Path) -> String {
+    let store = match MetaStore::open_data_dir(data_dir) {
+        Ok(store) => store,
+        Err(error) => return format!("store open failed: {error}"),
+    };
+    let schema_version = store.schema_version();
+    let summary = store.status_summary();
+    let latest_scope = store.latest_import_scan_scope();
+    format!(
+        "store state: encryption={}, schema={schema_version:?}, summary={summary:?}, latest_scope={latest_scope:?}",
+        store.metadata_encryption_state().label()
+    )
+}
+
+fn read_child_stderr(child: &mut Child) -> String {
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        pipe.read_to_string(&mut stderr)
+            .expect("read daemon stderr");
+    }
+    stderr
 }
 
 fn drain_status_requests(endpoint: &str, count: usize) {
@@ -1134,7 +1223,7 @@ fn read_ipc_auth_token(data_dir: &Path) -> String {
 }
 
 fn seed_snapshot_state(data_dir: &Path) {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_index_state(&IndexState {
@@ -1152,43 +1241,43 @@ fn seed_queued_import_task(
     canonical_root: &Path,
     queued_at_seconds: i64,
 ) -> ImportTaskId {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let now = UnixTimestamp::from_unix_seconds(queued_at_seconds);
     let task_id = ImportTaskId::from_non_secret_parts(&["s45", label]);
+    let root_path = path_str(canonical_root).to_string();
+    let task = ImportTask {
+        id: task_id.clone(),
+        root_path: root_path.clone(),
+        status: ImportTaskStatus::Queued,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    };
+    let scope = ImportScanScope {
+        import_task_id: task_id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: root_path.clone(),
+        canonical_root_path: root_path,
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
+        updated_at: now,
+    };
     store
-        .insert_import_task(&ImportTask {
-            id: task_id.clone(),
-            root_path: path_str(canonical_root).to_string(),
-            status: ImportTaskStatus::Queued,
-            queued_at: now,
-            started_at: None,
-            finished_at: None,
-            updated_at: now,
-        })
-        .unwrap();
-    store
-        .upsert_import_scan_scope(&ImportScanScope {
-            import_task_id: task_id.clone(),
-            root_kind: ImportRootKind::Explicit,
-            root_preset: None,
-            scan_profile: ImportScanProfile::Explicit,
-            requested_root_path: path_str(canonical_root).to_string(),
-            canonical_root_path: path_str(canonical_root).to_string(),
-            files_discovered: 0,
-            ignored_entries: 0,
-            scan_errors: 0,
-            searchable_documents: 0,
-            ocr_required_documents: 0,
-            ocr_jobs_queued: 0,
-            failed_documents: 0,
-            deleted_documents: 0,
-            scan_budget_kind: None,
-            scan_budget_limit: None,
-            scan_budget_observed: None,
-            scan_budget_exhausted: false,
-            updated_at: now,
-        })
+        .insert_import_task_with_scan_scope(&task, &scope)
         .unwrap();
     task_id
 }
@@ -1199,7 +1288,7 @@ fn seed_running_import_task(
     canonical_root: &Path,
     started_at_seconds: i64,
 ) -> ImportTaskId {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let now = UnixTimestamp::from_unix_seconds(started_at_seconds);
     let task_id = ImportTaskId::from_non_secret_parts(&["s46", label]);
@@ -1241,7 +1330,7 @@ fn seed_running_import_task(
 }
 
 fn seed_import_progress_scope(data_dir: &Path, task_id: &ImportTaskId, canonical_root: &Path) {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_import_scan_scope(&ImportScanScope {

@@ -1,0 +1,389 @@
+#!/usr/bin/env python3
+"""Build a redacted current-stage handoff summary from local validation output."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+
+HANDOFF_SCHEMA = "resume-ir.current-stage-handoff.v1"
+HANDOFF_PRIVACY_BOUNDARY = "local_only_redacted_handoff"
+SUPPORTED_SCHEMAS = {
+    "resume-ir.current-stage-smoke-summary.v1",
+    "resume-ir.current-stage-blocked-summary.v1",
+    "resume-ir.current-stage-validation-evidence.v1",
+}
+EXPECTED_SOURCE_PRIVACY_BOUNDARIES = {
+    "resume-ir.current-stage-smoke-summary.v1": "local_only_redacted_aggregate_summary",
+    "resume-ir.current-stage-blocked-summary.v1": "local_only_redacted_blocked_summary",
+    "resume-ir.current-stage-validation-evidence.v1": "local_only_redacted_evidence_manifest",
+}
+PRIVATE_MARKER = re.compile(r"PRIVATE-|/Users/|/home/|[A-Za-z]:\\")
+
+
+def fail(message: str) -> None:
+    print(f"current-stage handoff blocked: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Summarize redacted current-stage validation evidence."
+    )
+    parser.add_argument("--input", required=True, help="redacted summary/evidence JSON")
+    parser.add_argument("--out", required=True, help="handoff JSON output path")
+    return parser.parse_args()
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except OSError:
+        fail("input is unavailable")
+    except json.JSONDecodeError:
+        fail("input is not valid JSON")
+    if not isinstance(value, dict):
+        fail("input must be a JSON object")
+    return value
+
+
+def reject_private_markers(value: Any) -> None:
+    if isinstance(value, str):
+        if PRIVATE_MARKER.search(value):
+            fail("input contains a private marker")
+        return
+    if isinstance(value, list):
+        for item in value:
+            reject_private_markers(item)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            reject_private_markers(key)
+            reject_private_markers(item)
+        return
+
+
+def bool_field(document: dict[str, Any], name: str) -> bool:
+    value = document.get(name)
+    if not isinstance(value, bool):
+        fail(f"missing boolean field: {name}")
+    return value
+
+
+def string_field(document: dict[str, Any], name: str) -> str:
+    value = document.get(name)
+    if not isinstance(value, str) or not value:
+        fail(f"missing string field: {name}")
+    return value
+
+
+def optional_string(document: dict[str, Any], name: str) -> str | None:
+    value = document.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        fail(f"invalid string field: {name}")
+    return value
+
+
+def source_status(document: dict[str, Any], schema: str) -> str:
+    if schema == "resume-ir.current-stage-blocked-summary.v1":
+        return "blocked"
+    if schema == "resume-ir.current-stage-smoke-summary.v1":
+        return "smoke_satisfied" if bool_field(document, "smoke_satisfied") else "smoke_failed"
+    return "full_evidence_ready"
+
+
+def validation_profile(document: dict[str, Any], schema: str) -> str:
+    value = document.get("validation_profile")
+    if isinstance(value, str) and value:
+        return value
+    if schema == "resume-ir.current-stage-validation-evidence.v1":
+        return "full"
+    fail("validation profile is missing")
+
+
+def completed_steps(document: dict[str, Any]) -> list[dict[str, str]]:
+    steps = document.get("steps", [])
+    if not isinstance(steps, list):
+        fail("steps must be an array")
+    completed: list[dict[str, str]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            fail("step must be an object")
+        step_id = step.get("id")
+        status = step.get("status")
+        if not isinstance(step_id, str) or not isinstance(status, str):
+            fail("step id/status must be strings")
+        if status in {"success", "smoke_success", "expected_blocked"}:
+            completed.append({"id": step_id, "status": status})
+    return completed
+
+
+def not_complete_items(document: dict[str, Any]) -> list[dict[str, str]]:
+    items = document.get("not_completed", [])
+    if items is None:
+        items = []
+    if not isinstance(items, list):
+        fail("not_completed must be an array")
+    output = []
+    for item in items:
+        if not isinstance(item, str) or not item:
+            fail("not_completed entries must be strings")
+        output.append({"kind": "not_complete", "item": item})
+    if document.get("schema_version") == "resume-ir.current-stage-blocked-summary.v1":
+        output.insert(
+            0,
+            {
+                "kind": "blocked",
+                "step": string_field(document, "blocked_step"),
+                "category": string_field(document, "blocked_category"),
+                "reason": string_field(document, "blocked_reason"),
+            },
+        )
+    return output
+
+
+def source_requires_observability(document: dict[str, Any], schema: str) -> bool:
+    if schema in {
+        "resume-ir.current-stage-smoke-summary.v1",
+        "resume-ir.current-stage-validation-evidence.v1",
+    }:
+        return True
+    if schema == "resume-ir.current-stage-blocked-summary.v1":
+        steps = document.get("steps", [])
+        if not isinstance(steps, list):
+            fail("steps must be an array")
+        return any(
+            isinstance(step, dict)
+            and step.get("id") == "corpus_summary"
+            and step.get("status") == "success"
+            for step in steps
+        )
+    return False
+
+
+def observability(document: dict[str, Any], schema: str) -> dict[str, Any]:
+    value = document.get("corpus_summary_observability")
+    if value is None:
+        if source_requires_observability(document, schema):
+            fail("corpus_summary_observability is required for this handoff source")
+        value = {}
+    if not isinstance(value, dict):
+        fail("corpus_summary_observability must be an object")
+    allowed = {
+        "privacy_boundary",
+        "document_count",
+        "searchable_document_count",
+        "vector_indexed_document_count",
+        "hot_index_fully_covered",
+        "document_status_counts",
+        "ingest_job_status_counts",
+        "ingest_job_kind_status_counts",
+        "ingest_job_failure_counts",
+        "contains_raw_resume_text",
+        "contains_resume_paths",
+        "contains_queries",
+        "contains_sample_ids",
+    }
+    return {key: value[key] for key in sorted(allowed) if key in value}
+
+
+def int_at(value: Any, key: str) -> int:
+    if not isinstance(value, dict):
+        return 0
+    item = value.get(key)
+    if isinstance(item, int) and item > 0:
+        return item
+    return 0
+
+
+def nested_int_at(value: Any, parent: str, key: str) -> int:
+    if not isinstance(value, dict):
+        return 0
+    return int_at(value.get(parent), key)
+
+
+def derived_blockers(observability_value: dict[str, Any]) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    status_counts = observability_value.get("document_status_counts")
+    job_kind_counts = observability_value.get("ingest_job_kind_status_counts")
+
+    failed_permanent = int_at(status_counts, "failed_permanent")
+    if failed_permanent > 0:
+        blockers.append(
+            {
+                "kind": "derived_blocker",
+                "category": "import/parser",
+                "reason": "failed_permanent_documents_present",
+                "count": failed_permanent,
+                "next_action": "inspect redacted diagnostics and fix parser/import failure classes",
+            }
+        )
+
+    ocr_required = int_at(status_counts, "ocr_required")
+    queued_ocr = nested_int_at(job_kind_counts, "ocr_document", "queued")
+    running_ocr = nested_int_at(job_kind_counts, "ocr_document", "running")
+    if ocr_required > 0 or queued_ocr > 0 or running_ocr > 0:
+        blockers.append(
+            {
+                "kind": "derived_blocker",
+                "category": "ocr",
+                "reason": "ocr_backlog_present",
+                "document_count": ocr_required,
+                "queued_jobs": queued_ocr,
+                "running_jobs": running_ocr,
+                "next_action": "continue bounded OCR validation or carry backlog to performance/runtime follow-up",
+            }
+        )
+
+    searchable = int_at(observability_value, "searchable_document_count")
+    vector_indexed = int_at(observability_value, "vector_indexed_document_count")
+    if searchable > 0 and vector_indexed < searchable:
+        blockers.append(
+            {
+                "kind": "derived_blocker",
+                "category": "embedding",
+                "reason": "vector_index_backlog_present",
+                "searchable_document_count": searchable,
+                "vector_indexed_document_count": vector_indexed,
+                "next_action": "continue bounded embedding/index validation with reviewed local model runtime",
+            }
+        )
+
+    if observability_value.get("hot_index_fully_covered") is False:
+        blockers.append(
+            {
+                "kind": "derived_blocker",
+                "category": "benchmark",
+                "reason": "hot_index_not_fully_covered",
+                "next_action": "do not claim full baseline; rerun full validation after OCR/vector coverage is sufficient",
+            }
+        )
+
+    return blockers
+
+
+def preflight_probes(document: dict[str, Any]) -> dict[str, str]:
+    value = document.get("preflight_probes", {})
+    if not isinstance(value, dict):
+        fail("preflight_probes must be an object")
+    probes: dict[str, str] = {}
+    for key in ("ocr_runtime_probe", "embedding_protocol"):
+        item = value.get(key)
+        if isinstance(item, str):
+            probes[key] = item
+    return probes
+
+
+def must_not_upload(document: dict[str, Any]) -> list[str]:
+    value = document.get("must_not_upload", [])
+    if not isinstance(value, list):
+        fail("must_not_upload must be an array")
+    output = []
+    for item in value:
+        if not isinstance(item, str) or not item:
+            fail("must_not_upload entries must be strings")
+        if item not in output:
+            output.append(item)
+    return output
+
+
+def next_action(document: dict[str, Any], schema: str) -> dict[str, str]:
+    if schema == "resume-ir.current-stage-blocked-summary.v1":
+        category = string_field(document, "blocked_category")
+        return {
+            "status": "blocked",
+            "category": category,
+            "blocked_step": string_field(document, "blocked_step"),
+            "recommended_next_step": (
+                f"fix {category} blocker and rerun current-stage validation"
+            ),
+            "do_not_do": (
+                "do not chase P95/P99 optimization or require million-resume "
+                "validation in current stage"
+            ),
+        }
+    if schema == "resume-ir.current-stage-smoke-summary.v1":
+        return {
+            "status": "smoke_only",
+            "recommended_next_step": "run full current-stage validation when local runtime and corpus are ready",
+            "do_not_do": "do not treat smoke handoff as release-readiness evidence",
+        }
+    return {
+        "status": "full_evidence_ready",
+        "recommended_next_step": "feed current-stage evidence into release-readiness and continue remaining release blockers",
+        "do_not_do": "do not claim complete product while release-readiness remains blocked",
+    }
+
+
+def build_handoff(document: dict[str, Any]) -> dict[str, Any]:
+    schema = string_field(document, "schema_version")
+    if schema not in SUPPORTED_SCHEMAS:
+        fail("unsupported current-stage evidence schema")
+    if (
+        string_field(document, "privacy_boundary")
+        != EXPECTED_SOURCE_PRIVACY_BOUNDARIES[schema]
+    ):
+        fail("source privacy_boundary does not match schema")
+    reject_private_markers(document)
+
+    blocked = None
+    if schema == "resume-ir.current-stage-blocked-summary.v1":
+        blocked = {
+            "blocked_step": string_field(document, "blocked_step"),
+            "blocked_category": string_field(document, "blocked_category"),
+            "blocked_reason": string_field(document, "blocked_reason"),
+            "blocked_exit": document.get("blocked_exit"),
+            "private_corpus_read": bool_field(document, "private_corpus_read"),
+        }
+
+    observability_value = observability(document, schema)
+
+    return {
+        "schema_version": HANDOFF_SCHEMA,
+        "privacy_boundary": HANDOFF_PRIVACY_BOUNDARY,
+        "source_schema": schema,
+        "current_stage_status": source_status(document, schema),
+        "validation_profile": validation_profile(document, schema),
+        "current_stage_target": optional_string(document, "current_stage_target"),
+        "complete_product": False,
+        "full_baseline_satisfied": bool_field(document, "full_baseline_satisfied"),
+        "release_readiness_evidence": bool_field(document, "release_readiness_evidence"),
+        "performance_optimization_deferred": bool_field(
+            document, "performance_optimization_deferred"
+        ),
+        "preflight_probes": preflight_probes(document),
+        "blocked": blocked,
+        "next_action": next_action(document, schema),
+        "observability": observability_value,
+        "derived_blockers": derived_blockers(observability_value),
+        "completed_steps": completed_steps(document),
+        "blocked_or_not_complete": not_complete_items(document),
+        "must_not_upload": must_not_upload(document),
+    }
+
+
+def main() -> int:
+    args = parse_args()
+    source = load_json(Path(args.input))
+    handoff = build_handoff(source)
+    reject_private_markers(handoff)
+    out_path = Path(args.out)
+    if out_path.parent and str(out_path.parent) != ".":
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(handoff, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

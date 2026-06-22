@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,10 +8,12 @@ use core_domain::{EntityMentionId, SectionType};
 use extractor_rules::{extract_strong_fields, FieldType, RuleMatch};
 pub use fs_crawler::ScanProfile;
 use fs_crawler::{
-    crawl_directory_with_options_and_control, CrawlError, CrawlErrorKind, DiscoveredFile,
-    FsOperation, NormalizedPath, ScanBudgetKind, ScanControl, ScanOptions,
+    crawl_directory_with_options_and_control, normalize_path, CrawlError, CrawlErrorKind,
+    DiscoveredFile, FsOperation, NormalizedPath, ScanBudgetKind, ScanControl, ScanOptions,
 };
-use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
+use index_fulltext::{
+    incremental_snapshot_documents, publish_snapshot, IndexDocument, IndexSection,
+};
 use meta_store::{
     Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
     ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanError, ImportScanErrorKind,
@@ -19,6 +21,7 @@ use meta_store::{
     IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
+use parser_doc::DocParser;
 use parser_docx::DocxParser;
 use parser_pdf::PdfParser;
 use parser_text::TxtParser;
@@ -124,6 +127,7 @@ fn run_import(
         ocr_required_documents: 0,
         ocr_jobs_queued: 0,
         failed_documents: 0,
+        failure_counts: ImportFailureCounts::default(),
         deleted_documents: 0,
         scan_budget,
     };
@@ -164,8 +168,9 @@ fn run_import(
                     summary.ocr_jobs_queued += 1;
                 }
             }
-            ProcessedFile::Failed => {
+            ProcessedFile::Failed { kind } => {
                 summary.failed_documents += 1;
+                summary.failure_counts.increment(kind);
             }
         }
         if should_publish_import_progress(index, total_files) {
@@ -173,9 +178,9 @@ fn run_import(
         }
     }
 
-    if can_propagate_deletions {
+    let deleted_document_ids = if can_propagate_deletions {
         ensure_import_not_cancelled(store, &task.id)?;
-        summary.deleted_documents = mark_missing_documents_deleted(
+        let deleted_document_ids = mark_missing_documents_deleted(
             store,
             root,
             options.scan_profile,
@@ -184,31 +189,32 @@ fn run_import(
             &discovered_doc_ids,
             now,
         )?;
+        summary.deleted_documents = deleted_document_ids.len();
         publish_import_progress(store, &task.id, &summary, now)?;
-    }
+        deleted_document_ids
+    } else {
+        BTreeSet::new()
+    };
 
-    let pending_doc_ids = pending_index_documents
-        .iter()
-        .map(|(document, _)| document.id.as_str().to_string())
-        .collect::<BTreeSet<_>>();
-    ensure_import_not_cancelled(store, &task.id)?;
-    let mut index_documents = persisted_index_documents(store, &sectionizer, &pending_doc_ids)?;
-    index_documents.extend(
-        pending_index_documents
-            .iter()
-            .map(|(_, index_document)| index_document.clone()),
-    );
-    let indexed_document_count = index_documents.len();
-    let snapshot_token = index_snapshot_token(
-        now,
-        indexed_document_count,
-        summary.ocr_required_documents,
-        summary.deleted_documents,
-    );
-    ensure_import_not_cancelled(store, &task.id)?;
-    write_full_text_index(data_dir, &snapshot_token, index_documents)?;
+    let mut excluded_doc_ids = discovered_doc_ids;
+    excluded_doc_ids.extend(deleted_document_ids);
 
     let pending_searchable_total = pending_index_documents.len();
+    let pending_replacements = pending_index_documents
+        .iter()
+        .map(|(_, index_document)| index_document.clone())
+        .collect::<Vec<_>>();
+    ensure_import_not_cancelled(store, &task.id)?;
+    let (snapshot_token, _indexed_document_count) = write_incremental_full_text_index(
+        data_dir,
+        store,
+        now,
+        pending_replacements,
+        &excluded_doc_ids,
+        summary.ocr_required_documents,
+        summary.deleted_documents,
+    )?;
+
     for (index, (mut document, _)) in pending_index_documents.into_iter().enumerate() {
         ensure_import_not_cancelled(store, &task.id)?;
         document.status = DocumentStatus::Searchable;
@@ -298,12 +304,33 @@ pub fn rebuild_full_text_index(
     Ok(IndexRebuildSummary { indexed_documents })
 }
 
+pub fn remove_documents_from_full_text_index(
+    data_dir: &Path,
+    store: &MetaStore,
+    document_ids: &BTreeSet<String>,
+    now: UnixTimestamp,
+) -> Result<IndexRebuildSummary> {
+    let (snapshot_token, indexed_documents) = write_incremental_full_text_index(
+        data_dir,
+        store,
+        now,
+        Vec::new(),
+        document_ids,
+        0,
+        document_ids.len(),
+    )?;
+    update_index_state(store, now, snapshot_token)?;
+
+    Ok(IndexRebuildSummary { indexed_documents })
+}
+
 pub fn index_ocr_text(
     data_dir: &Path,
     store: &MetaStore,
     document_id: &DocumentId,
     ocr_text: &str,
     confidence: Option<f32>,
+    page_count: Option<u32>,
     now: UnixTimestamp,
 ) -> Result<OcrTextIndexSummary> {
     let Some(mut document) = store
@@ -319,8 +346,15 @@ pub fn index_ocr_text(
     let clean_text = TextNormalizer::normalize(ocr_text).text().to_string();
     let pending_doc_ids = BTreeSet::from([document.id.as_str().to_string()]);
     if clean_text.trim().is_empty() {
-        let (snapshot_token, indexed_documents) =
-            write_rebuilt_full_text_index(data_dir, store, now, &pending_doc_ids, Vec::new())?;
+        let (snapshot_token, indexed_documents) = write_incremental_full_text_index(
+            data_dir,
+            store,
+            now,
+            Vec::new(),
+            &pending_doc_ids,
+            0,
+            0,
+        )?;
         document.status = DocumentStatus::OcrDone;
         document.updated_at = now;
         store
@@ -351,7 +385,7 @@ pub fn index_ocr_text(
             parse_version: OCR_PARSE_VERSION.to_string(),
             schema_version: SCHEMA_VERSION.to_string(),
             language_set: language_set(&clean_text),
-            page_count: Some(1),
+            page_count,
             raw_text: Some(ocr_text.to_string()),
             clean_text: Some(clean_text.clone()),
             quality_score: Some(confidence.unwrap_or(0.5)),
@@ -373,12 +407,14 @@ pub fn index_ocr_text(
         sections: sections_to_index(sectionizer.sectionize(&clean_text)),
         is_deleted: document.is_deleted,
     };
-    let (snapshot_token, indexed_documents) = write_rebuilt_full_text_index(
+    let (snapshot_token, indexed_documents) = write_incremental_full_text_index(
         data_dir,
         store,
         now,
-        &pending_doc_ids,
         vec![pending_index_document],
+        &pending_doc_ids,
+        0,
+        0,
     )?;
     document.status = DocumentStatus::Searchable;
     document.updated_at = now;
@@ -391,6 +427,24 @@ pub fn index_ocr_text(
         searchable: true,
         indexed_documents,
     })
+}
+
+pub fn detect_ocr_page_count(extension: &FileExtension, bytes: &[u8]) -> Result<u32> {
+    if !matches!(extension, FileExtension::Pdf) {
+        return Ok(1);
+    }
+
+    let output = PdfParser
+        .parse(
+            ParseInput::from_bytes(Some("pdf"), bytes),
+            ResourceBudget::default(),
+        )
+        .map_err(ImportPipelineError::parser)?;
+    Ok(output
+        .page_count()
+        .and_then(|page_count| u32::try_from(page_count).ok())
+        .filter(|page_count| *page_count > 0)
+        .unwrap_or(1))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -410,6 +464,45 @@ fn write_full_text_index(
         index_documents,
     )
     .map_err(ImportPipelineError::index)
+}
+
+fn write_incremental_full_text_index(
+    data_dir: &Path,
+    store: &MetaStore,
+    now: UnixTimestamp,
+    replacement_documents: Vec<IndexDocument>,
+    excluded_doc_ids: &BTreeSet<String>,
+    ocr_required_documents: usize,
+    deleted_documents: usize,
+) -> Result<(String, usize)> {
+    let index_documents = match incremental_snapshot_documents(
+        &data_dir.join("search-index"),
+        replacement_documents.clone(),
+        excluded_doc_ids,
+    ) {
+        Ok(index_documents) => index_documents,
+        Err(_) => {
+            let sectionizer = Sectionizer::default();
+            let mut rebuilt_documents =
+                persisted_index_documents(store, &sectionizer, excluded_doc_ids)?;
+            rebuilt_documents.extend(
+                replacement_documents
+                    .into_iter()
+                    .filter(|document| !document.is_deleted),
+            );
+            rebuilt_documents
+        }
+    };
+    let indexed_documents = index_documents.len();
+    let snapshot_token = index_snapshot_token(
+        now,
+        indexed_documents,
+        ocr_required_documents,
+        deleted_documents,
+    );
+    write_full_text_index(data_dir, &snapshot_token, index_documents)?;
+
+    Ok((snapshot_token, indexed_documents))
 }
 
 fn write_rebuilt_full_text_index(
@@ -485,11 +578,11 @@ fn mark_missing_documents_deleted(
     skipped_directories: &[NormalizedPath],
     discovered_doc_ids: &BTreeSet<String>,
     now: UnixTimestamp,
-) -> Result<usize> {
+) -> Result<BTreeSet<String>> {
     let documents = store
         .visible_documents()
         .map_err(ImportPipelineError::store)?;
-    let mut deleted_count = 0_usize;
+    let mut deleted_doc_ids = BTreeSet::new();
 
     for document in documents {
         if !document_path_is_deletion_candidate(
@@ -509,11 +602,11 @@ fn mark_missing_documents_deleted(
             .map_err(ImportPipelineError::store)?
             .is_some()
         {
-            deleted_count += 1;
+            deleted_doc_ids.insert(document.id.as_str().to_string());
         }
     }
 
-    Ok(deleted_count)
+    Ok(deleted_doc_ids)
 }
 
 fn document_path_is_deletion_candidate(
@@ -536,17 +629,32 @@ fn document_path_is_deletion_candidate(
 }
 
 fn document_path_is_under_root(document_path: &str, root: &Path) -> bool {
-    Path::new(document_path).starts_with(root)
+    let Ok(root) = normalize_path(root) else {
+        return false;
+    };
+    normalized_path_is_under_root(document_path, root.as_str())
 }
 
 fn document_path_is_under_any_normalized_root(
     document_path: &str,
     roots: &[NormalizedPath],
 ) -> bool {
-    let document_path = Path::new(document_path);
     roots
         .iter()
-        .any(|root| document_path.starts_with(Path::new(root.as_str())))
+        .any(|root| normalized_path_is_under_root(document_path, root.as_str()))
+}
+
+fn normalized_path_is_under_root(document_path: &str, root: &str) -> bool {
+    if document_path == root {
+        return true;
+    }
+    if root.ends_with('/') {
+        return document_path.starts_with(root);
+    }
+
+    document_path
+        .strip_prefix(root)
+        .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn document_parent_is_scanned(document_path: &str, scanned_directories: &[NormalizedPath]) -> bool {
@@ -649,7 +757,9 @@ fn process_file(
         store
             .upsert_document(&document)
             .map_err(ImportPipelineError::store)?;
-        return Ok(ProcessedFile::Failed);
+        return Ok(ProcessedFile::Failed {
+            kind: ImportFailureKind::TextTooLarge,
+        });
     }
 
     let path = PathBuf::from(file.normalized_path.as_str());
@@ -661,7 +771,9 @@ fn process_file(
             store
                 .upsert_document(&document)
                 .map_err(ImportPipelineError::store)?;
-            return Ok(ProcessedFile::Failed);
+            return Ok(ProcessedFile::Failed {
+                kind: ImportFailureKind::ReadError,
+            });
         }
     };
     ensure_not_cancelled()?;
@@ -670,6 +782,12 @@ fn process_file(
     ensure_not_cancelled()?;
     let parse_output = match file.extension {
         FileExtension::Docx => DocxParser
+            .parse(
+                ParseInput::from_bytes(Some(extension), &bytes),
+                ResourceBudget::default(),
+            )
+            .map_err(|error| (error, document.clone())),
+        FileExtension::Doc => DocParser::default()
             .parse(
                 ParseInput::from_bytes(Some(extension), &bytes),
                 ResourceBudget::default(),
@@ -692,7 +810,9 @@ fn process_file(
             store
                 .upsert_document(&document)
                 .map_err(ImportPipelineError::store)?;
-            return Ok(ProcessedFile::Failed);
+            return Ok(ProcessedFile::Failed {
+                kind: ImportFailureKind::UnsupportedExtension,
+            });
         }
     };
     ensure_not_cancelled()?;
@@ -715,7 +835,9 @@ fn process_file(
                 store
                     .upsert_document(&document)
                     .map_err(ImportPipelineError::store)?;
-                ProcessedFile::Failed
+                ProcessedFile::Failed {
+                    kind: ImportFailureKind::from_parser_error(error.kind()),
+                }
             });
         }
     };
@@ -738,7 +860,9 @@ fn process_file(
             store
                 .upsert_document(&document)
                 .map_err(ImportPipelineError::store)?;
-            return Ok(ProcessedFile::Failed);
+            return Ok(ProcessedFile::Failed {
+                kind: ImportFailureKind::EmptyText,
+            });
         }
 
         ensure_not_cancelled()?;
@@ -910,11 +1034,15 @@ fn entity_type_from_field_type(field_type: &FieldType) -> EntityType {
         FieldType::Name => EntityType::Name,
         FieldType::Email => EntityType::Email,
         FieldType::Phone => EntityType::Phone,
+        FieldType::WeChat => EntityType::WeChat,
         FieldType::DateRange => EntityType::DateRange,
         FieldType::School => EntityType::School,
+        FieldType::SchoolTier => EntityType::SchoolTier,
         FieldType::Degree => EntityType::Degree,
+        FieldType::Major => EntityType::Major,
         FieldType::Company => EntityType::Company,
         FieldType::Title => EntityType::Title,
+        FieldType::Location => EntityType::Location,
         FieldType::Skill => EntityType::Skill,
         FieldType::Certificate => EntityType::Certificate,
         FieldType::YearsExperience => EntityType::YearsExperience,
@@ -1006,10 +1134,12 @@ enum ProcessedFile {
     OcrRequired {
         ocr_job_queued: bool,
     },
-    Failed,
+    Failed {
+        kind: ImportFailureKind,
+    },
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportSummary {
     pub files_discovered: usize,
     pub scan_errors: usize,
@@ -1018,8 +1148,80 @@ pub struct ImportSummary {
     pub ocr_required_documents: usize,
     pub ocr_jobs_queued: usize,
     pub failed_documents: usize,
+    pub failure_counts: ImportFailureCounts,
     pub deleted_documents: usize,
     pub scan_budget: Option<ImportScanBudget>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImportFailureCounts {
+    counts: BTreeMap<ImportFailureKind, usize>,
+}
+
+impl ImportFailureCounts {
+    fn increment(&mut self, kind: ImportFailureKind) {
+        *self.counts.entry(kind).or_default() += 1;
+    }
+
+    pub fn add(&mut self, kind: ImportFailureKind, count: usize) {
+        *self.counts.entry(kind).or_default() += count;
+    }
+
+    pub fn get(&self, kind: ImportFailureKind) -> usize {
+        self.counts.get(&kind).copied().unwrap_or(0)
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = (ImportFailureKind, usize)> + '_ {
+        self.counts.iter().map(|(kind, count)| (*kind, *count))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ImportFailureKind {
+    TextTooLarge,
+    ReadError,
+    UnsupportedExtension,
+    ParserUnsupported,
+    ParserCorrupted,
+    ParserEncrypted,
+    ParserTimeout,
+    ParserResourceExhausted,
+    ParserIo,
+    ParserCancelled,
+    ParserInternal,
+    EmptyText,
+}
+
+impl ImportFailureKind {
+    fn from_parser_error(kind: ParserErrorKind) -> Self {
+        match kind {
+            ParserErrorKind::Unsupported => Self::ParserUnsupported,
+            ParserErrorKind::Corrupted => Self::ParserCorrupted,
+            ParserErrorKind::Encrypted => Self::ParserEncrypted,
+            ParserErrorKind::Timeout => Self::ParserTimeout,
+            ParserErrorKind::ResourceExhausted => Self::ParserResourceExhausted,
+            ParserErrorKind::Io => Self::ParserIo,
+            ParserErrorKind::Cancelled => Self::ParserCancelled,
+            ParserErrorKind::OcrRequired | ParserErrorKind::Internal => Self::ParserInternal,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TextTooLarge => "text_too_large",
+            Self::ReadError => "read_error",
+            Self::UnsupportedExtension => "unsupported_extension",
+            Self::ParserUnsupported => "parser_unsupported",
+            Self::ParserCorrupted => "parser_corrupted",
+            Self::ParserEncrypted => "parser_encrypted",
+            Self::ParserTimeout => "parser_timeout",
+            Self::ParserResourceExhausted => "parser_resource_exhausted",
+            Self::ParserIo => "parser_io",
+            Self::ParserCancelled => "parser_cancelled",
+            Self::ParserInternal => "parser_internal",
+            Self::EmptyText => "empty_text",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1137,6 +1339,13 @@ impl ImportPipelineError {
             retryable: false,
         }
     }
+
+    fn parser(_error: parser_common::ParserError) -> Self {
+        Self {
+            kind: ImportPipelineErrorKind::Parser,
+            retryable: true,
+        }
+    }
 }
 
 impl fmt::Debug for ImportPipelineError {
@@ -1159,6 +1368,7 @@ impl fmt::Display for ImportPipelineError {
             ImportPipelineErrorKind::Privacy => {
                 formatter.write_str("contact privacy boundary failed")
             }
+            ImportPipelineErrorKind::Parser => formatter.write_str("document parser failed"),
         }
     }
 }
@@ -1172,10 +1382,12 @@ enum ImportPipelineErrorKind {
     Crawl,
     Index,
     Privacy,
+    Parser,
 }
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1234,6 +1446,27 @@ mod tests {
             ScanProfile::Discovery,
             &scanned_directories,
             &skipped_directories,
+        ));
+    }
+
+    #[test]
+    fn deletion_candidate_matches_windows_normalized_paths() {
+        let root = Path::new(r"C:\fixture");
+        let scanned_directories = vec![normalized_path(r"C:\fixture")];
+
+        assert!(document_path_is_deletion_candidate(
+            "c:/fixture/resume.pdf",
+            root,
+            ScanProfile::Explicit,
+            &scanned_directories,
+            &[],
+        ));
+        assert!(!document_path_is_deletion_candidate(
+            "c:/fixture-neighbor/resume.pdf",
+            root,
+            ScanProfile::Explicit,
+            &scanned_directories,
+            &[],
         ));
     }
 
@@ -1350,6 +1583,54 @@ mod tests {
         assert!(!format!("{scope:?}").contains(root.to_str().unwrap()));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn import_root_parses_legacy_doc_with_local_converter_without_path_leak() {
+        let temp = TestDir::new("import-pipeline-doc-converter");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("legacy-word.doc"), synthetic_ole_doc()).unwrap();
+        let converter = write_doc_converter(temp.path());
+        let _env = EnvVarGuard::set(
+            "RESUME_IR_DOC_TEXT_COMMAND",
+            converter.to_str().unwrap().to_string(),
+        );
+
+        let store = MetaStore::open_in_memory().unwrap();
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_200);
+        let task = import_task("legacy-doc-import", root.to_str().unwrap(), now);
+        store.insert_import_task(&task).unwrap();
+
+        let summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(summary.files_discovered, 1);
+        assert_eq!(summary.searchable_documents, 1);
+        assert_eq!(summary.failed_documents, 0);
+        let status = store.status_summary().unwrap();
+        assert_eq!(status.searchable_documents, 1);
+        let document = store.visible_documents().unwrap().remove(0);
+        let versions = store.resume_versions_for_document(&document.id).unwrap();
+        assert_eq!(versions.len(), 1);
+        assert!(versions[0]
+            .clean_text
+            .as_deref()
+            .unwrap()
+            .contains("Synthetic Legacy Candidate"));
+        assert!(!format!("{summary:?}").contains(root.to_str().unwrap()));
+        assert!(!format!("{summary:?}").contains(converter.to_str().unwrap()));
+    }
+
     fn import_task(label: &str, root_path: &str, now: UnixTimestamp) -> ImportTask {
         ImportTask {
             id: meta_store::ImportTaskId::from_non_secret_parts(&[label]),
@@ -1359,6 +1640,64 @@ mod tests {
             started_at: Some(now),
             finished_at: None,
             updated_at: now,
+        }
+    }
+
+    fn synthetic_ole_doc() -> Vec<u8> {
+        let mut bytes = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1".to_vec();
+        bytes.extend_from_slice(b"SYNTHETIC PRIVATE LEGACY DOC BODY");
+        bytes
+    }
+
+    #[cfg(unix)]
+    fn write_doc_converter(directory: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = directory.join("fixture-doc-converter");
+        fs::write(
+            &path,
+            r#"#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-output" ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+if [ -z "$out" ]; then
+  exit 9
+fi
+printf 'Synthetic Legacy Candidate\nRust Search\n' > "$out"
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: String) -> Self {
+            let previous = env::var(key).ok();
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                env::set_var(self.key, previous);
+            } else {
+                env::remove_var(self.key);
+            }
         }
     }
 

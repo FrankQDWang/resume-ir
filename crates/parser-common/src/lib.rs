@@ -56,6 +56,11 @@ impl FileProbe {
     pub fn has_pdf_header(&self) -> bool {
         self.header.starts_with(b"%PDF-")
     }
+
+    pub fn has_ole_header(&self) -> bool {
+        self.header
+            .starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])
+    }
 }
 
 impl fmt::Debug for FileProbe {
@@ -67,6 +72,7 @@ impl fmt::Debug for FileProbe {
             .field("header_len", &self.header.len())
             .field("zip_header", &self.has_zip_header())
             .field("pdf_header", &self.has_pdf_header())
+            .field("ole_header", &self.has_ole_header())
             .finish()
     }
 }

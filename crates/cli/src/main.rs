@@ -1,47 +1,73 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use benchmark_runner::{
+    evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
+    evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
+    evaluate_vector_quality_gate_json, BenchmarkGateConfig, DedupeQualityGateConfig,
+    FieldQualityGateConfig, OcrThroughputGateConfig, VectorQualityGateConfig,
+};
 use embedder::{
     Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
     LocalEmbeddingCommandSpec,
 };
+use fs4::fs_std::FileExt;
+use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions};
 use import_pipeline::{
-    import_root_with_options, index_ocr_text, rebuild_full_text_index, ImportOptions,
+    detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
+    remove_documents_from_full_text_index, ImportFailureKind, ImportOptions,
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{
-    inspect_snapshot_root, redact_contact_values, FullTextIndex, SearchHit, SearchQuery,
-    SnapshotReadTarget, SnapshotRootState,
+    inspect_snapshot_root, publish_snapshot, purge_obsolete_snapshots, redact_contact_values,
+    FullTextIndex, IndexDocument, IndexSection, SearchHit, SearchQuery, SnapshotReadTarget,
+    SnapshotRootState,
 };
 use index_vector::{
-    inspect_persistent_vector_snapshot, PersistentVectorIndex, PersistentVectorSnapshotInspection,
-    PersistentVectorSnapshotState, QueryVector, VectorDocument, VectorHit, VectorIndex,
+    inspect_persistent_vector_document_coverage, inspect_persistent_vector_snapshot,
+    PersistentVectorIndex, PersistentVectorSnapshotInspection, PersistentVectorSnapshotState,
+    QueryVector, VectorDocument, VectorHit, VectorIndex, VectorSearchBackend,
 };
 use meta_store::{
-    Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
+    backup_metadata_encryption_key, restore_metadata_encryption_key,
+    rotate_metadata_encryption_key, Candidate, CandidateId, ContactHash, Document, DocumentId,
+    DocumentStatus, EntityMention, EntityType, FileExtension,
     ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
-    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanProfile as StoreImportScanProfile,
-    ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobKind,
-    IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp, WorkerTaskKind,
+    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanErrorSummary,
+    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
+    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, QueryLatencySummary,
+    ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
-    CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, OcrClient, OcrOptions,
-    OcrPageRequest, OcrWorkerBudget, RenderedPage,
+    inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
+    LocalOcrCommandSpec, LocalPdfRenderCommandClient, LocalPdfRenderCommandSpec, OcrClient,
+    OcrErrorKind, OcrOptions, OcrPageRequest, OcrWorkerBudget, PdftoppmPdfRenderer,
+    PdftoppmRenderSpec, RenderedPage, TesseractLanguageAvailability, TesseractOcrClient,
+    TesseractOcrSpec,
 };
-use privacy::inspect_contact_hash_key;
+use privacy::{
+    backup_contact_hash_key, inspect_contact_hash_key, restore_contact_hash_key, ContactHasher,
+    ContactKind,
+};
 use rank_fusion::{
-    fuse_hybrid_rrf, DegreeLevel, HybridRecall, RankedHit, ResumeProfile, SearchFilters,
+    fuse_hybrid_rrf, soft_dedupe_score, DateRange, DedupeProfile, DegreeLevel, HybridRecall,
+    RankedHit, ResumeProfile, SchoolTier, SearchFilters,
 };
+use rusqlite::Connection;
 use search_planner::plan_search;
 use sectionizer::Sectionizer;
+use sha2::{Digest, Sha256};
+use sysinfo::{
+    get_current_pid, DiskRefreshKind, Disks, ProcessRefreshKind, ProcessesToUpdate, System,
+};
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 const LOCAL_DISCOVERY_DEFAULT_MAX_FILES: usize = 10_000;
@@ -50,7 +76,278 @@ const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
 const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
 const DEFAULT_SERVICE_LABEL: &str = "com.resume-ir.daemon";
 const DEFAULT_SERVICE_IPC_LISTEN: &str = "127.0.0.1:0";
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, detail, delete, cancel, pause, resume, ocr-worker, embed-worker, service, doctor, or export-diagnostics";
+const FAULT_PROBE_MAX_BYTES: u64 = 1024 * 1024;
+const OCR_CRASH_PROBE_BYTES: &[u8] = b"SYNTHETIC OCR CRASH PROBE BYTES";
+const MODEL_CHECKSUM_PROBE_BYTES: &[u8] = b"SYNTHETIC MODEL CHECKSUM PROBE\n";
+const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
+const OCR_PAGE_BUDGET_REMEDIATION: &str =
+    "raise OCR max pages per document or skip oversized scanned PDFs";
+const OCR_LANGUAGE_REMEDIATION: &str =
+    "install requested OCR language packs or choose an installed OCR language";
+const METADATA_ENCRYPTION_REMEDIATION: &str =
+    "enable SQLCipher metadata encryption before production release";
+const DATASET_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.dataset-manifest.v1";
+const QUERY_SET_SCHEMA_VERSION: &str = "resume-ir.query-set.jsonl.v1";
+const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
+const OCR_RUNTIME_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.ocr-runtime-manifest.v1";
+const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
+const WITNESS_DEFAULT_MAX_FILES: usize = 10_000;
+const WITNESS_CLEANUP_RETRY_ATTEMPTS: usize = 6;
+const WITNESS_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(25);
+const WITNESS_SEARCH_PROBE_LIMIT: usize = 5;
+const WITNESS_SEARCH_PROBE_MAX_CANDIDATES: usize = 64;
+const PURGE_RESIDUAL_MARKER_MIN_BYTES: usize = 8;
+const PURGE_RESIDUAL_SCAN_CHUNK_BYTES: usize = 64 * 1024;
+const WITNESS_FIELD_LABELS: &[&str] = &[
+    "name",
+    "email",
+    "phone",
+    "wechat",
+    "school",
+    "major",
+    "degree",
+    "company",
+    "title",
+    "education",
+    "skill",
+    "certificate",
+    "date",
+    "date_range",
+    "years_experience",
+    "location",
+];
+const WITNESS_IMPORT_FAILURE_KINDS: &[ImportFailureKind] = &[
+    ImportFailureKind::TextTooLarge,
+    ImportFailureKind::ReadError,
+    ImportFailureKind::UnsupportedExtension,
+    ImportFailureKind::ParserUnsupported,
+    ImportFailureKind::ParserCorrupted,
+    ImportFailureKind::ParserEncrypted,
+    ImportFailureKind::ParserTimeout,
+    ImportFailureKind::ParserResourceExhausted,
+    ImportFailureKind::ParserIo,
+    ImportFailureKind::ParserCancelled,
+    ImportFailureKind::ParserInternal,
+    ImportFailureKind::EmptyText,
+];
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, benchmark-query-set, benchmark-query-protocol, benchmark-corpus-summary, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
+const TOP_LEVEL_HELP: &str = "\
+resume-cli
+
+Local-first resume import and search.
+
+Usage:
+  resume-cli [--data-dir <local-data-dir>] <command> [options]
+  resume-cli --help
+
+Core operator workflows:
+  import                Import Word/PDF resume roots into local metadata and indexes.
+  status                Show local task, OCR, full-text, vector, and index state.
+  search                Search fulltext, field-filtered, semantic, or hybrid indexes.
+  detail                Show a redacted resume detail view by document id.
+  delete | purge        Hide deleted resumes from search, then purge local data.
+
+Runtime and worker commands:
+  ocr preflight         Check local OCR renderer/engine/language runtime.
+  ocr-worker           Process queued scanned-PDF OCR jobs.
+  model preflight       Check a local embedding command and reviewed model manifest.
+  embed-worker          Generate local embeddings and persistent vector snapshots.
+  pause | resume        Pause or resume OCR work.
+
+Diagnostics and release evidence:
+  doctor                Inspect local metadata, index, runtime, and diagnostic state.
+  export-diagnostics --redact
+                        Emit local aggregate diagnostics without paths, queries, or resume text.
+  benchmark-query-set   Draft local private query-set evidence.
+  benchmark-query-protocol
+                        Run the local query protocol for benchmark evidence.
+  benchmark-corpus-summary
+                        Emit redacted aggregate corpus observability.
+  fault-simulate        Run local-safe synthetic fault probes.
+  release-readiness     Report stable-release blockers and provided evidence.
+
+Current-stage boundary:
+  Core local import/search closure can be verified locally. Stable release remains
+  blocked by external evidence, credentials, platform transcripts, runtime/model
+  review, and private quality data. Performance optimization is deferred.
+";
+const RELEASE_READINESS_PERFORMANCE_LABEL: &str = "private real-corpus performance evidence";
+const RELEASE_READINESS_FIELD_QUALITY_LABEL: &str = "field extraction quality";
+const RELEASE_READINESS_DEDUPE_QUALITY_LABEL: &str = "dedupe quality";
+const RELEASE_READINESS_VECTOR_QUALITY_LABEL: &str = "vector quality";
+const RELEASE_READINESS_OCR_THROUGHPUT_LABEL: &str = "OCR throughput";
+const RELEASE_READINESS_OCR_LICENSE_LABEL: &str = "OCR runtime manifest/dependency evidence";
+const RELEASE_READINESS_OCR_MANIFEST_EVIDENCE_LABEL: &str = "OCR runtime manifest evidence";
+const RELEASE_READINESS_MODEL_LICENSE_LABEL: &str = "embedding model license/distribution";
+const RELEASE_READINESS_MODEL_MANIFEST_EVIDENCE_LABEL: &str = "embedding model manifest evidence";
+const RELEASE_READINESS_DIAGNOSTICS_LABEL: &str = "redacted diagnostics evidence";
+const RELEASE_READINESS_RELEASE_ARTIFACT_MANIFEST_LABEL: &str =
+    "release artifact manifest evidence";
+const RELEASE_READINESS_RELEASE_SBOM_LABEL: &str = "release SBOM evidence";
+const RELEASE_READINESS_RELEASE_PUBLICATION_AUTOMATION_LABEL: &str =
+    "GitHub Release publication automation evidence";
+const RELEASE_READINESS_GITHUB_PUBLICATION_GATE_LABEL: &str =
+    "GitHub Release publication gate evidence";
+const RELEASE_READINESS_MACOS_PACKAGE_MANIFEST_LABEL: &str = "macOS package manifest evidence";
+const RELEASE_READINESS_WINDOWS_PACKAGE_MANIFEST_LABEL: &str = "Windows package manifest evidence";
+const RELEASE_READINESS_SIGNING_AUTOMATION_LABEL: &str = "signing automation evidence";
+const RELEASE_READINESS_NOTARIZATION_AUTOMATION_LABEL: &str = "notarization automation evidence";
+const RELEASE_READINESS_MACOS_INSTALLER_AUTOMATION_LABEL: &str =
+    "macOS installer automation evidence";
+const RELEASE_READINESS_WINDOWS_INSTALLER_AUTOMATION_LABEL: &str =
+    "Windows installer automation evidence";
+const RELEASE_READINESS_WINDOWS_SERVICE_AUTOMATION_LABEL: &str =
+    "Windows service automation evidence";
+const RELEASE_READINESS_MACOS_INSTALLER_LIFECYCLE_PLAN_LABEL: &str =
+    "macOS installer lifecycle plan evidence";
+const RELEASE_READINESS_WINDOWS_INSTALLER_LIFECYCLE_PLAN_LABEL: &str =
+    "Windows installer lifecycle plan evidence";
+const RELEASE_READINESS_WINDOWS_SERVICE_LIFECYCLE_PLAN_LABEL: &str =
+    "Windows service lifecycle plan evidence";
+const RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL: &str =
+    "current-stage validation evidence manifest";
+const RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL: &str = "current-stage blocked handoff";
+const RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL: &str = "hardware fault drills";
+const RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS: usize = 8_000;
+struct ReleaseReadinessBlocker {
+    label: &'static str,
+    detail: &'static str,
+    dependency_kind: &'static str,
+    needed_from: &'static str,
+    dependency_summary: &'static str,
+    next_action: &'static str,
+}
+
+const RELEASE_READINESS_BLOCKERS: &[ReleaseReadinessBlocker] = &[
+    ReleaseReadinessBlocker {
+        label: "signing certificates",
+        detail: "production signing certificates are not available; release evidence requires certificate chain, private key custody, and signature verification evidence for every release artifact",
+        dependency_kind: "release_credentials",
+        needed_from: "human_release_owner",
+        dependency_summary: "production signing certificate chain, private-key custody policy, and artifact signature verification evidence",
+        next_action: "provide signing certificate material through the documented CI secret interface and rerun release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: "macOS notarization",
+        detail: "Apple Developer ID notarization credentials and ticket evidence are not available; release evidence requires notarization ticket stapling plus Gatekeeper validation on fresh macOS release artifacts",
+        dependency_kind: "release_credentials",
+        needed_from: "human_release_owner",
+        dependency_summary: "Apple Developer ID credentials plus notarization submission, stapled ticket, and Gatekeeper transcript evidence",
+        next_action: "provide Apple notarization credentials through CI secrets and run the macOS notarization release gate",
+    },
+    ReleaseReadinessBlocker {
+        label: "Windows installer lifecycle",
+        detail: "Windows MSI install, upgrade, uninstall, and rollback dry-run automation exists, but actual lifecycle execution is not proven on an administrator-elevated release Windows runner with fresh release artifacts",
+        dependency_kind: "release_platform_transcript",
+        needed_from: "windows_release_runner",
+        dependency_summary: "administrator-elevated Windows MSI install, upgrade, repair, uninstall, and rollback transcripts for fresh release artifacts",
+        next_action: "run the Windows installer lifecycle plan on an administrator-elevated release runner and attach redacted evidence",
+    },
+    ReleaseReadinessBlocker {
+        label: "Windows service lifecycle",
+        detail: "Windows service install/start/stop/status/uninstall/recovery dry-run automation exists, but actual lifecycle execution is not proven on an administrator-elevated release Windows runner with fresh release artifacts",
+        dependency_kind: "release_platform_transcript",
+        needed_from: "windows_release_runner",
+        dependency_summary: "administrator-elevated Windows Service install, start, status, stop, recovery, uninstall, and rollback transcripts",
+        next_action: "run the Windows service lifecycle plan on an administrator-elevated release runner and attach redacted evidence",
+    },
+    ReleaseReadinessBlocker {
+        label: "macOS installer lifecycle",
+        detail: "macOS pkg/dmg install, upgrade, uninstall, rollback, and LaunchAgent dry-run automation exists, but signed pkg/dmg install/upgrade/uninstall/rollback and Gatekeeper validation are not proven on fresh macOS release artifacts",
+        dependency_kind: "release_platform_transcript",
+        needed_from: "macos_release_runner",
+        dependency_summary: "fresh signed macOS pkg/dmg install, upgrade, uninstall, rollback, LaunchAgent, and Gatekeeper transcripts",
+        next_action: "run the macOS installer lifecycle plan on a release runner and attach redacted Gatekeeper/install evidence",
+    },
+    ReleaseReadinessBlocker {
+        label: "GitHub Release publication",
+        detail: "GitHub Release publication is not approved or proven; release evidence requires human release approval, a working GitHub Actions release token or Git credential path, and artifact upload evidence for fresh signed/notarized release artifacts",
+        dependency_kind: "release_publication_approval",
+        needed_from: "human_release_owner",
+        dependency_summary: "human release approval, GitHub Actions release token or Git credential readiness, and GitHub Release artifact upload evidence",
+        next_action: "approve the release publication gate, provide a working GitHub release token through CI secrets or repair Git credential access, then run the GitHub Release upload workflow and attach redacted upload evidence",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_PERFORMANCE_LABEL,
+        detail: "stable-release private real-corpus hot-index hybrid benchmark evidence is not available; the current goal can close with local import/search closure evidence and a redacted current-stage handoff, while the 8000-document hot-index floor, 500 query samples, P50/P95/P99 metrics, P95/P99 reduction, and external 100k/1M scale validation move to the follow-up performance-optimization goal",
+        dependency_kind: "local_current_stage_evidence",
+        needed_from: "local_private_validation_run",
+        dependency_summary: "redacted stable-release hot-index hybrid benchmark evidence over the available local private corpus",
+        next_action: "carry this blocker into the performance-optimization goal, then rerun current-stage validation with reviewed local OCR/model manifests and attach full redacted benchmark evidence",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_FIELD_QUALITY_LABEL,
+        detail: "private business labeled field-quality evidence is not available; release evidence requires min-samples 1000 and precision/recall/F1 >= 0.93 across required production fields",
+        dependency_kind: "private_labeled_quality_dataset",
+        needed_from: "business_labeling_process",
+        dependency_summary: "private field-quality labeled dataset and aggregate precision/recall/F1 report for required production fields",
+        next_action: "produce the private field-quality report and run the field quality gate before release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_DEDUPE_QUALITY_LABEL,
+        detail: "private business labeled dedupe-quality evidence is not available; release evidence requires min-pairs 1000, min-positive-pairs 100, and precision/recall/F1 >= 0.90",
+        dependency_kind: "private_labeled_quality_dataset",
+        needed_from: "business_labeling_process",
+        dependency_summary: "private dedupe labeled pair dataset with enough positive pairs and aggregate precision/recall/F1 evidence",
+        next_action: "produce the private dedupe-quality report and run the dedupe quality gate before release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_VECTOR_QUALITY_LABEL,
+        detail: "private business labeled vector-quality evidence is not available; release evidence requires min-samples 1000, recall@k >= 0.90, MRR >= 0.85, NDCG@k >= 0.90, and zero-recall queries blocked",
+        dependency_kind: "private_labeled_quality_dataset",
+        needed_from: "business_labeling_process",
+        dependency_summary: "private vector-quality labeled query set with recall@k, MRR, NDCG@k, and zero-recall evidence",
+        next_action: "produce the private vector-quality report and run the vector quality gate before release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_OCR_THROUGHPUT_LABEL,
+        detail: "stable-release private real-corpus OCR throughput evidence is not available; the current goal may close with local OCR runtime preflight plus a redacted blocked handoff when the OCR backlog exceeds the interaction budget, while min-pages 500, OCR page latency P50/P95/P99 metrics, pages_per_second, no run-budget exhaustion, and OCR throughput reduction move to the follow-up performance-optimization goal",
+        dependency_kind: "local_current_stage_evidence",
+        needed_from: "local_private_validation_run",
+        dependency_summary: "redacted stable-release private real-corpus OCR throughput evidence with observed page latency percentiles and throughput",
+        next_action: "carry this blocker into the performance-optimization goal, then run the OCR throughput baseline with reviewed OCR manifests and attach the redacted report",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_OCR_LICENSE_LABEL,
+        detail: "Tesseract/tessdata is the accepted Apache-2.0 OCR runtime direction, and the PDF renderer must follow bundled-first packaging with external override; if Poppler/pdftoppm is bundled, release evidence requires GPL-3.0-or-later-compatible distribution review, source-offer obligations, checksums/licenses, dependency detection, and fail-closed operator guidance",
+        dependency_kind: "reviewed_runtime_manifest",
+        needed_from: "local_runtime_review",
+        dependency_summary: "reviewed Tesseract/tessdata and PDF renderer runtime manifest with distribution mode, checksums, licenses, source-offer obligations, and dependency detection evidence",
+        next_action: "generate and review the OCR runtime manifest, then pass it to release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_MODEL_LICENSE_LABEL,
+        detail: "reviewed licensed embedding model selection, model manifest, offline distribution, and license review evidence are not complete",
+        dependency_kind: "reviewed_model_license",
+        needed_from: "legal_model_review",
+        dependency_summary: "approved local embedding model, artifact manifest, offline distribution plan, and license review evidence",
+        next_action: "complete model license/distribution review and attach the reviewed model manifest",
+    },
+    ReleaseReadinessBlocker {
+        label: "cross-platform release validation",
+        detail: "hosted macOS/Windows build/test and dry-run packaging evidence exist, but Windows and macOS release platforms validation is not complete; release evidence requires fresh release artifacts, install/upgrade/uninstall, and service lifecycle proof",
+        dependency_kind: "release_platform_transcript",
+        needed_from: "macos_windows_release_runners",
+        dependency_summary: "fresh Windows and macOS release artifact validation, install/upgrade/uninstall, and service lifecycle transcripts",
+        next_action: "run release-platform validation on fresh macOS and Windows runners and attach redacted lifecycle evidence",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_DIAGNOSTICS_LABEL,
+        detail: "redacted local aggregate diagnostics evidence is not available; release evidence requires export-diagnostics --redact output with diagnostics.v1 schema, local aggregate diagnostics scope, and redacted paths, queries, and resume text",
+        dependency_kind: "redacted_local_evidence",
+        needed_from: "local_validation_run",
+        dependency_summary: "redacted diagnostics.v1 aggregate output from the validation data directory",
+        next_action: "run export-diagnostics --redact on the validation data directory and pass the redacted report to release-readiness",
+    },
+    ReleaseReadinessBlocker {
+        label: RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL,
+        detail: "actual ENOSPC, service-level daemon kill, battery-mode, and external-drive disconnect drills are not proven on release platforms",
+        dependency_kind: "hardware_release_platform_drill",
+        needed_from: "dedicated_release_platforms",
+        dependency_summary: "actual ENOSPC, service kill, battery-mode, and external-drive disconnect drill transcripts from release platforms",
+        next_action: "run actual hardware fault drills on dedicated release platforms and attach redacted transcript digests",
+    },
+];
 
 fn main() {
     if let Err(error) = run() {
@@ -67,7 +364,25 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    if is_top_level_help(&args) {
+        print_top_level_help();
+        return Ok(());
+    }
+    if let Some(topic) = command_help_topic(&args) {
+        print_command_help(topic)?;
+        return Ok(());
+    }
+
     let data_dir = take_data_dir(&mut args)?;
+    if is_top_level_help(&args) {
+        print_top_level_help();
+        return Ok(());
+    }
+    if let Some(topic) = command_help_topic(&args) {
+        print_command_help(topic)?;
+        return Ok(());
+    }
+
     let Some(command) = args.first().map(String::as_str) else {
         return Err(CliError::usage(TOP_LEVEL_USAGE));
     };
@@ -76,23 +391,4792 @@ fn run() -> Result<()> {
         "status" => status_command(&data_dir, &args[1..]),
         "import" => import_command(&data_dir, &args[1..]),
         "search" => search_command(&data_dir, &args[1..]),
+        "benchmark-query-set" => benchmark_query_set_command(&data_dir, &args[1..]),
+        "benchmark-query-protocol" => benchmark_query_protocol_command(&data_dir, &args[1..]),
+        "benchmark-corpus-summary" => benchmark_corpus_summary_command(&data_dir, &args[1..]),
         "detail" => detail_command(&data_dir, &args[1..]),
         "delete" => delete_command(&data_dir, &args[1..]),
+        "purge" => purge_command(&data_dir, &args[1..]),
         "cancel" => cancel_command(&data_dir, &args[1..]),
         "pause" => task_control_command(&data_dir, &args[1..], true),
         "resume" => task_control_command(&data_dir, &args[1..], false),
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
         "embed-worker" => embed_worker_command(&data_dir, &args[1..]),
+        "candidate-review" => candidate_review_command(&data_dir, &args[1..]),
+        "model" => model_command(&args[1..]),
+        "ocr" => ocr_command(&args[1..]),
+        "privacy" => privacy_command(&data_dir, &args[1..]),
         "service" => service_command(&data_dir, &args[1..]),
-        "doctor" => {
-            if args.len() != 1 {
-                return Err(CliError::usage("usage: resume-cli doctor"));
-            }
-            doctor_command(&data_dir)
-        }
+        "fault-simulate" => fault_simulate_command(&data_dir, &args[1..]),
+        "witness" => witness_command(&args[1..]),
+        "doctor" => doctor_command(&data_dir, &args[1..]),
         "export-diagnostics" => export_diagnostics_command(&data_dir, &args[1..]),
+        "release-readiness" => release_readiness_command(&args[1..]),
         _ => Err(CliError::usage(TOP_LEVEL_USAGE)),
     }
+}
+
+fn is_top_level_help(args: &[String]) -> bool {
+    matches!(args, [arg] if is_help_flag(arg) || arg == "help")
+}
+
+fn is_help_flag(value: &str) -> bool {
+    value == "--help" || value == "-h"
+}
+
+fn command_help_topic(args: &[String]) -> Option<&str> {
+    match args {
+        [command, topic] if command == "help" => Some(topic.as_str()),
+        [command, ..] if command == "--data-dir" => None,
+        [command, rest @ ..] if command != "help" && rest.iter().any(|arg| is_help_flag(arg)) => {
+            Some(command.as_str())
+        }
+        _ => None,
+    }
+}
+
+fn print_top_level_help() {
+    print!("{TOP_LEVEL_HELP}");
+}
+
+fn print_command_help(topic: &str) -> Result<()> {
+    let usage = command_usage(topic).ok_or_else(|| CliError::usage(TOP_LEVEL_USAGE))?;
+    println!("{usage}");
+    Ok(())
+}
+
+fn command_usage(topic: &str) -> Option<&'static str> {
+    match topic {
+        "status" => Some(status_usage()),
+        "import" => Some(import_usage_text()),
+        "search" => Some(search_usage()),
+        "benchmark-query-set" => Some(benchmark_query_set_usage()),
+        "benchmark-query-protocol" => Some(benchmark_query_protocol_usage()),
+        "benchmark-corpus-summary" => Some(benchmark_corpus_summary_usage()),
+        "detail" => Some(detail_usage()),
+        "delete" => Some(delete_usage()),
+        "purge" => Some(purge_usage()),
+        "cancel" => Some(cancel_usage_text()),
+        "pause" | "resume" => Some(task_control_usage_text()),
+        "ocr-worker" => Some(ocr_worker_usage_text()),
+        "embed-worker" => Some(embed_worker_usage_text()),
+        "candidate-review" => Some(candidate_review_usage()),
+        "model" => Some(model_usage()),
+        "ocr" => Some(ocr_usage()),
+        "privacy" => Some(privacy_usage()),
+        "service" => Some(service_usage()),
+        "fault-simulate" => Some(fault_simulate_usage()),
+        "witness" => Some(witness_usage_text()),
+        "doctor" => Some(doctor_usage()),
+        "export-diagnostics" => Some(export_diagnostics_usage()),
+        "release-readiness" => Some(release_readiness_usage()),
+        _ => None,
+    }
+}
+
+fn release_readiness_command(args: &[String]) -> Result<()> {
+    let args = parse_release_readiness_args(args)?;
+    let provided_evidence = validate_release_readiness_evidence(&args.evidence)?;
+
+    if args.json {
+        let provided_labels = provided_evidence
+            .iter()
+            .map(|evidence| evidence.label)
+            .collect::<BTreeSet<_>>();
+        let blockers = RELEASE_READINESS_BLOCKERS
+            .iter()
+            .filter(|blocker| !provided_labels.contains(blocker.label))
+            .map(|blocker| {
+                serde_json::json!({
+                    "label": blocker.label,
+                    "status": "blocked",
+                    "detail": blocker.detail,
+                    "blocked_dependency": {
+                        "kind": blocker.dependency_kind,
+                        "needed_from": blocker.needed_from,
+                        "summary": blocker.dependency_summary,
+                    },
+                    "next_action": blocker.next_action,
+                })
+            })
+            .collect::<Vec<_>>();
+        let provided_evidence = provided_evidence
+            .iter()
+            .map(|evidence| {
+                serde_json::json!({
+                    "label": evidence.label,
+                    "status": "provided",
+                    "privacy_boundary": evidence.privacy_boundary,
+                    "detail": evidence.detail,
+                })
+            })
+            .collect::<Vec<_>>();
+        let report = serde_json::json!({
+            "schema_version": "release-readiness.v1",
+            "stable_release": "blocked",
+            "local_dry_run_artifacts": "evidence_only",
+            "provided_evidence": provided_evidence,
+            "blockers": blockers,
+            "goal_gap_matrix": release_readiness_goal_gap_matrix_json(),
+            "next_gate": "keep release blocked until every item has current local evidence",
+        });
+        let report = serde_json::to_string_pretty(&report)
+            .map_err(|_| CliError::user("release readiness report unavailable"))?;
+        println!("{report}");
+        return Err(CliError::user(
+            "release readiness blocked: stable release criteria are not met",
+        ));
+    }
+
+    println!("resume-ir release readiness");
+    println!("stable release: blocked");
+    println!("local dry-run artifacts: evidence only");
+    if !provided_evidence.is_empty() {
+        println!("provided local evidence:");
+        for evidence in &provided_evidence {
+            println!("- {}: provided ({})", evidence.label, evidence.detail);
+        }
+    }
+    println!("blocked evidence:");
+    let provided_labels = provided_evidence
+        .iter()
+        .map(|evidence| evidence.label)
+        .collect::<BTreeSet<_>>();
+    for blocker in RELEASE_READINESS_BLOCKERS {
+        if provided_labels.contains(blocker.label) {
+            continue;
+        }
+        println!("- {}: blocked ({})", blocker.label, blocker.detail);
+        println!(
+            "  needs: {} from {} ({})",
+            blocker.dependency_kind, blocker.needed_from, blocker.dependency_summary
+        );
+        println!("  next action: {}", blocker.next_action);
+    }
+    println!("next gate: keep release blocked until every item has current local evidence");
+
+    Err(CliError::user(
+        "release readiness blocked: stable release criteria are not met",
+    ))
+}
+
+fn release_readiness_goal_gap_matrix_json() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "resume-ir.goal-gap-matrix.v1",
+        "complete_product": false,
+        "current_stage": "core_import_search_closed_release_blocked",
+        "stable_release": "blocked",
+        "completion_statement": "core local import/search closure is verified; complete stable release remains blocked by evidence, credentials, platform transcripts, and deferred performance goals",
+        "rows": [
+            {
+                "id": "P0_foundation",
+                "label": "Rust workspace, daemon, CLI, metadata, task queue, IPC, diagnostics skeleton, CI",
+                "implementation_status": "production_complete",
+                "release_status": "covered_by_local_ci",
+                "evidence": [
+                    "daemon/CLI/metadata/IPC tests",
+                    "kill/restart recovery tests",
+                    "PR rust workspace checks"
+                ],
+                "blocked_by": []
+            },
+            {
+                "id": "P1_text_import_fulltext",
+                "label": "file scan, docx/PDF text layer parsing, normalization, full-text index, snippets",
+                "implementation_status": "production_complete",
+                "release_status": "covered_by_local_ci",
+                "evidence": [
+                    "parser fixture tests",
+                    "import/search closed-loop checks",
+                    "persistent full-text index recovery tests"
+                ],
+                "blocked_by": []
+            },
+            {
+                "id": "P2_fields_dedupe",
+                "label": "field extraction, confidence/evidence, filters, soft dedupe, multi-version folding",
+                "implementation_status": "production_complete",
+                "release_status": "blocked",
+                "evidence": [
+                    "extractor/filter tests",
+                    "candidate folding tests",
+                    "field persistence tests"
+                ],
+                "blocked_by": [
+                    "private business labeled field/dedupe quality reports",
+                    "field F1 production threshold evidence",
+                    "dedupe precision/recall/F1 production threshold evidence"
+                ]
+            },
+            {
+                "id": "P3_semantic_vector",
+                "label": "local embedding protocol, vector persistence, semantic/hybrid search, RRF",
+                "implementation_status": "production_complete",
+                "release_status": "blocked",
+                "evidence": [
+                    "local embedding protocol tests",
+                    "persistent vector snapshot tests",
+                    "hybrid search tests"
+                ],
+                "blocked_by": [
+                    "final reviewed embedding model distribution decision",
+                    "private business vector quality report",
+                    "release model manifest evidence"
+                ]
+            },
+            {
+                "id": "P4_ocr",
+                "label": "scanned PDF detection, OCR worker, cache, pause/resume, retry, OCR result indexing",
+                "implementation_status": "production_complete",
+                "release_status": "blocked",
+                "evidence": [
+                    "OCR worker tests",
+                    "OCR manifest/preflight tests",
+                    "current-stage smoke local runtime probe"
+                ],
+                "blocked_by": [
+                    "stable-release OCR throughput evidence deferred to performance optimization goal",
+                    "stable-release hot-index coverage evidence deferred to performance optimization goal",
+                    "representative OCR backlog drain evidence deferred to performance optimization goal"
+                ]
+            },
+            {
+                "id": "P5_cross_platform_release",
+                "label": "Windows/macOS packages, install, upgrade, uninstall, rollback, service lifecycle, signing/notarization",
+                "implementation_status": "production_complete",
+                "release_status": "blocked",
+                "evidence": [
+                    "unsigned dry-run package manifests",
+                    "installer lifecycle dry-run plans",
+                    "Windows Service lifecycle dry-run plan",
+                    "signing/notarization fail-closed dry-run gates",
+                    "hosted macOS/Windows build/test workflows"
+                ],
+                "blocked_by": [
+                    "real signing/notarization credentials",
+                    "administrator-elevated Windows release-runner transcripts",
+                    "fresh macOS installer and Gatekeeper transcripts",
+                    "GitHub Release approval"
+                ]
+            },
+            {
+                "id": "P6_performance_stability",
+                "label": "performance baseline, regression gates, fault injection, diagnostics, 100k/1M validation",
+                "implementation_status": "deferred_to_performance_optimization_goal",
+                "release_status": "blocked",
+                "evidence": [
+                    "benchmark runner tests",
+                    "fault simulation tests",
+                    "diagnostics redaction tests",
+                    "current-stage smoke handoff"
+                ],
+                "blocked_by": [
+                    "500-query/full hot-index baseline deferred to performance optimization goal",
+                    "private labeled quality datasets",
+                    "real hardware/platform fault drill transcripts",
+                    "external 100k/1M real-corpus validation deferred to performance goal"
+                ]
+            }
+        ]
+    })
+}
+
+fn release_readiness_usage() -> &'static str {
+    "usage: resume-cli release-readiness [--json] [--benchmark-report <path>] [--field-quality-report <path>] [--dedupe-quality-report <path>] [--vector-quality-report <path>] [--ocr-throughput-report <path>] [--model-manifest <path>] [--ocr-runtime-manifest <path>] [--diagnostics-report <path>] [--current-stage-evidence <path>] [--current-stage-blocked-summary <path>] [--release-artifact-manifest <path>] [--release-sbom <path>] [--release-publication-evidence <path>] [--github-release-publication-gate <path>] [--macos-package-manifest <path>] [--windows-package-manifest <path>] [--signing-evidence <path>] [--notarization-evidence <path>] [--macos-installer-evidence <path>] [--windows-installer-evidence <path>] [--windows-service-evidence <path>] [--macos-installer-lifecycle-plan <path>] [--windows-installer-lifecycle-plan <path>] [--windows-service-lifecycle-plan <path>] [--hardware-fault-evidence <path>]"
+}
+
+#[derive(Default)]
+struct ReleaseReadinessEvidenceArgs {
+    benchmark_report: Option<PathBuf>,
+    field_quality_report: Option<PathBuf>,
+    dedupe_quality_report: Option<PathBuf>,
+    vector_quality_report: Option<PathBuf>,
+    ocr_throughput_report: Option<PathBuf>,
+    model_manifest: Option<PathBuf>,
+    ocr_runtime_manifest: Option<PathBuf>,
+    diagnostics_report: Option<PathBuf>,
+    current_stage_evidence: Option<PathBuf>,
+    current_stage_blocked_summary: Option<PathBuf>,
+    release_artifact_manifest: Option<PathBuf>,
+    release_sbom: Option<PathBuf>,
+    release_publication_evidence: Option<PathBuf>,
+    github_release_publication_gate: Option<PathBuf>,
+    macos_package_manifest: Option<PathBuf>,
+    windows_package_manifest: Option<PathBuf>,
+    signing_evidence: Option<PathBuf>,
+    notarization_evidence: Option<PathBuf>,
+    macos_installer_evidence: Option<PathBuf>,
+    windows_installer_evidence: Option<PathBuf>,
+    windows_service_evidence: Option<PathBuf>,
+    macos_installer_lifecycle_plan: Option<PathBuf>,
+    windows_installer_lifecycle_plan: Option<PathBuf>,
+    windows_service_lifecycle_plan: Option<PathBuf>,
+    hardware_fault_evidence: Option<PathBuf>,
+}
+
+struct ReleaseReadinessArgs {
+    json: bool,
+    evidence: ReleaseReadinessEvidenceArgs,
+}
+
+struct ReleaseReadinessProvidedEvidence {
+    label: &'static str,
+    privacy_boundary: &'static str,
+    detail: &'static str,
+}
+
+struct ReleaseAutomationEvidenceSpec {
+    label: &'static str,
+    schema_version: &'static str,
+    status_key: &'static str,
+    evidence_boundary: &'static str,
+    digest_key: &'static str,
+    require_planned_actions: bool,
+}
+
+fn parse_release_readiness_args(args: &[String]) -> Result<ReleaseReadinessArgs> {
+    let mut parsed = ReleaseReadinessArgs {
+        json: false,
+        evidence: ReleaseReadinessEvidenceArgs::default(),
+    };
+    let mut index = 0_usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--json" => {
+                parsed.json = true;
+                index += 1;
+            }
+            "--benchmark-report" => {
+                parsed.evidence.benchmark_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--field-quality-report" => {
+                parsed.evidence.field_quality_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--dedupe-quality-report" => {
+                parsed.evidence.dedupe_quality_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--vector-quality-report" => {
+                parsed.evidence.vector_quality_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--ocr-throughput-report" => {
+                parsed.evidence.ocr_throughput_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--model-manifest" => {
+                parsed.evidence.model_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--ocr-runtime-manifest" => {
+                parsed.evidence.ocr_runtime_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--diagnostics-report" => {
+                parsed.evidence.diagnostics_report =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--current-stage-evidence" => {
+                parsed.evidence.current_stage_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--current-stage-blocked-summary" => {
+                parsed.evidence.current_stage_blocked_summary =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--release-artifact-manifest" => {
+                parsed.evidence.release_artifact_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--release-sbom" => {
+                parsed.evidence.release_sbom = Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--release-publication-evidence" => {
+                parsed.evidence.release_publication_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--github-release-publication-gate" => {
+                parsed.evidence.github_release_publication_gate =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--macos-package-manifest" => {
+                parsed.evidence.macos_package_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--windows-package-manifest" => {
+                parsed.evidence.windows_package_manifest =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--signing-evidence" => {
+                parsed.evidence.signing_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--notarization-evidence" => {
+                parsed.evidence.notarization_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--macos-installer-evidence" => {
+                parsed.evidence.macos_installer_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--windows-installer-evidence" => {
+                parsed.evidence.windows_installer_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--windows-service-evidence" => {
+                parsed.evidence.windows_service_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--macos-installer-lifecycle-plan" => {
+                parsed.evidence.macos_installer_lifecycle_plan =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--windows-installer-lifecycle-plan" => {
+                parsed.evidence.windows_installer_lifecycle_plan =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--windows-service-lifecycle-plan" => {
+                parsed.evidence.windows_service_lifecycle_plan =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            "--hardware-fault-evidence" => {
+                parsed.evidence.hardware_fault_evidence =
+                    Some(take_release_readiness_path(args, &mut index)?);
+            }
+            _ => return Err(CliError::usage(release_readiness_usage())),
+        }
+    }
+    Ok(parsed)
+}
+
+fn take_release_readiness_path(args: &[String], index: &mut usize) -> Result<PathBuf> {
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(release_readiness_usage()));
+    };
+    *index += 2;
+    Ok(PathBuf::from(value))
+}
+
+fn validate_release_readiness_evidence(
+    args: &ReleaseReadinessEvidenceArgs,
+) -> Result<Vec<ReleaseReadinessProvidedEvidence>> {
+    if args.current_stage_evidence.is_some() && args.current_stage_blocked_summary.is_some() {
+        return Err(CliError::user(
+            "current-stage evidence conflict: use either --current-stage-evidence or --current-stage-blocked-summary, not both",
+        ));
+    }
+    let mut provided = Vec::new();
+    if let Some(path) = &args.benchmark_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        let config = BenchmarkGateConfig::new(
+            RELEASE_READINESS_BENCHMARK_MIN_DOCUMENTS,
+            500,
+            f64::INFINITY,
+        )
+        .with_max_zero_result_queries(0)
+        .require_private_real_corpus();
+        evaluate_benchmark_gate_json(&report, config).map_err(|error| {
+            release_readiness_evidence_error(RELEASE_READINESS_PERFORMANCE_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_PERFORMANCE_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
+            detail: "private real-corpus hot-index hybrid benchmark baseline passed reproducibility and redaction checks",
+        });
+    }
+    if let Some(path) = &args.field_quality_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        let config = FieldQualityGateConfig::new(0.93, 0.93, 0.93)
+            .with_min_samples(1000)
+            .require_private_business_labeled();
+        evaluate_field_quality_gate_json(&report, config).map_err(|error| {
+            release_readiness_evidence_error(RELEASE_READINESS_FIELD_QUALITY_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_FIELD_QUALITY_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
+            detail: "private business field-quality report passed the local release gate",
+        });
+    }
+    if let Some(path) = &args.dedupe_quality_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        let config = DedupeQualityGateConfig::new(0.90, 0.90, 0.90)
+            .with_min_pairs(1000)
+            .with_min_positive_pairs(100)
+            .require_private_business_labeled();
+        evaluate_dedupe_quality_gate_json(&report, config).map_err(|error| {
+            release_readiness_evidence_error(RELEASE_READINESS_DEDUPE_QUALITY_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_DEDUPE_QUALITY_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
+            detail: "private business dedupe-quality report passed the local release gate",
+        });
+    }
+    if let Some(path) = &args.vector_quality_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        let config = VectorQualityGateConfig::new(1000, 0.90, 0.85, 0.90)
+            .with_max_zero_recall_queries(0)
+            .require_private_business_labeled();
+        evaluate_vector_quality_gate_json(&report, config).map_err(|error| {
+            release_readiness_evidence_error(RELEASE_READINESS_VECTOR_QUALITY_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_VECTOR_QUALITY_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
+            detail: "private business vector-quality report passed the local release gate",
+        });
+    }
+    if let Some(path) = &args.ocr_throughput_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        let config = OcrThroughputGateConfig::current_stage_baseline(500);
+        evaluate_ocr_throughput_gate_json(&report, config).map_err(|error| {
+            release_readiness_evidence_error(RELEASE_READINESS_OCR_THROUGHPUT_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_OCR_THROUGHPUT_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
+            detail:
+                "private real-corpus OCR baseline report passed the current-stage evidence gate",
+        });
+    }
+    if let Some(path) = &args.model_manifest {
+        let validation = validate_model_manifest(path).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_MODEL_LICENSE_LABEL, error)
+        })?;
+        if !validation
+            .models
+            .iter()
+            .any(|model| model.model_type == "embedding")
+        {
+            return Err(release_readiness_manifest_error(
+                RELEASE_READINESS_MODEL_LICENSE_LABEL,
+                CliError::user("model manifest blocked: embedding model is not present"),
+            ));
+        }
+        if release_readiness_model_distribution_is_packaged(args, &validation)? {
+            provided.push(ReleaseReadinessProvidedEvidence {
+                label: RELEASE_READINESS_MODEL_MANIFEST_EVIDENCE_LABEL,
+                privacy_boundary: "reviewed_local_manifest",
+                detail: "reviewed embedding model manifest passed checksum and license validation",
+            });
+            provided.push(ReleaseReadinessProvidedEvidence {
+                label: RELEASE_READINESS_MODEL_LICENSE_LABEL,
+                privacy_boundary: "blocked_release_evidence_manifest",
+                detail: "reviewed embedding model manifest is bound to a matching packaged runtime payload",
+            });
+        } else {
+            provided.push(ReleaseReadinessProvidedEvidence {
+                label: RELEASE_READINESS_MODEL_MANIFEST_EVIDENCE_LABEL,
+                privacy_boundary: "reviewed_local_manifest",
+                detail: "model manifest is reviewed but package payload does not prove matching offline model distribution",
+            });
+        }
+    }
+    if let Some(path) = &args.ocr_runtime_manifest {
+        let validation = validate_ocr_runtime_manifest(path).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_OCR_LICENSE_LABEL, error)
+        })?;
+        validate_release_readiness_ocr_manifest_coverage(&validation)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_OCR_MANIFEST_EVIDENCE_LABEL,
+            privacy_boundary: "reviewed_local_manifest",
+            detail: "reviewed bundled-first OCR runtime manifest with external override passed checksum, license, and component coverage validation",
+        });
+        if release_readiness_ocr_runtime_distribution_is_packaged(args, &validation)? {
+            provided.push(ReleaseReadinessProvidedEvidence {
+                label: RELEASE_READINESS_OCR_LICENSE_LABEL,
+                privacy_boundary: "blocked_release_evidence_manifest",
+                detail: "reviewed OCR runtime manifest is bound to a matching bundled runtime package payload",
+            });
+        }
+    }
+    if let Some(path) = &args.diagnostics_report {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_release_readiness_diagnostics_report(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_DIAGNOSTICS_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_DIAGNOSTICS_LABEL,
+            privacy_boundary: "redacted_local_aggregate",
+            detail: "diagnostics.v1 report passed local aggregate redaction and scope checks",
+        });
+    }
+    if let Some(path) = &args.current_stage_evidence {
+        let report = read_release_readiness_evidence_report(path)?;
+        let digests = validate_current_stage_evidence_manifest(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL, error)
+        })?;
+        validate_current_stage_evidence_bundle_digests(args, &digests).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_CURRENT_STAGE_EVIDENCE_LABEL,
+            privacy_boundary: "local_only_redacted_evidence_manifest",
+            detail:
+                "current-stage validation evidence manifest passed redacted schema and digest checks",
+        });
+    }
+    if let Some(path) = &args.current_stage_blocked_summary {
+        let report = read_release_readiness_evidence_report(path)?;
+        let digests =
+            validate_current_stage_blocked_summary_manifest(&report).map_err(|error| {
+                release_readiness_manifest_error(
+                    RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL,
+                    error,
+                )
+            })?;
+        validate_current_stage_blocked_summary_bundle_digests(args, &digests).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_CURRENT_STAGE_BLOCKED_HANDOFF_LABEL,
+            privacy_boundary: "local_only_redacted_blocked_summary",
+            detail: "current-stage blocked summary passed redacted handoff checks; it does not clear full baseline evidence",
+        });
+    }
+    if let Some(path) = &args.release_artifact_manifest {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_release_artifact_manifest_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_RELEASE_ARTIFACT_MANIFEST_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_RELEASE_ARTIFACT_MANIFEST_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail:
+                "release.artifacts.v1 dry-run manifest passed schema and artifact boundary checks",
+        });
+    }
+    if let Some(path) = &args.release_sbom {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_release_sbom_report(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_RELEASE_SBOM_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_RELEASE_SBOM_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "SPDX-2.3 release dry-run SBOM passed redaction and package boundary checks",
+        });
+    }
+    if let Some(path) = &args.release_publication_evidence {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_release_publication_evidence_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_RELEASE_PUBLICATION_AUTOMATION_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_RELEASE_PUBLICATION_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.publication_evidence.v1 blocked dry-run evidence passed schema and publication boundary checks",
+        });
+    }
+    if let Some(path) = &args.github_release_publication_gate {
+        let report = read_release_readiness_evidence_report(path)?;
+        let (privacy_boundary, detail) = validate_github_release_publication_gate_report(&report)
+            .map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_GITHUB_PUBLICATION_GATE_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_GITHUB_PUBLICATION_GATE_LABEL,
+            privacy_boundary,
+            detail,
+        });
+    }
+    if let Some(path) = &args.macos_package_manifest {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_macos_package_manifest_report(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_MACOS_PACKAGE_MANIFEST_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_MACOS_PACKAGE_MANIFEST_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail:
+                "release.macos_package.v1 unsigned dry-run manifest passed package boundary checks",
+        });
+    }
+    if let Some(path) = &args.windows_package_manifest {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_windows_package_manifest_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_WINDOWS_PACKAGE_MANIFEST_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_WINDOWS_PACKAGE_MANIFEST_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail:
+                "release.windows_package.v1 unsigned dry-run manifest passed package boundary checks",
+        });
+    }
+    if let Some(path) = &args.signing_evidence {
+        validate_release_automation_evidence(path, &SIGNING_AUTOMATION_EVIDENCE_SPEC)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_SIGNING_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.signing_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.notarization_evidence {
+        validate_release_automation_evidence(path, &NOTARIZATION_AUTOMATION_EVIDENCE_SPEC)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_NOTARIZATION_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.notarization_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.macos_installer_evidence {
+        validate_release_automation_evidence(path, &MACOS_INSTALLER_AUTOMATION_EVIDENCE_SPEC)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_MACOS_INSTALLER_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.macos_installer_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.windows_installer_evidence {
+        validate_release_automation_evidence(path, &WINDOWS_INSTALLER_AUTOMATION_EVIDENCE_SPEC)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_WINDOWS_INSTALLER_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.windows_installer_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.windows_service_evidence {
+        validate_release_automation_evidence(path, &WINDOWS_SERVICE_AUTOMATION_EVIDENCE_SPEC)?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_WINDOWS_SERVICE_AUTOMATION_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.windows_service_evidence.v1 blocked dry-run evidence passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.macos_installer_lifecycle_plan {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_macos_installer_lifecycle_plan_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_MACOS_INSTALLER_LIFECYCLE_PLAN_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_MACOS_INSTALLER_LIFECYCLE_PLAN_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.macos_installer_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.windows_installer_lifecycle_plan {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_windows_installer_lifecycle_plan_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_WINDOWS_INSTALLER_LIFECYCLE_PLAN_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_WINDOWS_INSTALLER_LIFECYCLE_PLAN_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.windows_installer_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.windows_service_lifecycle_plan {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_windows_service_lifecycle_plan_report(&report).map_err(|error| {
+            release_readiness_manifest_error(
+                RELEASE_READINESS_WINDOWS_SERVICE_LIFECYCLE_PLAN_LABEL,
+                error,
+            )
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_WINDOWS_SERVICE_LIFECYCLE_PLAN_LABEL,
+            privacy_boundary: "blocked_release_evidence_manifest",
+            detail: "release.windows_service_lifecycle_plan.v1 dry-run operator plan passed schema and boundary checks",
+        });
+    }
+    if let Some(path) = &args.hardware_fault_evidence {
+        let report = read_release_readiness_evidence_report(path)?;
+        validate_hardware_fault_drill_evidence_report(&report).map_err(|error| {
+            release_readiness_manifest_error(RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL, error)
+        })?;
+        provided.push(ReleaseReadinessProvidedEvidence {
+            label: RELEASE_READINESS_HARDWARE_FAULT_DRILLS_LABEL,
+            privacy_boundary: "redacted_release_hardware_fault_drills",
+            detail: "release.hardware_fault_drills.v1 actual release-platform drill evidence passed schema and redaction checks",
+        });
+    }
+    Ok(provided)
+}
+
+fn release_readiness_model_distribution_is_packaged(
+    args: &ReleaseReadinessEvidenceArgs,
+    validation: &ModelManifestValidation,
+) -> Result<bool> {
+    let embedding_model_sha256 = validation
+        .models
+        .iter()
+        .filter(|model| model.model_type == "embedding")
+        .map(|model| model.sha256.as_str())
+        .collect::<BTreeSet<_>>();
+    if embedding_model_sha256.is_empty() {
+        return Ok(false);
+    }
+
+    for path in [&args.macos_package_manifest, &args.windows_package_manifest]
+        .into_iter()
+        .flatten()
+    {
+        let report = read_release_readiness_evidence_report(path)?;
+        if release_package_runtime_payload_contains_embedding_model(
+            &report,
+            &embedding_model_sha256,
+        )? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn release_package_runtime_payload_contains_embedding_model(
+    report: &str,
+    embedding_model_sha256: &BTreeSet<&str>,
+) -> Result<bool> {
+    const CONTEXT: &str = "embedding model distribution package payload";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "embedding model distribution blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("embedding model distribution blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("embedding model distribution blocked: expected JSON object")
+    })?;
+    let Some(payload_value) = object.get("runtime_payload") else {
+        return Ok(false);
+    };
+    let payload = payload_value
+        .as_object()
+        .ok_or_else(|| release_evidence_invalid(CONTEXT, "runtime_payload"))?;
+    require_release_evidence_string(
+        payload,
+        "schema_version",
+        "release.runtime_package_payload.v1",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(payload, "runtime_distribution_mode", "bundled", CONTEXT)?;
+    require_release_evidence_bool(payload, "runtime_package_binaries_included", true, CONTEXT)?;
+    let components = require_release_evidence_array(payload, "components", CONTEXT)?;
+    for component in components {
+        let component = component
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "components"))?;
+        let kind = require_release_evidence_string_value(component, "kind", CONTEXT)?;
+        let file = require_release_evidence_string_value(component, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        let sha256 = require_release_evidence_sha256_value(component, "sha256", CONTEXT)?;
+        if kind == "embedding-model" && embedding_model_sha256.contains(sha256) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn release_readiness_ocr_runtime_distribution_is_packaged(
+    args: &ReleaseReadinessEvidenceArgs,
+    validation: &OcrRuntimeManifestValidation,
+) -> Result<bool> {
+    let engine_sha256 = validation
+        .components
+        .iter()
+        .filter(|component| component.kind == "ocr-engine")
+        .map(|component| component.sha256.as_str())
+        .collect::<BTreeSet<_>>();
+    let renderer_sha256 = validation
+        .components
+        .iter()
+        .filter(|component| component.kind == "pdf-renderer")
+        .map(|component| component.sha256.as_str())
+        .collect::<BTreeSet<_>>();
+    let language_pack_sha256 = validation
+        .components
+        .iter()
+        .filter(|component| component.kind == "ocr-language-pack")
+        .map(|component| component.sha256.as_str())
+        .chain(
+            validation
+                .languages
+                .iter()
+                .map(|language| language.sha256.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+
+    if engine_sha256.is_empty() || renderer_sha256.is_empty() || language_pack_sha256.is_empty() {
+        return Ok(false);
+    }
+
+    for path in [&args.macos_package_manifest, &args.windows_package_manifest]
+        .into_iter()
+        .flatten()
+    {
+        let report = read_release_readiness_evidence_report(path)?;
+        if release_package_runtime_payload_contains_ocr_runtime(
+            &report,
+            &engine_sha256,
+            &renderer_sha256,
+            &language_pack_sha256,
+        )? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn release_package_runtime_payload_contains_ocr_runtime(
+    report: &str,
+    engine_sha256: &BTreeSet<&str>,
+    renderer_sha256: &BTreeSet<&str>,
+    language_pack_sha256: &BTreeSet<&str>,
+) -> Result<bool> {
+    const CONTEXT: &str = "OCR runtime distribution package payload";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "OCR runtime distribution blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("OCR runtime distribution blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("OCR runtime distribution blocked: expected JSON object"))?;
+    let Some(payload_value) = object.get("runtime_payload") else {
+        return Ok(false);
+    };
+    let payload = payload_value
+        .as_object()
+        .ok_or_else(|| release_evidence_invalid(CONTEXT, "runtime_payload"))?;
+    require_release_evidence_string(
+        payload,
+        "schema_version",
+        "release.runtime_package_payload.v1",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(payload, "runtime_distribution_mode", "bundled", CONTEXT)?;
+    require_release_evidence_bool(payload, "runtime_package_binaries_included", true, CONTEXT)?;
+    let components = require_release_evidence_array(payload, "components", CONTEXT)?;
+
+    let mut has_engine = false;
+    let mut has_renderer = false;
+    let mut has_language_pack = false;
+    for component in components {
+        let component = component
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "components"))?;
+        let kind = require_release_evidence_string_value(component, "kind", CONTEXT)?;
+        let file = require_release_evidence_string_value(component, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        let sha256 = require_release_evidence_sha256_value(component, "sha256", CONTEXT)?;
+        match kind {
+            "ocr-engine" if engine_sha256.contains(sha256) => has_engine = true,
+            "pdf-renderer" if renderer_sha256.contains(sha256) => has_renderer = true,
+            "ocr-language-pack" if language_pack_sha256.contains(sha256) => {
+                has_language_pack = true
+            }
+            _ => {}
+        }
+    }
+
+    Ok(has_engine && has_renderer && has_language_pack)
+}
+
+const SIGNING_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
+    ReleaseAutomationEvidenceSpec {
+        label: RELEASE_READINESS_SIGNING_AUTOMATION_LABEL,
+        schema_version: "release.signing_evidence.v1",
+        status_key: "signing_status",
+        evidence_boundary: "dry_run_no_signing_material",
+        digest_key: "artifact_manifest_sha256",
+        require_planned_actions: false,
+    };
+
+const NOTARIZATION_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
+    ReleaseAutomationEvidenceSpec {
+        label: RELEASE_READINESS_NOTARIZATION_AUTOMATION_LABEL,
+        schema_version: "release.notarization_evidence.v1",
+        status_key: "notarization_status",
+        evidence_boundary: "dry_run_no_notarization_credentials",
+        digest_key: "macos_package_manifest_sha256",
+        require_planned_actions: false,
+    };
+
+const MACOS_INSTALLER_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
+    ReleaseAutomationEvidenceSpec {
+        label: RELEASE_READINESS_MACOS_INSTALLER_AUTOMATION_LABEL,
+        schema_version: "release.macos_installer_evidence.v1",
+        status_key: "installer_lifecycle_status",
+        evidence_boundary: "dry_run_no_macos_installer_execution",
+        digest_key: "macos_package_manifest_sha256",
+        require_planned_actions: true,
+    };
+
+const WINDOWS_INSTALLER_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
+    ReleaseAutomationEvidenceSpec {
+        label: RELEASE_READINESS_WINDOWS_INSTALLER_AUTOMATION_LABEL,
+        schema_version: "release.windows_installer_evidence.v1",
+        status_key: "installer_lifecycle_status",
+        evidence_boundary: "dry_run_no_windows_installer_execution",
+        digest_key: "windows_package_manifest_sha256",
+        require_planned_actions: true,
+    };
+
+const WINDOWS_SERVICE_AUTOMATION_EVIDENCE_SPEC: ReleaseAutomationEvidenceSpec =
+    ReleaseAutomationEvidenceSpec {
+        label: RELEASE_READINESS_WINDOWS_SERVICE_AUTOMATION_LABEL,
+        schema_version: "release.windows_service_evidence.v1",
+        status_key: "service_lifecycle_status",
+        evidence_boundary: "dry_run_no_windows_service_registration",
+        digest_key: "windows_package_manifest_sha256",
+        require_planned_actions: true,
+    };
+
+fn validate_release_automation_evidence(
+    path: &Path,
+    spec: &ReleaseAutomationEvidenceSpec,
+) -> Result<()> {
+    let report = read_release_readiness_evidence_report(path)?;
+    validate_release_automation_evidence_report(&report, spec)
+        .map_err(|error| release_readiness_manifest_error(spec.label, error))
+}
+
+fn validate_release_automation_evidence_report(
+    report: &str,
+    spec: &ReleaseAutomationEvidenceSpec,
+) -> Result<()> {
+    if release_readiness_diagnostics_report_contains_private_marker(report) {
+        return Err(CliError::user(
+            "release automation evidence blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("release automation evidence blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("release automation evidence blocked: expected JSON object")
+    })?;
+
+    validate_release_automation_evidence_allowed_keys(object, spec)?;
+    require_release_json_string(object, "schema_version", spec.schema_version)?;
+    require_release_json_string(object, spec.status_key, "blocked")?;
+    require_release_json_string(object, "evidence_boundary", spec.evidence_boundary)?;
+    require_release_json_sha256(object, spec.digest_key)?;
+    require_release_json_non_empty_array(object, "required_evidence")?;
+    require_release_json_non_empty_array(object, "blocked_release_steps")?;
+    if spec.require_planned_actions {
+        require_release_blocked_planned_actions(object)?;
+    }
+
+    Ok(())
+}
+
+fn validate_release_automation_evidence_allowed_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    spec: &ReleaseAutomationEvidenceSpec,
+) -> Result<()> {
+    const CONTEXT: &str = "release automation evidence";
+    let allowed_keys = match spec.schema_version {
+        "release.signing_evidence.v1" => &[
+            "schema_version",
+            "version",
+            "signing_status",
+            "evidence_boundary",
+            "artifact_manifest_sha256",
+            "artifacts",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ][..],
+        "release.notarization_evidence.v1" => &[
+            "schema_version",
+            "version",
+            "notarization_status",
+            "evidence_boundary",
+            "macos_package_manifest_sha256",
+            "artifacts",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ][..],
+        "release.macos_installer_evidence.v1" => &[
+            "schema_version",
+            "version",
+            "installer_lifecycle_status",
+            "evidence_boundary",
+            "macos_package_manifest_sha256",
+            "installer_tool",
+            "installer_supporting_tools",
+            "admin_elevation",
+            "installation_status",
+            "rollback_validation_status",
+            "launch_agent_validation_status",
+            "installer_artifacts",
+            "planned_actions",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ][..],
+        "release.windows_installer_evidence.v1" => &[
+            "schema_version",
+            "version",
+            "installer_lifecycle_status",
+            "evidence_boundary",
+            "windows_package_manifest_sha256",
+            "installer_engine",
+            "admin_elevation",
+            "installation_status",
+            "rollback_validation_status",
+            "installer_artifacts",
+            "planned_actions",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ][..],
+        "release.windows_service_evidence.v1" => &[
+            "schema_version",
+            "version",
+            "service_lifecycle_status",
+            "evidence_boundary",
+            "windows_package_manifest_sha256",
+            "service_manager",
+            "admin_elevation",
+            "registration_status",
+            "recovery_validation_status",
+            "installer_artifacts",
+            "planned_actions",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ][..],
+        _ => {
+            return Err(CliError::user(
+                "release automation evidence blocked: schema_version is invalid",
+            ))
+        }
+    };
+    validate_release_evidence_allowed_keys(object, allowed_keys, CONTEXT)?;
+    validate_release_automation_object_array_keys(
+        object,
+        "artifacts",
+        &[
+            "name",
+            "kind",
+            "file",
+            "artifact_sha256",
+            "bytes",
+            "signature_status",
+            "verification_status",
+            "ticket_status",
+            "staple_status",
+            "gatekeeper_status",
+        ],
+    )?;
+    validate_release_automation_object_array_keys(
+        object,
+        "installer_artifacts",
+        &["kind", "file", "artifact_sha256", "bytes"],
+    )?;
+    validate_release_automation_object_array_keys(
+        object,
+        "planned_actions",
+        &["action", "action_status", "required_evidence"],
+    )
+}
+
+fn validate_release_automation_object_array_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    allowed_keys: &[&str],
+) -> Result<()> {
+    const CONTEXT: &str = "release automation evidence";
+    let Some(values) = object.get(key) else {
+        return Ok(());
+    };
+    let values = values
+        .as_array()
+        .ok_or_else(|| CliError::user(format!("{CONTEXT} blocked: {key} is invalid")))?;
+    for value in values {
+        let value = value
+            .as_object()
+            .ok_or_else(|| CliError::user(format!("{CONTEXT} blocked: {key} is invalid")))?;
+        validate_release_evidence_allowed_keys(value, allowed_keys, CONTEXT)?;
+    }
+    Ok(())
+}
+
+fn validate_release_publication_evidence_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "release publication evidence";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "release publication evidence blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("release publication evidence blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("release publication evidence blocked: expected JSON object")
+    })?;
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "publication_status",
+            "evidence_boundary",
+            "artifact_manifest_sha256",
+            "artifacts",
+            "required_evidence",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
+
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.publication_evidence.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_non_empty_string(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "publication_status", "blocked", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "evidence_boundary",
+        "dry_run_no_release_publication",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "artifact_manifest_sha256", CONTEXT)?;
+    for expected in [
+        "human_release_approval",
+        "github_actions_release_token",
+        "github_release_upload_evidence",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "required_evidence",
+            expected,
+            CONTEXT,
+        )?;
+    }
+    for expected in ["github_release_create", "github_release_upload"] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            expected,
+            CONTEXT,
+        )?;
+    }
+    require_release_evidence_exact_string_array(
+        object,
+        "prohibited_public_material",
+        &[
+            "github_token",
+            "release_pat",
+            "local_paths",
+            "raw_resume_data",
+            "diagnostic_packages",
+            "model_caches",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_non_empty_string(object, "notes", CONTEXT)?;
+    validate_release_publication_artifacts(object)?;
+    Ok(())
+}
+
+fn validate_release_publication_artifacts(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    const CONTEXT: &str = "release publication evidence";
+    let artifacts = require_release_evidence_array(object, "artifacts", CONTEXT)?;
+    let mut seen = BTreeSet::new();
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &["name", "file", "artifact_sha256", "bytes", "upload_status"],
+            CONTEXT,
+        )?;
+        let name = require_release_evidence_non_empty_string(artifact, "name", CONTEXT)?;
+        if !matches!(name, "resume-cli" | "resume-daemon" | "resume-benchmark")
+            || !seen.insert(name.to_string())
+        {
+            return Err(release_evidence_invalid(CONTEXT, "artifacts"));
+        }
+        let file = require_release_evidence_non_empty_string(artifact, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        require_release_evidence_sha256(artifact, "artifact_sha256", CONTEXT)?;
+        require_release_evidence_positive_u64(artifact, "bytes", CONTEXT)?;
+        require_release_evidence_string(artifact, "upload_status", "blocked", CONTEXT)?;
+    }
+    for required in ["resume-cli", "resume-daemon", "resume-benchmark"] {
+        if !seen.contains(required) {
+            return Err(release_evidence_invalid(CONTEXT, "artifacts"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_github_release_publication_gate_report(
+    report: &str,
+) -> Result<(&'static str, &'static str)> {
+    const CONTEXT: &str = "GitHub Release publication gate";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "GitHub Release publication gate blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("GitHub Release publication gate blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("GitHub Release publication gate blocked: expected JSON object")
+    })?;
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "repo",
+            "execution_mode",
+            "evidence_boundary",
+            "publication_status",
+            "approval_gate",
+            "secret_interface",
+            "artifact_manifest_sha256",
+            "publication_evidence_sha256",
+            "planned_steps",
+            "artifacts",
+            "prohibited_public_material",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
+
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.github_publication_gate.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_non_empty_string(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    let repo = require_release_evidence_non_empty_string(object, "repo", CONTEXT)?;
+    if !is_github_repo_slug(repo) {
+        return Err(release_evidence_invalid(CONTEXT, "repo"));
+    }
+    let execution_mode =
+        require_release_evidence_non_empty_string(object, "execution_mode", CONTEXT)?;
+    let (publication_status, artifact_publish_status, privacy_boundary, detail) =
+        match execution_mode {
+        "dry_run" => (
+            "blocked",
+            "blocked",
+            "blocked_release_evidence_manifest",
+            "release.github_publication_gate.v1 fail-closed dry-run gate passed schema and publication boundary checks",
+        ),
+        "execute" => (
+            "published_verified",
+            "uploaded_verified",
+            "verified_release_evidence_manifest",
+            "release.github_publication_gate.v1 verified execute gate passed upload and download evidence checks",
+        ),
+        _ => return Err(release_evidence_invalid(CONTEXT, "execution_mode")),
+    };
+    require_release_evidence_string(object, "evidence_boundary", privacy_boundary, CONTEXT)?;
+    require_release_evidence_string(object, "publication_status", publication_status, CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "approval_gate",
+        "human_release_approval_required",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "secret_interface",
+        "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "artifact_manifest_sha256", CONTEXT)?;
+    require_release_evidence_sha256(object, "publication_evidence_sha256", CONTEXT)?;
+    require_release_evidence_exact_string_array(
+        object,
+        "planned_steps",
+        &[
+            "validate_release_artifact_manifest",
+            "validate_publication_evidence_manifest",
+            "gh_release_create",
+            "gh_release_upload",
+            "gh_release_download_verify",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_exact_string_array(
+        object,
+        "prohibited_public_material",
+        &[
+            "github_token",
+            "release_pat",
+            "local_paths",
+            "raw_resume_data",
+            "diagnostic_packages",
+            "model_caches",
+        ],
+        CONTEXT,
+    )?;
+    let notes = require_release_evidence_non_empty_string(object, "notes", CONTEXT)?;
+    if execution_mode == "execute" {
+        let normalized_notes = notes.to_ascii_lowercase();
+        if normalized_notes.contains("synthetic")
+            || normalized_notes.contains("fixture")
+            || normalized_notes.contains("no real")
+        {
+            return Err(release_evidence_invalid(CONTEXT, "notes"));
+        }
+    }
+    validate_github_release_publication_gate_artifacts(object, artifact_publish_status)?;
+    Ok((privacy_boundary, detail))
+}
+
+fn validate_github_release_publication_gate_artifacts(
+    object: &serde_json::Map<String, serde_json::Value>,
+    expected_publish_status: &str,
+) -> Result<()> {
+    const CONTEXT: &str = "GitHub Release publication gate";
+    let artifacts = require_release_evidence_array(object, "artifacts", CONTEXT)?;
+    let mut seen = BTreeSet::new();
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &["name", "file", "artifact_sha256", "bytes", "publish_status"],
+            CONTEXT,
+        )?;
+        let name = require_release_evidence_non_empty_string(artifact, "name", CONTEXT)?;
+        if !matches!(name, "resume-cli" | "resume-daemon" | "resume-benchmark")
+            || !seen.insert(name.to_string())
+        {
+            return Err(release_evidence_invalid(CONTEXT, "artifacts"));
+        }
+        let file = require_release_evidence_non_empty_string(artifact, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        require_release_evidence_sha256(artifact, "artifact_sha256", CONTEXT)?;
+        require_release_evidence_positive_u64(artifact, "bytes", CONTEXT)?;
+        require_release_evidence_string(
+            artifact,
+            "publish_status",
+            expected_publish_status,
+            CONTEXT,
+        )?;
+    }
+    for required in ["resume-cli", "resume-daemon", "resume-benchmark"] {
+        if !seen.contains(required) {
+            return Err(release_evidence_invalid(CONTEXT, "artifacts"));
+        }
+    }
+    Ok(())
+}
+
+fn is_github_repo_slug(value: &str) -> bool {
+    let parts = value.split('/').collect::<Vec<_>>();
+    parts.len() == 2
+        && parts.iter().all(|part| {
+            !part.is_empty()
+            && part.bytes().all(
+                |byte| matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'.' | b'-'),
+            )
+        })
+}
+
+struct CurrentStageEvidenceDigests {
+    input_digests: BTreeMap<String, String>,
+    redacted_outputs: BTreeMap<String, String>,
+}
+
+impl CurrentStageEvidenceDigests {
+    fn input_digest(&self, key: &str) -> Option<&str> {
+        self.input_digests.get(key).map(String::as_str)
+    }
+
+    fn output_digest(&self, file: &str) -> Option<&str> {
+        self.redacted_outputs.get(file).map(String::as_str)
+    }
+}
+
+fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStageEvidenceDigests> {
+    const CONTEXT: &str = "current-stage validation evidence";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+        || report.contains("PRIVATE-")
+        || report.contains("private fake query")
+    {
+        return Err(CliError::user(
+            "current-stage validation evidence blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("current-stage validation evidence blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("current-stage validation evidence blocked: expected JSON object")
+    })?;
+
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "privacy_boundary",
+            "current_stage_target",
+            "runtime_distribution_mode",
+            "runtime_package_binaries_included",
+            "performance_optimization_deferred",
+            "release_readiness_exit",
+            "stable_release_expected_blocked",
+            "input_digests",
+            "parameters",
+            "preflight_probes",
+            "corpus_summary_observability",
+            "steps",
+            "redacted_outputs",
+            "privacy_sentinels",
+            "must_not_upload",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "resume-ir.current-stage-validation-evidence.v1",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "privacy_boundary",
+        "local_only_redacted_evidence_manifest",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "current_stage_target",
+        "reproducible_local_10k_baseline",
+        CONTEXT,
+    )?;
+    validate_current_stage_runtime_distribution(object, CONTEXT)?;
+    require_release_evidence_bool(object, "performance_optimization_deferred", true, CONTEXT)?;
+    require_release_evidence_u64(object, "release_readiness_exit", 1, CONTEXT)?;
+    require_release_evidence_bool(object, "stable_release_expected_blocked", true, CONTEXT)?;
+
+    let input_digests = require_release_evidence_object(object, "input_digests", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        input_digests,
+        &[
+            "dataset_manifest_sha256",
+            "query_set_sha256",
+            "model_manifest_sha256",
+            "ocr_runtime_manifest_sha256",
+        ],
+        CONTEXT,
+    )?;
+    let dataset_manifest_sha256 =
+        require_release_evidence_sha256_value(input_digests, "dataset_manifest_sha256", CONTEXT)?;
+    let query_set_sha256 =
+        require_release_evidence_sha256_value(input_digests, "query_set_sha256", CONTEXT)?;
+    let model_manifest_sha256 =
+        require_release_evidence_sha256_value(input_digests, "model_manifest_sha256", CONTEXT)?;
+    let ocr_runtime_manifest_sha256 = require_release_evidence_sha256_value(
+        input_digests,
+        "ocr_runtime_manifest_sha256",
+        CONTEXT,
+    )?;
+    let expected_input_digests = BTreeMap::from([
+        (
+            "dataset_manifest_sha256".to_string(),
+            dataset_manifest_sha256.to_string(),
+        ),
+        ("query_set_sha256".to_string(), query_set_sha256.to_string()),
+        (
+            "model_manifest_sha256".to_string(),
+            model_manifest_sha256.to_string(),
+        ),
+        (
+            "ocr_runtime_manifest_sha256".to_string(),
+            ocr_runtime_manifest_sha256.to_string(),
+        ),
+    ]);
+
+    let parameters = require_release_evidence_object(object, "parameters", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        parameters,
+        &[
+            "max_files",
+            "max_queries",
+            "top_k",
+            "embedding_dimension",
+            "ocr_worker_ticks",
+            "embedding_worker_ticks",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_min_u64(parameters, "max_files", 8000, CONTEXT)?;
+    require_release_evidence_min_u64(parameters, "max_queries", 500, CONTEXT)?;
+    for key in [
+        "top_k",
+        "embedding_dimension",
+        "ocr_worker_ticks",
+        "embedding_worker_ticks",
+    ] {
+        require_release_evidence_positive_u64(parameters, key, CONTEXT)?;
+    }
+
+    let preflight_probes = require_release_evidence_object(object, "preflight_probes", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        preflight_probes,
+        &["ocr_runtime_probe", "embedding_protocol"],
+        CONTEXT,
+    )?;
+    require_release_evidence_string(preflight_probes, "ocr_runtime_probe", "passed", CONTEXT)?;
+    require_release_evidence_string(preflight_probes, "embedding_protocol", "passed", CONTEXT)?;
+
+    let observability = object
+        .get("corpus_summary_observability")
+        .ok_or_else(|| release_evidence_invalid(CONTEXT, "corpus_summary_observability"))?;
+    validate_current_stage_aggregate_observability(observability, CONTEXT)?;
+
+    let steps = require_release_evidence_array(object, "steps", CONTEXT)?;
+    require_release_evidence_exact_steps(
+        steps,
+        &[
+            ("ocr_preflight", "success"),
+            ("ocr_manifest_draft", "success"),
+            ("ocr_manifest_validate", "success"),
+            ("model_manifest_draft", "success"),
+            ("model_manifest_validate", "success"),
+            ("model_preflight", "success"),
+            ("dataset_manifest", "success"),
+            ("import_private_corpus", "success"),
+            ("ocr_worker_bounded_loop", "success"),
+            ("embedding_worker_bounded_loop", "success"),
+            ("corpus_summary", "success"),
+            ("query_set_draft", "success"),
+            ("private_query_baseline", "success"),
+            ("baseline_shape_gate", "success"),
+            ("private_ocr_throughput_baseline", "success"),
+            ("ocr_throughput_baseline_gate", "success"),
+            ("redacted_diagnostics", "success"),
+            ("doctor", "success"),
+            ("fault_simulation_smoke", "success"),
+            ("fault_simulation_suite", "success"),
+            ("release_readiness_intake", "expected_blocked"),
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_step_exit_code(
+        steps,
+        "release_readiness_intake",
+        "expected_blocked",
+        1,
+        CONTEXT,
+    )?;
+
+    let redacted_outputs = require_release_evidence_array(object, "redacted_outputs", CONTEXT)?;
+    let required_output_files = [
+        "dataset-manifest.local.json",
+        "dataset-manifest.stdout.txt",
+        "ocr-runtime-manifest.local.json",
+        "ocr-preflight.json",
+        "ocr-draft-manifest.stdout.txt",
+        "ocr-validate-manifest.stdout.txt",
+        "model-manifest.local.json",
+        "model-draft-manifest.stdout.txt",
+        "model-validate-manifest.stdout.txt",
+        "model-preflight.json",
+        "import.stdout.txt",
+        "ocr-worker.stdout.txt",
+        "embedding-worker.stdout.txt",
+        "benchmark-corpus-summary.local.json",
+        "private-query-set.local.jsonl",
+        "query-set-draft.stdout.txt",
+        "private-benchmark-local.json",
+        "private-benchmark-gate.stdout.txt",
+        "private-ocr-throughput.json",
+        "ocr-throughput-gate.stdout.txt",
+        "redacted-diagnostics.json",
+        "doctor.out",
+        "fault-simulation-storage-low.json",
+        "fault-simulation-suite-local-safe.json",
+        "release-readiness.json",
+        "release-readiness.stderr.txt",
+    ];
+    let mut output_digests = BTreeMap::new();
+    for output in redacted_outputs {
+        let output = output
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "redacted_outputs"))?;
+        validate_release_evidence_allowed_keys(output, &["file", "sha256"], CONTEXT)?;
+        let file = require_release_evidence_string_value(output, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        if !required_output_files.contains(&file) {
+            return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+        }
+        let sha256 = require_release_evidence_sha256_value(output, "sha256", CONTEXT)?;
+        if output_digests
+            .insert(file.to_string(), sha256.to_string())
+            .is_some()
+        {
+            return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+        }
+    }
+    if output_digests.len() != required_output_files.len() {
+        return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+    }
+    for required_file in required_output_files {
+        if !output_digests.contains_key(required_file) {
+            return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+        }
+    }
+    require_release_evidence_output_digest(
+        &output_digests,
+        "dataset-manifest.local.json",
+        dataset_manifest_sha256,
+        CONTEXT,
+    )?;
+    require_release_evidence_output_digest(
+        &output_digests,
+        "private-query-set.local.jsonl",
+        query_set_sha256,
+        CONTEXT,
+    )?;
+    require_release_evidence_output_digest(
+        &output_digests,
+        "model-manifest.local.json",
+        model_manifest_sha256,
+        CONTEXT,
+    )?;
+    require_release_evidence_output_digest(
+        &output_digests,
+        "ocr-runtime-manifest.local.json",
+        ocr_runtime_manifest_sha256,
+        CONTEXT,
+    )?;
+
+    let privacy_sentinels = require_release_evidence_object(object, "privacy_sentinels", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        privacy_sentinels,
+        &[
+            "local_paths_included",
+            "raw_resume_text_included",
+            "raw_query_text_included",
+            "model_bytes_included",
+            "runtime_binaries_included",
+            "report_bodies_included",
+        ],
+        CONTEXT,
+    )?;
+    for key in [
+        "local_paths_included",
+        "raw_resume_text_included",
+        "raw_query_text_included",
+        "model_bytes_included",
+        "runtime_binaries_included",
+        "report_bodies_included",
+    ] {
+        require_release_evidence_bool(privacy_sentinels, key, false, CONTEXT)?;
+    }
+
+    for item in [
+        "raw resumes",
+        "query set",
+        "local manifests",
+        "benchmark reports",
+        "diagnostics",
+        "indexes",
+        "SQLite databases",
+        "model caches",
+        "runtime binaries",
+    ] {
+        require_release_evidence_array_contains_string(object, "must_not_upload", item, CONTEXT)?;
+    }
+
+    Ok(CurrentStageEvidenceDigests {
+        input_digests: expected_input_digests,
+        redacted_outputs: output_digests,
+    })
+}
+
+fn validate_current_stage_runtime_distribution(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+) -> Result<()> {
+    let mode = require_release_evidence_string_value(object, "runtime_distribution_mode", context)?;
+    let package_binaries_included =
+        require_release_evidence_bool_value(object, "runtime_package_binaries_included", context)?;
+    let expected_package_binaries = match mode {
+        "bundled" => true,
+        "external" => false,
+        _ => {
+            return Err(release_evidence_invalid(
+                context,
+                "runtime_distribution_mode",
+            ))
+        }
+    };
+    if package_binaries_included != expected_package_binaries {
+        return Err(release_evidence_invalid(
+            context,
+            "runtime_package_binaries_included",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_current_stage_evidence_bundle_digests(
+    args: &ReleaseReadinessEvidenceArgs,
+    digests: &CurrentStageEvidenceDigests,
+) -> Result<()> {
+    if let Some(path) = &args.benchmark_report {
+        require_current_stage_bundle_digest(
+            path,
+            digests.output_digest("private-benchmark-local.json"),
+            "private-benchmark-local.json",
+        )?;
+    }
+    if let Some(path) = &args.ocr_throughput_report {
+        require_current_stage_bundle_digest(
+            path,
+            digests.output_digest("private-ocr-throughput.json"),
+            "private-ocr-throughput.json",
+        )?;
+    }
+    if let Some(path) = &args.diagnostics_report {
+        require_current_stage_bundle_digest(
+            path,
+            digests.output_digest("redacted-diagnostics.json"),
+            "redacted-diagnostics.json",
+        )?;
+    }
+    if let Some(path) = &args.model_manifest {
+        require_current_stage_bundle_digest(
+            path,
+            digests.input_digest("model_manifest_sha256"),
+            "model_manifest_sha256",
+        )?;
+    }
+    if let Some(path) = &args.ocr_runtime_manifest {
+        require_current_stage_bundle_digest(
+            path,
+            digests.input_digest("ocr_runtime_manifest_sha256"),
+            "ocr_runtime_manifest_sha256",
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_current_stage_blocked_summary_bundle_digests(
+    args: &ReleaseReadinessEvidenceArgs,
+    digests: &CurrentStageEvidenceDigests,
+) -> Result<()> {
+    if let Some(path) = &args.diagnostics_report {
+        require_current_stage_bundle_digest(
+            path,
+            digests.output_digest("redacted-diagnostics.json"),
+            "redacted-diagnostics.json",
+        )?;
+    }
+    if let Some(path) = &args.model_manifest {
+        require_current_stage_bundle_digest(
+            path,
+            digests.input_digest("model_manifest_sha256"),
+            "model_manifest_sha256",
+        )?;
+    }
+    if let Some(path) = &args.ocr_runtime_manifest {
+        require_current_stage_bundle_digest(
+            path,
+            digests.input_digest("ocr_runtime_manifest_sha256"),
+            "ocr_runtime_manifest_sha256",
+        )?;
+    }
+
+    Ok(())
+}
+
+fn require_current_stage_bundle_digest(
+    path: &Path,
+    expected_sha256: Option<&str>,
+    artifact: &'static str,
+) -> Result<()> {
+    let expected_sha256 = expected_sha256.ok_or_else(|| {
+        CliError::user(format!(
+            "current-stage evidence bundle blocked: {artifact} digest is missing"
+        ))
+    })?;
+    let actual_sha256 = file_sha256_hex(path).map_err(|_| {
+        CliError::user(format!(
+            "current-stage evidence bundle blocked: {artifact} digest could not be verified"
+        ))
+    })?;
+    if actual_sha256 == expected_sha256 {
+        Ok(())
+    } else {
+        Err(CliError::user(format!(
+            "current-stage evidence bundle blocked: {artifact} digest mismatch"
+        )))
+    }
+}
+
+fn validate_current_stage_blocked_summary_manifest(
+    report: &str,
+) -> Result<CurrentStageEvidenceDigests> {
+    const CONTEXT: &str = "current-stage blocked summary";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+        || report.contains("PRIVATE-")
+        || report.contains("private fake query")
+    {
+        return Err(CliError::user(
+            "current-stage blocked summary blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("current-stage blocked summary blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("current-stage blocked summary blocked: expected JSON object")
+    })?;
+
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "privacy_boundary",
+            "validation_profile",
+            "current_stage_target",
+            "runtime_distribution_mode",
+            "runtime_package_binaries_included",
+            "private_corpus_read",
+            "full_baseline_satisfied",
+            "release_readiness_evidence",
+            "performance_optimization_deferred",
+            "blocked_step",
+            "blocked_category",
+            "blocked_reason",
+            "blocked_exit",
+            "input_digests",
+            "parameters",
+            "preflight_probes",
+            "corpus_summary_observability",
+            "steps",
+            "redacted_outputs",
+            "privacy_sentinels",
+            "not_completed",
+            "must_not_upload",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "resume-ir.current-stage-blocked-summary.v1",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "privacy_boundary",
+        "local_only_redacted_blocked_summary",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(object, "validation_profile", "full", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "current_stage_target",
+        "reproducible_local_10k_baseline",
+        CONTEXT,
+    )?;
+    validate_current_stage_runtime_distribution(object, CONTEXT)?;
+    require_release_evidence_bool_value(object, "private_corpus_read", CONTEXT)?;
+    require_release_evidence_bool_value(object, "full_baseline_satisfied", CONTEXT)?;
+    require_release_evidence_bool(object, "release_readiness_evidence", false, CONTEXT)?;
+    require_release_evidence_bool(object, "performance_optimization_deferred", true, CONTEXT)?;
+    let blocked_step = require_release_evidence_non_empty_string(object, "blocked_step", CONTEXT)?;
+    let blocked_category =
+        require_release_evidence_non_empty_string(object, "blocked_category", CONTEXT)?;
+    if ![
+        "ocr",
+        "embedding",
+        "import/parser",
+        "query-set",
+        "benchmark",
+        "diagnostics",
+        "fault-injection",
+        "release-readiness",
+    ]
+    .contains(&blocked_category)
+    {
+        return Err(release_evidence_invalid(CONTEXT, "blocked_category"));
+    }
+    require_release_evidence_non_empty_string(object, "blocked_reason", CONTEXT)?;
+    let blocked_exit =
+        require_release_evidence_positive_u64_value(object, "blocked_exit", CONTEXT)?;
+
+    let input_digests = require_release_evidence_object(object, "input_digests", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        input_digests,
+        &[
+            "dataset_manifest_sha256",
+            "query_set_sha256",
+            "model_manifest_sha256",
+            "ocr_runtime_manifest_sha256",
+        ],
+        CONTEXT,
+    )?;
+    let mut expected_input_digests = BTreeMap::new();
+    for key in [
+        "dataset_manifest_sha256",
+        "query_set_sha256",
+        "model_manifest_sha256",
+        "ocr_runtime_manifest_sha256",
+    ] {
+        if let Some(sha256) =
+            require_release_evidence_optional_sha256_value(input_digests, key, CONTEXT)?
+        {
+            expected_input_digests.insert(key.to_string(), sha256.to_string());
+        }
+    }
+
+    let parameters = require_release_evidence_object(object, "parameters", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        parameters,
+        &[
+            "max_files",
+            "max_queries",
+            "top_k",
+            "embedding_dimension",
+            "embedding_runtime_bin_dir_configured",
+            "ocr_worker_ticks",
+            "embedding_worker_ticks",
+            "query_set_min_queries",
+            "baseline_min_documents",
+            "baseline_min_queries",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_min_u64(parameters, "max_files", 8000, CONTEXT)?;
+    require_release_evidence_min_u64(parameters, "max_queries", 500, CONTEXT)?;
+    require_release_evidence_min_u64(parameters, "baseline_min_documents", 8000, CONTEXT)?;
+    require_release_evidence_min_u64(parameters, "baseline_min_queries", 500, CONTEXT)?;
+    for key in [
+        "top_k",
+        "embedding_dimension",
+        "ocr_worker_ticks",
+        "embedding_worker_ticks",
+        "query_set_min_queries",
+    ] {
+        require_release_evidence_positive_u64(parameters, key, CONTEXT)?;
+    }
+    require_release_evidence_bool_value(
+        parameters,
+        "embedding_runtime_bin_dir_configured",
+        CONTEXT,
+    )?;
+
+    let preflight_probes = require_release_evidence_object(object, "preflight_probes", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        preflight_probes,
+        &["ocr_runtime_probe", "embedding_protocol"],
+        CONTEXT,
+    )?;
+    let ocr_runtime_probe =
+        require_release_evidence_string_value(preflight_probes, "ocr_runtime_probe", CONTEXT)?;
+    let embedding_protocol =
+        require_release_evidence_string_value(preflight_probes, "embedding_protocol", CONTEXT)?;
+    for (key, status) in [
+        ("ocr_runtime_probe", ocr_runtime_probe),
+        ("embedding_protocol", embedding_protocol),
+    ] {
+        if !["passed", "blocked", "not_run"].contains(&status) {
+            return Err(release_evidence_invalid(CONTEXT, key));
+        }
+    }
+
+    let observability = object
+        .get("corpus_summary_observability")
+        .ok_or_else(|| release_evidence_invalid(CONTEXT, "corpus_summary_observability"))?;
+    validate_current_stage_aggregate_observability(observability, CONTEXT)?;
+
+    let steps = require_release_evidence_array(object, "steps", CONTEXT)?;
+    let mut step_statuses = BTreeMap::new();
+    let mut saw_blocked_step = false;
+    for step in steps {
+        let step = step
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "steps"))?;
+        validate_release_evidence_allowed_keys(step, &["id", "status", "exit_code"], CONTEXT)?;
+        let id = require_release_evidence_non_empty_string(step, "id", CONTEXT)?;
+        let status = require_release_evidence_string_value(step, "status", CONTEXT)?;
+        if !["success", "blocked", "expected_blocked"].contains(&status) {
+            return Err(release_evidence_invalid(CONTEXT, "steps"));
+        }
+        if step_statuses
+            .insert(id.to_string(), status.to_string())
+            .is_some()
+        {
+            return Err(release_evidence_invalid(CONTEXT, "steps"));
+        }
+        if status == "blocked" {
+            let exit_code =
+                require_release_evidence_positive_u64_value(step, "exit_code", CONTEXT)?;
+            if id == blocked_step && exit_code == blocked_exit {
+                saw_blocked_step = true;
+            }
+        }
+    }
+    if !saw_blocked_step {
+        return Err(release_evidence_invalid(CONTEXT, "steps"));
+    }
+    validate_current_stage_blocked_preflight_consistency(
+        &step_statuses,
+        "ocr_preflight",
+        ocr_runtime_probe,
+        CONTEXT,
+    )?;
+    validate_current_stage_blocked_preflight_consistency(
+        &step_statuses,
+        "model_preflight",
+        embedding_protocol,
+        CONTEXT,
+    )?;
+
+    let redacted_outputs = require_release_evidence_array(object, "redacted_outputs", CONTEXT)?;
+    let mut seen_outputs = BTreeSet::new();
+    let mut output_digests = BTreeMap::new();
+    for output in redacted_outputs {
+        let output = output
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "redacted_outputs"))?;
+        validate_release_evidence_allowed_keys(output, &["file", "sha256"], CONTEXT)?;
+        let file = require_release_evidence_string_value(output, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) || !seen_outputs.insert(file.to_string()) {
+            return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+        }
+        if let Some(sha256) =
+            require_release_evidence_optional_sha256_value(output, "sha256", CONTEXT)?
+        {
+            output_digests.insert(file.to_string(), sha256.to_string());
+        }
+    }
+    if output_digests.is_empty() {
+        return Err(release_evidence_invalid(CONTEXT, "redacted_outputs"));
+    }
+
+    let privacy_sentinels = require_release_evidence_object(object, "privacy_sentinels", CONTEXT)?;
+    validate_release_evidence_allowed_keys(
+        privacy_sentinels,
+        &[
+            "local_paths_included",
+            "raw_resume_text_included",
+            "raw_query_text_included",
+            "model_bytes_included",
+            "runtime_binaries_included",
+            "report_bodies_included",
+        ],
+        CONTEXT,
+    )?;
+    for key in [
+        "local_paths_included",
+        "raw_resume_text_included",
+        "raw_query_text_included",
+        "model_bytes_included",
+        "runtime_binaries_included",
+        "report_bodies_included",
+    ] {
+        require_release_evidence_bool(privacy_sentinels, key, false, CONTEXT)?;
+    }
+    require_release_evidence_array_contains_string(
+        object,
+        "not_completed",
+        "stable release readiness",
+        CONTEXT,
+    )?;
+    for item in [
+        "raw resumes",
+        "query set",
+        "local manifests",
+        "benchmark reports",
+        "diagnostics",
+        "indexes",
+        "SQLite databases",
+        "model caches",
+        "runtime binaries",
+    ] {
+        require_release_evidence_array_contains_string(object, "must_not_upload", item, CONTEXT)?;
+    }
+
+    Ok(CurrentStageEvidenceDigests {
+        input_digests: expected_input_digests,
+        redacted_outputs: output_digests,
+    })
+}
+
+fn validate_current_stage_blocked_preflight_consistency(
+    step_statuses: &BTreeMap<String, String>,
+    step_id: &str,
+    probe_status: &str,
+    context: &'static str,
+) -> Result<()> {
+    match step_statuses.get(step_id).map(String::as_str) {
+        Some("success") if probe_status == "passed" => Ok(()),
+        Some("blocked") if probe_status == "blocked" => Ok(()),
+        None if probe_status == "not_run" => Ok(()),
+        _ => Err(release_evidence_invalid(context, "preflight_probes")),
+    }
+}
+
+fn validate_release_artifact_manifest_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "release artifact manifest";
+    if release_readiness_diagnostics_report_contains_private_marker(report) {
+        return Err(CliError::user(
+            "release artifact manifest blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("release artifact manifest blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("release artifact manifest blocked: expected JSON object"))?;
+
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "packaging_status",
+            "artifacts",
+            "runtime_bundle_manifests",
+            "blocked_release_steps",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_string(object, "schema_version", "release.artifacts.v1", CONTEXT)?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "packaging_status", "blocked", CONTEXT)?;
+    let artifacts = require_release_evidence_array(object, "artifacts", CONTEXT)?;
+    let required_names = ["resume-cli", "resume-daemon", "resume-benchmark"];
+    let mut seen_names = BTreeSet::new();
+
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &["name", "file", "sha256", "bytes"],
+            CONTEXT,
+        )?;
+        let name = require_release_evidence_string_value(artifact, "name", CONTEXT)?;
+        if !required_names.contains(&name) {
+            return Err(release_evidence_invalid(CONTEXT, "artifacts"));
+        }
+        let file = require_release_evidence_string_value(artifact, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        require_release_evidence_sha256(artifact, "sha256", CONTEXT)?;
+        require_release_evidence_positive_u64(artifact, "bytes", CONTEXT)?;
+        seen_names.insert(name.to_string());
+    }
+
+    if !required_names.iter().all(|name| seen_names.contains(*name)) {
+        return Err(release_evidence_invalid(CONTEXT, "artifacts"));
+    }
+    if let Some(runtime_bundles_value) = object.get("runtime_bundle_manifests") {
+        let runtime_bundles = runtime_bundles_value
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "runtime_bundle_manifests"))?;
+        if runtime_bundles.is_empty() {
+            return Err(release_evidence_invalid(
+                CONTEXT,
+                "runtime_bundle_manifests",
+            ));
+        }
+        for runtime_bundle in runtime_bundles {
+            let runtime_bundle = runtime_bundle
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "runtime_bundle_manifests"))?;
+            validate_release_evidence_allowed_keys(
+                runtime_bundle,
+                &[
+                    "file",
+                    "sha256",
+                    "bytes",
+                    "schema_version",
+                    "runtime_distribution_mode",
+                    "runtime_package_binaries_included",
+                    "runtime_binaries_included",
+                ],
+                CONTEXT,
+            )?;
+            let file = require_release_evidence_string_value(runtime_bundle, "file", CONTEXT)?;
+            if !is_release_evidence_basename(file) {
+                return Err(release_evidence_invalid(CONTEXT, "file"));
+            }
+            require_release_evidence_sha256(runtime_bundle, "sha256", CONTEXT)?;
+            require_release_evidence_positive_u64(runtime_bundle, "bytes", CONTEXT)?;
+            require_release_evidence_string(
+                runtime_bundle,
+                "schema_version",
+                "release.runtime_bundle.v1",
+                CONTEXT,
+            )?;
+            require_release_evidence_string(
+                runtime_bundle,
+                "runtime_distribution_mode",
+                "bundled",
+                CONTEXT,
+            )?;
+            require_release_evidence_bool(
+                runtime_bundle,
+                "runtime_package_binaries_included",
+                true,
+                CONTEXT,
+            )?;
+            require_release_evidence_bool(
+                runtime_bundle,
+                "runtime_binaries_included",
+                false,
+                CONTEXT,
+            )?;
+        }
+    }
+    for step in [
+        "packaging",
+        "signing",
+        "notarization",
+        "github_release_upload",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_release_sbom_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "release SBOM";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "release SBOM blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("release SBOM blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("release SBOM blocked: expected JSON object"))?;
+
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "spdxVersion",
+            "dataLicense",
+            "SPDXID",
+            "name",
+            "documentNamespace",
+            "creationInfo",
+            "packages",
+            "relationships",
+        ],
+        CONTEXT,
+    )?;
+    validate_release_sbom_root_nested_objects(object)?;
+    require_release_evidence_string(object, "spdxVersion", "SPDX-2.3", CONTEXT)?;
+    require_release_evidence_string(object, "SPDXID", "SPDXRef-DOCUMENT", CONTEXT)?;
+    let name = require_release_evidence_string_value(object, "name", CONTEXT)?;
+    let Some(version) = name.strip_prefix("resume-ir-") else {
+        return Err(release_evidence_invalid(CONTEXT, "name"));
+    };
+    validate_release_evidence_version(version, CONTEXT)?;
+    let packages = require_release_evidence_array(object, "packages", CONTEXT)?;
+    let required_names = ["resume-cli", "resume-daemon", "benchmark-runner"];
+    let mut seen_names = BTreeSet::new();
+
+    for package in packages {
+        let package = package
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "packages"))?;
+        validate_release_evidence_allowed_keys(
+            package,
+            &[
+                "SPDXID",
+                "name",
+                "versionInfo",
+                "supplier",
+                "downloadLocation",
+                "filesAnalyzed",
+                "licenseConcluded",
+                "licenseDeclared",
+                "copyrightText",
+                "checksums",
+                "annotations",
+                "externalRefs",
+                "dependencies",
+            ],
+            CONTEXT,
+        )?;
+        validate_release_sbom_package_nested_objects(package)?;
+        let name = require_release_evidence_string_value(package, "name", CONTEXT)?;
+        if required_names.contains(&name) {
+            seen_names.insert(name.to_string());
+        }
+        match package
+            .get("filesAnalyzed")
+            .and_then(serde_json::Value::as_bool)
+        {
+            Some(false) => {}
+            _ => return Err(release_evidence_invalid(CONTEXT, "filesAnalyzed")),
+        }
+        if require_release_evidence_string_value(package, "licenseDeclared", CONTEXT)?
+            .trim()
+            .is_empty()
+        {
+            return Err(release_evidence_invalid(CONTEXT, "licenseDeclared"));
+        }
+        validate_release_sbom_external_refs(package)?;
+    }
+
+    if !required_names.iter().all(|name| seen_names.contains(*name)) {
+        return Err(release_evidence_invalid(CONTEXT, "packages"));
+    }
+
+    Ok(())
+}
+
+fn validate_release_sbom_root_nested_objects(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    const CONTEXT: &str = "release SBOM";
+    if let Some(creation_info) = object.get("creationInfo") {
+        let creation_info = creation_info
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "creationInfo"))?;
+        validate_release_evidence_allowed_keys(creation_info, &["created", "creators"], CONTEXT)?;
+    }
+    if let Some(relationships) = object.get("relationships") {
+        let relationships = relationships
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "relationships"))?;
+        for relationship in relationships {
+            let relationship = relationship
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "relationships"))?;
+            validate_release_evidence_allowed_keys(
+                relationship,
+                &["spdxElementId", "relationshipType", "relatedSpdxElement"],
+                CONTEXT,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_release_sbom_package_nested_objects(
+    package: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    const CONTEXT: &str = "release SBOM";
+    if let Some(checksums) = package.get("checksums") {
+        let checksums = checksums
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "checksums"))?;
+        for checksum in checksums {
+            let checksum = checksum
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "checksums"))?;
+            validate_release_evidence_allowed_keys(
+                checksum,
+                &["algorithm", "checksumValue"],
+                CONTEXT,
+            )?;
+        }
+    }
+    if let Some(annotations) = package.get("annotations") {
+        let annotations = annotations
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "annotations"))?;
+        for annotation in annotations {
+            let annotation = annotation
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "annotations"))?;
+            validate_release_evidence_allowed_keys(
+                annotation,
+                &["annotationType", "annotator", "annotationDate", "comment"],
+                CONTEXT,
+            )?;
+        }
+    }
+    if let Some(external_refs) = package.get("externalRefs") {
+        let external_refs = external_refs
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "externalRefs"))?;
+        for external_ref in external_refs {
+            let external_ref = external_ref
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "externalRefs"))?;
+            validate_release_evidence_allowed_keys(
+                external_ref,
+                &["referenceCategory", "referenceType", "referenceLocator"],
+                CONTEXT,
+            )?;
+        }
+    }
+    if let Some(dependencies) = package.get("dependencies") {
+        let dependencies = dependencies
+            .as_array()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "dependencies"))?;
+        for dependency in dependencies {
+            let dependency = dependency
+                .as_object()
+                .ok_or_else(|| release_evidence_invalid(CONTEXT, "dependencies"))?;
+            validate_release_evidence_allowed_keys(
+                dependency,
+                &[
+                    "name",
+                    "req",
+                    "kind",
+                    "optional",
+                    "uses_default_features",
+                    "features",
+                    "rename",
+                    "target",
+                ],
+                CONTEXT,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_macos_package_manifest_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "macOS package manifest";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "macOS package manifest blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("macOS package manifest blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("macOS package manifest blocked: expected JSON object"))?;
+
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "packaging_status",
+            "install_location",
+            "signing_status",
+            "notarization_status",
+            "runtime_payload",
+            "artifacts",
+            "blocked_release_steps",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.macos_package.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "packaging_status", "unsigned_dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "install_location", "/usr/local/bin", CONTEXT)?;
+    require_release_evidence_string(object, "signing_status", "unsigned", CONTEXT)?;
+    require_release_evidence_string(object, "notarization_status", "not_requested", CONTEXT)?;
+    validate_release_package_artifacts(object, CONTEXT, &["pkg", "dmg"])?;
+    validate_release_package_runtime_payload(object, CONTEXT, "/usr/local/lib/resume-ir/runtime")?;
+    for step in [
+        "signing",
+        "notarization",
+        "github_release_upload",
+        "installer_lifecycle_validation",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_windows_package_manifest_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "Windows package manifest";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "Windows package manifest blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("Windows package manifest blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("Windows package manifest blocked: expected JSON object"))?;
+
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "packaging_status",
+            "installer_kind",
+            "install_location",
+            "signing_status",
+            "runtime_payload",
+            "artifacts",
+            "blocked_release_steps",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.windows_package.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "packaging_status", "unsigned_dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "installer_kind", "msi", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "install_location",
+        "ProgramFilesFolder/resume-ir",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(object, "signing_status", "unsigned", CONTEXT)?;
+    validate_release_package_artifacts(object, CONTEXT, &["msi"])?;
+    validate_release_package_runtime_payload(
+        object,
+        CONTEXT,
+        "ProgramFilesFolder/resume-ir/runtime",
+    )?;
+    for step in [
+        "signing",
+        "github_release_upload",
+        "installer_lifecycle_validation",
+        "service_install_validation",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+
+    Ok(())
+}
+
+struct InstallerLifecycleActionExpectation {
+    action: &'static str,
+    command: &'static str,
+    target_kind: &'static str,
+}
+
+fn validate_macos_installer_lifecycle_plan_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "macOS installer lifecycle plan";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "macOS installer lifecycle plan blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("macOS installer lifecycle plan blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("macOS installer lifecycle plan blocked: expected JSON object")
+    })?;
+
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "execution_mode",
+            "installer_lifecycle_status",
+            "evidence_boundary",
+            "macos_package_manifest_sha256",
+            "admin_elevation",
+            "release_runner",
+            "installer_artifacts",
+            "planned_actions",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.macos_installer_lifecycle_plan.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "execution_mode", "dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "installer_lifecycle_status", "blocked", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "evidence_boundary",
+        "dry_run_no_macos_installer_execution",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "macos_package_manifest_sha256", CONTEXT)?;
+    require_release_evidence_string(object, "admin_elevation", "required_not_observed", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "release_runner",
+        "macos_required_not_observed",
+        CONTEXT,
+    )?;
+
+    let artifacts = validate_installer_lifecycle_artifacts(object, CONTEXT, &["pkg", "dmg"])?;
+    validate_installer_lifecycle_actions(
+        object,
+        CONTEXT,
+        &artifacts,
+        &[
+            InstallerLifecycleActionExpectation {
+                action: "install",
+                command: "installer",
+                target_kind: "pkg",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "upgrade",
+                command: "installer",
+                target_kind: "pkg",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "uninstall",
+                command: "pkgutil",
+                target_kind: "pkg",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "rollback",
+                command: "installer",
+                target_kind: "pkg",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "launch-agent-start",
+                command: "launchctl",
+                target_kind: "dmg",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "launch-agent-stop",
+                command: "launchctl",
+                target_kind: "dmg",
+            },
+        ],
+    )?;
+    for step in [
+        "macos_pkg_install",
+        "macos_pkg_upgrade",
+        "macos_pkg_uninstall",
+        "macos_pkg_rollback",
+        "macos_launch_agent_start",
+        "macos_launch_agent_stop",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+    validate_installer_lifecycle_prohibited_material(object, CONTEXT)
+}
+
+fn validate_windows_installer_lifecycle_plan_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "Windows installer lifecycle plan";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "Windows installer lifecycle plan blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("Windows installer lifecycle plan blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("Windows installer lifecycle plan blocked: expected JSON object")
+    })?;
+
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "execution_mode",
+            "installer_lifecycle_status",
+            "evidence_boundary",
+            "windows_package_manifest_sha256",
+            "installer_engine",
+            "admin_elevation",
+            "release_runner",
+            "installation_status",
+            "rollback_validation_status",
+            "installer_artifacts",
+            "planned_actions",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.windows_installer_lifecycle_plan.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "execution_mode", "dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "installer_lifecycle_status", "blocked", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "evidence_boundary",
+        "dry_run_no_windows_installer_execution",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "windows_package_manifest_sha256", CONTEXT)?;
+    require_release_evidence_string(object, "installer_engine", "msiexec.exe", CONTEXT)?;
+    require_release_evidence_string(object, "admin_elevation", "required_not_observed", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "release_runner",
+        "windows_required_not_observed",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(object, "installation_status", "not_installed", CONTEXT)?;
+    require_release_evidence_string(object, "rollback_validation_status", "blocked", CONTEXT)?;
+
+    let artifacts = validate_installer_lifecycle_artifacts(object, CONTEXT, &["msi"])?;
+    validate_installer_lifecycle_actions(
+        object,
+        CONTEXT,
+        &artifacts,
+        &[
+            InstallerLifecycleActionExpectation {
+                action: "install",
+                command: "msiexec.exe",
+                target_kind: "msi",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "upgrade",
+                command: "msiexec.exe",
+                target_kind: "msi",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "repair",
+                command: "msiexec.exe",
+                target_kind: "msi",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "uninstall",
+                command: "msiexec.exe",
+                target_kind: "msi",
+            },
+            InstallerLifecycleActionExpectation {
+                action: "rollback",
+                command: "msiexec.exe",
+                target_kind: "msi",
+            },
+        ],
+    )?;
+    for step in [
+        "windows_msi_install",
+        "windows_msi_upgrade",
+        "windows_msi_repair",
+        "windows_msi_uninstall",
+        "windows_msi_rollback",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+    validate_installer_lifecycle_prohibited_material(object, CONTEXT)
+}
+
+fn validate_installer_lifecycle_artifacts(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+    required_kinds: &[&'static str],
+) -> Result<BTreeMap<String, String>> {
+    let artifacts = require_release_evidence_array(object, "installer_artifacts", context)?;
+    let mut artifacts_by_file = BTreeMap::new();
+    let mut seen_kinds = BTreeSet::new();
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "installer_artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &["kind", "file", "artifact_sha256", "bytes"],
+            context,
+        )?;
+        let kind = require_release_evidence_string_value(artifact, "kind", context)?;
+        if !required_kinds.contains(&kind) {
+            return Err(release_evidence_invalid(context, "installer_artifacts"));
+        }
+        let file = require_release_evidence_string_value(artifact, "file", context)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(context, "file"));
+        }
+        require_release_evidence_sha256(artifact, "artifact_sha256", context)?;
+        require_release_evidence_positive_u64(artifact, "bytes", context)?;
+        if artifacts_by_file
+            .insert(file.to_string(), kind.to_string())
+            .is_some()
+        {
+            return Err(release_evidence_invalid(context, "installer_artifacts"));
+        }
+        seen_kinds.insert(kind.to_string());
+    }
+    if required_kinds.iter().all(|kind| seen_kinds.contains(*kind)) {
+        Ok(artifacts_by_file)
+    } else {
+        Err(release_evidence_invalid(context, "installer_artifacts"))
+    }
+}
+
+fn validate_installer_lifecycle_actions(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+    artifacts_by_file: &BTreeMap<String, String>,
+    expected_actions: &[InstallerLifecycleActionExpectation],
+) -> Result<()> {
+    let actions = require_release_evidence_array(object, "planned_actions", context)?;
+    if actions.len() != expected_actions.len() {
+        return Err(release_evidence_invalid(context, "planned_actions"));
+    }
+    let mut seen_actions = BTreeSet::new();
+    for (action, expected) in actions.iter().zip(expected_actions.iter()) {
+        let action = action
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "planned_actions"))?;
+        validate_release_evidence_allowed_keys(
+            action,
+            &[
+                "action",
+                "command",
+                "target_artifact",
+                "dry_run_intent",
+                "requires_approval",
+                "action_status",
+            ],
+            context,
+        )?;
+        let action_name = require_release_evidence_string_value(action, "action", context)?;
+        if action_name != expected.action || !seen_actions.insert(action_name.to_string()) {
+            return Err(release_evidence_invalid(context, "planned_actions"));
+        }
+        require_release_evidence_string(action, "command", expected.command, context)?;
+        let target_artifact =
+            require_release_evidence_string_value(action, "target_artifact", context)?;
+        if !is_release_evidence_basename(target_artifact) {
+            return Err(release_evidence_invalid(context, "target_artifact"));
+        }
+        match artifacts_by_file.get(target_artifact) {
+            Some(kind) if kind == expected.target_kind => {}
+            _ => return Err(release_evidence_invalid(context, "target_artifact")),
+        }
+        if require_release_evidence_string_value(action, "dry_run_intent", context)?
+            .trim()
+            .is_empty()
+        {
+            return Err(release_evidence_invalid(context, "dry_run_intent"));
+        }
+        require_release_evidence_bool(action, "requires_approval", true, context)?;
+        require_release_evidence_string(action, "action_status", "blocked", context)?;
+    }
+    Ok(())
+}
+
+fn validate_installer_lifecycle_prohibited_material(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+) -> Result<()> {
+    for material in [
+        "installer_tokens",
+        "administrator_passwords",
+        "local_paths",
+        "raw_installer_logs",
+        "raw_resume_data",
+        "diagnostic_packages",
+        "model_artifact_caches",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "prohibited_public_material",
+            material,
+            context,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_windows_service_lifecycle_plan_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "Windows service lifecycle plan";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+    {
+        return Err(CliError::user(
+            "Windows service lifecycle plan blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("Windows service lifecycle plan blocked: invalid JSON"))?;
+    let object = value.as_object().ok_or_else(|| {
+        CliError::user("Windows service lifecycle plan blocked: expected JSON object")
+    })?;
+
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "version",
+            "execution_mode",
+            "service_lifecycle_status",
+            "evidence_boundary",
+            "windows_package_manifest_sha256",
+            "service_manager",
+            "admin_elevation",
+            "release_runner",
+            "registration_status",
+            "recovery_validation_status",
+            "rollback_validation_status",
+            "service_artifacts",
+            "planned_actions",
+            "blocked_release_steps",
+            "prohibited_public_material",
+            "notes",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.windows_service_lifecycle_plan.v1",
+        CONTEXT,
+    )?;
+    let version = require_release_evidence_string_value(object, "version", CONTEXT)?;
+    validate_release_evidence_version(version, CONTEXT)?;
+    require_release_evidence_string(object, "execution_mode", "dry_run", CONTEXT)?;
+    require_release_evidence_string(object, "service_lifecycle_status", "blocked", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "evidence_boundary",
+        "dry_run_no_windows_service_registration",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "windows_package_manifest_sha256", CONTEXT)?;
+    require_release_evidence_string(object, "service_manager", "sc.exe", CONTEXT)?;
+    require_release_evidence_string(object, "admin_elevation", "required_not_observed", CONTEXT)?;
+    require_release_evidence_string(
+        object,
+        "release_runner",
+        "windows_required_not_observed",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(object, "registration_status", "not_registered", CONTEXT)?;
+    require_release_evidence_string(object, "recovery_validation_status", "blocked", CONTEXT)?;
+    require_release_evidence_string(object, "rollback_validation_status", "blocked", CONTEXT)?;
+
+    let target_artifacts = validate_windows_service_lifecycle_artifacts(object)?;
+    validate_windows_service_lifecycle_actions(object, &target_artifacts)?;
+    for step in [
+        "windows_service_install",
+        "windows_service_start",
+        "windows_service_status",
+        "windows_service_stop",
+        "windows_service_recovery",
+        "windows_service_uninstall",
+        "windows_service_rollback",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "blocked_release_steps",
+            step,
+            CONTEXT,
+        )?;
+    }
+    for material in [
+        "service_tokens",
+        "administrator_passwords",
+        "local_paths",
+        "raw_service_logs",
+        "raw_resume_data",
+        "diagnostic_packages",
+        "model_artifact_caches",
+    ] {
+        require_release_evidence_array_contains_string(
+            object,
+            "prohibited_public_material",
+            material,
+            CONTEXT,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_windows_service_lifecycle_artifacts(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<BTreeSet<String>> {
+    const CONTEXT: &str = "Windows service lifecycle plan";
+    let artifacts = require_release_evidence_array(object, "service_artifacts", CONTEXT)?;
+    let mut target_artifacts = BTreeSet::new();
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "service_artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &[
+                "kind",
+                "file",
+                "artifact_sha256",
+                "bytes",
+                "service_validation_status",
+            ],
+            CONTEXT,
+        )?;
+        require_release_evidence_string(artifact, "kind", "msi", CONTEXT)?;
+        let file = require_release_evidence_string_value(artifact, "file", CONTEXT)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(CONTEXT, "file"));
+        }
+        require_release_evidence_sha256(artifact, "artifact_sha256", CONTEXT)?;
+        require_release_evidence_positive_u64(artifact, "bytes", CONTEXT)?;
+        require_release_evidence_string(
+            artifact,
+            "service_validation_status",
+            "not_executed",
+            CONTEXT,
+        )?;
+        target_artifacts.insert(file.to_string());
+    }
+    if target_artifacts.is_empty() {
+        Err(release_evidence_invalid(CONTEXT, "service_artifacts"))
+    } else {
+        Ok(target_artifacts)
+    }
+}
+
+fn validate_windows_service_lifecycle_actions(
+    object: &serde_json::Map<String, serde_json::Value>,
+    target_artifacts: &BTreeSet<String>,
+) -> Result<()> {
+    const CONTEXT: &str = "Windows service lifecycle plan";
+    let actions = require_release_evidence_array(object, "planned_actions", CONTEXT)?;
+    let expected_actions = [
+        "install",
+        "start",
+        "status",
+        "stop",
+        "recovery",
+        "uninstall",
+        "rollback",
+    ];
+    if actions.len() != expected_actions.len() {
+        return Err(release_evidence_invalid(CONTEXT, "planned_actions"));
+    }
+    let mut seen_actions = BTreeSet::new();
+    for (action, expected_action) in actions.iter().zip(expected_actions) {
+        let action = action
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(CONTEXT, "planned_actions"))?;
+        validate_release_evidence_allowed_keys(
+            action,
+            &[
+                "action",
+                "command",
+                "target_artifact",
+                "dry_run_intent",
+                "requires_approval",
+                "action_status",
+            ],
+            CONTEXT,
+        )?;
+        let action_name = require_release_evidence_string_value(action, "action", CONTEXT)?;
+        if action_name != expected_action || !seen_actions.insert(action_name.to_string()) {
+            return Err(release_evidence_invalid(CONTEXT, "planned_actions"));
+        }
+        require_release_evidence_string(action, "command", "sc.exe", CONTEXT)?;
+        let target_artifact =
+            require_release_evidence_string_value(action, "target_artifact", CONTEXT)?;
+        if !is_release_evidence_basename(target_artifact)
+            || !target_artifacts.contains(target_artifact)
+        {
+            return Err(release_evidence_invalid(CONTEXT, "target_artifact"));
+        }
+        if require_release_evidence_string_value(action, "dry_run_intent", CONTEXT)?
+            .trim()
+            .is_empty()
+        {
+            return Err(release_evidence_invalid(CONTEXT, "dry_run_intent"));
+        }
+        require_release_evidence_bool(action, "requires_approval", true, CONTEXT)?;
+        require_release_evidence_string(action, "action_status", "blocked", CONTEXT)?;
+    }
+
+    Ok(())
+}
+
+fn validate_hardware_fault_drill_evidence_report(report: &str) -> Result<()> {
+    const CONTEXT: &str = "hardware fault drills";
+    if release_readiness_diagnostics_report_contains_private_marker(report)
+        || release_evidence_report_contains_forbidden_marker(report)
+        || report.contains("PRIVATE-")
+    {
+        return Err(CliError::user(
+            "hardware fault drills blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("hardware fault drills blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("hardware fault drills blocked: expected JSON object"))?;
+
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "schema_version",
+            "evidence_boundary",
+            "execution_mode",
+            "artifact_manifest_sha256",
+            "build_sha",
+            "redacted",
+            "dedicated_test_environment",
+            "cleanup_verified",
+            "contains_local_paths",
+            "contains_raw_resume_text",
+            "contains_secrets",
+            "contains_diagnostics_package",
+            "drills",
+            "must_not_upload",
+        ],
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "schema_version",
+        "release.hardware_fault_drills.v1",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "evidence_boundary",
+        "redacted_release_hardware_fault_drills",
+        CONTEXT,
+    )?;
+    require_release_evidence_string(
+        object,
+        "execution_mode",
+        "actual_release_platform_drill",
+        CONTEXT,
+    )?;
+    require_release_evidence_sha256(object, "artifact_manifest_sha256", CONTEXT)?;
+    validate_release_hardware_fault_build_sha(object, CONTEXT)?;
+    for key in ["redacted", "dedicated_test_environment", "cleanup_verified"] {
+        require_release_evidence_bool(object, key, true, CONTEXT)?;
+    }
+    for key in [
+        "contains_local_paths",
+        "contains_raw_resume_text",
+        "contains_secrets",
+        "contains_diagnostics_package",
+    ] {
+        require_release_evidence_bool(object, key, false, CONTEXT)?;
+    }
+
+    let drills = require_release_evidence_array(object, "drills", CONTEXT)?;
+    validate_release_hardware_fault_drills(drills, CONTEXT)?;
+    for item in [
+        "raw resumes",
+        "local paths",
+        "diagnostics packages",
+        "tokens",
+        "model caches",
+        "indexes",
+        "SQLite databases",
+    ] {
+        require_release_evidence_array_contains_string(object, "must_not_upload", item, CONTEXT)?;
+    }
+    Ok(())
+}
+
+fn validate_release_hardware_fault_build_sha(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+) -> Result<()> {
+    let build_sha = require_release_evidence_string_value(object, "build_sha", context)?;
+    let is_full_git_sha = build_sha.len() == 40
+        && build_sha
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+    if is_full_git_sha {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, "build_sha"))
+    }
+}
+
+fn validate_release_hardware_fault_drills(
+    drills: &[serde_json::Value],
+    context: &'static str,
+) -> Result<()> {
+    let expected_drills = [
+        "actual_enospc",
+        "service_daemon_kill",
+        "battery_mode",
+        "external_drive_disconnect",
+    ];
+    if drills.len() != expected_drills.len() {
+        return Err(release_evidence_invalid(context, "drills"));
+    }
+    let mut seen_drills = BTreeSet::new();
+    for (drill, expected_drill) in drills.iter().zip(expected_drills.iter()) {
+        let drill = drill
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "drills"))?;
+        validate_release_evidence_allowed_keys(
+            drill,
+            &[
+                "drill",
+                "status",
+                "evidence_kind",
+                "platforms",
+                "transcript_sha256",
+                "diagnostics_sha256",
+            ],
+            context,
+        )?;
+        let drill_id = require_release_evidence_string_value(drill, "drill", context)?;
+        if drill_id != *expected_drill || !seen_drills.insert(drill_id.to_string()) {
+            return Err(release_evidence_invalid(context, "drills"));
+        }
+        require_release_evidence_string(drill, "status", "passed", context)?;
+        require_release_evidence_string(
+            drill,
+            "evidence_kind",
+            "actual_release_platform_drill",
+            context,
+        )?;
+        let platforms = require_release_evidence_object(drill, "platforms", context)?;
+        validate_release_evidence_allowed_keys(platforms, &["macos", "windows"], context)?;
+        require_release_evidence_string(platforms, "macos", "passed", context)?;
+        require_release_evidence_string(platforms, "windows", "passed", context)?;
+        require_release_evidence_sha256(drill, "transcript_sha256", context)?;
+        require_release_evidence_sha256(drill, "diagnostics_sha256", context)?;
+    }
+    Ok(())
+}
+
+fn validate_release_package_artifacts(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+    required_kinds: &[&str],
+) -> Result<()> {
+    let artifacts = require_release_evidence_array(object, "artifacts", context)?;
+    let mut seen_kinds = BTreeSet::new();
+    for artifact in artifacts {
+        let artifact = artifact
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "artifacts"))?;
+        validate_release_evidence_allowed_keys(
+            artifact,
+            &["kind", "file", "sha256", "bytes"],
+            context,
+        )?;
+        let kind = require_release_evidence_string_value(artifact, "kind", context)?;
+        if !required_kinds.contains(&kind) {
+            return Err(release_evidence_invalid(context, "artifacts"));
+        }
+        let file = require_release_evidence_string_value(artifact, "file", context)?;
+        if !is_release_evidence_basename(file) {
+            return Err(release_evidence_invalid(context, "file"));
+        }
+        require_release_evidence_sha256(artifact, "sha256", context)?;
+        require_release_evidence_positive_u64(artifact, "bytes", context)?;
+        seen_kinds.insert(kind.to_string());
+    }
+    if required_kinds.iter().all(|kind| seen_kinds.contains(*kind)) {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, "artifacts"))
+    }
+}
+
+fn validate_release_package_runtime_payload(
+    object: &serde_json::Map<String, serde_json::Value>,
+    context: &'static str,
+    expected_install_location: &str,
+) -> Result<()> {
+    let Some(payload) = object.get("runtime_payload") else {
+        return Ok(());
+    };
+    let payload = payload
+        .as_object()
+        .ok_or_else(|| release_evidence_invalid(context, "runtime_payload"))?;
+    validate_release_evidence_allowed_keys(
+        payload,
+        &[
+            "schema_version",
+            "runtime_distribution_mode",
+            "runtime_package_binaries_included",
+            "runtime_binaries_included_in_manifest",
+            "install_location",
+            "runtime_bundle_manifest",
+            "components",
+        ],
+        context,
+    )?;
+    require_release_evidence_string(
+        payload,
+        "schema_version",
+        "release.runtime_package_payload.v1",
+        context,
+    )?;
+    require_release_evidence_string(payload, "runtime_distribution_mode", "bundled", context)?;
+    require_release_evidence_bool(payload, "runtime_package_binaries_included", true, context)?;
+    require_release_evidence_bool(
+        payload,
+        "runtime_binaries_included_in_manifest",
+        false,
+        context,
+    )?;
+    require_release_evidence_string(
+        payload,
+        "install_location",
+        expected_install_location,
+        context,
+    )?;
+
+    let bundle_manifest =
+        require_release_evidence_object(payload, "runtime_bundle_manifest", context)?;
+    validate_release_evidence_allowed_keys(
+        bundle_manifest,
+        &[
+            "file",
+            "sha256",
+            "bytes",
+            "schema_version",
+            "runtime_distribution_mode",
+        ],
+        context,
+    )?;
+    let bundle_manifest_file =
+        require_release_evidence_string_value(bundle_manifest, "file", context)?;
+    if !is_release_evidence_basename(bundle_manifest_file) {
+        return Err(release_evidence_invalid(context, "runtime_bundle_manifest"));
+    }
+    require_release_evidence_sha256(bundle_manifest, "sha256", context)?;
+    require_release_evidence_positive_u64(bundle_manifest, "bytes", context)?;
+    require_release_evidence_string(
+        bundle_manifest,
+        "schema_version",
+        "release.runtime_bundle.v1",
+        context,
+    )?;
+    require_release_evidence_string(
+        bundle_manifest,
+        "runtime_distribution_mode",
+        "bundled",
+        context,
+    )?;
+
+    let components = require_release_evidence_array(payload, "components", context)?;
+    if components.is_empty() {
+        return Err(release_evidence_invalid(context, "components"));
+    }
+    let mut seen_files = BTreeSet::new();
+    let mut ocr_component_kinds = BTreeSet::new();
+    for component in components {
+        let component = component
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "components"))?;
+        validate_release_evidence_allowed_keys(
+            component,
+            &["id", "kind", "file", "sha256", "bytes", "license", "source"],
+            context,
+        )?;
+        require_release_evidence_string_value(component, "id", context)?;
+        let kind = require_release_evidence_string_value(component, "kind", context)?;
+        if matches!(kind, "ocr-engine" | "pdf-renderer" | "ocr-language-pack") {
+            ocr_component_kinds.insert(kind.to_string());
+        }
+        let file = require_release_evidence_string_value(component, "file", context)?;
+        if !is_release_evidence_basename(file) || !seen_files.insert(file.to_string()) {
+            return Err(release_evidence_invalid(context, "components"));
+        }
+        require_release_evidence_sha256(component, "sha256", context)?;
+        require_release_evidence_positive_u64(component, "bytes", context)?;
+        require_release_evidence_string_value(component, "license", context)?;
+        let source = require_release_evidence_string_value(component, "source", context)?;
+        if source.starts_with('/')
+            || source.contains("PRIVATE-")
+            || source.contains("/Users/")
+            || release_readiness_diagnostics_report_contains_private_marker(source)
+        {
+            return Err(release_evidence_invalid(context, "source"));
+        }
+    }
+    if !ocr_component_kinds.is_empty()
+        && !["ocr-engine", "pdf-renderer", "ocr-language-pack"]
+            .iter()
+            .all(|kind| ocr_component_kinds.contains(*kind))
+    {
+        return Err(release_evidence_invalid(context, "ocr_runtime_components"));
+    }
+
+    Ok(())
+}
+
+fn validate_release_sbom_external_refs(
+    package: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    if release_sbom_package_has_annotation(package, "runtime_distribution_mode=bundled") {
+        return validate_release_sbom_runtime_package(package);
+    }
+
+    let external_refs = package
+        .get("externalRefs")
+        .and_then(serde_json::Value::as_array)
+        .filter(|external_refs| !external_refs.is_empty())
+        .ok_or_else(|| release_evidence_invalid("release SBOM", "externalRefs"))?;
+    let has_purl = external_refs.iter().any(|external_ref| {
+        let Some(external_ref) = external_ref.as_object() else {
+            return false;
+        };
+        external_ref
+            .get("referenceType")
+            .and_then(serde_json::Value::as_str)
+            == Some("purl")
+            && external_ref
+                .get("referenceLocator")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|locator| locator.starts_with("pkg:cargo/"))
+    });
+    if has_purl {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid("release SBOM", "externalRefs"))
+    }
+}
+
+fn validate_release_sbom_runtime_package(
+    package: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    let download_location =
+        require_release_evidence_string_value(package, "downloadLocation", "release SBOM")?;
+    if download_location == "NOASSERTION" || download_location.starts_with('/') {
+        return Err(release_evidence_invalid("release SBOM", "downloadLocation"));
+    }
+    if release_readiness_diagnostics_report_contains_private_marker(download_location)
+        || download_location.contains("PRIVATE-")
+    {
+        return Err(release_evidence_invalid("release SBOM", "downloadLocation"));
+    }
+
+    let checksums = require_release_evidence_array(package, "checksums", "release SBOM")?;
+    let has_sha256 = checksums.iter().any(|checksum| {
+        let Some(checksum) = checksum.as_object() else {
+            return false;
+        };
+        checksum
+            .get("algorithm")
+            .and_then(serde_json::Value::as_str)
+            == Some("SHA256")
+            && checksum
+                .get("checksumValue")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| {
+                    value.len() == 64
+                        && value
+                            .bytes()
+                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                })
+    });
+    if !has_sha256 {
+        return Err(release_evidence_invalid("release SBOM", "checksums"));
+    }
+
+    for expected in [
+        "runtime_package_binaries_included=true",
+        "runtime_binaries_included=false",
+    ] {
+        if !release_sbom_package_has_annotation(package, expected) {
+            return Err(release_evidence_invalid("release SBOM", "annotations"));
+        }
+    }
+    if !release_sbom_package_has_annotation_prefix(package, "runtime_component_kind=")
+        || !release_sbom_package_has_annotation_prefix(package, "runtime_component_file=")
+        || !release_sbom_package_has_annotation_prefix(package, "source_offer_sha256=")
+    {
+        return Err(release_evidence_invalid("release SBOM", "annotations"));
+    }
+
+    let external_refs = package
+        .get("externalRefs")
+        .and_then(serde_json::Value::as_array)
+        .filter(|external_refs| !external_refs.is_empty())
+        .ok_or_else(|| release_evidence_invalid("release SBOM", "externalRefs"))?;
+    let has_runtime_ref = external_refs.iter().any(|external_ref| {
+        let Some(external_ref) = external_ref.as_object() else {
+            return false;
+        };
+        external_ref
+            .get("referenceType")
+            .and_then(serde_json::Value::as_str)
+            == Some("persistent-id")
+            && external_ref
+                .get("referenceLocator")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|locator| locator.starts_with("runtime-bundle:"))
+    });
+    if has_runtime_ref {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid("release SBOM", "externalRefs"))
+    }
+}
+
+fn release_sbom_package_has_annotation(
+    package: &serde_json::Map<String, serde_json::Value>,
+    expected: &str,
+) -> bool {
+    release_sbom_package_has_annotation_matching(package, |comment| comment == expected)
+}
+
+fn release_sbom_package_has_annotation_prefix(
+    package: &serde_json::Map<String, serde_json::Value>,
+    expected_prefix: &str,
+) -> bool {
+    release_sbom_package_has_annotation_matching(package, |comment| {
+        comment.starts_with(expected_prefix)
+    })
+}
+
+fn release_sbom_package_has_annotation_matching(
+    package: &serde_json::Map<String, serde_json::Value>,
+    predicate: impl Fn(&str) -> bool,
+) -> bool {
+    package
+        .get("annotations")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|annotations| {
+            annotations.iter().any(|annotation| {
+                annotation
+                    .as_object()
+                    .and_then(|annotation| annotation.get("comment"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(&predicate)
+            })
+        })
+}
+
+fn release_evidence_report_contains_forbidden_marker(report: &str) -> bool {
+    [
+        "manifest_path",
+        "src_path",
+        "license_file",
+        "target/release",
+        "local-data",
+        "diagnostics.zip",
+        "model-cache",
+    ]
+    .iter()
+    .any(|marker| report.contains(marker))
+}
+
+fn validate_release_evidence_allowed_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    allowed_keys: &[&str],
+    context: &'static str,
+) -> Result<()> {
+    for key in object.keys() {
+        if !allowed_keys.contains(&key.as_str()) {
+            return Err(CliError::user(format!(
+                "{context} blocked: {key} is not allowed"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn require_release_evidence_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: &str,
+    context: &'static str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_str) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn require_release_evidence_string_value<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<&'a str> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| release_evidence_invalid(context, key))
+}
+
+fn require_release_evidence_non_empty_string<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<&'a str> {
+    let value = require_release_evidence_string_value(object, key, context)?;
+    if value.trim().is_empty() {
+        Err(release_evidence_invalid(context, key))
+    } else {
+        Ok(value)
+    }
+}
+
+fn require_release_evidence_object<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<&'a serde_json::Map<String, serde_json::Value>> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| release_evidence_invalid(context, key))
+}
+
+fn require_release_evidence_array<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<&'a Vec<serde_json::Value>> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .filter(|values| !values.is_empty())
+        .ok_or_else(|| release_evidence_invalid(context, key))
+}
+
+fn require_release_evidence_array_contains_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: &str,
+    context: &'static str,
+) -> Result<()> {
+    let values = require_release_evidence_array(object, key, context)?;
+    if values.iter().any(|value| value.as_str() == Some(expected)) {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, key))
+    }
+}
+
+fn require_release_evidence_exact_string_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: &[&str],
+    context: &'static str,
+) -> Result<()> {
+    let values = require_release_evidence_array(object, key, context)?;
+    if values.len() != expected.len() {
+        return Err(release_evidence_invalid(context, key));
+    }
+    let mut seen = BTreeSet::new();
+    for (value, expected_value) in values.iter().zip(expected.iter()) {
+        let actual = value
+            .as_str()
+            .ok_or_else(|| release_evidence_invalid(context, key))?;
+        if actual != *expected_value || !seen.insert(actual.to_string()) {
+            return Err(release_evidence_invalid(context, key));
+        }
+    }
+    Ok(())
+}
+
+fn require_release_evidence_exact_steps(
+    steps: &[serde_json::Value],
+    expected_steps: &[(&str, &str)],
+    context: &'static str,
+) -> Result<()> {
+    if steps.len() != expected_steps.len() {
+        return Err(release_evidence_invalid(context, "steps"));
+    }
+    let mut seen_ids = BTreeSet::new();
+    for (step, (expected_id, expected_status)) in steps.iter().zip(expected_steps.iter()) {
+        let step = step
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "steps"))?;
+        validate_release_evidence_allowed_keys(step, &["id", "status", "exit_code"], context)?;
+        let id = step
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| release_evidence_invalid(context, "steps"))?;
+        let status = step
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| release_evidence_invalid(context, "steps"))?;
+        if id != *expected_id || status != *expected_status || !seen_ids.insert(id.to_string()) {
+            return Err(release_evidence_invalid(context, "steps"));
+        }
+    }
+    Ok(())
+}
+
+fn require_release_evidence_step_exit_code(
+    steps: &[serde_json::Value],
+    expected_id: &str,
+    expected_status: &str,
+    expected_exit_code: u64,
+    context: &'static str,
+) -> Result<()> {
+    let has_step = steps.iter().any(|step| {
+        let Some(step) = step.as_object() else {
+            return false;
+        };
+        step.get("id").and_then(serde_json::Value::as_str) == Some(expected_id)
+            && step.get("status").and_then(serde_json::Value::as_str) == Some(expected_status)
+            && step.get("exit_code").and_then(serde_json::Value::as_u64) == Some(expected_exit_code)
+    });
+    if has_step {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, "steps"))
+    }
+}
+
+fn require_release_evidence_sha256(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<()> {
+    require_release_evidence_sha256_value(object, key, context).map(|_| ())
+}
+
+fn require_release_evidence_sha256_value<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<&'a str> {
+    let Some(value) = object.get(key).and_then(serde_json::Value::as_str) else {
+        return Err(release_evidence_invalid(context, key));
+    };
+    let is_sha256 = value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+    if is_sha256 {
+        Ok(value)
+    } else {
+        Err(release_evidence_invalid(context, key))
+    }
+}
+
+fn require_release_evidence_optional_sha256_value<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<Option<&'a str>> {
+    let Some(value) = object.get(key) else {
+        return Err(release_evidence_invalid(context, key));
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(value) = value.as_str() else {
+        return Err(release_evidence_invalid(context, key));
+    };
+    let is_sha256 = value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+    if is_sha256 {
+        Ok(Some(value))
+    } else {
+        Err(release_evidence_invalid(context, key))
+    }
+}
+
+fn require_release_evidence_output_digest(
+    output_digests: &BTreeMap<String, String>,
+    file: &str,
+    expected_sha256: &str,
+    context: &'static str,
+) -> Result<()> {
+    match output_digests.get(file) {
+        Some(value) if value == expected_sha256 => Ok(()),
+        _ => Err(release_evidence_invalid(context, "redacted_outputs")),
+    }
+}
+
+fn require_release_evidence_bool(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: bool,
+    context: &'static str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_bool) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn require_release_evidence_bool_value(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<bool> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| release_evidence_invalid(context, key))
+}
+
+fn require_release_evidence_u64(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: u64,
+    context: &'static str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_u64) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn require_release_evidence_min_u64(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    min: u64,
+    context: &'static str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_u64) {
+        Some(value) if value >= min => Ok(()),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn require_release_evidence_positive_u64(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_u64) {
+        Some(value) if value > 0 => Ok(()),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn require_release_evidence_positive_u64_value(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<u64> {
+    match object.get(key).and_then(serde_json::Value::as_u64) {
+        Some(value) if value > 0 => Ok(value),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn validate_current_stage_aggregate_observability(
+    value: &serde_json::Value,
+    context: &'static str,
+) -> Result<()> {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, nested) in object {
+                if !is_current_stage_aggregate_key(key) {
+                    return Err(release_evidence_invalid(
+                        context,
+                        "corpus_summary_observability",
+                    ));
+                }
+                validate_current_stage_aggregate_observability(nested, context)?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Number(number) if number.as_u64().is_some() => Ok(()),
+        serde_json::Value::Bool(_) => Ok(()),
+        serde_json::Value::String(value) if value == "redacted_local_aggregate" => Ok(()),
+        serde_json::Value::Null => Ok(()),
+        _ => Err(release_evidence_invalid(
+            context,
+            "corpus_summary_observability",
+        )),
+    }
+}
+
+fn is_current_stage_aggregate_key(key: &str) -> bool {
+    !key.trim().is_empty()
+        && key.len() <= 80
+        && key.bytes().all(
+            |byte| matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-' | b'.'),
+        )
+}
+
+fn validate_release_evidence_version(version: &str, context: &'static str) -> Result<()> {
+    let Some(raw_version) = version.strip_prefix('v') else {
+        return Err(release_evidence_invalid(context, "version"));
+    };
+    let parts = raw_version.split('.').collect::<Vec<_>>();
+    if parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, "version"))
+    }
+}
+
+fn is_release_evidence_basename(file: &str) -> bool {
+    !file.trim().is_empty()
+        && file != "."
+        && file != ".."
+        && !file.contains('/')
+        && !file.contains('\\')
+        && !file.contains(':')
+}
+
+fn release_evidence_invalid(context: &'static str, key: &str) -> CliError {
+    CliError::user(format!("{context} blocked: {key} is invalid"))
+}
+
+fn read_release_readiness_evidence_report(path: &Path) -> Result<String> {
+    fs::read_to_string(path)
+        .map_err(|_| CliError::user("unable to read release readiness evidence report"))
+}
+
+fn release_readiness_evidence_error(
+    label: &'static str,
+    error: benchmark_runner::BenchmarkGateError,
+) -> CliError {
+    CliError::user(format!(
+        "release readiness evidence failed validation: {label}: {error}"
+    ))
+}
+
+fn release_readiness_manifest_error(label: &'static str, error: CliError) -> CliError {
+    CliError::user(format!(
+        "release readiness evidence failed validation: {label}: {error}"
+    ))
+}
+
+fn validate_release_readiness_diagnostics_report(report: &str) -> Result<()> {
+    if release_readiness_diagnostics_report_contains_private_marker(report) {
+        return Err(CliError::user(
+            "diagnostics report blocked: private marker is present",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|_| CliError::user("diagnostics report blocked: invalid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("diagnostics report blocked: expected JSON object"))?;
+
+    validate_release_readiness_diagnostics_allowed_keys(object)?;
+    require_json_string(object, "schema_version", "diagnostics.v1")?;
+    require_json_bool(object, "redacted", true)?;
+    require_json_string(object, "raw_paths", "<redacted>")?;
+    require_json_string(object, "raw_queries", "<redacted>")?;
+    require_json_string(object, "raw_resume_text", "<redacted>")?;
+    require_json_string(object, "evidence_level", "local_aggregate_only")?;
+    require_optional_nested_redacted(object, "resource_telemetry", "paths")?;
+    require_optional_nested_redacted(object, "ocr_runtime", "paths")?;
+    require_optional_nested_redacted(object, "query_latency", "raw_queries")?;
+
+    let diagnostic_scope = object
+        .get("diagnostic_scope")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| CliError::user("diagnostics report blocked: diagnostic scope missing"))?;
+    for (key, expected) in [
+        ("metadata", "aggregate_counts"),
+        ("search_index", "state_and_snapshot_health"),
+        ("vector_index", "state_backend_and_counts"),
+        ("query_latency", "aggregate_observations"),
+        ("runtime_dependencies", "presence_only"),
+        ("fault_simulations", "available_cases_only"),
+    ] {
+        require_json_string(diagnostic_scope, key, expected)?;
+    }
+
+    Ok(())
+}
+
+fn validate_release_readiness_diagnostics_allowed_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    const ALLOWED_KEYS: &[&str] = &[
+        "schema_version",
+        "redacted",
+        "raw_paths",
+        "raw_queries",
+        "raw_resume_text",
+        "metadata",
+        "search_index_state",
+        "vector_index_state",
+        "vector_index_backend",
+        "vector_index_vectors",
+        "vector_index_tombstones",
+        "search_index_read_target",
+        "index_health",
+        "last_snapshot",
+        "staging_orphans",
+        "snapshot_fallback",
+        "query_smoke",
+        "query_latency",
+        "contact_hash_key",
+        "resource_telemetry",
+        "ocr_runtime",
+        "fault_simulations",
+        "diagnostic_scope",
+        "evidence_level",
+        "scope",
+    ];
+
+    for key in object.keys() {
+        if !ALLOWED_KEYS.contains(&key.as_str()) {
+            return Err(CliError::user(format!(
+                "diagnostics report blocked: {key} is not allowed"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn require_json_bool(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: bool,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_bool) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(CliError::user(format!(
+            "diagnostics report blocked: {key} is invalid"
+        ))),
+    }
+}
+
+fn require_json_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: &str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_str) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(CliError::user(format!(
+            "diagnostics report blocked: {key} is invalid"
+        ))),
+    }
+}
+
+fn require_optional_nested_redacted(
+    object: &serde_json::Map<String, serde_json::Value>,
+    parent: &str,
+    key: &str,
+) -> Result<()> {
+    let Some(parent_value) = object.get(parent) else {
+        return Ok(());
+    };
+    let parent_object = parent_value.as_object().ok_or_else(|| {
+        CliError::user(format!("diagnostics report blocked: {parent} is invalid"))
+    })?;
+    require_json_string(parent_object, key, "<redacted>")
+}
+
+fn require_release_json_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    expected: &str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_str) {
+        Some(value) if value == expected => Ok(()),
+        _ => Err(CliError::user(format!(
+            "release automation evidence blocked: {key} is invalid"
+        ))),
+    }
+}
+
+fn require_release_json_sha256(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<()> {
+    let is_sha256 = object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        });
+    if is_sha256 {
+        Ok(())
+    } else {
+        Err(CliError::user(format!(
+            "release automation evidence blocked: {key} is invalid"
+        )))
+    }
+}
+
+fn require_release_json_non_empty_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<()> {
+    match object.get(key).and_then(serde_json::Value::as_array) {
+        Some(values) if !values.is_empty() => Ok(()),
+        _ => Err(CliError::user(format!(
+            "release automation evidence blocked: {key} is invalid"
+        ))),
+    }
+}
+
+fn require_release_blocked_planned_actions(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    let actions = object
+        .get("planned_actions")
+        .and_then(serde_json::Value::as_array)
+        .filter(|actions| !actions.is_empty())
+        .ok_or_else(|| {
+            CliError::user("release automation evidence blocked: planned_actions is invalid")
+        })?;
+    for action in actions {
+        let Some(action_object) = action.as_object() else {
+            return Err(CliError::user(
+                "release automation evidence blocked: planned_actions is invalid",
+            ));
+        };
+        require_release_json_string(action_object, "action_status", "blocked")?;
+    }
+    Ok(())
+}
+
+fn release_readiness_diagnostics_report_contains_private_marker(report: &str) -> bool {
+    let markers = [
+        ["/Users", "/"].concat(),
+        ["/home", "/"].concat(),
+        ["/private", "/"].concat(),
+        ["\\Users", "\\"].concat(),
+        [":", "\\"].concat(),
+        ["BEGIN ", "PRIVATE", " KEY"].concat(),
+        ["gh", "p_"].concat(),
+        ["github", "_pat_"].concat(),
+        ["s", "k-"].concat(),
+        ["h", "f_"].concat(),
+    ];
+    markers.iter().any(|marker| report.contains(marker))
+}
+
+fn validate_release_readiness_ocr_manifest_coverage(
+    validation: &OcrRuntimeManifestValidation,
+) -> Result<()> {
+    let has_engine = validation
+        .components
+        .iter()
+        .any(|component| component.kind == "ocr-engine");
+    let has_renderer = validation
+        .components
+        .iter()
+        .any(|component| component.kind == "pdf-renderer");
+    let has_language_pack = !validation.languages.is_empty()
+        || validation
+            .components
+            .iter()
+            .any(|component| component.kind == "ocr-language-pack");
+
+    if !has_engine || !has_renderer || !has_language_pack {
+        return Err(release_readiness_manifest_error(
+            RELEASE_READINESS_OCR_LICENSE_LABEL,
+            CliError::user(
+                "ocr runtime manifest blocked: engine, renderer, and language-pack evidence required",
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+fn candidate_review_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(candidate_review_usage()));
+    };
+    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
+    store.run_migrations().map_err(CliError::store)?;
+
+    match action {
+        "list" => candidate_review_list_command(&store, &args[1..]),
+        "conflicts" => candidate_review_conflicts_command(&store, &args[1..]),
+        "merge" => candidate_review_merge_command(&store, &args[1..]),
+        "split" => candidate_review_split_command(&store, &args[1..]),
+        _ => Err(CliError::usage(candidate_review_usage())),
+    }
+}
+
+fn candidate_review_list_command(store: &MetaStore, args: &[String]) -> Result<()> {
+    let review_args = parse_candidate_review_list_args(args)?;
+    let suggestions = candidate_review_suggestions(store, review_args.limit)?;
+
+    println!("candidate review suggestions: {}", suggestions.len());
+    for (index, suggestion) in suggestions.iter().enumerate() {
+        println!("suggestion: {}", index + 1);
+        println!("versions: 2");
+        println!(
+            "version_ids: {} {}",
+            suggestion.left_version_id, suggestion.right_version_id
+        );
+        println!("confidence: {:.2}", suggestion.confidence);
+        println!("folded: false");
+        println!("paths: <redacted>");
+    }
+
+    Ok(())
+}
+
+fn candidate_review_conflicts_command(store: &MetaStore, args: &[String]) -> Result<()> {
+    let review_args = parse_candidate_review_list_args(args)?;
+    let mut conflicts = store
+        .candidate_contact_conflicts()
+        .map_err(CliError::store)?;
+    conflicts.truncate(review_args.limit);
+
+    println!("candidate contact conflicts: {}", conflicts.len());
+    for (index, conflict) in conflicts.iter().enumerate() {
+        println!("conflict: {}", index + 1);
+        println!("version_id: {}", conflict.resume_version_id);
+        println!("email_candidate_id: {}", conflict.email_candidate_id);
+        println!("phone_candidate_id: {}", conflict.phone_candidate_id);
+        println!("contact_values: <redacted>");
+        println!("contact_hashes: <redacted>");
+        println!("paths: <redacted>");
+    }
+
+    Ok(())
+}
+
+fn candidate_review_merge_command(store: &MetaStore, args: &[String]) -> Result<()> {
+    let review_args = parse_candidate_review_merge_args(args)?;
+    let versions = candidate_review_versions_for_merge(store, &review_args.version_ids)?;
+    let candidate_id = candidate_review_candidate_id(&review_args.version_ids);
+    store
+        .upsert_candidate(&Candidate {
+            id: candidate_id.clone(),
+            primary_name: None,
+            phone_hash: None,
+            email_hash: None,
+            dedupe_key: Some("candidate-review-manual-v1".to_string()),
+            merge_confidence: Some(review_args.confidence),
+            version_count: 0,
+        })
+        .map_err(CliError::store)?;
+
+    for version in &versions {
+        store
+            .assign_candidate_to_version(&version.id, &candidate_id)
+            .map_err(CliError::store)?;
+    }
+
+    println!("candidate review merge: completed");
+    println!("candidate id: {candidate_id}");
+    println!("versions assigned: {}", versions.len());
+    println!("confidence: {:.2}", review_args.confidence);
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn candidate_review_split_command(store: &MetaStore, args: &[String]) -> Result<()> {
+    let candidate_id = parse_candidate_review_split_args(args)?;
+    let unassigned = store
+        .unassign_candidate_versions(&candidate_id)
+        .map_err(CliError::store)?;
+
+    println!("candidate review split: completed");
+    println!("candidate id: {candidate_id}");
+    println!("versions unassigned: {unassigned}");
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CandidateReviewListArgs {
+    limit: usize,
+}
+
+#[derive(Debug, PartialEq)]
+struct CandidateReviewMergeArgs {
+    version_ids: Vec<ResumeVersionId>,
+    confidence: f32,
+}
+
+#[derive(Debug, PartialEq)]
+struct CandidateReviewSuggestion {
+    left_version_id: ResumeVersionId,
+    right_version_id: ResumeVersionId,
+    confidence: f32,
+}
+
+struct CandidateReviewProfile {
+    document_id: DocumentId,
+    version_id: ResumeVersionId,
+    profile: DedupeProfile,
+}
+
+fn parse_candidate_review_list_args(args: &[String]) -> Result<CandidateReviewListArgs> {
+    let mut limit = 20_usize;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--limit" => {
+                limit = parse_candidate_review_positive_usize(take_candidate_review_value(
+                    args, &mut index,
+                )?)?;
+            }
+            _ => return Err(CliError::usage(candidate_review_usage())),
+        }
+    }
+
+    Ok(CandidateReviewListArgs { limit })
+}
+
+fn parse_candidate_review_merge_args(args: &[String]) -> Result<CandidateReviewMergeArgs> {
+    let mut version_ids = Vec::new();
+    let mut confidence = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--version" => {
+                let version_id =
+                    ResumeVersionId::from_str(take_candidate_review_value(args, &mut index)?)
+                        .map_err(|_| CliError::usage(candidate_review_usage()))?;
+                version_ids.push(version_id);
+            }
+            "--confidence" => {
+                if confidence.is_some() {
+                    return Err(CliError::usage(candidate_review_usage()));
+                }
+                confidence = Some(parse_candidate_review_confidence(
+                    take_candidate_review_value(args, &mut index)?,
+                )?);
+            }
+            _ => return Err(CliError::usage(candidate_review_usage())),
+        }
+    }
+
+    if version_ids.len() < 2 {
+        return Err(CliError::usage(candidate_review_usage()));
+    }
+    let unique_ids = version_ids.iter().collect::<BTreeSet<_>>();
+    if unique_ids.len() != version_ids.len() {
+        return Err(CliError::usage(candidate_review_usage()));
+    }
+
+    Ok(CandidateReviewMergeArgs {
+        version_ids,
+        confidence: confidence.ok_or_else(|| CliError::usage(candidate_review_usage()))?,
+    })
+}
+
+fn parse_candidate_review_split_args(args: &[String]) -> Result<CandidateId> {
+    let mut candidate_id = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--candidate" => {
+                if candidate_id.is_some() {
+                    return Err(CliError::usage(candidate_review_usage()));
+                }
+                candidate_id = Some(
+                    CandidateId::from_str(take_candidate_review_value(args, &mut index)?)
+                        .map_err(|_| CliError::usage(candidate_review_usage()))?,
+                );
+            }
+            _ => return Err(CliError::usage(candidate_review_usage())),
+        }
+    }
+
+    candidate_id.ok_or_else(|| CliError::usage(candidate_review_usage()))
+}
+
+fn parse_candidate_review_positive_usize(value: &str) -> Result<usize> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| CliError::usage(candidate_review_usage()))?;
+    if parsed == 0 {
+        return Err(CliError::usage(candidate_review_usage()));
+    }
+    Ok(parsed)
+}
+
+fn parse_candidate_review_confidence(value: &str) -> Result<f32> {
+    let parsed = value
+        .parse::<f32>()
+        .map_err(|_| CliError::usage(candidate_review_usage()))?;
+    if !parsed.is_finite() || !(0.0..=1.0).contains(&parsed) {
+        return Err(CliError::usage(candidate_review_usage()));
+    }
+    Ok(parsed)
+}
+
+fn take_candidate_review_value<'a>(args: &'a [String], index: &mut usize) -> Result<&'a str> {
+    *index += 1;
+    let Some(value) = args.get(*index) else {
+        return Err(CliError::usage(candidate_review_usage()));
+    };
+    *index += 1;
+    Ok(value)
+}
+
+fn candidate_review_suggestions(
+    store: &MetaStore,
+    limit: usize,
+) -> Result<Vec<CandidateReviewSuggestion>> {
+    let mut profiles_by_name = BTreeMap::<String, Vec<CandidateReviewProfile>>::new();
+
+    for document in store.visible_documents().map_err(CliError::store)? {
+        if document.is_deleted
+            || !matches!(
+                document.status,
+                DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+            )
+        {
+            continue;
+        }
+        for version in store
+            .resume_versions_for_document(&document.id)
+            .map_err(CliError::store)?
+        {
+            if version.visibility != ResumeVisibility::Searchable || version.candidate_id.is_some()
+            {
+                continue;
+            }
+            let Some(profile) = dedupe_profile_for_review_version(store, &document.id, &version)?
+            else {
+                continue;
+            };
+            let Some(name) = profile.name().map(str::to_string) else {
+                continue;
+            };
+            profiles_by_name
+                .entry(name)
+                .or_default()
+                .push(CandidateReviewProfile {
+                    document_id: document.id.clone(),
+                    version_id: version.id,
+                    profile,
+                });
+        }
+    }
+
+    let mut suggestions = Vec::new();
+    for profiles in profiles_by_name.values() {
+        for left_index in 0..profiles.len() {
+            for right_index in (left_index + 1)..profiles.len() {
+                let left = &profiles[left_index];
+                let right = &profiles[right_index];
+                if left.document_id == right.document_id {
+                    continue;
+                }
+                let Some(score) = soft_dedupe_score(&left.profile, &right.profile) else {
+                    continue;
+                };
+                let (left_version_id, right_version_id) =
+                    ordered_version_pair(&left.version_id, &right.version_id);
+                suggestions.push(CandidateReviewSuggestion {
+                    left_version_id,
+                    right_version_id,
+                    confidence: score.confidence(),
+                });
+            }
+        }
+    }
+
+    suggestions.sort_by(|left, right| {
+        right
+            .confidence
+            .partial_cmp(&left.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.left_version_id.cmp(&right.left_version_id))
+            .then_with(|| left.right_version_id.cmp(&right.right_version_id))
+    });
+    suggestions.truncate(limit);
+    Ok(suggestions)
+}
+
+fn dedupe_profile_for_review_version(
+    store: &MetaStore,
+    document_id: &DocumentId,
+    version: &ResumeVersion,
+) -> Result<Option<DedupeProfile>> {
+    if &version.document_id != document_id {
+        return Ok(None);
+    }
+    let mentions = store
+        .entity_mentions_for_version(&version.id)
+        .map_err(CliError::store)?;
+    let Some(name) = best_normalized_entity_value(&mentions, EntityType::Name) else {
+        return Ok(None);
+    };
+
+    Ok(Some(
+        DedupeProfile::new(document_id.to_string())
+            .with_name(&name)
+            .with_schools(normalized_entity_values(&mentions, EntityType::School))
+            .with_companies(normalized_entity_values(&mentions, EntityType::Company))
+            .with_skills(normalized_entity_values(&mentions, EntityType::Skill)),
+    ))
+}
+
+fn candidate_review_versions_for_merge(
+    store: &MetaStore,
+    version_ids: &[ResumeVersionId],
+) -> Result<Vec<ResumeVersion>> {
+    let mut versions = Vec::with_capacity(version_ids.len());
+    for version_id in version_ids {
+        let Some(version) = store
+            .resume_version_by_id(version_id)
+            .map_err(CliError::store)?
+        else {
+            return Err(CliError::user("candidate review version is unavailable"));
+        };
+        if version.visibility != ResumeVisibility::Searchable || version.candidate_id.is_some() {
+            return Err(CliError::user(
+                "candidate review merge requires unassigned searchable versions",
+            ));
+        }
+        let Some(document) = store
+            .document_by_id(&version.document_id)
+            .map_err(CliError::store)?
+        else {
+            return Err(CliError::user("candidate review document is unavailable"));
+        };
+        if document.is_deleted
+            || !matches!(
+                document.status,
+                DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+            )
+        {
+            return Err(CliError::user(
+                "candidate review merge requires visible searchable documents",
+            ));
+        }
+        versions.push(version);
+    }
+    Ok(versions)
+}
+
+fn candidate_review_candidate_id(version_ids: &[ResumeVersionId]) -> CandidateId {
+    let mut parts = vec!["candidate-review-manual-v1".to_string()];
+    let mut sorted_ids = version_ids
+        .iter()
+        .map(|version_id| version_id.as_str().to_string())
+        .collect::<Vec<_>>();
+    sorted_ids.sort();
+    parts.extend(sorted_ids);
+    let part_refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
+    CandidateId::from_non_secret_parts(&part_refs)
+}
+
+fn ordered_version_pair(
+    left: &ResumeVersionId,
+    right: &ResumeVersionId,
+) -> (ResumeVersionId, ResumeVersionId) {
+    if left <= right {
+        (left.clone(), right.clone())
+    } else {
+        (right.clone(), left.clone())
+    }
+}
+
+fn candidate_review_usage() -> &'static str {
+    "usage: resume-cli candidate-review <list --limit <count>|conflicts --limit <count>|merge --version <id> --version <id> [--version <id> ...] --confidence <0..1>|split --candidate <id>>"
 }
 
 fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
@@ -109,6 +5193,2038 @@ fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
     let path = PathBuf::from(args.remove(1));
     args.remove(0);
     Ok(path)
+}
+
+fn model_command(args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(model_usage()));
+    };
+
+    match action {
+        "draft-manifest" => model_draft_manifest_command(&args[1..]),
+        "preflight" => model_preflight_command(&args[1..]),
+        "validate-manifest" => model_validate_manifest_command(&args[1..]),
+        _ => Err(CliError::usage(model_usage())),
+    }
+}
+
+fn ocr_command(args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(ocr_usage()));
+    };
+
+    match action {
+        "draft-manifest" => ocr_draft_manifest_command(&args[1..]),
+        "preflight" => ocr_preflight_command(&args[1..]),
+        "validate-manifest" => ocr_validate_manifest_command(&args[1..]),
+        _ => Err(CliError::usage(ocr_usage())),
+    }
+}
+
+fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(privacy_usage()));
+    };
+
+    match action {
+        "dataset-manifest" => privacy_dataset_manifest_command(&args[1..]),
+        "backup-contact-key" => {
+            let key_args = parse_privacy_key_file_args(&args[1..], "--output")?;
+            let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
+            backup_contact_hash_key(data_dir, &key_args.key_path, &passphrase)
+                .map_err(CliError::privacy)?;
+            println!("contact hash key backup: written");
+            Ok(())
+        }
+        "restore-contact-key" => {
+            let key_args = parse_privacy_key_file_args(&args[1..], "--input")?;
+            let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
+            restore_contact_hash_key(data_dir, &key_args.key_path, &passphrase)
+                .map_err(CliError::privacy)?;
+            println!("contact hash key restore: restored");
+            Ok(())
+        }
+        "backup-metadata-key" => {
+            let key_args = parse_privacy_key_file_args(&args[1..], "--output")?;
+            let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
+            backup_metadata_encryption_key(data_dir, &key_args.key_path, &passphrase)
+                .map_err(CliError::store)?;
+            println!("metadata encryption key backup: written");
+            Ok(())
+        }
+        "restore-metadata-key" => {
+            let key_args = parse_privacy_key_file_args(&args[1..], "--input")?;
+            let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
+            restore_metadata_encryption_key(data_dir, &key_args.key_path, &passphrase)
+                .map_err(CliError::store)?;
+            println!("metadata encryption key restore: restored");
+            Ok(())
+        }
+        "rotate-metadata-key" => {
+            if args.len() != 1 {
+                return Err(CliError::usage(privacy_usage()));
+            }
+            rotate_metadata_encryption_key(data_dir).map_err(CliError::store)?;
+            println!("metadata encryption key rotation: rotated");
+            Ok(())
+        }
+        _ => Err(CliError::usage(privacy_usage())),
+    }
+}
+
+struct PrivacyDatasetManifestArgs {
+    root: PathBuf,
+    out: PathBuf,
+    profile: fs_crawler::ScanProfile,
+    max_files: Option<usize>,
+}
+
+fn privacy_dataset_manifest_command(args: &[String]) -> Result<()> {
+    let args = parse_privacy_dataset_manifest_args(args)?;
+    let report = crawl_directory_with_options(
+        &args.root,
+        CrawlerScanOptions {
+            profile: args.profile,
+            max_files: args.max_files,
+        },
+    )
+    .map_err(|_| CliError::user("dataset manifest blocked: root must exist and be readable"))?;
+    let manifest = redacted_dataset_manifest(&report, args.profile, args.max_files);
+    let manifest_text = serde_json::to_string_pretty(&manifest)
+        .map_err(|_| CliError::user("dataset manifest blocked: manifest is unavailable"))?;
+
+    if let Some(parent) = args.out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|_| CliError::user("dataset manifest blocked: output is unavailable"))?;
+        }
+    }
+    fs::write(&args.out, format!("{manifest_text}\n"))
+        .map_err(|_| CliError::user("dataset manifest blocked: output is unavailable"))?;
+    let manifest_sha256 = file_sha256_hex(&args.out)
+        .map_err(|_| CliError::user("dataset manifest blocked: checksum unavailable"))?;
+
+    println!("dataset manifest: written");
+    println!("schema: {DATASET_MANIFEST_SCHEMA_VERSION}");
+    println!("privacy boundary: local_only_redacted_dataset_manifest");
+    println!("files: {}", report.files.len());
+    println!("manifest sha256: {manifest_sha256}");
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn parse_privacy_dataset_manifest_args(args: &[String]) -> Result<PrivacyDatasetManifestArgs> {
+    let mut root = None;
+    let mut out = None;
+    let mut profile = fs_crawler::ScanProfile::Explicit;
+    let mut profile_seen = false;
+    let mut max_files = None;
+    let mut index = 0_usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--root" => root = Some(take_privacy_path_arg(args, &mut index, root.is_some())?),
+            "--out" => out = Some(take_privacy_path_arg(args, &mut index, out.is_some())?),
+            "--profile" => {
+                if profile_seen {
+                    return Err(CliError::usage(privacy_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(privacy_usage()));
+                };
+                profile = match value.as_str() {
+                    "explicit" => fs_crawler::ScanProfile::Explicit,
+                    "discovery" => fs_crawler::ScanProfile::Discovery,
+                    _ => return Err(CliError::usage(privacy_usage())),
+                };
+                profile_seen = true;
+                index += 2;
+            }
+            "--max-files" => {
+                if max_files.is_some() {
+                    return Err(CliError::usage(privacy_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(privacy_usage()));
+                };
+                max_files = Some(parse_privacy_positive_usize(value)?);
+                index += 2;
+            }
+            _ => return Err(CliError::usage(privacy_usage())),
+        }
+    }
+
+    Ok(PrivacyDatasetManifestArgs {
+        root: root.ok_or_else(|| CliError::usage(privacy_usage()))?,
+        out: out.ok_or_else(|| CliError::usage(privacy_usage()))?,
+        profile,
+        max_files,
+    })
+}
+
+fn take_privacy_path_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<PathBuf> {
+    if duplicate {
+        return Err(CliError::usage(privacy_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(privacy_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(privacy_usage()));
+    }
+    *index += 2;
+    Ok(PathBuf::from(value))
+}
+
+fn parse_privacy_positive_usize(value: &str) -> Result<usize> {
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|parsed| *parsed > 0)
+        .ok_or_else(|| CliError::usage(privacy_usage()))
+}
+
+fn redacted_dataset_manifest(
+    report: &fs_crawler::ScanReport,
+    profile: fs_crawler::ScanProfile,
+    max_files: Option<usize>,
+) -> serde_json::Value {
+    let mut extension_counts = BTreeMap::<String, usize>::new();
+    let mut total_bytes = 0_u64;
+    let mut readonly_file_count = 0_usize;
+    let mut fingerprint_sampled_bytes = 0_u64;
+    let mut corpus_hasher = Sha256::new();
+    update_sha256_string(&mut corpus_hasher, DATASET_MANIFEST_SCHEMA_VERSION);
+    update_sha256_string(&mut corpus_hasher, profile.label());
+
+    for file in &report.files {
+        let extension = dataset_file_extension_label(&file.extension);
+        *extension_counts.entry(extension.to_string()).or_insert(0) += 1;
+        total_bytes = total_bytes.saturating_add(file.byte_size);
+        fingerprint_sampled_bytes =
+            fingerprint_sampled_bytes.saturating_add(file.fingerprint.sampled_bytes);
+        if file.permissions.readonly {
+            readonly_file_count += 1;
+        }
+        update_sha256_string(&mut corpus_hasher, extension);
+        update_sha256_u64(&mut corpus_hasher, file.byte_size);
+        update_sha256_i64(&mut corpus_hasher, file.mtime.as_unix_seconds());
+        update_sha256_string(&mut corpus_hasher, file.fingerprint.as_str());
+    }
+
+    let scan_budget = report
+        .budget_exhausted
+        .map(|budget| {
+            serde_json::json!({
+                "exhausted": true,
+                "kind": "files",
+                "limit": budget.limit,
+                "observed": budget.observed,
+            })
+        })
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "exhausted": false,
+                "kind": serde_json::Value::Null,
+                "limit": max_files,
+                "observed": report.files.len(),
+            })
+        });
+
+    serde_json::json!({
+        "schema_version": DATASET_MANIFEST_SCHEMA_VERSION,
+        "privacy_boundary": "local_only_redacted_dataset_manifest",
+        "dataset_kind": "private-local-corpus",
+        "scan_profile": profile.label(),
+        "max_files": max_files,
+        "file_count": report.files.len(),
+        "ignored_entries": report.ignored_count,
+        "scan_error_count": report.errors.len(),
+        "scanned_directory_count": report.scanned_directories.len(),
+        "skipped_directory_count": report.skipped_directories.len(),
+        "scan_budget": scan_budget,
+        "total_bytes": total_bytes,
+        "readonly_file_count": readonly_file_count,
+        "fingerprint_sampled_bytes": fingerprint_sampled_bytes,
+        "supported_extensions": ["doc", "docx", "pdf", "txt"],
+        "extension_counts": extension_counts,
+        "corpus_fingerprint_sha256": hex_encode_lower(&corpus_hasher.finalize()),
+        "contains_paths": false,
+        "contains_file_names": false,
+        "contains_raw_resume_text": false,
+        "contains_file_hashes": false,
+        "must_not_upload": [
+            "raw resumes",
+            "local paths",
+            "file names",
+            "raw resume text",
+            "per-file hashes",
+            "diagnostic packages",
+            "indexes",
+            "SQLite databases"
+        ]
+    })
+}
+
+fn dataset_file_extension_label(extension: &FileExtension) -> &'static str {
+    match extension {
+        FileExtension::Doc => "doc",
+        FileExtension::Docx => "docx",
+        FileExtension::Pdf => "pdf",
+        FileExtension::Txt => "txt",
+        FileExtension::Image => "image",
+        FileExtension::Other(_) => "other",
+    }
+}
+
+struct PrivacyKeyFileArgs {
+    key_path: PathBuf,
+    passphrase_path: PathBuf,
+}
+
+fn parse_privacy_key_file_args(
+    args: &[String],
+    key_flag: &'static str,
+) -> Result<PrivacyKeyFileArgs> {
+    let mut key_path = None;
+    let mut passphrase_path = None;
+    let mut index = 0;
+    while index < args.len() {
+        if index + 1 >= args.len() || args[index + 1].is_empty() {
+            return Err(CliError::usage(privacy_usage()));
+        }
+
+        match args[index].as_str() {
+            flag if flag == key_flag => {
+                if key_path.replace(PathBuf::from(&args[index + 1])).is_some() {
+                    return Err(CliError::usage(privacy_usage()));
+                }
+            }
+            "--passphrase-file" => {
+                if passphrase_path
+                    .replace(PathBuf::from(&args[index + 1]))
+                    .is_some()
+                {
+                    return Err(CliError::usage(privacy_usage()));
+                }
+            }
+            _ => return Err(CliError::usage(privacy_usage())),
+        }
+
+        index += 2;
+    }
+
+    let Some(key_path) = key_path else {
+        return Err(CliError::usage(privacy_usage()));
+    };
+    let Some(passphrase_path) = passphrase_path else {
+        return Err(CliError::usage(privacy_usage()));
+    };
+
+    Ok(PrivacyKeyFileArgs {
+        key_path,
+        passphrase_path,
+    })
+}
+
+fn read_privacy_passphrase_file(path: &Path) -> Result<Vec<u8>> {
+    let mut passphrase =
+        fs::read(path).map_err(|_| CliError::user("privacy passphrase file could not be read"))?;
+    while matches!(passphrase.last(), Some(b'\n' | b'\r')) {
+        passphrase.pop();
+    }
+
+    Ok(passphrase)
+}
+
+fn privacy_usage() -> &'static str {
+    "usage: resume-cli privacy dataset-manifest --root <path> --out <path> [--profile explicit|discovery] [--max-files <count>] | resume-cli privacy backup-contact-key --output <path> --passphrase-file <path> | resume-cli privacy restore-contact-key --input <path> --passphrase-file <path> | resume-cli privacy backup-metadata-key --output <path> --passphrase-file <path> | resume-cli privacy restore-metadata-key --input <path> --passphrase-file <path> | resume-cli privacy rotate-metadata-key"
+}
+
+fn model_validate_manifest_command(args: &[String]) -> Result<()> {
+    let manifest_path = parse_model_validate_manifest_args(args)?;
+    let validation = validate_model_manifest(&manifest_path)?;
+
+    println!("model manifest: valid");
+    println!("model pack: {}", validation.model_pack_id);
+    println!("models: {}", validation.models.len());
+    for model in &validation.models {
+        println!("model id: {}", model.model_id);
+        println!("type: {}", model.model_type);
+        if let Some(dimension) = model.dimension {
+            println!("dimension: {dimension}");
+        }
+        println!("license reviewed: yes");
+        println!("checksum match: yes");
+        println!("sha256 prefix: {}", checksum_prefix(&model.sha256));
+    }
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ModelDraftManifestArgs {
+    out: PathBuf,
+    model_pack_id: String,
+    model_id: String,
+    model_type: String,
+    dimension: Option<usize>,
+    format: String,
+    artifact: PathBuf,
+    license: String,
+    reviewed: bool,
+}
+
+fn model_draft_manifest_command(args: &[String]) -> Result<()> {
+    let draft_args = parse_model_draft_manifest_args(args)?;
+    if !draft_args.artifact.is_file() {
+        return Err(CliError::user(
+            "model manifest draft blocked: artifact is unavailable",
+        ));
+    }
+    let artifact_sha256 = file_sha256_hex(&draft_args.artifact)
+        .map_err(|_| CliError::user("model manifest draft blocked: checksum unavailable"))?;
+    let mut model = serde_json::json!({
+        "id": draft_args.model_id,
+        "type": draft_args.model_type,
+        "format": draft_args.format,
+        "artifact": {
+            "path": path_string_lossless(&draft_args.artifact)?,
+            "sha256": artifact_sha256
+        },
+        "license": {
+            "id": draft_args.license,
+            "reviewed": draft_args.reviewed
+        }
+    });
+    if let Some(dimension) = draft_args.dimension {
+        model
+            .as_object_mut()
+            .expect("model draft is an object")
+            .insert("dim".to_string(), serde_json::json!(dimension));
+    }
+    let manifest = serde_json::json!({
+        "schema_version": MODEL_MANIFEST_SCHEMA_VERSION,
+        "model_pack_id": draft_args.model_pack_id,
+        "models": [model]
+    });
+    let manifest_text = serde_json::to_string_pretty(&manifest)
+        .map_err(|_| CliError::user("model manifest draft blocked: invalid manifest"))?;
+    if let Some(parent) = draft_args.out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|_| {
+                CliError::user("model manifest draft blocked: output is unavailable")
+            })?;
+        }
+    }
+    fs::write(&draft_args.out, format!("{manifest_text}\n"))
+        .map_err(|_| CliError::user("model manifest draft blocked: output is unavailable"))?;
+
+    println!("model manifest draft: written");
+    println!("schema: {MODEL_MANIFEST_SCHEMA_VERSION}");
+    println!(
+        "model pack: {}",
+        manifest["model_pack_id"].as_str().unwrap_or("unknown")
+    );
+    println!(
+        "model id: {}",
+        manifest["models"][0]["id"].as_str().unwrap_or("unknown")
+    );
+    println!(
+        "type: {}",
+        manifest["models"][0]["type"].as_str().unwrap_or("unknown")
+    );
+    if let Some(dimension) = manifest["models"][0]["dim"].as_u64() {
+        println!("dimension: {dimension}");
+    }
+    println!(
+        "license reviewed: {}",
+        if draft_args.reviewed { "yes" } else { "no" }
+    );
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn parse_model_draft_manifest_args(args: &[String]) -> Result<ModelDraftManifestArgs> {
+    let mut out = None;
+    let mut model_pack_id = None;
+    let mut model_id = None;
+    let mut model_type = None;
+    let mut dimension = None;
+    let mut format = None;
+    let mut artifact = None;
+    let mut license = None;
+    let mut reviewed = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--out" => out = Some(take_model_path_arg(args, &mut index, out.is_some())?),
+            "--model-pack-id" => {
+                model_pack_id = Some(take_model_identifier_arg(
+                    args,
+                    &mut index,
+                    model_pack_id.is_some(),
+                )?)
+            }
+            "--model-id" => {
+                model_id = Some(take_model_identifier_arg(
+                    args,
+                    &mut index,
+                    model_id.is_some(),
+                )?)
+            }
+            "--model-type" => {
+                model_type = Some(take_model_identifier_arg(
+                    args,
+                    &mut index,
+                    model_type.is_some(),
+                )?)
+            }
+            "--dimension" => {
+                dimension = Some(take_model_dimension_arg(
+                    args,
+                    &mut index,
+                    dimension.is_some(),
+                )?)
+            }
+            "--format" => {
+                format = Some(take_model_identifier_arg(
+                    args,
+                    &mut index,
+                    format.is_some(),
+                )?)
+            }
+            "--artifact" => {
+                artifact = Some(take_model_path_arg(args, &mut index, artifact.is_some())?)
+            }
+            "--license" => {
+                license = Some(take_model_license_arg(args, &mut index, license.is_some())?)
+            }
+            "--reviewed" => {
+                if reviewed {
+                    return Err(CliError::usage(model_usage()));
+                }
+                reviewed = true;
+                index += 1;
+            }
+            _ => return Err(CliError::usage(model_usage())),
+        }
+    }
+
+    let model_type = model_type.ok_or_else(|| CliError::usage(model_usage()))?;
+    if !matches!(model_type.as_str(), "embedding" | "ner" | "ocr") {
+        return Err(CliError::usage(model_usage()));
+    }
+    if model_type == "embedding" && dimension.is_none() {
+        return Err(CliError::usage(model_usage()));
+    }
+    if model_type != "embedding" && dimension.is_some() {
+        return Err(CliError::usage(model_usage()));
+    }
+
+    Ok(ModelDraftManifestArgs {
+        out: out.ok_or_else(|| CliError::usage(model_usage()))?,
+        model_pack_id: model_pack_id.ok_or_else(|| CliError::usage(model_usage()))?,
+        model_id: model_id.ok_or_else(|| CliError::usage(model_usage()))?,
+        model_type,
+        dimension,
+        format: format.ok_or_else(|| CliError::usage(model_usage()))?,
+        artifact: artifact.ok_or_else(|| CliError::usage(model_usage()))?,
+        license: license.ok_or_else(|| CliError::usage(model_usage()))?,
+        reviewed,
+    })
+}
+
+fn take_model_path_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<PathBuf> {
+    if duplicate {
+        return Err(CliError::usage(model_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(model_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(model_usage()));
+    }
+    *index += 2;
+    Ok(PathBuf::from(value))
+}
+
+fn take_model_identifier_arg(
+    args: &[String],
+    index: &mut usize,
+    duplicate: bool,
+) -> Result<String> {
+    if duplicate {
+        return Err(CliError::usage(model_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(model_usage()));
+    };
+    if !valid_model_manifest_identifier(value) {
+        return Err(CliError::usage(model_usage()));
+    }
+    *index += 2;
+    Ok(value.clone())
+}
+
+fn take_model_license_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<String> {
+    if duplicate {
+        return Err(CliError::usage(model_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(model_usage()));
+    };
+    if !valid_license_expression(value) {
+        return Err(CliError::usage(model_usage()));
+    }
+    *index += 2;
+    Ok(value.clone())
+}
+
+fn take_model_dimension_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<usize> {
+    if duplicate {
+        return Err(CliError::usage(model_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(model_usage()));
+    };
+    let dimension = value
+        .parse::<usize>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| CliError::usage(model_usage()))?;
+    *index += 2;
+    Ok(dimension)
+}
+
+#[derive(Debug, Clone)]
+struct ModelPreflightArgs {
+    manifest_path: PathBuf,
+    embedding_command: PathBuf,
+    model_id: String,
+    dimension: usize,
+}
+
+fn model_preflight_command(args: &[String]) -> Result<()> {
+    let preflight_args = parse_model_preflight_args(args)?;
+    let validation = validate_model_manifest(&preflight_args.manifest_path)?;
+    let model = validation
+        .models
+        .iter()
+        .find(|model| {
+            model.model_id == preflight_args.model_id
+                && model.model_type == "embedding"
+                && model.dimension == Some(preflight_args.dimension)
+        })
+        .ok_or_else(|| {
+            CliError::user(
+                "embedding runtime preflight blocked: reviewed embedding model is not present",
+            )
+        })?;
+    let command_available = is_executable_file(&preflight_args.embedding_command);
+    let protocol_status = if command_available {
+        model_preflight_protocol_status(&preflight_args)
+    } else {
+        EmbeddingPreflightProtocolStatus::NotRun
+    };
+    print_model_preflight_json(model, command_available, protocol_status);
+    if command_available && protocol_status == EmbeddingPreflightProtocolStatus::Passed {
+        Ok(())
+    } else {
+        Err(CliError::user(
+            "embedding runtime preflight blocked: dependencies are not ready",
+        ))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EmbeddingPreflightProtocolStatus {
+    Passed,
+    Failed,
+    NotRun,
+}
+
+impl EmbeddingPreflightProtocolStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::NotRun => "not_run",
+        }
+    }
+}
+
+fn model_preflight_protocol_status(args: &ModelPreflightArgs) -> EmbeddingPreflightProtocolStatus {
+    let spec = match LocalEmbeddingCommandSpec::new(
+        args.embedding_command.clone(),
+        Vec::<String>::new(),
+        args.model_id.clone(),
+        args.dimension,
+    ) {
+        Ok(spec) => spec,
+        Err(_) => return EmbeddingPreflightProtocolStatus::Failed,
+    };
+    let embedder = LocalEmbeddingCommandEmbedder::new(spec);
+    let input = EmbeddingInput::new(
+        "preflight",
+        "resume-ir synthetic embedding runtime preflight",
+    );
+    match embedder.embed_batch(&[input], EmbeddingBudget::new(1, 4096)) {
+        Ok(vectors)
+            if vectors.len() == 1
+                && vectors[0].id() == "preflight"
+                && vectors[0].model_id() == args.model_id
+                && vectors[0].values().len() == args.dimension =>
+        {
+            EmbeddingPreflightProtocolStatus::Passed
+        }
+        _ => EmbeddingPreflightProtocolStatus::Failed,
+    }
+}
+
+fn parse_model_preflight_args(args: &[String]) -> Result<ModelPreflightArgs> {
+    let mut json = false;
+    let mut manifest_path = None;
+    let mut embedding_command = None;
+    let mut model_id = None;
+    let mut dimension = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--json" => {
+                if json {
+                    return Err(CliError::usage(model_usage()));
+                }
+                json = true;
+                index += 1;
+            }
+            "--manifest" => {
+                if manifest_path.is_some() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(model_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                manifest_path = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--embedding-command" => {
+                if embedding_command.is_some() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(model_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                embedding_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--model-id" => {
+                if model_id.is_some() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(model_usage()));
+                };
+                if !valid_model_manifest_identifier(value) {
+                    return Err(CliError::usage(model_usage()));
+                }
+                model_id = Some(value.clone());
+                index += 2;
+            }
+            "--dimension" => {
+                if dimension.is_some() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(model_usage()));
+                };
+                dimension = Some(
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .ok_or_else(|| CliError::usage(model_usage()))?,
+                );
+                index += 2;
+            }
+            _ => return Err(CliError::usage(model_usage())),
+        }
+    }
+
+    if !json {
+        return Err(CliError::usage(model_usage()));
+    }
+
+    Ok(ModelPreflightArgs {
+        manifest_path: manifest_path.ok_or_else(|| CliError::usage(model_usage()))?,
+        embedding_command: embedding_command.ok_or_else(|| CliError::usage(model_usage()))?,
+        model_id: model_id.ok_or_else(|| CliError::usage(model_usage()))?,
+        dimension: dimension.ok_or_else(|| CliError::usage(model_usage()))?,
+    })
+}
+
+fn print_model_preflight_json(
+    model: &ModelManifestModelValidation,
+    command_available: bool,
+    protocol_status: EmbeddingPreflightProtocolStatus,
+) {
+    println!("{{");
+    println!("  \"schema_version\": \"embedding-runtime-preflight.v1\",");
+    println!(
+        "  \"runtime_status\": \"{}\",",
+        if command_available && protocol_status == EmbeddingPreflightProtocolStatus::Passed {
+            "ready"
+        } else {
+            "blocked"
+        }
+    );
+    println!("  \"runtime_boundary\": \"external_local_command\",");
+    println!("  \"paths\": \"<redacted>\",");
+    println!("  \"model_manifest\": \"valid\",");
+    println!(
+        "  \"embedding_command\": \"{}\",",
+        if command_available {
+            "available"
+        } else {
+            "missing"
+        }
+    );
+    println!("  \"embedding_protocol\": \"{}\",", protocol_status.label());
+    println!("  \"model_id\": \"{}\",", model.model_id);
+    println!("  \"dimension\": {},", model.dimension.unwrap_or(0));
+    println!("  \"license_reviewed\": true,");
+    print!("  \"remediation\": [");
+    let remediation = model_preflight_remediation(command_available, protocol_status);
+    for (index, item) in remediation.iter().enumerate() {
+        if index > 0 {
+            print!(", ");
+        }
+        print!("\"{item}\"");
+    }
+    println!("]");
+    println!("}}");
+}
+
+fn model_preflight_remediation(
+    command_available: bool,
+    protocol_status: EmbeddingPreflightProtocolStatus,
+) -> Vec<&'static str> {
+    let mut remediation = Vec::new();
+    if !command_available {
+        remediation.push("configure --embedding-command with a local executable");
+    } else if protocol_status == EmbeddingPreflightProtocolStatus::Failed {
+        remediation.push("verify the local embedding command speaks resume-ir-embedding-v1");
+    }
+    remediation
+}
+
+fn parse_model_validate_manifest_args(args: &[String]) -> Result<PathBuf> {
+    let mut manifest = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--manifest" => {
+                if manifest.is_some() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(model_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(model_usage()));
+                }
+                manifest = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(model_usage())),
+        }
+    }
+
+    manifest.ok_or_else(|| CliError::usage(model_usage()))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ModelManifestValidation {
+    model_pack_id: String,
+    models: Vec<ModelManifestModelValidation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ModelManifestModelValidation {
+    model_id: String,
+    model_type: String,
+    dimension: Option<usize>,
+    sha256: String,
+}
+
+fn validate_model_manifest(manifest_path: &Path) -> Result<ModelManifestValidation> {
+    let manifest_text = fs::read_to_string(manifest_path)
+        .map_err(|_| CliError::user("model manifest blocked: manifest is unavailable"))?;
+    let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
+        .map_err(|_| CliError::user("model manifest blocked: invalid manifest"))?;
+    validate_model_manifest_allowed_keys(
+        &manifest_json,
+        &["schema_version", "model_pack_id", "models"],
+    )?;
+
+    let schema_version = model_manifest_string(&manifest_json, "schema_version")?;
+    if schema_version != MODEL_MANIFEST_SCHEMA_VERSION {
+        return Err(CliError::user(
+            "model manifest blocked: unsupported schema version",
+        ));
+    }
+
+    let model_pack_id = model_manifest_string(&manifest_json, "model_pack_id")?;
+    if !valid_model_manifest_identifier(model_pack_id) {
+        return Err(CliError::user(
+            "model manifest blocked: invalid model pack id",
+        ));
+    }
+
+    let models = model_manifest_array(&manifest_json, "models")?
+        .iter()
+        .map(|model| validate_model_manifest_model(manifest_path, model))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(ModelManifestValidation {
+        model_pack_id: model_pack_id.to_string(),
+        models,
+    })
+}
+
+fn validate_model_manifest_model(
+    manifest_path: &Path,
+    model: &serde_json::Value,
+) -> Result<ModelManifestModelValidation> {
+    validate_model_manifest_allowed_keys(
+        model,
+        &["id", "type", "dim", "format", "artifact", "license"],
+    )?;
+
+    let model_id = model_manifest_string(model, "id")?;
+    if !valid_model_manifest_identifier(model_id) {
+        return Err(CliError::user("model manifest blocked: invalid model id"));
+    }
+
+    let model_type = model_manifest_string(model, "type")?;
+    let dimension = match model_type {
+        "embedding" => Some(model_manifest_positive_usize(model, "dim")?),
+        "ner" | "ocr" => None,
+        _ => {
+            return Err(CliError::user(
+                "model manifest blocked: unsupported model type",
+            ))
+        }
+    };
+
+    let format = model_manifest_string(model, "format")?;
+    if !valid_model_manifest_identifier(format) {
+        return Err(CliError::user(
+            "model manifest blocked: invalid model format",
+        ));
+    }
+
+    let artifact = model_manifest_object(model, "artifact")?;
+    validate_model_manifest_allowed_keys(artifact, &["path", "sha256"])?;
+    let artifact_path = model_manifest_string(artifact, "path")?;
+    if artifact_path.trim().is_empty()
+        || artifact_path.contains('\n')
+        || artifact_path.contains('\r')
+    {
+        return Err(CliError::user("model manifest blocked: invalid artifact"));
+    }
+    let expected_sha256 = model_manifest_sha256(model_manifest_string(artifact, "sha256")?)?;
+
+    let license = model_manifest_object(model, "license")?;
+    validate_model_manifest_allowed_keys(license, &["id", "reviewed"])?;
+    let license_id = model_manifest_string(license, "id")?;
+    if !valid_license_expression(license_id) {
+        return Err(CliError::user("model manifest blocked: invalid license"));
+    }
+    let reviewed = license
+        .get("reviewed")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid license"))?;
+    if !reviewed {
+        return Err(CliError::user(
+            "model manifest blocked: license has not been reviewed",
+        ));
+    }
+
+    let artifact_path = model_manifest_artifact_path(manifest_path, artifact_path);
+    let actual_sha256 = file_sha256_hex(&artifact_path)
+        .map_err(|_| CliError::user("model manifest blocked: artifact is unavailable"))?;
+    if actual_sha256 != expected_sha256 {
+        return Err(CliError::user("model manifest blocked: checksum mismatch"));
+    }
+
+    Ok(ModelManifestModelValidation {
+        model_id: model_id.to_string(),
+        model_type: model_type.to_string(),
+        dimension,
+        sha256: actual_sha256,
+    })
+}
+
+fn validate_model_manifest_allowed_keys(
+    value: &serde_json::Value,
+    allowed_keys: &[&str],
+) -> Result<()> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid manifest"))?;
+    validate_release_evidence_allowed_keys(object, allowed_keys, "model manifest")
+}
+
+fn model_manifest_object<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a serde_json::Value> {
+    value
+        .get(key)
+        .filter(|field| field.is_object())
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid manifest"))
+}
+
+fn model_manifest_array<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a [serde_json::Value]> {
+    let array = value
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid manifest"))?;
+    if array.is_empty() {
+        return Err(CliError::user("model manifest blocked: invalid manifest"));
+    }
+    Ok(array)
+}
+
+fn model_manifest_string<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|field| !field.trim().is_empty())
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid manifest"))
+}
+
+fn model_manifest_positive_usize(value: &serde_json::Value, key: &str) -> Result<usize> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|field| usize::try_from(field).ok())
+        .filter(|field| *field > 0)
+        .ok_or_else(|| CliError::user("model manifest blocked: invalid manifest"))
+}
+
+fn model_manifest_sha256(value: &str) -> Result<String> {
+    let value = value.to_ascii_lowercase();
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(CliError::user("model manifest blocked: invalid checksum"));
+    }
+    Ok(value)
+}
+
+fn model_manifest_artifact_path(manifest_path: &Path, artifact_path: &str) -> PathBuf {
+    let artifact_path = PathBuf::from(artifact_path);
+    if artifact_path.is_absolute() {
+        artifact_path
+    } else {
+        manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(artifact_path)
+    }
+}
+
+fn valid_model_manifest_identifier(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '-' | '_' | '.' | '/' | ':' | '+')
+        })
+}
+
+fn valid_license_expression(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(
+                    character,
+                    '-' | '_' | '.' | '/' | ':' | '+' | '(' | ')' | ' '
+                )
+        })
+}
+
+fn model_usage() -> &'static str {
+    "usage: resume-cli model draft-manifest --out <path> --model-pack-id <id> --model-id <id> --model-type embedding --dimension <n> --format <id> --artifact <path> --license <id> [--reviewed] | resume-cli model preflight --json --manifest <path> --embedding-command <path> --model-id <id> --dimension <n> | resume-cli model validate-manifest --manifest <path>"
+}
+
+fn ocr_validate_manifest_command(args: &[String]) -> Result<()> {
+    let manifest_path = parse_ocr_validate_manifest_args(args)?;
+    let validation = validate_ocr_runtime_manifest(&manifest_path)?;
+
+    println!("ocr runtime manifest: valid");
+    println!("runtime pack: {}", validation.runtime_pack_id);
+    println!("components: {}", validation.components.len());
+    for component in &validation.components {
+        println!("component id: {}", component.component_id);
+        println!("kind: {}", component.kind);
+        println!("engine: {}", component.engine);
+        println!("version: {}", component.version);
+        println!("license reviewed: yes");
+        println!("checksum match: yes");
+        println!("sha256 prefix: {}", checksum_prefix(&component.sha256));
+    }
+    println!("languages: {}", validation.languages.len());
+    for language in &validation.languages {
+        println!("language id: {}", language.language_id);
+        println!("license reviewed: yes");
+        println!("checksum match: yes");
+        println!("sha256 prefix: {}", checksum_prefix(&language.sha256));
+    }
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct OcrDraftManifestArgs {
+    out: PathBuf,
+    runtime_pack_id: String,
+    tesseract_command: PathBuf,
+    pdftoppm_command: PathBuf,
+    language_packs: Vec<OcrLanguagePackDraft>,
+    engine_license: String,
+    renderer_license: String,
+    language_license: String,
+    reviewed: bool,
+}
+
+#[derive(Debug, Clone)]
+struct OcrLanguagePackDraft {
+    id: String,
+    path: PathBuf,
+}
+
+fn ocr_draft_manifest_command(args: &[String]) -> Result<()> {
+    let draft_args = parse_ocr_draft_manifest_args(args)?;
+    if !is_executable_file(&draft_args.tesseract_command) {
+        return Err(CliError::user(
+            "ocr runtime manifest draft blocked: tesseract command is unavailable",
+        ));
+    }
+    if !is_executable_file(&draft_args.pdftoppm_command) {
+        return Err(CliError::user(
+            "ocr runtime manifest draft blocked: pdftoppm command is unavailable",
+        ));
+    }
+    for language_pack in &draft_args.language_packs {
+        if !language_pack.path.is_file() {
+            return Err(CliError::user(
+                "ocr runtime manifest draft blocked: language pack is unavailable",
+            ));
+        }
+    }
+
+    let tesseract_sha256 = file_sha256_hex(&draft_args.tesseract_command).map_err(|_| {
+        CliError::user("ocr runtime manifest draft blocked: tesseract checksum unavailable")
+    })?;
+    let pdftoppm_sha256 = file_sha256_hex(&draft_args.pdftoppm_command).map_err(|_| {
+        CliError::user("ocr runtime manifest draft blocked: pdftoppm checksum unavailable")
+    })?;
+    let language_entries = draft_args
+        .language_packs
+        .iter()
+        .map(|language_pack| {
+            let language_sha256 = file_sha256_hex(&language_pack.path).map_err(|_| {
+                CliError::user(
+                    "ocr runtime manifest draft blocked: language pack checksum unavailable",
+                )
+            })?;
+            Ok(serde_json::json!({
+                "id": language_pack.id,
+                "artifact": {
+                    "path": path_string_lossless(&language_pack.path)?,
+                    "sha256": language_sha256
+                },
+                "license": {
+                    "id": draft_args.language_license,
+                    "reviewed": draft_args.reviewed
+                }
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let tesseract_version =
+        local_command_version_token(&draft_args.tesseract_command, &["--version"]);
+    let pdftoppm_version = local_command_version_token(&draft_args.pdftoppm_command, &["-v"]);
+
+    let manifest = serde_json::json!({
+        "schema_version": OCR_RUNTIME_MANIFEST_SCHEMA_VERSION,
+        "runtime_pack_id": draft_args.runtime_pack_id,
+        "components": [
+            {
+                "id": "tesseract",
+                "kind": "ocr-engine",
+                "engine": "tesseract",
+                "version": tesseract_version,
+                "artifact": {
+                    "path": path_string_lossless(&draft_args.tesseract_command)?,
+                    "sha256": tesseract_sha256
+                },
+                "license": {
+                    "id": draft_args.engine_license,
+                    "reviewed": draft_args.reviewed
+                }
+            },
+            {
+                "id": "poppler-pdftoppm",
+                "kind": "pdf-renderer",
+                "engine": "poppler-pdftoppm",
+                "version": pdftoppm_version,
+                "artifact": {
+                    "path": path_string_lossless(&draft_args.pdftoppm_command)?,
+                    "sha256": pdftoppm_sha256
+                },
+                "license": {
+                    "id": draft_args.renderer_license,
+                    "reviewed": draft_args.reviewed
+                }
+            }
+        ],
+        "languages": language_entries
+    });
+    let manifest_text = serde_json::to_string_pretty(&manifest)
+        .map_err(|_| CliError::user("ocr runtime manifest draft blocked: invalid manifest"))?;
+    if let Some(parent) = draft_args.out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|_| {
+                CliError::user("ocr runtime manifest draft blocked: output is unavailable")
+            })?;
+        }
+    }
+    fs::write(&draft_args.out, format!("{manifest_text}\n"))
+        .map_err(|_| CliError::user("ocr runtime manifest draft blocked: output is unavailable"))?;
+
+    println!("ocr runtime manifest draft: written");
+    println!("schema: {OCR_RUNTIME_MANIFEST_SCHEMA_VERSION}");
+    println!(
+        "runtime pack: {}",
+        manifest["runtime_pack_id"].as_str().unwrap_or("unknown")
+    );
+    println!("components: 2");
+    println!("languages: {}", draft_args.language_packs.len());
+    println!(
+        "license reviewed: {}",
+        if draft_args.reviewed { "yes" } else { "no" }
+    );
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn parse_ocr_draft_manifest_args(args: &[String]) -> Result<OcrDraftManifestArgs> {
+    let mut out = None;
+    let mut runtime_pack_id = None;
+    let mut tesseract_command = None;
+    let mut pdftoppm_command = None;
+    let mut language = None;
+    let mut language_pack_args = Vec::new();
+    let mut engine_license = None;
+    let mut renderer_license = None;
+    let mut language_license = None;
+    let mut reviewed = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--out" => {
+                out = Some(take_ocr_path_arg(args, &mut index, out.is_some())?);
+            }
+            "--runtime-pack-id" => {
+                runtime_pack_id = Some(take_ocr_identifier_arg(
+                    args,
+                    &mut index,
+                    runtime_pack_id.is_some(),
+                )?);
+            }
+            "--tesseract-command" => {
+                tesseract_command = Some(take_ocr_path_arg(
+                    args,
+                    &mut index,
+                    tesseract_command.is_some(),
+                )?);
+            }
+            "--pdftoppm-command" => {
+                pdftoppm_command = Some(take_ocr_path_arg(
+                    args,
+                    &mut index,
+                    pdftoppm_command.is_some(),
+                )?);
+            }
+            "--language" => {
+                language = Some(take_ocr_identifier_arg(
+                    args,
+                    &mut index,
+                    language.is_some(),
+                )?);
+            }
+            "--language-pack" => {
+                language_pack_args.push(take_ocr_language_pack_arg(args, &mut index)?);
+            }
+            "--engine-license" => {
+                engine_license = Some(take_ocr_license_arg(
+                    args,
+                    &mut index,
+                    engine_license.is_some(),
+                )?);
+            }
+            "--renderer-license" => {
+                renderer_license = Some(take_ocr_license_arg(
+                    args,
+                    &mut index,
+                    renderer_license.is_some(),
+                )?);
+            }
+            "--language-license" => {
+                language_license = Some(take_ocr_license_arg(
+                    args,
+                    &mut index,
+                    language_license.is_some(),
+                )?);
+            }
+            "--reviewed" => {
+                if reviewed {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                reviewed = true;
+                index += 1;
+            }
+            _ => return Err(CliError::usage(ocr_usage())),
+        }
+    }
+
+    let language = language.ok_or_else(|| CliError::usage(ocr_usage()))?;
+    let language_packs = parse_ocr_language_pack_args(&language, &language_pack_args)?;
+
+    Ok(OcrDraftManifestArgs {
+        out: out.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        runtime_pack_id: runtime_pack_id.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        tesseract_command: tesseract_command.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        pdftoppm_command: pdftoppm_command.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        language_packs,
+        engine_license: engine_license.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        renderer_license: renderer_license.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        language_license: language_license.ok_or_else(|| CliError::usage(ocr_usage()))?,
+        reviewed,
+    })
+}
+
+fn parse_ocr_language_pack_args(
+    requested_language: &str,
+    raw_args: &[String],
+) -> Result<Vec<OcrLanguagePackDraft>> {
+    if raw_args.is_empty() {
+        return Err(CliError::usage(ocr_usage()));
+    }
+
+    let requested_languages = split_ocr_language_set(requested_language)?;
+    if raw_args.len() == 1 && !raw_args[0].contains('=') {
+        return Ok(vec![OcrLanguagePackDraft {
+            id: requested_language.to_string(),
+            path: PathBuf::from(&raw_args[0]),
+        }]);
+    }
+
+    let mut language_packs = Vec::new();
+    for raw_arg in raw_args {
+        let Some((language_id, path)) = raw_arg.split_once('=') else {
+            return Err(CliError::usage(ocr_usage()));
+        };
+        if !valid_model_manifest_identifier(language_id) || path.trim().is_empty() {
+            return Err(CliError::usage(ocr_usage()));
+        }
+        if !requested_languages
+            .iter()
+            .any(|language| language == language_id)
+        {
+            return Err(CliError::usage(ocr_usage()));
+        }
+        if language_packs
+            .iter()
+            .any(|language_pack: &OcrLanguagePackDraft| language_pack.id == language_id)
+        {
+            return Err(CliError::usage(ocr_usage()));
+        }
+        language_packs.push(OcrLanguagePackDraft {
+            id: language_id.to_string(),
+            path: PathBuf::from(path),
+        });
+    }
+
+    if language_packs.len() != requested_languages.len() {
+        return Err(CliError::usage(ocr_usage()));
+    }
+
+    Ok(language_packs)
+}
+
+fn split_ocr_language_set(requested_language: &str) -> Result<Vec<String>> {
+    let languages = requested_language
+        .split('+')
+        .map(str::trim)
+        .filter(|language| !language.is_empty())
+        .map(|language| {
+            if valid_model_manifest_identifier(language) {
+                Ok(language.to_string())
+            } else {
+                Err(CliError::usage(ocr_usage()))
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if languages.is_empty() {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    Ok(languages)
+}
+
+fn take_ocr_language_pack_arg(args: &[String], index: &mut usize) -> Result<String> {
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(ocr_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    *index += 2;
+    Ok(value.clone())
+}
+
+fn take_ocr_path_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<PathBuf> {
+    if duplicate {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(ocr_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    *index += 2;
+    Ok(PathBuf::from(value))
+}
+
+fn take_ocr_identifier_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<String> {
+    if duplicate {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(ocr_usage()));
+    };
+    if !valid_model_manifest_identifier(value) {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    *index += 2;
+    Ok(value.clone())
+}
+
+fn take_ocr_license_arg(args: &[String], index: &mut usize, duplicate: bool) -> Result<String> {
+    if duplicate {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(ocr_usage()));
+    };
+    if !valid_license_expression(value) {
+        return Err(CliError::usage(ocr_usage()));
+    }
+    *index += 2;
+    Ok(value.clone())
+}
+
+fn path_string_lossless(path: &Path) -> Result<String> {
+    path.to_str()
+        .map(str::to_string)
+        .ok_or_else(|| CliError::user("ocr runtime manifest draft blocked: invalid path"))
+}
+
+fn local_command_version_token(command: &Path, args: &[&str]) -> String {
+    let output = Command::new(command).args(args).output();
+    let Ok(output) = output else {
+        return "unknown".to_string();
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stdout
+        .split_whitespace()
+        .chain(stderr.split_whitespace())
+        .find_map(safe_version_token)
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn safe_version_token(token: &str) -> Option<String> {
+    let token = token
+        .trim_matches(|character: char| {
+            matches!(
+                character,
+                '"' | '\'' | '(' | ')' | '[' | ']' | ',' | ';' | ':'
+            )
+        })
+        .trim_start_matches('v');
+    if token.is_empty() || !token.chars().any(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    let normalized = token
+        .chars()
+        .take_while(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_' | '+')
+        })
+        .collect::<String>();
+    if valid_model_manifest_identifier(&normalized) {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OcrPreflightArgs {
+    ocr_lang: String,
+    tesseract_command: Option<PathBuf>,
+    pdftoppm_command: Option<PathBuf>,
+}
+
+fn ocr_preflight_command(args: &[String]) -> Result<()> {
+    let preflight_args = parse_ocr_preflight_args(args)?;
+    let pdftoppm_command =
+        resolve_ocr_preflight_command(preflight_args.pdftoppm_command.as_ref(), "pdftoppm");
+    let tesseract_command =
+        resolve_ocr_preflight_command(preflight_args.tesseract_command.as_ref(), "tesseract");
+    let runtime = inspect_ocr_runtime_with_commands(
+        &preflight_args.ocr_lang,
+        pdftoppm_command.as_ref(),
+        tesseract_command.as_ref(),
+    );
+    let dependencies_ready = runtime.pdftoppm == OcrRuntimeState::Available
+        && runtime.tesseract == OcrRuntimeState::Available
+        && runtime.requested_language_status == OcrRuntimeState::Available;
+    let probe_status = if dependencies_ready {
+        ocr_preflight_probe_status(
+            pdftoppm_command.as_ref(),
+            tesseract_command.as_ref(),
+            &preflight_args.ocr_lang,
+        )
+    } else {
+        OcrPreflightProbeStatus::NotRun
+    };
+    let ready = dependencies_ready && probe_status == OcrPreflightProbeStatus::Passed;
+    print_ocr_preflight_json(&runtime, ready, probe_status);
+    if ready {
+        Ok(())
+    } else {
+        Err(CliError::user(
+            "ocr runtime preflight blocked: dependencies are not ready",
+        ))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OcrPreflightProbeStatus {
+    Passed,
+    Failed,
+    NotRun,
+}
+
+impl OcrPreflightProbeStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::NotRun => "not_run",
+        }
+    }
+}
+
+fn resolve_ocr_preflight_command(configured: Option<&PathBuf>, name: &str) -> Option<PathBuf> {
+    configured.cloned().or_else(|| find_command_in_path(name))
+}
+
+fn ocr_preflight_probe_status(
+    pdftoppm_command: Option<&PathBuf>,
+    tesseract_command: Option<&PathBuf>,
+    ocr_lang: &str,
+) -> OcrPreflightProbeStatus {
+    let Some(pdftoppm_command) = pdftoppm_command else {
+        return OcrPreflightProbeStatus::NotRun;
+    };
+    let Some(tesseract_command) = tesseract_command else {
+        return OcrPreflightProbeStatus::NotRun;
+    };
+
+    let budget = match OcrWorkerBudget::new(5_000) {
+        Ok(budget) => budget,
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+    let cancellation = CancellationToken::new();
+    let render_spec = match PdftoppmRenderSpec::new(pdftoppm_command.clone()) {
+        Ok(spec) => spec,
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+    let renderer = PdftoppmPdfRenderer::new(render_spec);
+    let rendered = match renderer.render_page(
+        &ocr_preflight_blank_pdf_bytes(),
+        1,
+        72,
+        budget,
+        &cancellation,
+    ) {
+        Ok(rendered) => rendered,
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+    let tesseract = match TesseractOcrSpec::new(tesseract_command.clone(), "preflight-tesseract") {
+        Ok(spec) => TesseractOcrClient::new(spec),
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+    let options = match OcrOptions::new(ocr_lang, "preflight") {
+        Ok(options) => options,
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+    let request = match OcrPageRequest::new(rendered, options) {
+        Ok(request) => request,
+        Err(_) => return OcrPreflightProbeStatus::Failed,
+    };
+
+    match tesseract.recognize_page(request, budget, &cancellation) {
+        Ok(page) if page.page_no() == 1 => OcrPreflightProbeStatus::Passed,
+        _ => OcrPreflightProbeStatus::Failed,
+    }
+}
+
+fn ocr_preflight_blank_pdf_bytes() -> Vec<u8> {
+    let mut output = Vec::new();
+    output.extend_from_slice(b"%PDF-1.4\n");
+    let object_1 = output.len();
+    output.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    let object_2 = output.len();
+    output.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+    let object_3 = output.len();
+    output.extend_from_slice(
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources << >> >>\nendobj\n",
+    );
+    let xref = output.len();
+    output.extend_from_slice(b"xref\n0 4\n");
+    output.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in [object_1, object_2, object_3] {
+        output.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    output.extend_from_slice(
+        format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    output
+}
+
+fn parse_ocr_preflight_args(args: &[String]) -> Result<OcrPreflightArgs> {
+    let mut json = false;
+    let mut ocr_lang = "eng".to_string();
+    let mut seen_ocr_lang = false;
+    let mut tesseract_command = None;
+    let mut pdftoppm_command = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--json" => {
+                if json {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                json = true;
+                index += 1;
+            }
+            "--ocr-lang" => {
+                if seen_ocr_lang {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(ocr_usage()));
+                };
+                ocr_lang = parse_ocr_diagnostic_language(value, ocr_usage())?;
+                seen_ocr_lang = true;
+                index += 2;
+            }
+            "--tesseract-command" => {
+                if tesseract_command.is_some() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(ocr_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                tesseract_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--pdftoppm-command" => {
+                if pdftoppm_command.is_some() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(ocr_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                pdftoppm_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(ocr_usage())),
+        }
+    }
+
+    if !json {
+        return Err(CliError::usage(ocr_usage()));
+    }
+
+    Ok(OcrPreflightArgs {
+        ocr_lang,
+        tesseract_command,
+        pdftoppm_command,
+    })
+}
+
+fn print_ocr_preflight_json(
+    runtime: &OcrRuntimeDiagnostic,
+    ready: bool,
+    probe_status: OcrPreflightProbeStatus,
+) {
+    println!("{{");
+    println!("  \"schema_version\": \"ocr-runtime-preflight.v1\",");
+    println!(
+        "  \"runtime_status\": \"{}\",",
+        if ready { "ready" } else { "blocked" }
+    );
+    println!("  \"runtime_boundary\": \"external_local_commands\",");
+    println!("  \"paths\": \"<redacted>\",");
+    println!("  \"dependencies\": {{");
+    println!("    \"pdftoppm\": \"{}\",", runtime.pdftoppm.label());
+    println!("    \"tesseract\": \"{}\",", runtime.tesseract.label());
+    println!(
+        "    \"requested_language\": \"{}\",",
+        runtime.requested_language
+    );
+    println!(
+        "    \"requested_language_status\": \"{}\"",
+        runtime.requested_language_status.label()
+    );
+    println!("  }},");
+    println!("  \"runtime_probe\": \"{}\",", probe_status.label());
+    print!("  \"remediation\": [");
+    let remediation = ocr_preflight_remediation(runtime, probe_status);
+    for (index, item) in remediation.iter().enumerate() {
+        if index > 0 {
+            print!(", ");
+        }
+        print!("\"{item}\"");
+    }
+    println!("]");
+    println!("}}");
+}
+
+fn ocr_preflight_remediation(
+    runtime: &OcrRuntimeDiagnostic,
+    probe_status: OcrPreflightProbeStatus,
+) -> Vec<&'static str> {
+    let mut remediation = Vec::new();
+    if runtime.pdftoppm != OcrRuntimeState::Available {
+        remediation.push("install Poppler/pdftoppm or configure --pdftoppm-command");
+    }
+    if runtime.tesseract != OcrRuntimeState::Available {
+        remediation.push("install Tesseract/tessdata or configure --tesseract-command");
+    } else if runtime.requested_language_status != OcrRuntimeState::Available {
+        remediation
+            .push("install requested Tesseract language pack or choose an installed --ocr-lang");
+    }
+    if probe_status == OcrPreflightProbeStatus::Failed {
+        remediation.push("verify pdftoppm can render and Tesseract can OCR a local probe");
+    }
+    remediation
+}
+
+fn parse_ocr_validate_manifest_args(args: &[String]) -> Result<PathBuf> {
+    let mut manifest = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--manifest" => {
+                if manifest.is_some() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(ocr_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(ocr_usage()));
+                }
+                manifest = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(ocr_usage())),
+        }
+    }
+
+    manifest.ok_or_else(|| CliError::usage(ocr_usage()))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OcrRuntimeManifestValidation {
+    runtime_pack_id: String,
+    components: Vec<OcrRuntimeComponentValidation>,
+    languages: Vec<OcrRuntimeLanguageValidation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OcrRuntimeComponentValidation {
+    component_id: String,
+    kind: String,
+    engine: String,
+    version: String,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OcrRuntimeLanguageValidation {
+    language_id: String,
+    sha256: String,
+}
+
+fn validate_ocr_runtime_manifest(manifest_path: &Path) -> Result<OcrRuntimeManifestValidation> {
+    let manifest_text = fs::read_to_string(manifest_path)
+        .map_err(|_| CliError::user("ocr runtime manifest blocked: manifest is unavailable"))?;
+    let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
+        .map_err(|_| CliError::user("ocr runtime manifest blocked: invalid manifest"))?;
+    validate_ocr_runtime_manifest_allowed_keys(
+        &manifest_json,
+        &[
+            "schema_version",
+            "runtime_pack_id",
+            "components",
+            "languages",
+        ],
+    )?;
+
+    let schema_version = ocr_manifest_string(&manifest_json, "schema_version")?;
+    if schema_version != OCR_RUNTIME_MANIFEST_SCHEMA_VERSION {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: unsupported schema version",
+        ));
+    }
+
+    let runtime_pack_id = ocr_manifest_string(&manifest_json, "runtime_pack_id")?;
+    if !valid_model_manifest_identifier(runtime_pack_id) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid runtime pack id",
+        ));
+    }
+
+    let components = ocr_manifest_array(&manifest_json, "components")?
+        .iter()
+        .map(|component| validate_ocr_runtime_component(manifest_path, component))
+        .collect::<Result<Vec<_>>>()?;
+    let languages = match manifest_json.get("languages") {
+        Some(value) => ocr_manifest_array_value(value)?
+            .iter()
+            .map(|language| validate_ocr_runtime_language(manifest_path, language))
+            .collect::<Result<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+
+    Ok(OcrRuntimeManifestValidation {
+        runtime_pack_id: runtime_pack_id.to_string(),
+        components,
+        languages,
+    })
+}
+
+fn validate_ocr_runtime_component(
+    manifest_path: &Path,
+    component: &serde_json::Value,
+) -> Result<OcrRuntimeComponentValidation> {
+    validate_ocr_runtime_manifest_allowed_keys(
+        component,
+        &["id", "kind", "engine", "version", "artifact", "license"],
+    )?;
+
+    let component_id = ocr_manifest_string(component, "id")?;
+    if !valid_model_manifest_identifier(component_id) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid component id",
+        ));
+    }
+
+    let kind = ocr_manifest_string(component, "kind")?;
+    if !matches!(kind, "ocr-engine" | "pdf-renderer" | "ocr-language-pack") {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: unsupported component kind",
+        ));
+    }
+    let engine = ocr_manifest_string(component, "engine")?;
+    if !valid_model_manifest_identifier(engine) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid engine id",
+        ));
+    }
+    let version = ocr_manifest_string(component, "version")?;
+    if !valid_model_manifest_identifier(version) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid version",
+        ));
+    }
+    let sha256 = validate_ocr_runtime_artifact(manifest_path, component)?;
+    validate_ocr_manifest_license(component)?;
+
+    Ok(OcrRuntimeComponentValidation {
+        component_id: component_id.to_string(),
+        kind: kind.to_string(),
+        engine: engine.to_string(),
+        version: version.to_string(),
+        sha256,
+    })
+}
+
+fn validate_ocr_runtime_language(
+    manifest_path: &Path,
+    language: &serde_json::Value,
+) -> Result<OcrRuntimeLanguageValidation> {
+    validate_ocr_runtime_manifest_allowed_keys(language, &["id", "artifact", "license"])?;
+    let language_id = ocr_manifest_string(language, "id")?;
+    if !valid_model_manifest_identifier(language_id) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid language id",
+        ));
+    }
+    let sha256 = validate_ocr_runtime_artifact(manifest_path, language)?;
+    validate_ocr_manifest_license(language)?;
+
+    Ok(OcrRuntimeLanguageValidation {
+        language_id: language_id.to_string(),
+        sha256,
+    })
+}
+
+fn validate_ocr_runtime_artifact(
+    manifest_path: &Path,
+    value: &serde_json::Value,
+) -> Result<String> {
+    let artifact = ocr_manifest_object(value, "artifact")?;
+    validate_ocr_runtime_manifest_allowed_keys(artifact, &["path", "sha256"])?;
+    let artifact_path = ocr_manifest_string(artifact, "path")?;
+    if artifact_path.trim().is_empty()
+        || artifact_path.contains('\n')
+        || artifact_path.contains('\r')
+    {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid artifact",
+        ));
+    }
+    let expected_sha256 = ocr_manifest_sha256(ocr_manifest_string(artifact, "sha256")?)?;
+    let artifact_path = model_manifest_artifact_path(manifest_path, artifact_path);
+    let actual_sha256 = file_sha256_hex(&artifact_path)
+        .map_err(|_| CliError::user("ocr runtime manifest blocked: artifact is unavailable"))?;
+    if actual_sha256 != expected_sha256 {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: checksum mismatch",
+        ));
+    }
+
+    Ok(actual_sha256)
+}
+
+fn validate_ocr_manifest_license(value: &serde_json::Value) -> Result<()> {
+    let license = ocr_manifest_object(value, "license")?;
+    validate_ocr_runtime_manifest_allowed_keys(license, &["id", "reviewed"])?;
+    let license_id = ocr_manifest_string(license, "id")?;
+    if !valid_license_expression(license_id) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid license",
+        ));
+    }
+    let reviewed = license
+        .get("reviewed")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| CliError::user("ocr runtime manifest blocked: invalid license"))?;
+    if !reviewed {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: license has not been reviewed",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_ocr_runtime_manifest_allowed_keys(
+    value: &serde_json::Value,
+    allowed_keys: &[&str],
+) -> Result<()> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| CliError::user("ocr runtime manifest blocked: invalid manifest"))?;
+    validate_release_evidence_allowed_keys(object, allowed_keys, "ocr runtime manifest")
+}
+
+fn ocr_manifest_object<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a serde_json::Value> {
+    value
+        .get(key)
+        .filter(|field| field.is_object())
+        .ok_or_else(|| CliError::user("ocr runtime manifest blocked: invalid manifest"))
+}
+
+fn ocr_manifest_array<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a [serde_json::Value]> {
+    let Some(array) = value.get(key) else {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid manifest",
+        ));
+    };
+    ocr_manifest_array_value(array)
+}
+
+fn ocr_manifest_array_value(value: &serde_json::Value) -> Result<&[serde_json::Value]> {
+    let array = value
+        .as_array()
+        .ok_or_else(|| CliError::user("ocr runtime manifest blocked: invalid manifest"))?;
+    if array.is_empty() {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid manifest",
+        ));
+    }
+    Ok(array)
+}
+
+fn ocr_manifest_string<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|field| !field.trim().is_empty())
+        .ok_or_else(|| CliError::user("ocr runtime manifest blocked: invalid manifest"))
+}
+
+fn ocr_manifest_sha256(value: &str) -> Result<String> {
+    let value = value.to_ascii_lowercase();
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(CliError::user(
+            "ocr runtime manifest blocked: invalid checksum",
+        ));
+    }
+    Ok(value)
+}
+
+fn ocr_usage() -> &'static str {
+    "usage: resume-cli ocr draft-manifest --out <path> --runtime-pack-id <id> --tesseract-command <path> --pdftoppm-command <path> --language <lang> --language-pack <path|lang=path> [--language-pack <lang=path> ...] --engine-license <id> --renderer-license <id> --language-license <id> [--reviewed] | resume-cli ocr preflight --json [--ocr-lang <lang>] [--tesseract-command <path>] [--pdftoppm-command <path>] | resume-cli ocr validate-manifest --manifest <path>"
 }
 
 fn service_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -128,7 +7244,6 @@ fn service_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
 fn service_install_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let install_args = parse_service_install_args(args)?;
-    let plist_path = service_plist_path(&install_args.common);
     let daemon_binary = install_args
         .daemon_binary
         .as_ref()
@@ -142,6 +7257,16 @@ fn service_install_command(data_dir: &Path, args: &[String]) -> Result<()> {
     }
 
     let program_arguments = service_program_arguments(data_dir, &daemon_binary, &install_args)?;
+    if install_args.common.platform == ServicePlatform::WindowsService {
+        if !install_args.common.dry_run {
+            return Err(windows_service_control_blocked("install"));
+        }
+        print_windows_service_dry_run("install", &install_args.common, "sc.exe create");
+        println!("service command: <redacted>");
+        return Ok(());
+    }
+
+    let plist_path = service_plist_path(&install_args.common);
     let stdout_path = data_dir.join("logs").join("resume-daemon.stdout.log");
     let stderr_path = data_dir.join("logs").join("resume-daemon.stderr.log");
     let plist = render_launch_agent_plist(
@@ -177,8 +7302,25 @@ fn service_install_command(data_dir: &Path, args: &[String]) -> Result<()> {
 }
 
 fn service_uninstall_command(args: &[String]) -> Result<()> {
-    let common = parse_service_common_args(args, false)?;
+    let common = parse_service_common_args(args, true)?;
+    if common.platform == ServicePlatform::WindowsService {
+        if !common.dry_run {
+            return Err(windows_service_control_blocked("uninstall"));
+        }
+        print_windows_service_dry_run("uninstall", &common, "sc.exe delete");
+        return Ok(());
+    }
+
     let plist_path = service_plist_path(&common);
+    if common.dry_run {
+        println!("service: uninstall dry-run");
+        println!("label: {}", common.label);
+        println!("platform: macos-launch-agent");
+        println!("launch agent: would remove");
+        println!("paths: <redacted>");
+        return Ok(());
+    }
+
     match fs::remove_file(&plist_path) {
         Ok(()) => {
             println!("service: uninstalled");
@@ -199,21 +7341,51 @@ fn service_uninstall_command(args: &[String]) -> Result<()> {
 }
 
 fn service_status_command(args: &[String]) -> Result<()> {
-    let common = parse_service_common_args(args, false)?;
+    let common = parse_service_common_args(args, true)?;
+    if common.platform == ServicePlatform::WindowsService {
+        if !common.dry_run {
+            return Err(windows_service_control_blocked("status"));
+        }
+        print_windows_service_dry_run("status", &common, "sc.exe query");
+        return Ok(());
+    }
+
     let plist_path = service_plist_path(&common);
-    if plist_path.exists() {
+    let installed = plist_path.exists();
+    if installed {
         println!("service: installed");
     } else {
         println!("service: not installed");
     }
+    if common.dry_run {
+        println!("label: {}", common.label);
+        println!("platform: macos-launch-agent");
+        println!("launchctl print: <redacted>");
+        println!("paths: <redacted>");
+        return Ok(());
+    }
+    let runtime_state = if installed {
+        query_service_runtime_state(&common.label)?
+    } else {
+        ServiceRuntimeState::NotLoaded
+    };
     println!("label: {}", common.label);
     println!("platform: macos-launch-agent");
+    println!("runtime: {}", runtime_state.label());
     println!("paths: <redacted>");
     Ok(())
 }
 
 fn service_start_command(args: &[String]) -> Result<()> {
     let common = parse_service_common_args(args, true)?;
+    if common.platform == ServicePlatform::WindowsService {
+        if !common.dry_run {
+            return Err(windows_service_control_blocked("start"));
+        }
+        print_windows_service_dry_run("start", &common, "sc.exe start");
+        return Ok(());
+    }
+
     let plist_path = service_plist_path(&common);
     if !plist_path.exists() {
         return Err(CliError::user(
@@ -242,6 +7414,14 @@ fn service_start_command(args: &[String]) -> Result<()> {
 
 fn service_stop_command(args: &[String]) -> Result<()> {
     let common = parse_service_common_args(args, true)?;
+    if common.platform == ServicePlatform::WindowsService {
+        if !common.dry_run {
+            return Err(windows_service_control_blocked("stop"));
+        }
+        print_windows_service_dry_run("stop", &common, "sc.exe stop");
+        return Ok(());
+    }
+
     let plist_path = service_plist_path(&common);
     if !plist_path.exists() {
         return Err(CliError::user(
@@ -268,8 +7448,24 @@ fn service_stop_command(args: &[String]) -> Result<()> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ServiceCommonArgs {
     label: String,
+    platform: ServicePlatform,
     launch_agent_dir: PathBuf,
     dry_run: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServicePlatform {
+    MacosLaunchAgent,
+    WindowsService,
+}
+
+impl ServicePlatform {
+    fn label(self) -> &'static str {
+        match self {
+            ServicePlatform::MacosLaunchAgent => "macos-launch-agent",
+            ServicePlatform::WindowsService => "windows-service",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -282,6 +7478,7 @@ struct ServiceInstallArgs {
     ocr_profile: Option<String>,
     ocr_render_dpi: Option<String>,
     ocr_page_timeout_ms: Option<String>,
+    ocr_max_pages_per_document: Option<String>,
     embedding_command: Option<PathBuf>,
     embedding_model_id: Option<String>,
     embedding_dimension: Option<String>,
@@ -292,6 +7489,8 @@ struct ServiceInstallArgs {
 
 fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
     let mut label = DEFAULT_SERVICE_LABEL.to_string();
+    let mut platform = ServicePlatform::MacosLaunchAgent;
+    let mut platform_seen = false;
     let mut launch_agent_dir = None;
     let mut dry_run = false;
     let mut daemon_binary = None;
@@ -301,6 +7500,7 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
     let mut ocr_profile = None;
     let mut ocr_render_dpi = None;
     let mut ocr_page_timeout_ms = None;
+    let mut ocr_max_pages_per_document = None;
     let mut embedding_command = None;
     let mut embedding_model_id = None;
     let mut embedding_dimension = None;
@@ -313,6 +7513,13 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
         match args[index].as_str() {
             "--label" => {
                 label = parse_service_label(take_service_value(args, &mut index)?)?;
+            }
+            "--platform" => {
+                if platform_seen {
+                    return Err(CliError::usage(service_usage()));
+                }
+                platform = parse_service_platform(take_service_value(args, &mut index)?)?;
+                platform_seen = true;
             }
             "--launch-agent-dir" => {
                 if launch_agent_dir.is_some() {
@@ -353,6 +7560,12 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
             "--ocr-page-timeout-ms" => {
                 set_once_string(
                     &mut ocr_page_timeout_ms,
+                    take_service_positive_number(args, &mut index)?,
+                )?;
+            }
+            "--ocr-max-pages-per-document" => {
+                set_once_string(
+                    &mut ocr_max_pages_per_document,
                     take_service_positive_number(args, &mut index)?,
                 )?;
             }
@@ -422,7 +7635,8 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
             || ocr_lang.is_some()
             || ocr_profile.is_some()
             || ocr_render_dpi.is_some()
-            || ocr_page_timeout_ms.is_some())
+            || ocr_page_timeout_ms.is_some()
+            || ocr_max_pages_per_document.is_some())
     {
         return Err(CliError::usage(service_usage()));
     }
@@ -430,9 +7644,8 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
     Ok(ServiceInstallArgs {
         common: ServiceCommonArgs {
             label,
-            launch_agent_dir: launch_agent_dir
-                .map(Ok)
-                .unwrap_or_else(default_launch_agent_dir)?,
+            platform,
+            launch_agent_dir: service_launch_agent_dir_or_default(platform, launch_agent_dir)?,
             dry_run,
         },
         daemon_binary,
@@ -442,6 +7655,7 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
         ocr_profile,
         ocr_render_dpi,
         ocr_page_timeout_ms,
+        ocr_max_pages_per_document,
         embedding_command,
         embedding_model_id,
         embedding_dimension,
@@ -453,6 +7667,8 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
 
 fn parse_service_common_args(args: &[String], allow_dry_run: bool) -> Result<ServiceCommonArgs> {
     let mut label = DEFAULT_SERVICE_LABEL.to_string();
+    let mut platform = ServicePlatform::MacosLaunchAgent;
+    let mut platform_seen = false;
     let mut launch_agent_dir = None;
     let mut dry_run = false;
     let mut index = 0;
@@ -461,6 +7677,13 @@ fn parse_service_common_args(args: &[String], allow_dry_run: bool) -> Result<Ser
         match args[index].as_str() {
             "--label" => {
                 label = parse_service_label(take_service_value(args, &mut index)?)?;
+            }
+            "--platform" => {
+                if platform_seen {
+                    return Err(CliError::usage(service_usage()));
+                }
+                platform = parse_service_platform(take_service_value(args, &mut index)?)?;
+                platform_seen = true;
             }
             "--launch-agent-dir" => {
                 if launch_agent_dir.is_some() {
@@ -481,9 +7704,8 @@ fn parse_service_common_args(args: &[String], allow_dry_run: bool) -> Result<Ser
 
     Ok(ServiceCommonArgs {
         label,
-        launch_agent_dir: launch_agent_dir
-            .map(Ok)
-            .unwrap_or_else(default_launch_agent_dir)?,
+        platform,
+        launch_agent_dir: service_launch_agent_dir_or_default(platform, launch_agent_dir)?,
         dry_run,
     })
 }
@@ -533,6 +7755,11 @@ fn service_program_arguments(
             &mut arguments,
             "--ocr-page-timeout-ms",
             install_args.ocr_page_timeout_ms.as_deref(),
+        );
+        push_optional_pair(
+            &mut arguments,
+            "--ocr-max-pages-per-document",
+            install_args.ocr_max_pages_per_document.as_deref(),
         );
     }
 
@@ -634,6 +7861,20 @@ fn write_service_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn print_windows_service_dry_run(action: &str, common: &ServiceCommonArgs, command: &str) {
+    println!("service: {action} dry-run");
+    println!("label: {}", common.label);
+    println!("platform: {}", common.platform.label());
+    println!("{command}: <redacted>");
+    println!("paths: <redacted>");
+}
+
+fn windows_service_control_blocked(action: &str) -> CliError {
+    CliError::user(format!(
+        "service {action} blocked: Windows service control requires a Windows service validation run"
+    ))
+}
+
 fn current_user_launchctl_domain() -> Result<String> {
     let output = Command::new("/usr/bin/id")
         .arg("-u")
@@ -658,6 +7899,81 @@ fn run_launchctl(args: &[&str]) -> Result<()> {
         Ok(())
     } else {
         Err(CliError::user("launchctl reported a service error"))
+    }
+}
+
+fn query_service_runtime_state(label: &str) -> Result<ServiceRuntimeState> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = label;
+        Ok(ServiceRuntimeState::Unknown)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let domain = current_user_launchctl_domain()?;
+        let target = format!("{domain}/{label}");
+        let output = Command::new("/bin/launchctl")
+            .args(["print", target.as_str()])
+            .output();
+
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Ok(service_runtime_state_from_launchctl_result(
+                    output.status.success(),
+                    &stdout,
+                    &stderr,
+                ))
+            }
+            Err(_) => Ok(ServiceRuntimeState::Unknown),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServiceRuntimeState {
+    #[cfg(any(target_os = "macos", test))]
+    Running,
+    #[cfg(any(target_os = "macos", test))]
+    Loaded,
+    NotLoaded,
+    Unknown,
+}
+
+impl ServiceRuntimeState {
+    fn label(self) -> &'static str {
+        match self {
+            #[cfg(any(target_os = "macos", test))]
+            Self::Running => "running",
+            #[cfg(any(target_os = "macos", test))]
+            Self::Loaded => "loaded",
+            Self::NotLoaded => "not_loaded",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn service_runtime_state_from_launchctl_result(
+    success: bool,
+    stdout: &str,
+    stderr: &str,
+) -> ServiceRuntimeState {
+    if success {
+        if stdout
+            .lines()
+            .any(|line| line.trim().eq_ignore_ascii_case("state = running"))
+        {
+            ServiceRuntimeState::Running
+        } else {
+            ServiceRuntimeState::Loaded
+        }
+    } else if stderr.contains("Could not find service") || stderr.contains("No such process") {
+        ServiceRuntimeState::NotLoaded
+    } else {
+        ServiceRuntimeState::Unknown
     }
 }
 
@@ -687,6 +8003,17 @@ fn default_launch_agent_dir() -> Result<PathBuf> {
     Ok(home.join("Library").join("LaunchAgents"))
 }
 
+fn service_launch_agent_dir_or_default(
+    platform: ServicePlatform,
+    launch_agent_dir: Option<PathBuf>,
+) -> Result<PathBuf> {
+    match (platform, launch_agent_dir) {
+        (_, Some(path)) => Ok(path),
+        (ServicePlatform::MacosLaunchAgent, None) => default_launch_agent_dir(),
+        (ServicePlatform::WindowsService, None) => Ok(PathBuf::new()),
+    }
+}
+
 fn parse_service_label(value: &str) -> Result<String> {
     if value.is_empty()
         || value.starts_with('.')
@@ -698,6 +8025,14 @@ fn parse_service_label(value: &str) -> Result<String> {
         return Err(CliError::usage(service_usage()));
     }
     Ok(value.to_string())
+}
+
+fn parse_service_platform(value: &str) -> Result<ServicePlatform> {
+    match value {
+        "macos-launch-agent" => Ok(ServicePlatform::MacosLaunchAgent),
+        "windows-service" => Ok(ServicePlatform::WindowsService),
+        _ => Err(CliError::usage(service_usage())),
+    }
 }
 
 fn take_service_value<'a>(args: &'a [String], index: &mut usize) -> Result<&'a str> {
@@ -770,7 +8105,1530 @@ fn xml_escape(value: &str) -> String {
 }
 
 fn service_usage() -> &'static str {
-    "usage: resume-cli service <install|uninstall|status|start|stop> [--launch-agent-dir <path>] [--label <id>] [--dry-run] [--daemon-binary <path>] [--ocr-command <path>] [--embedding-command <path> --embedding-model-id <id> --embedding-dimension <n>]"
+    "usage: resume-cli service <install|uninstall|status|start|stop> [--platform <macos-launch-agent|windows-service>] [--launch-agent-dir <path>] [--label <id>] [--dry-run] [--daemon-binary <path>] [--ocr-command <path>] [--ocr-max-pages-per-document <n>] [--embedding-command <path> --embedding-model-id <id> --embedding-dimension <n>]"
+}
+
+fn fault_simulate_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let fault_args = parse_fault_simulate_args(args)?;
+    let scratch_dir = fault_args
+        .scratch_dir
+        .clone()
+        .unwrap_or_else(|| data_dir.join("fault-probes"));
+
+    if let Some(suite) = fault_args.suite {
+        return print_fault_simulation_suite_report(
+            suite,
+            data_dir,
+            &scratch_dir,
+            fault_args.json,
+            fault_args.daemon_binary.as_deref(),
+            fault_args.ocr_command.as_deref(),
+        );
+    }
+
+    let report = fault_simulation_report_for_args(&scratch_dir, &fault_args)?;
+    print_fault_simulation_report(fault_args.json, report)
+}
+
+fn fault_simulation_report_for_args(
+    scratch_dir: &Path,
+    fault_args: &FaultSimulationArgs,
+) -> Result<FaultSimulationReport> {
+    let case = fault_args
+        .case
+        .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+    let report = match case {
+        FaultSimulationCase::DiskSpaceLow => {
+            let required = fault_args
+                .required_bytes
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+            let available = fault_args
+                .available_bytes
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            if required > available {
+                fault_report(
+                    "disk_space_low",
+                    "reproduced",
+                    serde_json::json!({
+                        "required_bytes": required,
+                        "available_bytes": available,
+                        "probe_writes": "skipped"
+                    }),
+                    vec![
+                        "fault: disk_space_low".to_string(),
+                        format!("required bytes: {required}"),
+                        format!("available bytes: {available}"),
+                        "status: reproduced".to_string(),
+                        "probe writes: skipped".to_string(),
+                        "paths: <redacted>".to_string(),
+                    ],
+                )
+            } else {
+                let probe_bytes = required.min(FAULT_PROBE_MAX_BYTES);
+                write_fault_probe(scratch_dir, probe_bytes)
+                    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+                fault_report(
+                    "disk_space_low",
+                    "not reproduced",
+                    serde_json::json!({
+                        "required_bytes": required,
+                        "available_bytes": available,
+                        "probe_writes": "completed",
+                        "probe_bytes": probe_bytes
+                    }),
+                    vec![
+                        "fault: disk_space_low".to_string(),
+                        format!("required bytes: {required}"),
+                        format!("available bytes: {available}"),
+                        "status: not reproduced".to_string(),
+                        "probe writes: completed".to_string(),
+                        format!("probe bytes: {probe_bytes}"),
+                        "paths: <redacted>".to_string(),
+                    ],
+                )
+            }
+        }
+        FaultSimulationCase::PermissionDenied => match write_fault_probe(scratch_dir, 1) {
+            Ok(()) => fault_report(
+                "permission_denied",
+                "not reproduced",
+                serde_json::json!({ "probe_writes": "completed" }),
+                vec![
+                    "fault: permission_denied".to_string(),
+                    "status: not reproduced".to_string(),
+                    "probe writes: completed".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => fault_report(
+                "permission_denied",
+                "reproduced",
+                serde_json::json!({ "probe_writes": "denied" }),
+                vec![
+                    "fault: permission_denied".to_string(),
+                    "status: reproduced".to_string(),
+                    "probe writes: denied".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            ),
+            Err(_) => return Err(CliError::user("fault simulation probe failed")),
+        },
+        FaultSimulationCase::FileLock => match contend_file_lock_probe(scratch_dir) {
+            Ok(FileLockProbeResult::Contended) => fault_report(
+                "file_lock",
+                "reproduced",
+                serde_json::json!({
+                    "lock_holder": "active",
+                    "contended_lock": "denied"
+                }),
+                vec![
+                    "fault: file_lock".to_string(),
+                    "status: reproduced".to_string(),
+                    "lock holder: active".to_string(),
+                    "contended lock: denied".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            ),
+            Ok(FileLockProbeResult::NotContended) => fault_report(
+                "file_lock",
+                "not reproduced",
+                serde_json::json!({
+                    "lock_holder": "active",
+                    "contended_lock": "acquired"
+                }),
+                vec![
+                    "fault: file_lock".to_string(),
+                    "status: not reproduced".to_string(),
+                    "lock holder: active".to_string(),
+                    "contended lock: acquired".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            ),
+            Err(_) => return Err(CliError::user("fault simulation probe failed")),
+        },
+        FaultSimulationCase::IndexSnapshotCorrupt => {
+            let result = simulate_index_snapshot_corrupt_probe(scratch_dir)?;
+            let status = if result.reproduced {
+                "reproduced"
+            } else {
+                "not reproduced"
+            };
+            let active_snapshot = if result.active_snapshot_corrupt {
+                "corrupt"
+            } else {
+                "not_corrupt"
+            };
+            let fallback_snapshot = if result.fallback_recovered {
+                "recovered"
+            } else {
+                "not_recovered"
+            };
+            let query_after_recovery = if result.query_after_recovery_passed {
+                "passed"
+            } else {
+                "failed"
+            };
+            fault_report(
+                "index_snapshot_corrupt",
+                status,
+                serde_json::json!({
+                    "active_snapshot": active_snapshot,
+                    "fallback_snapshot": fallback_snapshot,
+                    "query_after_recovery": query_after_recovery
+                }),
+                vec![
+                    "fault: index_snapshot_corrupt".to_string(),
+                    format!("status: {status}"),
+                    format!("active snapshot: {active_snapshot}"),
+                    format!("fallback snapshot: {fallback_snapshot}"),
+                    format!("query after recovery: {query_after_recovery}"),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
+        }
+        FaultSimulationCase::MetadataMigration => {
+            let result = simulate_metadata_migration_failure_probe(scratch_dir)
+                .map_err(|_| CliError::user("fault simulation probe failed"))?;
+            let (status, migration_check) = if result.reproduced {
+                ("reproduced", "failed")
+            } else {
+                ("not reproduced", "passed")
+            };
+            let recovery = "restore metadata backup before retrying migration";
+            fault_report(
+                "metadata_migration",
+                status,
+                serde_json::json!({
+                    "migration_check": migration_check,
+                    "recovery": recovery
+                }),
+                vec![
+                    "fault: metadata_migration".to_string(),
+                    format!("status: {status}"),
+                    format!("migration check: {migration_check}"),
+                    format!("recovery: {recovery}"),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
+        }
+        FaultSimulationCase::ModelChecksum => {
+            let model_file = fault_args
+                .model_file
+                .as_deref()
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+            let expected_sha256 = fault_args
+                .expected_sha256
+                .as_deref()
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            let actual_sha256 = file_sha256_hex(model_file)
+                .map_err(|_| CliError::user("fault simulation probe failed"))?;
+            let reproduced = actual_sha256 != expected_sha256;
+            let (status, checksum_match) = if reproduced {
+                ("reproduced", "no")
+            } else {
+                ("not reproduced", "yes")
+            };
+            let expected_prefix = checksum_prefix(expected_sha256).to_string();
+            let actual_prefix = checksum_prefix(&actual_sha256).to_string();
+            fault_report(
+                "model_checksum",
+                status,
+                serde_json::json!({
+                    "checksum_match": checksum_match,
+                    "expected_sha256_prefix": expected_prefix,
+                    "actual_sha256_prefix": actual_prefix
+                }),
+                vec![
+                    "fault: model_checksum".to_string(),
+                    format!("status: {status}"),
+                    format!("checksum match: {checksum_match}"),
+                    format!("expected sha256 prefix: {expected_prefix}"),
+                    format!("actual sha256 prefix: {actual_prefix}"),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
+        }
+        FaultSimulationCase::DaemonKill => {
+            let daemon_binary = fault_args
+                .daemon_binary
+                .as_deref()
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            let result = simulate_daemon_kill_probe(scratch_dir, daemon_binary)
+                .map_err(|_| CliError::user("fault simulation probe failed"))?;
+            let status = if result.terminated && result.restart_succeeded {
+                "reproduced"
+            } else {
+                "not reproduced"
+            };
+            let terminated_daemon = if result.terminated { "yes" } else { "no" };
+            let restart_check = if result.restart_succeeded {
+                "passed"
+            } else {
+                "failed"
+            };
+            fault_report(
+                "daemon_kill",
+                status,
+                serde_json::json!({
+                    "daemon_ready": "yes",
+                    "terminated_daemon": terminated_daemon,
+                    "restart_check": restart_check
+                }),
+                vec![
+                    "fault: daemon_kill".to_string(),
+                    format!("status: {status}"),
+                    "daemon ready: yes".to_string(),
+                    format!("terminated daemon: {terminated_daemon}"),
+                    format!("restart check: {restart_check}"),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
+        }
+        FaultSimulationCase::OcrCrash => {
+            let ocr_command = fault_args
+                .ocr_command
+                .as_deref()
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            let result = simulate_ocr_crash_probe(scratch_dir, ocr_command)?;
+            let (status, ocr_command_status) = if result.reproduced {
+                ("reproduced", "failed")
+            } else {
+                ("not reproduced", "completed")
+            };
+            fault_report(
+                "ocr_crash",
+                status,
+                serde_json::json!({
+                    "ocr_command": ocr_command_status,
+                    "probe_bytes": result.probe_bytes
+                }),
+                vec![
+                    "fault: ocr_crash".to_string(),
+                    format!("status: {status}"),
+                    format!("ocr command: {ocr_command_status}"),
+                    format!("probe bytes: {}", result.probe_bytes),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
+        }
+        FaultSimulationCase::BatteryMode => {
+            let battery_state = fault_args
+                .battery_state
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            let (status, power_source, degradation) = match battery_state {
+                FaultBatteryState::Battery => (
+                    "reproduced",
+                    "battery",
+                    "pause or lower OCR/vector worker budgets",
+                ),
+                FaultBatteryState::Ac => ("not reproduced", "ac", "not required"),
+            };
+            fault_report(
+                "battery_mode",
+                status,
+                serde_json::json!({
+                    "power_source": power_source,
+                    "degradation": degradation,
+                    "real_hardware_drill": "blocked"
+                }),
+                vec![
+                    "fault: battery_mode".to_string(),
+                    format!("status: {status}"),
+                    format!("power source: {power_source}"),
+                    format!("degradation: {degradation}"),
+                    "real hardware drill: blocked".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
+        }
+        FaultSimulationCase::ExternalDriveDisconnect => {
+            let drive_state = fault_args
+                .drive_state
+                .ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+
+            let (status, mount_state, import_roots, recovery) = match drive_state {
+                FaultDriveState::Disconnected => (
+                    "reproduced",
+                    "disconnected",
+                    "unavailable",
+                    "reconnect drive or reselect root before retry",
+                ),
+                FaultDriveState::Mounted => {
+                    ("not reproduced", "mounted", "available", "not required")
+                }
+            };
+            fault_report(
+                "external_drive_disconnect",
+                status,
+                serde_json::json!({
+                    "mount_state": mount_state,
+                    "import_roots": import_roots,
+                    "recovery": recovery,
+                    "real_hardware_drill": "blocked"
+                }),
+                vec![
+                    "fault: external_drive_disconnect".to_string(),
+                    format!("status: {status}"),
+                    format!("mount state: {mount_state}"),
+                    format!("import roots: {import_roots}"),
+                    format!("recovery: {recovery}"),
+                    "real hardware drill: blocked".to_string(),
+                    "paths: <redacted>".to_string(),
+                ],
+            )
+        }
+    };
+
+    Ok(report)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FaultSimulationReport {
+    fault: &'static str,
+    status: &'static str,
+    details: serde_json::Value,
+    text_lines: Vec<String>,
+}
+
+fn fault_report(
+    fault: &'static str,
+    status: &'static str,
+    details: serde_json::Value,
+    text_lines: Vec<String>,
+) -> FaultSimulationReport {
+    FaultSimulationReport {
+        fault,
+        status,
+        details,
+        text_lines,
+    }
+}
+
+fn print_fault_simulation_report(json: bool, report: FaultSimulationReport) -> Result<()> {
+    if json {
+        let body = serde_json::json!({
+            "schema_version": "fault-simulation.v1",
+            "redacted": true,
+            "fault": report.fault,
+            "status": report.status,
+            "paths": "<redacted>",
+            "details": report.details,
+            "evidence_level": "local_synthetic_fault_probe"
+        });
+        let output = serde_json::to_string_pretty(&body)
+            .map_err(|_| CliError::user("fault simulation report serialization failed"))?;
+        println!("{output}");
+    } else {
+        for line in report.text_lines {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
+fn print_fault_simulation_suite_report(
+    suite: FaultSimulationSuite,
+    data_dir: &Path,
+    scratch_dir: &Path,
+    json: bool,
+    daemon_binary: Option<&Path>,
+    ocr_command: Option<&Path>,
+) -> Result<()> {
+    if !json {
+        return Err(CliError::usage(fault_simulate_usage()));
+    }
+
+    match suite {
+        FaultSimulationSuite::LocalSafe => {
+            let cases =
+                run_local_safe_fault_suite(data_dir, scratch_dir, daemon_binary, ocr_command)?;
+            let total_cases = cases.len();
+            let failed_cases = cases.iter().filter(|case| case.status == "failed").count();
+            let reproduced_cases = cases
+                .iter()
+                .filter(|case| case.status == "reproduced")
+                .count();
+            let blocked_by_host_cases = cases
+                .iter()
+                .filter(|case| case.status == "blocked_by_host")
+                .count();
+            let body = serde_json::json!({
+                "schema_version": "fault-simulation-suite.v1",
+                "suite": "local_safe",
+                "redacted": true,
+                "paths": "<redacted>",
+                "evidence_level": "local_synthetic_fault_suite",
+                "release_hardware_drills": "blocked",
+                "summary": {
+                    "total_cases": total_cases,
+                    "reproduced_cases": reproduced_cases,
+                    "blocked_by_host_cases": blocked_by_host_cases,
+                    "failed_cases": failed_cases,
+                    "release_blockers_cleared": false
+                },
+                "cases": cases.into_iter().map(FaultSuiteCaseReport::into_json).collect::<Vec<_>>()
+            });
+            let output = serde_json::to_string_pretty(&body)
+                .map_err(|_| CliError::user("fault simulation report serialization failed"))?;
+            println!("{output}");
+            Ok(())
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FaultSuiteCaseReport {
+    fault: &'static str,
+    status: String,
+    details: serde_json::Value,
+}
+
+impl FaultSuiteCaseReport {
+    fn from_report(report: FaultSimulationReport) -> Self {
+        Self {
+            fault: report.fault,
+            status: report.status.to_string(),
+            details: report.details,
+        }
+    }
+
+    fn blocked_by_host(fault: &'static str, reason: &'static str) -> Self {
+        Self {
+            fault,
+            status: "blocked_by_host".to_string(),
+            details: serde_json::json!({ "reason": reason }),
+        }
+    }
+
+    fn failed(fault: &'static str) -> Self {
+        Self {
+            fault,
+            status: "failed".to_string(),
+            details: serde_json::json!({ "reason": "probe failed" }),
+        }
+    }
+
+    fn into_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "fault": self.fault,
+            "status": self.status,
+            "redacted": true,
+            "paths": "<redacted>",
+            "details": self.details
+        })
+    }
+}
+
+fn run_local_safe_fault_suite(
+    data_dir: &Path,
+    scratch_dir: &Path,
+    daemon_binary: Option<&Path>,
+    ocr_command: Option<&Path>,
+) -> Result<Vec<FaultSuiteCaseReport>> {
+    let mut cases = vec![run_fault_suite_case(
+        scratch_dir,
+        "disk_space_low",
+        FaultSimulationArgs::suite_case(FaultSimulationCase::DiskSpaceLow)
+            .with_disk_space(4096, 1024),
+    )];
+
+    #[cfg(unix)]
+    cases.push(run_permission_denied_suite_case(scratch_dir));
+    #[cfg(not(unix))]
+    cases.push(FaultSuiteCaseReport::blocked_by_host(
+        "permission_denied",
+        "permission bit probe requires unix permissions",
+    ));
+
+    cases.extend([
+        run_fault_suite_case(
+            scratch_dir,
+            "file_lock",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::FileLock),
+        ),
+        run_fault_suite_case(
+            scratch_dir,
+            "index_snapshot_corrupt",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::IndexSnapshotCorrupt),
+        ),
+        run_fault_suite_case(
+            scratch_dir,
+            "metadata_migration",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::MetadataMigration),
+        ),
+        run_model_checksum_suite_case(scratch_dir),
+    ]);
+    cases.push(match daemon_binary {
+        Some(path) => run_fault_suite_case(
+            scratch_dir,
+            "daemon_kill",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::DaemonKill)
+                .with_daemon_binary(path.to_path_buf()),
+        ),
+        None => FaultSuiteCaseReport::blocked_by_host(
+            "daemon_kill",
+            "suite requires explicit daemon binary to avoid guessing host paths",
+        ),
+    });
+    cases.push(match ocr_command {
+        Some(path) => run_fault_suite_case(
+            scratch_dir,
+            "ocr_crash",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::OcrCrash)
+                .with_ocr_command(path.to_path_buf()),
+        ),
+        None => FaultSuiteCaseReport::blocked_by_host(
+            "ocr_crash",
+            "suite requires explicit local OCR crash fixture to avoid shell-specific probes",
+        ),
+    });
+    cases.extend([
+        run_fault_suite_case(
+            scratch_dir,
+            "battery_mode",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::BatteryMode)
+                .with_battery_state(FaultBatteryState::Battery),
+        ),
+        run_fault_suite_case(
+            scratch_dir,
+            "external_drive_disconnect",
+            FaultSimulationArgs::suite_case(FaultSimulationCase::ExternalDriveDisconnect)
+                .with_drive_state(FaultDriveState::Disconnected),
+        ),
+    ]);
+
+    if !data_dir.as_os_str().is_empty() {
+        let _ = fs::create_dir_all(scratch_dir);
+    }
+
+    Ok(cases)
+}
+
+fn run_fault_suite_case(
+    scratch_dir: &Path,
+    fault: &'static str,
+    args: FaultSimulationArgs,
+) -> FaultSuiteCaseReport {
+    match fault_simulation_report_for_args(&scratch_dir.join(fault), &args) {
+        Ok(report) => FaultSuiteCaseReport::from_report(report),
+        Err(_) => FaultSuiteCaseReport::failed(fault),
+    }
+}
+
+#[cfg(unix)]
+fn run_permission_denied_suite_case(scratch_dir: &Path) -> FaultSuiteCaseReport {
+    let case_dir = scratch_dir.join("permission_denied");
+    if fs::create_dir_all(&case_dir).is_err() {
+        return FaultSuiteCaseReport::failed("permission_denied");
+    }
+    let original_permissions = match fs::metadata(&case_dir).map(|metadata| metadata.permissions())
+    {
+        Ok(permissions) => permissions,
+        Err(_) => return FaultSuiteCaseReport::failed("permission_denied"),
+    };
+    let mut denied = original_permissions.clone();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        denied.set_mode(0o500);
+    }
+    if fs::set_permissions(&case_dir, denied).is_err() {
+        return FaultSuiteCaseReport::failed("permission_denied");
+    }
+    let result = run_fault_suite_case(
+        scratch_dir,
+        "permission_denied",
+        FaultSimulationArgs::suite_case(FaultSimulationCase::PermissionDenied)
+            .with_scratch_dir(case_dir.clone()),
+    );
+    let _ = fs::set_permissions(&case_dir, original_permissions);
+    result
+}
+
+fn run_model_checksum_suite_case(scratch_dir: &Path) -> FaultSuiteCaseReport {
+    let case_dir = scratch_dir.join("model_checksum");
+    if fs::create_dir_all(&case_dir).is_err() {
+        return FaultSuiteCaseReport::failed("model_checksum");
+    }
+    let model_path = case_dir.join("model.bin");
+    if fs::write(&model_path, MODEL_CHECKSUM_PROBE_BYTES).is_err() {
+        return FaultSuiteCaseReport::failed("model_checksum");
+    }
+    let result = run_fault_suite_case(
+        scratch_dir,
+        "model_checksum",
+        FaultSimulationArgs::suite_case(FaultSimulationCase::ModelChecksum).with_model_file(
+            model_path.clone(),
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+    );
+    let _ = fs::remove_file(model_path);
+    result
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FaultSimulationCase {
+    DiskSpaceLow,
+    PermissionDenied,
+    FileLock,
+    IndexSnapshotCorrupt,
+    MetadataMigration,
+    ModelChecksum,
+    DaemonKill,
+    OcrCrash,
+    BatteryMode,
+    ExternalDriveDisconnect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FaultSimulationSuite {
+    LocalSafe,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FaultBatteryState {
+    Battery,
+    Ac,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FaultDriveState {
+    Disconnected,
+    Mounted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FaultSimulationArgs {
+    case: Option<FaultSimulationCase>,
+    suite: Option<FaultSimulationSuite>,
+    json: bool,
+    scratch_dir: Option<PathBuf>,
+    required_bytes: Option<u64>,
+    available_bytes: Option<u64>,
+    daemon_binary: Option<PathBuf>,
+    ocr_command: Option<PathBuf>,
+    model_file: Option<PathBuf>,
+    expected_sha256: Option<String>,
+    battery_state: Option<FaultBatteryState>,
+    drive_state: Option<FaultDriveState>,
+}
+
+impl FaultSimulationArgs {
+    fn suite_case(case: FaultSimulationCase) -> Self {
+        Self {
+            case: Some(case),
+            suite: None,
+            json: true,
+            scratch_dir: None,
+            required_bytes: None,
+            available_bytes: None,
+            daemon_binary: None,
+            ocr_command: None,
+            model_file: None,
+            expected_sha256: None,
+            battery_state: None,
+            drive_state: None,
+        }
+    }
+
+    fn with_scratch_dir(mut self, scratch_dir: PathBuf) -> Self {
+        self.scratch_dir = Some(scratch_dir);
+        self
+    }
+
+    fn with_disk_space(mut self, required_bytes: u64, available_bytes: u64) -> Self {
+        self.required_bytes = Some(required_bytes);
+        self.available_bytes = Some(available_bytes);
+        self
+    }
+
+    fn with_model_file(mut self, model_file: PathBuf, expected_sha256: &str) -> Self {
+        self.model_file = Some(model_file);
+        self.expected_sha256 = Some(expected_sha256.to_string());
+        self
+    }
+
+    fn with_daemon_binary(mut self, daemon_binary: PathBuf) -> Self {
+        self.daemon_binary = Some(daemon_binary);
+        self
+    }
+
+    fn with_ocr_command(mut self, ocr_command: PathBuf) -> Self {
+        self.ocr_command = Some(ocr_command);
+        self
+    }
+
+    fn with_battery_state(mut self, battery_state: FaultBatteryState) -> Self {
+        self.battery_state = Some(battery_state);
+        self
+    }
+
+    fn with_drive_state(mut self, drive_state: FaultDriveState) -> Self {
+        self.drive_state = Some(drive_state);
+        self
+    }
+}
+
+fn parse_fault_simulate_args(args: &[String]) -> Result<FaultSimulationArgs> {
+    let mut case = None;
+    let mut suite = None;
+    let mut json = false;
+    let mut scratch_dir = None;
+    let mut required_bytes = None;
+    let mut available_bytes = None;
+    let mut daemon_binary = None;
+    let mut ocr_command = None;
+    let mut model_file = None;
+    let mut expected_sha256 = None;
+    let mut battery_state = None;
+    let mut drive_state = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--case" => {
+                if case.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                let value = take_fault_value(args, &mut index)?;
+                case = Some(parse_fault_case(value)?);
+            }
+            "--suite" => {
+                if suite.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                let value = take_fault_value(args, &mut index)?;
+                suite = Some(parse_fault_suite(value)?);
+            }
+            "--json" => {
+                if json {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                json = true;
+                index += 1;
+            }
+            "--scratch-dir" => {
+                if scratch_dir.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                scratch_dir = Some(PathBuf::from(take_fault_value(args, &mut index)?));
+            }
+            "--required-bytes" => {
+                if required_bytes.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                required_bytes = Some(take_fault_positive_u64(args, &mut index)?);
+            }
+            "--available-bytes" => {
+                if available_bytes.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                available_bytes = Some(take_fault_positive_u64(args, &mut index)?);
+            }
+            "--daemon-binary" => {
+                if daemon_binary.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                daemon_binary = Some(PathBuf::from(take_fault_value(args, &mut index)?));
+            }
+            "--ocr-command" => {
+                if ocr_command.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                ocr_command = Some(PathBuf::from(take_fault_value(args, &mut index)?));
+            }
+            "--model-file" => {
+                if model_file.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                model_file = Some(PathBuf::from(take_fault_value(args, &mut index)?));
+            }
+            "--expected-sha256" => {
+                if expected_sha256.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                expected_sha256 = Some(take_fault_sha256(args, &mut index)?);
+            }
+            "--battery-state" => {
+                if battery_state.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                battery_state = Some(parse_fault_battery_state(take_fault_value(
+                    args, &mut index,
+                )?)?);
+            }
+            "--drive-state" => {
+                if drive_state.is_some() {
+                    return Err(CliError::usage(fault_simulate_usage()));
+                }
+                drive_state = Some(parse_fault_drive_state(take_fault_value(
+                    args, &mut index,
+                )?)?);
+            }
+            _ => return Err(CliError::usage(fault_simulate_usage())),
+        }
+    }
+
+    if suite.is_some() {
+        if case.is_some()
+            || required_bytes.is_some()
+            || available_bytes.is_some()
+            || model_file.is_some()
+            || expected_sha256.is_some()
+            || battery_state.is_some()
+            || drive_state.is_some()
+            || !json
+        {
+            return Err(CliError::usage(fault_simulate_usage()));
+        }
+        return Ok(FaultSimulationArgs {
+            case: None,
+            suite,
+            json,
+            scratch_dir,
+            required_bytes,
+            available_bytes,
+            daemon_binary,
+            ocr_command,
+            model_file,
+            expected_sha256,
+            battery_state,
+            drive_state,
+        });
+    }
+
+    let case = case.ok_or_else(|| CliError::usage(fault_simulate_usage()))?;
+    match case {
+        FaultSimulationCase::DiskSpaceLow => {
+            if required_bytes.is_none() || available_bytes.is_none() {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+            if daemon_binary.is_some()
+                || ocr_command.is_some()
+                || model_file.is_some()
+                || expected_sha256.is_some()
+                || battery_state.is_some()
+                || drive_state.is_some()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::PermissionDenied
+        | FaultSimulationCase::FileLock
+        | FaultSimulationCase::IndexSnapshotCorrupt
+        | FaultSimulationCase::MetadataMigration => {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_some()
+                || ocr_command.is_some()
+                || model_file.is_some()
+                || expected_sha256.is_some()
+                || battery_state.is_some()
+                || drive_state.is_some()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::ModelChecksum => {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_some()
+                || ocr_command.is_some()
+                || model_file.is_none()
+                || expected_sha256.is_none()
+                || battery_state.is_some()
+                || drive_state.is_some()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::DaemonKill => {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_none()
+                || ocr_command.is_some()
+                || model_file.is_some()
+                || expected_sha256.is_some()
+                || battery_state.is_some()
+                || drive_state.is_some()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::OcrCrash => {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_some()
+                || ocr_command.is_none()
+                || model_file.is_some()
+                || expected_sha256.is_some()
+                || battery_state.is_some()
+                || drive_state.is_some()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::BatteryMode => {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_some()
+                || ocr_command.is_some()
+                || model_file.is_some()
+                || expected_sha256.is_some()
+                || battery_state.is_none()
+                || drive_state.is_some()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+        FaultSimulationCase::ExternalDriveDisconnect => {
+            if required_bytes.is_some()
+                || available_bytes.is_some()
+                || daemon_binary.is_some()
+                || ocr_command.is_some()
+                || model_file.is_some()
+                || expected_sha256.is_some()
+                || battery_state.is_some()
+                || drive_state.is_none()
+            {
+                return Err(CliError::usage(fault_simulate_usage()));
+            }
+        }
+    }
+
+    Ok(FaultSimulationArgs {
+        case: Some(case),
+        suite: None,
+        json,
+        scratch_dir,
+        required_bytes,
+        available_bytes,
+        daemon_binary,
+        ocr_command,
+        model_file,
+        expected_sha256,
+        battery_state,
+        drive_state,
+    })
+}
+
+fn parse_fault_suite(value: &str) -> Result<FaultSimulationSuite> {
+    match value {
+        "local-safe" | "local_safe" => Ok(FaultSimulationSuite::LocalSafe),
+        _ => Err(CliError::usage(fault_simulate_usage())),
+    }
+}
+
+fn parse_fault_case(value: &str) -> Result<FaultSimulationCase> {
+    match value {
+        "disk-space-low" => Ok(FaultSimulationCase::DiskSpaceLow),
+        "permission-denied" => Ok(FaultSimulationCase::PermissionDenied),
+        "file-lock" => Ok(FaultSimulationCase::FileLock),
+        "index-snapshot-corrupt" | "index_snapshot_corrupt" => {
+            Ok(FaultSimulationCase::IndexSnapshotCorrupt)
+        }
+        "migration-failure" | "metadata-migration" => Ok(FaultSimulationCase::MetadataMigration),
+        "model-checksum" => Ok(FaultSimulationCase::ModelChecksum),
+        "daemon-kill" => Ok(FaultSimulationCase::DaemonKill),
+        "ocr-crash" => Ok(FaultSimulationCase::OcrCrash),
+        "battery-mode" | "battery_mode" => Ok(FaultSimulationCase::BatteryMode),
+        "external-drive-disconnect" | "external_drive_disconnect" => {
+            Ok(FaultSimulationCase::ExternalDriveDisconnect)
+        }
+        _ => Err(CliError::usage(fault_simulate_usage())),
+    }
+}
+
+fn parse_fault_battery_state(value: &str) -> Result<FaultBatteryState> {
+    match value {
+        "battery" => Ok(FaultBatteryState::Battery),
+        "ac" => Ok(FaultBatteryState::Ac),
+        _ => Err(CliError::usage(fault_simulate_usage())),
+    }
+}
+
+fn parse_fault_drive_state(value: &str) -> Result<FaultDriveState> {
+    match value {
+        "disconnected" => Ok(FaultDriveState::Disconnected),
+        "mounted" => Ok(FaultDriveState::Mounted),
+        _ => Err(CliError::usage(fault_simulate_usage())),
+    }
+}
+
+fn take_fault_value<'a>(args: &'a [String], index: &mut usize) -> Result<&'a str> {
+    let Some(value) = args.get(*index + 1).map(String::as_str) else {
+        return Err(CliError::usage(fault_simulate_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(fault_simulate_usage()));
+    }
+    *index += 2;
+    Ok(value)
+}
+
+fn take_fault_positive_u64(args: &[String], index: &mut usize) -> Result<u64> {
+    take_fault_value(args, index)?
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| CliError::usage(fault_simulate_usage()))
+}
+
+fn take_fault_sha256(args: &[String], index: &mut usize) -> Result<String> {
+    let value = take_fault_value(args, index)?.to_ascii_lowercase();
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(CliError::usage(fault_simulate_usage()));
+    }
+    Ok(value)
+}
+
+fn file_sha256_hex(path: &Path) -> std::io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Ok(hex_encode_lower(&hasher.finalize()))
+}
+
+fn hex_encode_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn update_sha256_string(hasher: &mut Sha256, value: &str) {
+    update_sha256_u64(hasher, value.len() as u64);
+    hasher.update(value.as_bytes());
+}
+
+fn update_sha256_u64(hasher: &mut Sha256, value: u64) {
+    hasher.update(value.to_le_bytes());
+}
+
+fn update_sha256_i64(hasher: &mut Sha256, value: i64) {
+    hasher.update(value.to_le_bytes());
+}
+
+fn checksum_prefix(checksum: &str) -> &str {
+    checksum.get(..8).unwrap_or("<invalid>")
+}
+
+fn write_fault_probe(scratch_dir: &Path, bytes: u64) -> std::io::Result<()> {
+    fs::create_dir_all(scratch_dir)?;
+    let probe_path = scratch_dir.join(format!(
+        ".resume-ir-fault-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    let result = write_fault_probe_file(&probe_path, bytes);
+    let _ = fs::remove_file(&probe_path);
+    result
+}
+
+fn write_fault_probe_file(path: &Path, bytes: u64) -> std::io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    let mut remaining = bytes;
+    let buffer = [0_u8; 8192];
+    while remaining > 0 {
+        let chunk_len = remaining.min(buffer.len() as u64) as usize;
+        file.write_all(&buffer[..chunk_len])?;
+        remaining -= chunk_len as u64;
+    }
+    file.sync_all()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileLockProbeResult {
+    Contended,
+    NotContended,
+}
+
+fn contend_file_lock_probe(scratch_dir: &Path) -> std::io::Result<FileLockProbeResult> {
+    fs::create_dir_all(scratch_dir)?;
+    let lock_path = scratch_dir.join(format!(
+        ".resume-ir-lock-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+
+    let result = contend_file_lock_probe_file(&lock_path);
+    let _ = fs::remove_file(&lock_path);
+    result
+}
+
+fn contend_file_lock_probe_file(path: &Path) -> std::io::Result<FileLockProbeResult> {
+    let holder = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    holder.lock_exclusive()?;
+
+    let contender = fs::OpenOptions::new().read(true).write(true).open(path)?;
+    let result = match contender.try_lock_exclusive() {
+        Ok(true) => {
+            contender.unlock()?;
+            Ok(FileLockProbeResult::NotContended)
+        }
+        Ok(false) => Ok(FileLockProbeResult::Contended),
+        Err(error) => Err(error),
+    };
+
+    holder.unlock()?;
+    result
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct IndexSnapshotCorruptProbeResult {
+    reproduced: bool,
+    active_snapshot_corrupt: bool,
+    fallback_recovered: bool,
+    query_after_recovery_passed: bool,
+}
+
+fn simulate_index_snapshot_corrupt_probe(
+    scratch_dir: &Path,
+) -> Result<IndexSnapshotCorruptProbeResult> {
+    fs::create_dir_all(scratch_dir).map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let probe_dir = scratch_dir.join(format!(
+        ".resume-ir-index-corrupt-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&probe_dir).map_err(|_| CliError::user("fault simulation probe failed"))?;
+
+    let result = simulate_index_snapshot_corrupt_probe_dir(&probe_dir);
+    let _ = fs::remove_dir_all(&probe_dir);
+    result
+}
+
+fn simulate_index_snapshot_corrupt_probe_dir(
+    probe_dir: &Path,
+) -> Result<IndexSnapshotCorruptProbeResult> {
+    const QUERY_TOKEN: &str = "SYNTHETIC_INDEX_CORRUPT_PRIVATE_TOKEN";
+    const GOOD_SNAPSHOT: &str = "fulltext-1800003000-good";
+    const ACTIVE_SNAPSHOT: &str = "fulltext-1800003001-active";
+
+    let index_root = probe_dir.join("search-index");
+    publish_snapshot(
+        &index_root,
+        GOOD_SNAPSHOT,
+        [index_corrupt_probe_document(
+            "doc_recovered",
+            "ver_recovered",
+            "synthetic-recovered.pdf",
+            QUERY_TOKEN,
+        )],
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    publish_snapshot(
+        &index_root,
+        ACTIVE_SNAPSHOT,
+        [index_corrupt_probe_document(
+            "doc_active",
+            "ver_active",
+            "synthetic-corrupt-active.pdf",
+            "active snapshot text that should disappear after corruption",
+        )],
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+
+    fs::write(
+        index_root
+            .join("snapshots")
+            .join(ACTIVE_SNAPSHOT)
+            .join("fulltext.snapshot.enc"),
+        b"not a valid encrypted full-text snapshot",
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+
+    let inspection = inspect_snapshot_root(&index_root)
+        .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let active_snapshot_corrupt = inspection.active_snapshot().is_some()
+        && inspection.state() == SnapshotRootState::Recovered;
+    let fallback_recovered = inspection.fallback_snapshot().is_some()
+        && inspection.read_target() == Some(SnapshotReadTarget::PublishedSnapshot);
+    let query_after_recovery_passed = FullTextIndex::open_active(&index_root)
+        .map_err(|_| CliError::user("fault simulation probe failed"))?
+        .map(|index| {
+            index
+                .search(SearchQuery::new(QUERY_TOKEN).with_limit(5))
+                .map(|hits| hits.len() == 1 && hits[0].doc_id == "doc_recovered")
+        })
+        .transpose()
+        .map_err(|_| CliError::user("fault simulation probe failed"))?
+        .unwrap_or(false);
+
+    Ok(IndexSnapshotCorruptProbeResult {
+        reproduced: active_snapshot_corrupt && fallback_recovered && query_after_recovery_passed,
+        active_snapshot_corrupt,
+        fallback_recovered,
+        query_after_recovery_passed,
+    })
+}
+
+fn index_corrupt_probe_document(
+    doc_id: &str,
+    version_id: &str,
+    file_name: &str,
+    clean_text: &str,
+) -> IndexDocument {
+    IndexDocument {
+        doc_id: doc_id.to_string(),
+        version_id: version_id.to_string(),
+        file_name: file_name.to_string(),
+        clean_text: clean_text.to_string(),
+        sections: vec![IndexSection {
+            section_type: "summary".to_string(),
+            text: clean_text.to_string(),
+        }],
+        is_deleted: false,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MetadataMigrationProbeResult {
+    reproduced: bool,
+}
+
+fn simulate_metadata_migration_failure_probe(
+    scratch_dir: &Path,
+) -> std::io::Result<MetadataMigrationProbeResult> {
+    fs::create_dir_all(scratch_dir)?;
+    let probe_dir = scratch_dir.join(format!(
+        ".resume-ir-migration-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&probe_dir)?;
+
+    let result = simulate_metadata_migration_failure_probe_dir(&probe_dir);
+    let _ = fs::remove_dir_all(&probe_dir);
+    result
+}
+
+fn simulate_metadata_migration_failure_probe_dir(
+    probe_dir: &Path,
+) -> std::io::Result<MetadataMigrationProbeResult> {
+    let db_path = probe_dir.join("metadata.sqlite3");
+    let connection = Connection::open(&db_path).map_err(sqlite_probe_error)?;
+    connection
+        .execute_batch(
+            "\
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at_seconds INTEGER NOT NULL
+            );
+            INSERT INTO schema_migrations (version, applied_at_seconds)
+            VALUES (1, 0);",
+        )
+        .map_err(sqlite_probe_error)?;
+    drop(connection);
+
+    let store = MetaStore::open(&db_path).map_err(|_| metadata_migration_probe_error())?;
+    Ok(MetadataMigrationProbeResult {
+        reproduced: store.run_migrations().is_err(),
+    })
+}
+
+fn sqlite_probe_error(_: rusqlite::Error) -> std::io::Error {
+    metadata_migration_probe_error()
+}
+
+fn metadata_migration_probe_error() -> std::io::Error {
+    std::io::Error::other("metadata migration probe failed")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DaemonKillProbeResult {
+    terminated: bool,
+    restart_succeeded: bool,
+}
+
+fn simulate_daemon_kill_probe(
+    scratch_dir: &Path,
+    daemon_binary: &Path,
+) -> std::io::Result<DaemonKillProbeResult> {
+    fs::create_dir_all(scratch_dir)?;
+    let probe_data_dir = scratch_dir.join(format!(
+        ".resume-ir-daemon-kill-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&probe_data_dir)?;
+
+    let result = simulate_daemon_kill_probe_dir(daemon_binary, &probe_data_dir);
+    let _ = fs::remove_dir_all(&probe_data_dir);
+    result
+}
+
+fn simulate_daemon_kill_probe_dir(
+    daemon_binary: &Path,
+    data_dir: &Path,
+) -> std::io::Result<DaemonKillProbeResult> {
+    let mut child = Command::new(daemon_binary)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .arg("run")
+        .arg("--foreground")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "daemon stdout was not captured",
+        )
+    })?;
+
+    if !wait_for_daemon_ready(&mut child, stdout, Duration::from_secs(5))? {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "daemon did not report ready",
+        ));
+    }
+
+    child.kill()?;
+    let status = child.wait()?;
+    let restart_succeeded = daemon_restart_once_succeeds(daemon_binary, data_dir)?;
+
+    Ok(DaemonKillProbeResult {
+        terminated: !status.success(),
+        restart_succeeded,
+    })
+}
+
+fn wait_for_daemon_ready<R: Read + Send + 'static>(
+    child: &mut Child,
+    stdout: R,
+    timeout: Duration,
+) -> std::io::Result<bool> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    let _ = sender.send(false);
+                    return;
+                }
+                Ok(_) => {
+                    if line.contains("resume-daemon foreground ready") {
+                        let _ = sender.send(true);
+                        return;
+                    }
+                }
+                Err(_) => {
+                    let _ = sender.send(false);
+                    return;
+                }
+            }
+        }
+    });
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match receiver.try_recv() {
+            Ok(ready) => return Ok(ready),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(false),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+        if child.try_wait()?.is_some() {
+            return Ok(false);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(false);
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn daemon_restart_once_succeeds(daemon_binary: &Path, data_dir: &Path) -> std::io::Result<bool> {
+    let output = Command::new(daemon_binary)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .arg("run")
+        .arg("--foreground")
+        .arg("--once")
+        .output()?;
+
+    Ok(output.status.success()
+        && output.stderr.is_empty()
+        && String::from_utf8_lossy(&output.stdout).contains("resume-daemon foreground ready"))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OcrCrashProbeResult {
+    reproduced: bool,
+    probe_bytes: usize,
+}
+
+fn simulate_ocr_crash_probe(scratch_dir: &Path, ocr_command: &Path) -> Result<OcrCrashProbeResult> {
+    fs::create_dir_all(scratch_dir).map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let client = LocalOcrCommandClient::new(
+        LocalOcrCommandSpec::new(ocr_command, Vec::<String>::new(), "fault-simulate")
+            .map_err(CliError::ocr)?,
+    );
+    let request = OcrPageRequest::new(
+        RenderedPage::new(1, 300, OCR_CRASH_PROBE_BYTES.to_vec()).map_err(CliError::ocr)?,
+        OcrOptions::new("eng", "balanced").map_err(CliError::ocr)?,
+    )
+    .map_err(CliError::ocr)?;
+    let reproduced = match client.recognize_page(
+        request,
+        OcrWorkerBudget::new(1_000).map_err(CliError::ocr)?,
+        &CancellationToken::new(),
+    ) {
+        Ok(_) => false,
+        Err(error) if error.kind() == OcrErrorKind::EngineFailed => true,
+        Err(_) => return Err(CliError::user("fault simulation probe failed")),
+    };
+
+    Ok(OcrCrashProbeResult {
+        reproduced,
+        probe_bytes: OCR_CRASH_PROBE_BYTES.len(),
+    })
+}
+
+fn fault_simulate_usage() -> &'static str {
+    "usage: resume-cli fault-simulate --suite local-safe --json [--scratch-dir <path>] [--daemon-binary <path>] [--ocr-command <path>] OR resume-cli fault-simulate --case disk-space-low --required-bytes <n> --available-bytes <n> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case permission-denied [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case file-lock [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case index-snapshot-corrupt [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case migration-failure [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case model-checksum --model-file <path> --expected-sha256 <hex> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case daemon-kill --daemon-binary <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case ocr-crash --ocr-command <path> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case battery-mode --battery-state <battery|ac> [--scratch-dir <path>] [--json] OR resume-cli fault-simulate --case external-drive-disconnect --drive-state <disconnected|mounted> [--scratch-dir <path>] [--json]"
 }
 
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -785,6 +9643,9 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
     let latest_import_scan = store.latest_import_scan_scope().map_err(CliError::store)?;
+    let scan_error_breakdown = store
+        .import_scan_error_breakdown()
+        .map_err(CliError::store)?;
     let ocr_task = store
         .worker_task_control(WorkerTaskKind::Ocr)
         .map_err(CliError::store)?;
@@ -800,6 +9661,20 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("ocr queue: {}", summary.ocr_queue_depth);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
+    println!(
+        "ocr page budget blocked: {}",
+        summary.ocr_page_budget_blocked
+    );
+    if summary.ocr_page_budget_blocked > 0 {
+        println!("ocr remediation: {}", OCR_PAGE_BUDGET_REMEDIATION);
+    }
+    println!(
+        "ocr language unavailable: {}",
+        summary.ocr_language_unavailable
+    );
+    if summary.ocr_language_unavailable > 0 {
+        println!("ocr language remediation: {}", OCR_LANGUAGE_REMEDIATION);
+    }
     println!("ocr task: {}", worker_task_status_label(ocr_task.paused));
     println!("embedding queue: {}", summary.embedding_queue_depth);
     println!("entity mentions: {}", summary.entity_mentions);
@@ -811,6 +9686,8 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("import tasks cancelled: {}", summary.import_tasks_cancelled);
     println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("import scan errors: {}", summary.import_scan_errors);
+    print_import_scan_error_breakdown(&scan_error_breakdown);
+    print_query_latency_summary(&summary.query_latency);
     if let Some(scope) = latest_import_scan.as_ref() {
         print_import_scan_progress(scope);
     }
@@ -866,6 +9743,114 @@ fn print_import_scan_progress(scope: &ImportScanScope) {
     println!(
         "latest import scan budget: {}",
         import_scan_budget_progress_label(scope)
+    );
+}
+
+fn import_scan_error_breakdown_label(breakdown: &[ImportScanErrorSummary]) -> String {
+    if breakdown.is_empty() {
+        return "none".to_string();
+    }
+
+    breakdown
+        .iter()
+        .map(|summary| {
+            format!(
+                "{}/{}={}",
+                summary.kind.label(),
+                summary.operation.label(),
+                summary.count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn print_import_scan_error_breakdown(breakdown: &[ImportScanErrorSummary]) {
+    println!(
+        "import scan error breakdown: {}",
+        import_scan_error_breakdown_label(breakdown)
+    );
+}
+
+fn print_import_scan_error_breakdown_json(breakdown: &[ImportScanErrorSummary], indent: &str) {
+    for (index, summary) in breakdown.iter().enumerate() {
+        let comma = if index + 1 == breakdown.len() {
+            ""
+        } else {
+            ","
+        };
+        println!(
+            "{indent}{{\"kind\": \"{}\", \"operation\": \"{}\", \"count\": {}}}{comma}",
+            summary.kind.label(),
+            summary.operation.label(),
+            summary.count
+        );
+    }
+}
+
+fn print_query_latency_summary(summary: &QueryLatencySummary) {
+    println!("query telemetry samples: {}", summary.sample_count);
+    if summary.sample_count == 0 {
+        return;
+    }
+    println!(
+        "query latency p50 ms: {}",
+        format_optional_u64(summary.p50_ms)
+    );
+    println!(
+        "query latency p95 ms: {}",
+        format_optional_u64(summary.p95_ms)
+    );
+    println!(
+        "query latency p99 ms: {}",
+        format_optional_u64(summary.p99_ms)
+    );
+    println!(
+        "query latest result count: {}",
+        format_optional_u64(summary.last_result_count)
+    );
+}
+
+fn print_query_latency_json_summary(query_latency: &serde_json::Value) {
+    let sample_count = query_latency
+        .get("sample_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    println!("query telemetry samples: {sample_count}");
+    if sample_count == 0 {
+        return;
+    }
+    println!(
+        "query latency p50 ms: {}",
+        format_optional_u64(
+            query_latency
+                .get("p50_ms")
+                .and_then(serde_json::Value::as_u64)
+        )
+    );
+    println!(
+        "query latency p95 ms: {}",
+        format_optional_u64(
+            query_latency
+                .get("p95_ms")
+                .and_then(serde_json::Value::as_u64)
+        )
+    );
+    println!(
+        "query latency p99 ms: {}",
+        format_optional_u64(
+            query_latency
+                .get("p99_ms")
+                .and_then(serde_json::Value::as_u64)
+        )
+    );
+    println!(
+        "query latest result count: {}",
+        format_optional_u64(
+            query_latency
+                .get("last_result_count")
+                .and_then(serde_json::Value::as_u64)
+        )
     );
 }
 
@@ -934,7 +9919,7 @@ fn parse_status_args(data_dir: &Path, args: &[String]) -> Result<StatusArgs> {
     }
 
     let Some(ipc_value) = ipc_value else {
-        if watch_import {
+        if ipc_token_file.is_some() {
             return Err(CliError::usage(status_usage()));
         }
         return Ok(StatusArgs {
@@ -1109,6 +10094,16 @@ fn render_ipc_status(body: &serde_json::Value) {
     println!("recovery queue: {}", json_u64(body, "recovery_queue_depth"));
     println!("ocr queue: {}", json_u64(body, "ocr_queue_depth"));
     println!("ocr jobs queued: {}", json_u64(body, "ocr_jobs_queued"));
+    let ocr_page_budget_blocked = json_u64(body, "ocr_page_budget_blocked");
+    println!("ocr page budget blocked: {ocr_page_budget_blocked}");
+    if ocr_page_budget_blocked > 0 {
+        println!("ocr remediation: {}", OCR_PAGE_BUDGET_REMEDIATION);
+    }
+    let ocr_language_unavailable = json_u64(body, "ocr_language_unavailable");
+    println!("ocr language unavailable: {ocr_language_unavailable}");
+    if ocr_language_unavailable > 0 {
+        println!("ocr language remediation: {}", OCR_LANGUAGE_REMEDIATION);
+    }
     println!(
         "embedding queue: {}",
         json_u64(body, "embedding_queue_depth")
@@ -1134,6 +10129,11 @@ fn render_ipc_status(body: &serde_json::Value) {
         "import scan errors: {}",
         json_u64(body, "import_scan_errors")
     );
+    if let Some(query_latency) = body.get("query_latency") {
+        print_query_latency_json_summary(query_latency);
+    } else {
+        println!("query telemetry samples: 0");
+    }
     if let Some(latest_import) = body.get("latest_import_scan") {
         render_ipc_import_scan_progress(latest_import);
     }
@@ -1283,6 +10283,11 @@ struct IpcDetailEndpoint {
     addr: SocketAddr,
 }
 
+#[derive(Clone)]
+struct IpcDeleteEndpoint {
+    addr: SocketAddr,
+}
+
 fn auto_ipc_token_file(data_dir: &Path) -> PathBuf {
     data_dir.join(IPC_AUTH_TOKEN_FILE)
 }
@@ -1309,6 +10314,10 @@ fn discover_search_ipc_endpoint(data_dir: &Path) -> Result<IpcSearchEndpoint> {
 
 fn discover_detail_ipc_endpoint(data_dir: &Path) -> Result<IpcDetailEndpoint> {
     parse_detail_ipc_endpoint(&discover_ipc_url(data_dir, "details")?)
+}
+
+fn discover_delete_ipc_endpoint(data_dir: &Path) -> Result<IpcDeleteEndpoint> {
+    parse_delete_ipc_endpoint(&discover_ipc_url(data_dir, "delete")?)
 }
 
 fn ensure_auto_ipc_same_daemon(status_addr: SocketAddr, command_addr: SocketAddr) -> Result<()> {
@@ -1476,6 +10485,1262 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
 
     Ok(())
+}
+
+fn witness_command(args: &[String]) -> Result<()> {
+    let witness_args = parse_witness_args(args)?;
+    let (source_roots, scan_profile) = expand_witness_root_selection(&witness_args.root_selection)?;
+    let selection = collect_witness_inputs(&source_roots, witness_args.max_files, scan_profile)?;
+    let temp_dirs = WitnessTempDirs::create()?;
+    copy_witness_inputs(&selection.selected, &temp_dirs.input_root)?;
+
+    let store = open_store(&temp_dirs.data_dir)?;
+    let now = current_timestamp()?;
+    let task = ImportTask {
+        id: new_import_task_id()?,
+        root_path: path_string(&temp_dirs.input_root),
+        status: ImportTaskStatus::Queued,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    };
+    store.insert_import_task(&task).map_err(CliError::store)?;
+    let summary = import_root_with_options(
+        &temp_dirs.data_dir,
+        &store,
+        &task,
+        &temp_dirs.input_root,
+        now,
+        ImportOptions {
+            scan_profile,
+            max_files: None,
+        },
+    )
+    .map_err(CliError::import)?;
+    let witness_ocr = if witness_args.run_ocr {
+        run_witness_ocr_jobs(
+            &temp_dirs.data_dir,
+            &store,
+            &witness_args.ocr_worker_args,
+            witness_args.ocr_max_documents,
+            now,
+        )?
+    } else {
+        WitnessOcrStatus::NotRequested
+    };
+    let witness_embedding = if witness_args.run_embedding {
+        run_witness_embedding_jobs(
+            &temp_dirs.data_dir,
+            &store,
+            &witness_args.embedding_worker_args,
+        )?
+    } else {
+        WitnessEmbeddingStatus::NotRequested
+    };
+    let witness_benchmark_corpus = if witness_args.probe_benchmark_corpus {
+        WitnessBenchmarkCorpusStatus::Completed {
+            summary: benchmark_corpus_summary(&temp_dirs.data_dir, &store)?,
+        }
+    } else {
+        WitnessBenchmarkCorpusStatus::NotRequested
+    };
+    let witness_fields = if witness_args.probe_fields {
+        run_witness_field_probe(&store)?
+    } else {
+        WitnessFieldStatus::NotRequested
+    };
+    let witness_search = if witness_args.probe_search {
+        run_witness_search_probe(&temp_dirs.data_dir, &store)?
+    } else {
+        WitnessSearchStatus::NotRequested
+    };
+    drop(store);
+    let private_data_removed = temp_dirs.cleanup();
+
+    println!("resume-ir local witness");
+    println!("source root: <redacted>");
+    println!(
+        "root preset: {}",
+        witness_args.root_selection.preset_label().unwrap_or("none")
+    );
+    println!("scan profile: {}", scan_profile.label());
+    println!("formats: pdf,docx,doc");
+    println!("files selected: {}", selection.selected.len());
+    println!(
+        "unsupported entries skipped: {}",
+        selection.unsupported_entries
+    );
+    println!("filesystem scan errors: {}", selection.scan_errors);
+    println!(
+        "scan budget exhausted: {}",
+        yes_no(selection.budget_exhausted)
+    );
+    println!("witness import status: completed");
+    println!("searchable documents: {}", summary.searchable_documents);
+    println!("ocr required documents: {}", summary.ocr_required_documents);
+    println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
+    println!("failed documents: {}", summary.failed_documents);
+    print_import_failure_counts(&summary);
+    print_witness_ocr_status(&witness_ocr);
+    print_witness_embedding_status(&witness_embedding);
+    print_witness_benchmark_corpus_status(&witness_benchmark_corpus);
+    print_witness_field_status(&witness_fields);
+    print_witness_search_status(&witness_search);
+    println!(
+        "private witness data: {}",
+        if private_data_removed {
+            "removed"
+        } else {
+            "cleanup_failed"
+        }
+    );
+
+    if !private_data_removed {
+        return Err(CliError::user(
+            "unable to remove private local witness data",
+        ));
+    }
+
+    Ok(())
+}
+
+fn print_import_failure_counts(summary: &ImportSummary) {
+    for kind in WITNESS_IMPORT_FAILURE_KINDS {
+        println!(
+            "import failure {}: {}",
+            kind.label(),
+            summary.failure_counts.get(*kind)
+        );
+    }
+}
+
+fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
+    let mut root = None;
+    let mut root_preset = None;
+    let mut max_files = WITNESS_DEFAULT_MAX_FILES;
+    let mut run_ocr = false;
+    let mut run_embedding = false;
+    let mut probe_search = false;
+    let mut probe_fields = false;
+    let mut probe_benchmark_corpus = false;
+    let mut seen_ocr_option = false;
+    let mut seen_embedding_option = false;
+    let mut ocr_worker_args = default_ocr_worker_args();
+    let mut embedding_worker_args = default_embed_worker_args();
+    let mut ocr_max_documents = None;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--root" => {
+                if root_preset.is_some() {
+                    return Err(witness_usage());
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if root.is_some() {
+                    return Err(witness_usage());
+                }
+                root = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--root-preset" => {
+                if root.is_some() || root_preset.is_some() {
+                    return Err(witness_usage());
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                root_preset = Some(parse_root_preset(value)?);
+                index += 2;
+            }
+            "--max-files" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                max_files = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            "--run-ocr" => {
+                run_ocr = true;
+                index += 1;
+            }
+            "--run-embedding" => {
+                run_embedding = true;
+                index += 1;
+            }
+            "--probe-search" => {
+                probe_search = true;
+                index += 1;
+            }
+            "--probe-fields" => {
+                probe_fields = true;
+                index += 1;
+            }
+            "--probe-benchmark-corpus" => {
+                probe_benchmark_corpus = true;
+                index += 1;
+            }
+            "--ocr-command" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if ocr_worker_args.command.is_some() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-tesseract-command" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if ocr_worker_args.tesseract_command.is_some() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.tesseract_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-render-command" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if ocr_worker_args.render_command.is_some() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.render_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-pdftoppm-command" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if ocr_worker_args.pdftoppm_command.is_some() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.pdftoppm_command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--ocr-engine-profile" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if value.trim().is_empty() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.engine_profile = value.clone();
+                index += 2;
+            }
+            "--ocr-lang" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if value.trim().is_empty() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.lang = value.clone();
+                index += 2;
+            }
+            "--ocr-profile" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if value.trim().is_empty() {
+                    return Err(witness_usage());
+                }
+                ocr_worker_args.profile = value.clone();
+                index += 2;
+            }
+            "--ocr-render-dpi" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                ocr_worker_args.render_dpi = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            "--ocr-page-timeout-ms" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                ocr_worker_args.page_timeout_ms = value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            "--ocr-max-pages-per-document" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                ocr_worker_args.max_pages_per_document = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            "--ocr-max-documents" => {
+                seen_ocr_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if ocr_max_documents.is_some() {
+                    return Err(witness_usage());
+                }
+                ocr_max_documents = Some(
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .ok_or_else(witness_usage)?,
+                );
+                index += 2;
+            }
+            "--embedding-command" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if embedding_worker_args.command.is_some() {
+                    return Err(witness_usage());
+                }
+                embedding_worker_args.command = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--embedding-model-id" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if embedding_worker_args.model_id.is_some() || !valid_cli_identifier(value) {
+                    return Err(witness_usage());
+                }
+                embedding_worker_args.model_id = Some(value.clone());
+                index += 2;
+            }
+            "--embedding-dimension" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                if embedding_worker_args.dimension.is_some() {
+                    return Err(witness_usage());
+                }
+                embedding_worker_args.dimension = Some(
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .ok_or_else(witness_usage)?,
+                );
+                index += 2;
+            }
+            "--embedding-max-docs" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                embedding_worker_args.max_docs = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            "--embedding-max-text-bytes" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                embedding_worker_args.max_text_bytes = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            "--embedding-timeout-ms" => {
+                seen_embedding_option = true;
+                let Some(value) = args.get(index + 1) else {
+                    return Err(witness_usage());
+                };
+                embedding_worker_args.timeout_ms = value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(witness_usage)?;
+                index += 2;
+            }
+            _ => return Err(witness_usage()),
+        }
+    }
+
+    if seen_ocr_option && !run_ocr {
+        return Err(witness_usage());
+    }
+    if seen_embedding_option && !run_embedding {
+        return Err(witness_usage());
+    }
+    if ocr_worker_args.command.is_some() && ocr_worker_args.tesseract_command.is_some() {
+        return Err(witness_usage());
+    }
+    if ocr_worker_args.render_command.is_some() && ocr_worker_args.pdftoppm_command.is_some() {
+        return Err(witness_usage());
+    }
+
+    let root_selection = if let Some(root) = root {
+        WitnessRootSelection::Explicit(root)
+    } else if let Some(root_preset) = root_preset {
+        WitnessRootSelection::Preset(root_preset)
+    } else {
+        return Err(witness_usage());
+    };
+
+    Ok(WitnessArgs {
+        root_selection,
+        max_files,
+        run_ocr,
+        run_embedding,
+        probe_search,
+        probe_fields,
+        probe_benchmark_corpus,
+        ocr_max_documents,
+        ocr_worker_args,
+        embedding_worker_args,
+    })
+}
+
+fn witness_usage_text() -> &'static str {
+    "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--probe-search] [--probe-fields] [--probe-benchmark-corpus] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]] [--run-embedding [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>]]"
+}
+
+fn witness_usage() -> CliError {
+    CliError::usage(witness_usage_text())
+}
+
+fn default_ocr_worker_args() -> OcrWorkerArgs {
+    OcrWorkerArgs {
+        command: None,
+        tesseract_command: None,
+        render_command: None,
+        pdftoppm_command: None,
+        engine_profile: "local-command".to_string(),
+        lang: "eng".to_string(),
+        profile: "balanced".to_string(),
+        render_dpi: 300,
+        page_timeout_ms: 30_000,
+        max_pages_per_document: DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT,
+    }
+}
+
+fn default_embed_worker_args() -> EmbedWorkerArgs {
+    EmbedWorkerArgs {
+        command: None,
+        model_id: None,
+        dimension: None,
+        max_docs: 64,
+        max_text_bytes: 1_000_000,
+        timeout_ms: 30_000,
+    }
+}
+
+fn run_witness_ocr_jobs(
+    data_dir: &Path,
+    store: &MetaStore,
+    worker_args: &OcrWorkerArgs,
+    max_documents: Option<usize>,
+    now: UnixTimestamp,
+) -> Result<WitnessOcrStatus> {
+    if worker_args.command.is_none() && worker_args.tesseract_command.is_none() {
+        return Ok(WitnessOcrStatus::Blocked {
+            reason: "local OCR command not configured",
+            documents_processed: 0,
+            documents_failed: 0,
+            cache_writes: 0,
+            cache_hits: 0,
+            budget_exhausted: false,
+        });
+    }
+
+    let mut documents_processed = 0_usize;
+    let mut documents_failed = 0_usize;
+    let mut cache_writes = 0_usize;
+    let mut cache_hits = 0_usize;
+
+    loop {
+        let documents_attempted = documents_processed + documents_failed;
+        if max_documents.is_some_and(|limit| documents_attempted >= limit) {
+            let summary = store.status_summary().map_err(CliError::store)?;
+            return Ok(WitnessOcrStatus::Completed {
+                documents_processed,
+                documents_failed,
+                cache_writes,
+                cache_hits,
+                budget_exhausted: summary.ocr_jobs_queued > 0,
+            });
+        }
+
+        let Some(job) = store
+            .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
+            .map_err(CliError::store)?
+        else {
+            return Ok(WitnessOcrStatus::Completed {
+                documents_processed,
+                documents_failed,
+                cache_writes,
+                cache_hits,
+                budget_exhausted: false,
+            });
+        };
+
+        match run_claimed_ocr_job(data_dir, store, &job, worker_args, now) {
+            Ok(summary) => {
+                documents_processed += summary.documents_processed;
+                cache_writes += summary.cache_writes;
+                cache_hits += summary.cache_hits;
+            }
+            Err(_) => {
+                documents_failed += 1;
+                if let Ok(Some(current_job)) = store.ingest_job_by_id(&job.id) {
+                    if current_job.status == IngestJobStatus::Running {
+                        let _ =
+                            store.update_job_status(&job.id, IngestJobStatus::FailedRetryable, now);
+                    }
+                }
+                if max_documents.is_some() {
+                    continue;
+                }
+                return Ok(WitnessOcrStatus::Blocked {
+                    reason: "local OCR command failed or unavailable",
+                    documents_processed,
+                    documents_failed,
+                    cache_writes,
+                    cache_hits,
+                    budget_exhausted: false,
+                });
+            }
+        }
+    }
+}
+
+fn print_witness_ocr_status(status: &WitnessOcrStatus) {
+    match status {
+        WitnessOcrStatus::NotRequested => {
+            println!("witness ocr status: not_requested");
+            println!("ocr documents processed: 0");
+            println!("ocr documents failed: 0");
+            println!("ocr cache writes: 0");
+            println!("ocr cache hits: 0");
+            println!("ocr document budget exhausted: no");
+        }
+        WitnessOcrStatus::Completed {
+            documents_processed,
+            documents_failed,
+            cache_writes,
+            cache_hits,
+            budget_exhausted,
+        } => {
+            println!("witness ocr status: completed");
+            println!("ocr documents processed: {documents_processed}");
+            println!("ocr documents failed: {documents_failed}");
+            println!("ocr cache writes: {cache_writes}");
+            println!("ocr cache hits: {cache_hits}");
+            println!(
+                "ocr document budget exhausted: {}",
+                yes_no(*budget_exhausted)
+            );
+        }
+        WitnessOcrStatus::Blocked {
+            reason,
+            documents_processed,
+            documents_failed,
+            cache_writes,
+            cache_hits,
+            budget_exhausted,
+        } => {
+            println!("witness ocr status: blocked");
+            println!("ocr block reason: {reason}");
+            println!("ocr documents processed: {documents_processed}");
+            println!("ocr documents failed: {documents_failed}");
+            println!("ocr cache writes: {cache_writes}");
+            println!("ocr cache hits: {cache_hits}");
+            println!(
+                "ocr document budget exhausted: {}",
+                yes_no(*budget_exhausted)
+            );
+        }
+    }
+}
+
+fn run_witness_embedding_jobs(
+    data_dir: &Path,
+    store: &MetaStore,
+    worker_args: &EmbedWorkerArgs,
+) -> Result<WitnessEmbeddingStatus> {
+    let Some(command) = worker_args.command.clone() else {
+        return Ok(WitnessEmbeddingStatus::Blocked {
+            reason: "local embedding command not configured",
+            documents_considered: 0,
+            documents_embedded: 0,
+            vector_inputs: 0,
+            vector_indexed_documents: 0,
+        });
+    };
+    let Some(model_id) = worker_args.model_id.as_deref() else {
+        return Ok(WitnessEmbeddingStatus::Blocked {
+            reason: "local embedding model not configured",
+            documents_considered: 0,
+            documents_embedded: 0,
+            vector_inputs: 0,
+            vector_indexed_documents: 0,
+        });
+    };
+    let Some(dimension) = worker_args.dimension else {
+        return Ok(WitnessEmbeddingStatus::Blocked {
+            reason: "local embedding dimension not configured",
+            documents_considered: 0,
+            documents_embedded: 0,
+            vector_inputs: 0,
+            vector_indexed_documents: 0,
+        });
+    };
+
+    let candidates = embedding_candidates(store, worker_args.max_docs)?;
+    let documents_considered = candidates.len();
+    match run_local_embedding_jobs(
+        data_dir,
+        &candidates,
+        command,
+        model_id,
+        dimension,
+        worker_args.max_text_bytes,
+        worker_args.timeout_ms,
+    ) {
+        Ok(summary) => {
+            let corpus_summary = benchmark_corpus_summary(data_dir, store)?;
+            Ok(WitnessEmbeddingStatus::Completed {
+                documents_considered: summary.documents_considered,
+                documents_embedded: summary.documents_embedded,
+                vector_inputs: summary.vector_inputs,
+                vector_indexed_documents: corpus_summary.vector_indexed_document_count,
+            })
+        }
+        Err(_) => Ok(WitnessEmbeddingStatus::Blocked {
+            reason: "local embedding command failed or unavailable",
+            documents_considered,
+            documents_embedded: 0,
+            vector_inputs: 0,
+            vector_indexed_documents: benchmark_corpus_summary(data_dir, store)?
+                .vector_indexed_document_count,
+        }),
+    }
+}
+
+fn print_witness_embedding_status(status: &WitnessEmbeddingStatus) {
+    match status {
+        WitnessEmbeddingStatus::NotRequested => {
+            println!("witness embedding status: not_requested");
+            println!("embedding documents considered: 0");
+            println!("embedding documents embedded: 0");
+            println!("embedding vector inputs: 0");
+            println!("embedding vector indexed documents: 0");
+        }
+        WitnessEmbeddingStatus::Completed {
+            documents_considered,
+            documents_embedded,
+            vector_inputs,
+            vector_indexed_documents,
+        } => {
+            println!("witness embedding status: completed");
+            println!("embedding documents considered: {documents_considered}");
+            println!("embedding documents embedded: {documents_embedded}");
+            println!("embedding vector inputs: {vector_inputs}");
+            println!("embedding vector indexed documents: {vector_indexed_documents}");
+        }
+        WitnessEmbeddingStatus::Blocked {
+            reason,
+            documents_considered,
+            documents_embedded,
+            vector_inputs,
+            vector_indexed_documents,
+        } => {
+            println!("witness embedding status: blocked");
+            println!("embedding block reason: {reason}");
+            println!("embedding documents considered: {documents_considered}");
+            println!("embedding documents embedded: {documents_embedded}");
+            println!("embedding vector inputs: {vector_inputs}");
+            println!("embedding vector indexed documents: {vector_indexed_documents}");
+        }
+    }
+}
+
+fn print_witness_benchmark_corpus_status(status: &WitnessBenchmarkCorpusStatus) {
+    match status {
+        WitnessBenchmarkCorpusStatus::NotRequested => {
+            println!("witness benchmark corpus status: not_requested");
+            println!("benchmark corpus documents: 0");
+            println!("benchmark corpus searchable documents: 0");
+            println!("benchmark corpus vector indexed documents: 0");
+            println!("benchmark corpus active vector documents: 0");
+            println!("benchmark corpus vector count: 0");
+            println!("benchmark corpus vector tombstones: 0");
+            println!("benchmark corpus vector index: unavailable");
+            println!("benchmark corpus vector backend: none");
+            println!("benchmark corpus hot index fully covered: no");
+        }
+        WitnessBenchmarkCorpusStatus::Completed { summary } => {
+            println!("witness benchmark corpus status: completed");
+            println!("benchmark corpus documents: {}", summary.document_count);
+            println!(
+                "benchmark corpus searchable documents: {}",
+                summary.searchable_document_count
+            );
+            println!(
+                "benchmark corpus vector indexed documents: {}",
+                summary.vector_indexed_document_count
+            );
+            println!(
+                "benchmark corpus active vector documents: {}",
+                summary.active_vector_document_count
+            );
+            println!("benchmark corpus vector count: {}", summary.vector_count);
+            println!(
+                "benchmark corpus vector tombstones: {}",
+                summary.vector_deleted_count
+            );
+            println!(
+                "benchmark corpus vector index: {}",
+                summary.vector_index_state
+            );
+            println!(
+                "benchmark corpus vector backend: {}",
+                summary.vector_search_backend
+            );
+            println!(
+                "benchmark corpus hot index fully covered: {}",
+                yes_no(summary.hot_index_fully_covered)
+            );
+        }
+    }
+}
+
+fn run_witness_field_probe(store: &MetaStore) -> Result<WitnessFieldStatus> {
+    let mut documents = 0_usize;
+    let mut mentions = 0_usize;
+    let mut counts = WitnessFieldCounts::default();
+
+    for document in store.visible_documents().map_err(CliError::store)? {
+        let mut document_has_mentions = false;
+        for (entity_type, count) in store
+            .visible_entity_type_counts_for_document(&document.id)
+            .map_err(CliError::store)?
+        {
+            let Some(label) = witness_field_label(&entity_type) else {
+                continue;
+            };
+            counts.add(label, count);
+            mentions += count;
+            document_has_mentions = true;
+        }
+
+        if document_has_mentions {
+            documents += 1;
+        }
+    }
+
+    if mentions == 0 {
+        Ok(WitnessFieldStatus::Blocked {
+            reason: "no witness field mentions",
+            documents,
+            mentions,
+            counts,
+        })
+    } else {
+        Ok(WitnessFieldStatus::Completed {
+            documents,
+            mentions,
+            counts,
+        })
+    }
+}
+
+fn witness_field_label(entity_type: &EntityType) -> Option<&'static str> {
+    match entity_type {
+        EntityType::Name => Some("name"),
+        EntityType::Email => Some("email"),
+        EntityType::Phone => Some("phone"),
+        EntityType::WeChat => Some("wechat"),
+        EntityType::School => Some("school"),
+        EntityType::SchoolTier => Some("school_tier"),
+        EntityType::Degree => Some("degree"),
+        EntityType::Major => Some("major"),
+        EntityType::Company => Some("company"),
+        EntityType::Title => Some("title"),
+        EntityType::Education => Some("education"),
+        EntityType::Skills | EntityType::Skill => Some("skill"),
+        EntityType::Certificate => Some("certificate"),
+        EntityType::Date => Some("date"),
+        EntityType::DateRange => Some("date_range"),
+        EntityType::YearsExperience => Some("years_experience"),
+        EntityType::Location => Some("location"),
+        EntityType::Other(_) => None,
+    }
+}
+
+fn print_witness_field_status(status: &WitnessFieldStatus) {
+    match status {
+        WitnessFieldStatus::NotRequested => {
+            println!("witness field status: not_requested");
+            println!("field probe documents: 0");
+            println!("field probe mentions: 0");
+            print_witness_field_counts(&WitnessFieldCounts::default());
+        }
+        WitnessFieldStatus::Completed {
+            documents,
+            mentions,
+            counts,
+        } => {
+            println!("witness field status: completed");
+            println!("field probe documents: {documents}");
+            println!("field probe mentions: {mentions}");
+            print_witness_field_counts(counts);
+        }
+        WitnessFieldStatus::Blocked {
+            reason,
+            documents,
+            mentions,
+            counts,
+        } => {
+            println!("witness field status: blocked");
+            println!("field block reason: {reason}");
+            println!("field probe documents: {documents}");
+            println!("field probe mentions: {mentions}");
+            print_witness_field_counts(counts);
+        }
+    }
+}
+
+fn print_witness_field_counts(counts: &WitnessFieldCounts) {
+    for label in WITNESS_FIELD_LABELS {
+        println!("field probe {label} mentions: {}", counts.get(label));
+    }
+}
+
+fn run_witness_search_probe(data_dir: &Path, store: &MetaStore) -> Result<WitnessSearchStatus> {
+    let candidates = witness_search_probe_candidates(store)?;
+    if candidates.is_empty() {
+        return Ok(WitnessSearchStatus::Blocked {
+            reason: "no searchable witness text",
+            hits: 0,
+        });
+    }
+
+    let Some(index) =
+        FullTextIndex::open_active(&data_dir.join("search-index")).map_err(CliError::fulltext)?
+    else {
+        return Ok(WitnessSearchStatus::Blocked {
+            reason: "full-text index unavailable",
+            hits: 0,
+        });
+    };
+
+    let mut best_hits = 0_usize;
+    for query in candidates {
+        let hits = index
+            .search(SearchQuery::new(query).with_limit(WITNESS_SEARCH_PROBE_LIMIT))
+            .map_err(CliError::fulltext)?;
+        let visible = visible_hits(store, hits, WITNESS_SEARCH_PROBE_LIMIT)?;
+        best_hits = best_hits.max(visible.len());
+        if !visible.is_empty() {
+            return Ok(WitnessSearchStatus::Completed {
+                hits: visible.len(),
+            });
+        }
+    }
+
+    Ok(WitnessSearchStatus::Blocked {
+        reason: "search probe returned no visible results",
+        hits: best_hits,
+    })
+}
+
+fn witness_search_probe_candidates(store: &MetaStore) -> Result<Vec<String>> {
+    let mut candidates = Vec::new();
+
+    for document in store.visible_documents().map_err(CliError::store)? {
+        for version in store
+            .resume_versions_for_document(&document.id)
+            .map_err(CliError::store)?
+        {
+            if version.visibility != ResumeVisibility::Searchable {
+                continue;
+            }
+
+            if let Some(text) = version
+                .clean_text
+                .as_deref()
+                .or(version.raw_text.as_deref())
+            {
+                collect_witness_search_tokens(text, &mut candidates);
+                if candidates.len() >= WITNESS_SEARCH_PROBE_MAX_CANDIDATES {
+                    return Ok(candidates);
+                }
+            }
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn collect_witness_search_tokens(text: &str, candidates: &mut Vec<String>) {
+    let mut token = String::new();
+
+    for character in text.chars() {
+        if character.is_alphabetic() {
+            token.push(character);
+            continue;
+        }
+
+        push_witness_search_token(&mut token, candidates);
+        if candidates.len() >= WITNESS_SEARCH_PROBE_MAX_CANDIDATES {
+            return;
+        }
+    }
+
+    push_witness_search_token(&mut token, candidates);
+}
+
+fn push_witness_search_token(token: &mut String, candidates: &mut Vec<String>) {
+    let char_count = token.chars().count();
+    let min_chars = if token.is_ascii() { 4 } else { 2 };
+    if char_count >= min_chars && candidates.len() < WITNESS_SEARCH_PROBE_MAX_CANDIDATES {
+        let candidate = token.chars().take(32).collect::<String>();
+        if !candidates.iter().any(|existing| existing == &candidate) {
+            candidates.push(candidate);
+        }
+    }
+    token.clear();
+}
+
+fn print_witness_search_status(status: &WitnessSearchStatus) {
+    match status {
+        WitnessSearchStatus::NotRequested => {
+            println!("witness search status: not_requested");
+            println!("search probe hits: 0");
+        }
+        WitnessSearchStatus::Completed { hits } => {
+            println!("witness search status: completed");
+            println!("search probe hits: {hits}");
+        }
+        WitnessSearchStatus::Blocked { reason, hits } => {
+            println!("witness search status: blocked");
+            println!("search block reason: {reason}");
+            println!("search probe hits: {hits}");
+        }
+    }
+}
+
+fn canonical_witness_root(root: &Path) -> Result<PathBuf> {
+    let metadata = fs::metadata(root)
+        .map_err(|_| CliError::user("witness root must exist and be a directory"))?;
+    if !metadata.is_dir() {
+        return Err(CliError::user("witness root must exist and be a directory"));
+    }
+    fs::canonicalize(root).map_err(|_| CliError::user("witness root must exist and be a directory"))
+}
+
+fn expand_witness_root_selection(
+    root_selection: &WitnessRootSelection,
+) -> Result<(Vec<PathBuf>, ScanProfile)> {
+    match root_selection {
+        WitnessRootSelection::Explicit(root) => {
+            Ok((vec![canonical_witness_root(root)?], ScanProfile::Explicit))
+        }
+        WitnessRootSelection::Preset(RootPreset::LocalDiscovery) => {
+            Ok((local_discovery_roots()?, ScanProfile::Discovery))
+        }
+    }
+}
+
+fn collect_witness_inputs(
+    roots: &[PathBuf],
+    max_files: usize,
+    scan_profile: ScanProfile,
+) -> Result<WitnessSelection> {
+    let mut selection = WitnessSelection::default();
+
+    for (root_index, root) in roots.iter().enumerate() {
+        if selection.selected.len() >= max_files {
+            selection.budget_exhausted = true;
+            return Ok(selection);
+        }
+        let remaining_files = max_files - selection.selected.len();
+        let report = crawl_directory_with_options(
+            root,
+            CrawlerScanOptions {
+                profile: scan_profile,
+                max_files: Some(remaining_files),
+            },
+        )
+        .map_err(|_| CliError::user("unable to scan private witness root"))?;
+        let root_budget_exhausted = report.budget_exhausted.is_some();
+        selection.scan_errors += report.errors.len();
+        selection.unsupported_entries += report.ignored_count;
+
+        for file in report.files {
+            let source_path = PathBuf::from(file.normalized_path.as_str());
+            if witness_supported_extension(&source_path).is_some() {
+                selection.selected.push(source_path);
+                if selection.selected.len() >= max_files {
+                    selection.budget_exhausted =
+                        root_budget_exhausted || root_index + 1 < roots.len();
+                    return Ok(selection);
+                }
+            } else {
+                selection.unsupported_entries += 1;
+            }
+        }
+
+        if root_budget_exhausted {
+            selection.budget_exhausted = true;
+            return Ok(selection);
+        }
+    }
+
+    Ok(selection)
+}
+
+fn copy_witness_inputs(paths: &[PathBuf], import_root: &Path) -> Result<()> {
+    fs::create_dir_all(import_root)
+        .map_err(|_| CliError::user("unable to prepare private witness input"))?;
+
+    for (index, path) in paths.iter().enumerate() {
+        let extension = witness_supported_extension(path)
+            .ok_or_else(|| CliError::user("witness input extension is unsupported"))?;
+        let destination = import_root.join(format!("sample-{index:06}.{extension}"));
+        fs::copy(path, destination)
+            .map_err(|_| CliError::user("unable to copy private witness input"))?;
+    }
+
+    Ok(())
+}
+
+fn witness_supported_extension(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("pdf") => Some("pdf"),
+        Some("docx") => Some("docx"),
+        Some("doc") => Some("doc"),
+        _ => None,
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+struct WitnessArgs {
+    root_selection: WitnessRootSelection,
+    max_files: usize,
+    run_ocr: bool,
+    run_embedding: bool,
+    probe_search: bool,
+    probe_fields: bool,
+    probe_benchmark_corpus: bool,
+    ocr_max_documents: Option<usize>,
+    ocr_worker_args: OcrWorkerArgs,
+    embedding_worker_args: EmbedWorkerArgs,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WitnessRootSelection {
+    Explicit(PathBuf),
+    Preset(RootPreset),
+}
+
+impl WitnessRootSelection {
+    fn preset_label(&self) -> Option<&'static str> {
+        match self {
+            Self::Explicit(_) => None,
+            Self::Preset(RootPreset::LocalDiscovery) => Some("local-discovery"),
+        }
+    }
+}
+
+#[derive(Default)]
+struct WitnessSelection {
+    selected: Vec<PathBuf>,
+    unsupported_entries: usize,
+    scan_errors: usize,
+    budget_exhausted: bool,
+}
+
+enum WitnessOcrStatus {
+    NotRequested,
+    Completed {
+        documents_processed: usize,
+        documents_failed: usize,
+        cache_writes: usize,
+        cache_hits: usize,
+        budget_exhausted: bool,
+    },
+    Blocked {
+        reason: &'static str,
+        documents_processed: usize,
+        documents_failed: usize,
+        cache_writes: usize,
+        cache_hits: usize,
+        budget_exhausted: bool,
+    },
+}
+
+enum WitnessEmbeddingStatus {
+    NotRequested,
+    Completed {
+        documents_considered: usize,
+        documents_embedded: usize,
+        vector_inputs: usize,
+        vector_indexed_documents: u64,
+    },
+    Blocked {
+        reason: &'static str,
+        documents_considered: usize,
+        documents_embedded: usize,
+        vector_inputs: usize,
+        vector_indexed_documents: u64,
+    },
+}
+
+enum WitnessBenchmarkCorpusStatus {
+    NotRequested,
+    Completed { summary: BenchmarkCorpusSummary },
+}
+
+enum WitnessSearchStatus {
+    NotRequested,
+    Completed { hits: usize },
+    Blocked { reason: &'static str, hits: usize },
+}
+
+#[derive(Clone, Default)]
+struct WitnessFieldCounts {
+    by_label: BTreeMap<&'static str, usize>,
+}
+
+impl WitnessFieldCounts {
+    fn add(&mut self, label: &'static str, count: usize) {
+        *self.by_label.entry(label).or_default() += count;
+    }
+
+    fn get(&self, label: &str) -> usize {
+        self.by_label.get(label).copied().unwrap_or(0)
+    }
+}
+
+enum WitnessFieldStatus {
+    NotRequested,
+    Completed {
+        documents: usize,
+        mentions: usize,
+        counts: WitnessFieldCounts,
+    },
+    Blocked {
+        reason: &'static str,
+        documents: usize,
+        mentions: usize,
+        counts: WitnessFieldCounts,
+    },
+}
+
+struct WitnessTempDirs {
+    root: PathBuf,
+    input_root: PathBuf,
+    data_dir: PathBuf,
+}
+
+impl WitnessTempDirs {
+    fn create() -> Result<Self> {
+        let root = unique_witness_temp_root()?;
+        let input_root = root.join("input");
+        let data_dir = root.join("data");
+        fs::create_dir_all(&input_root)
+            .map_err(|_| CliError::user("unable to prepare private witness input"))?;
+        fs::create_dir_all(&data_dir)
+            .map_err(|_| CliError::user("unable to prepare private witness data"))?;
+        Ok(Self {
+            root,
+            input_root,
+            data_dir,
+        })
+    }
+
+    fn cleanup(&self) -> bool {
+        remove_witness_temp_root(&self.root)
+    }
+}
+
+impl Drop for WitnessTempDirs {
+    fn drop(&mut self) {
+        let _ = remove_witness_temp_root(&self.root);
+    }
+}
+
+fn remove_witness_temp_root(root: &Path) -> bool {
+    for attempt in 0..WITNESS_CLEANUP_RETRY_ATTEMPTS {
+        match fs::remove_dir_all(root) {
+            Ok(()) => return true,
+            Err(_) if !root.exists() => return true,
+            Err(_) if attempt + 1 < WITNESS_CLEANUP_RETRY_ATTEMPTS => {
+                std::thread::sleep(WITNESS_CLEANUP_RETRY_DELAY);
+            }
+            Err(_) => return !root.exists(),
+        }
+    }
+
+    !root.exists()
+}
+
+fn unique_witness_temp_root() -> Result<PathBuf> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| CliError::user("system clock is before the Unix epoch"))?;
+    let root = std::env::temp_dir().join(format!(
+        "resume-ir-local-witness-{}-{}",
+        std::process::id(),
+        duration.as_nanos()
+    ));
+    fs::create_dir_all(&root)
+        .map_err(|_| CliError::user("unable to prepare private witness data"))?;
+    Ok(root)
 }
 
 fn import_ipc_command(endpoint: &IpcImportEndpoint, import_args: &ImportArgs) -> Result<()> {
@@ -1653,6 +11918,9 @@ fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
     total.ocr_required_documents += next.ocr_required_documents;
     total.ocr_jobs_queued += next.ocr_jobs_queued;
     total.failed_documents += next.failed_documents;
+    for (kind, count) in next.failure_counts.entries() {
+        total.failure_counts.add(kind, count);
+    }
     total.deleted_documents += next.deleted_documents;
     if next.scan_budget.is_some()
         && (total.scan_budget.is_none() || next.scan_budget.is_some_and(|budget| budget.exhausted))
@@ -1999,10 +12267,12 @@ fn parse_positive_usize(value: &str) -> Result<usize> {
     Ok(parsed)
 }
 
+fn import_usage_text() -> &'static str {
+    "usage: resume-cli import [--enqueue] [--ipc auto|<http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]"
+}
+
 fn import_usage() -> CliError {
-    CliError::usage(
-        "usage: resume-cli import [--enqueue] [--ipc auto|<http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]",
-    )
+    CliError::usage(import_usage_text())
 }
 
 fn expand_import_root_selection(selection: &ImportRootSelection) -> Result<Vec<PathBuf>> {
@@ -2102,7 +12372,7 @@ fn pending_import_task(
 }
 
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    let search_args = parse_search_args(args)?;
+    let search_args = parse_search_args(data_dir, args)?;
     if search_args.ipc_auto {
         let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
         let endpoint = discover_search_ipc_endpoint(data_dir)?;
@@ -2115,6 +12385,709 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return search_ipc_command(endpoint, &search_args);
     }
 
+    let query_started = Instant::now();
+    let hits = match run_local_search(data_dir, &search_args)? {
+        LocalSearchOutcome::Hits(hits) => hits,
+        LocalSearchOutcome::FullTextIndexUnavailable => {
+            println!("search index not available yet");
+            println!("results: 0");
+            return Ok(());
+        }
+    };
+
+    record_search_query_observation(
+        data_dir,
+        search_args.mode,
+        query_started.elapsed(),
+        hits.len(),
+    );
+    print_search_hits(hits);
+
+    Ok(())
+}
+
+fn benchmark_query_protocol_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    validate_benchmark_query_protocol_args(args)?;
+    let query_input_path = benchmark_query_env("RESUME_IR_QUERY_INPUT_PATH")?;
+    let top_k = benchmark_query_top_k()?;
+    let mode = benchmark_query_mode()?;
+    let mut search_args = vec![
+        "--query-file".to_string(),
+        query_input_path,
+        "--mode".to_string(),
+        mode.label().to_string(),
+        "--top-k".to_string(),
+        top_k.to_string(),
+    ];
+    search_args.extend(args.iter().cloned());
+
+    let search_args = parse_search_args(data_dir, &search_args)?;
+    let query_started = Instant::now();
+    let hits = match run_local_search(data_dir, &search_args)? {
+        LocalSearchOutcome::Hits(hits) => hits,
+        LocalSearchOutcome::FullTextIndexUnavailable => Vec::new(),
+    };
+    record_search_query_observation(
+        data_dir,
+        search_args.mode,
+        query_started.elapsed(),
+        hits.len(),
+    );
+    println!("resume-ir-query-v1");
+    println!("mode={}", search_args.mode.label());
+    println!("layers={}", search_args.mode.benchmark_layers_label());
+    println!("top_k={}", search_args.top_k);
+    println!(
+        "query_embedding_runtime={}",
+        search_args.mode.benchmark_query_embedding_runtime_label()
+    );
+    println!(
+        "query_embedding_invocations={}",
+        search_args.mode.benchmark_query_embedding_invocations()
+    );
+    println!("hits={}", hits.len());
+    Ok(())
+}
+
+fn validate_benchmark_query_protocol_args(args: &[String]) -> Result<()> {
+    for arg in args {
+        match arg.as_str() {
+            "--query-file" | "--mode" | "--top-k" | "--ipc" | "--ipc-token-file" => {
+                return Err(CliError::usage(benchmark_query_protocol_usage()));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BenchmarkQuerySetDraftArgs {
+    out: PathBuf,
+    max_queries: usize,
+    min_queries: usize,
+    allow_keyword_fallback: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DraftedLocalPrivateQueries {
+    queries: Vec<String>,
+    used_keyword_fallback: bool,
+}
+
+fn benchmark_query_set_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    };
+    match action {
+        "draft" => benchmark_query_set_draft_command(data_dir, &args[1..]),
+        _ => Err(CliError::usage(benchmark_query_set_usage())),
+    }
+}
+
+fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let args = parse_benchmark_query_set_draft_args(args)?;
+    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
+    store.run_migrations().map_err(CliError::store)?;
+    let drafted =
+        draft_local_private_queries(&store, args.max_queries, args.allow_keyword_fallback)?;
+    let queries = drafted.queries;
+    if queries.len() < args.min_queries {
+        return Err(CliError::user(
+            "query set blocked: not enough local field queries",
+        ));
+    }
+
+    if let Some(parent) = args.out.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+        }
+    }
+    let mut output = String::new();
+    for (index, query) in queries.iter().enumerate() {
+        output.push_str(
+            &serde_json::json!({
+                "sample_id": format!("local-query-{number:06}", number = index + 1),
+                "query": query,
+            })
+            .to_string(),
+        );
+        output.push('\n');
+    }
+    fs::write(&args.out, output)
+        .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+    let query_set_sha256 = file_sha256_hex(&args.out)
+        .map_err(|_| CliError::user("query set blocked: checksum unavailable"))?;
+
+    println!("query set: written");
+    println!("schema: {QUERY_SET_SCHEMA_VERSION}");
+    println!("privacy boundary: local_only_private_query_set");
+    println!("queries: {}", queries.len());
+    println!(
+        "query fallback: {}",
+        if drafted.used_keyword_fallback {
+            "keyword"
+        } else {
+            "none"
+        }
+    );
+    println!("query set sha256: {query_set_sha256}");
+    println!("queries: <redacted>");
+    println!("sample ids: <redacted>");
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuerySetDraftArgs> {
+    let mut out = None;
+    let mut max_queries = 500_usize;
+    let mut max_queries_seen = false;
+    let mut min_queries = 1_usize;
+    let mut min_queries_seen = false;
+    let mut allow_keyword_fallback = false;
+    let mut index = 0_usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--out" => {
+                if out.is_some() {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                out = Some(take_benchmark_query_set_path(args, &mut index)?);
+            }
+            "--max-queries" => {
+                if max_queries_seen {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                max_queries = take_benchmark_query_set_positive_usize(args, &mut index)?;
+                max_queries_seen = true;
+            }
+            "--min-queries" => {
+                if min_queries_seen {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                min_queries = take_benchmark_query_set_positive_usize(args, &mut index)?;
+                min_queries_seen = true;
+            }
+            "--allow-keyword-fallback" => {
+                if allow_keyword_fallback {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                allow_keyword_fallback = true;
+                index += 1;
+            }
+            _ => return Err(CliError::usage(benchmark_query_set_usage())),
+        }
+    }
+    if min_queries > max_queries {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    }
+    Ok(BenchmarkQuerySetDraftArgs {
+        out: out.ok_or_else(|| CliError::usage(benchmark_query_set_usage()))?,
+        max_queries,
+        min_queries,
+        allow_keyword_fallback,
+    })
+}
+
+fn take_benchmark_query_set_path(args: &[String], index: &mut usize) -> Result<PathBuf> {
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    };
+    if value.trim().is_empty() {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    }
+    *index += 2;
+    Ok(PathBuf::from(value))
+}
+
+fn take_benchmark_query_set_positive_usize(args: &[String], index: &mut usize) -> Result<usize> {
+    let Some(value) = args.get(*index + 1) else {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    };
+    let parsed = value
+        .parse::<usize>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| CliError::usage(benchmark_query_set_usage()))?;
+    *index += 2;
+    Ok(parsed)
+}
+
+fn benchmark_query_set_usage() -> &'static str {
+    "usage: resume-cli benchmark-query-set draft --out <path> [--max-queries <count>] [--min-queries <count>] [--allow-keyword-fallback]"
+}
+
+fn draft_local_private_queries(
+    store: &MetaStore,
+    max_queries: usize,
+    allow_keyword_fallback: bool,
+) -> Result<DraftedLocalPrivateQueries> {
+    let mut field_queries = BTreeSet::<String>::new();
+    let candidate_budget = max_queries.saturating_mul(10).max(max_queries);
+    let document_ids = store.searchable_document_ids().map_err(CliError::store)?;
+    for document_id in document_ids.iter() {
+        let Some(version) = store
+            .latest_visible_resume_version_for_document(document_id)
+            .map_err(CliError::store)?
+        else {
+            continue;
+        };
+        if version.visibility != ResumeVisibility::Searchable {
+            continue;
+        }
+        let mentions = store
+            .entity_mentions_for_version(&version.id)
+            .map_err(CliError::store)?;
+        add_query_candidates_for_mentions(&mentions, &mut field_queries, candidate_budget);
+        if field_queries.len() >= candidate_budget {
+            break;
+        }
+    }
+    let mut queries = field_queries
+        .into_iter()
+        .take(max_queries)
+        .collect::<Vec<_>>();
+    let mut seen = queries.iter().cloned().collect::<BTreeSet<_>>();
+    let mut used_keyword_fallback = false;
+    if allow_keyword_fallback && queries.len() < max_queries {
+        for document_id in document_ids {
+            let Some(version) = store
+                .latest_visible_resume_version_for_document(&document_id)
+                .map_err(CliError::store)?
+            else {
+                continue;
+            };
+            if version.visibility != ResumeVisibility::Searchable {
+                continue;
+            }
+            let Some(text) = version
+                .clean_text
+                .as_deref()
+                .or(version.raw_text.as_deref())
+            else {
+                continue;
+            };
+            if add_keyword_fallback_queries(text, &mut queries, &mut seen, max_queries) {
+                used_keyword_fallback = true;
+            }
+            if queries.len() >= max_queries {
+                break;
+            }
+        }
+    }
+    Ok(DraftedLocalPrivateQueries {
+        queries,
+        used_keyword_fallback,
+    })
+}
+
+fn add_query_candidates_for_mentions(
+    mentions: &[EntityMention],
+    queries: &mut BTreeSet<String>,
+    max_queries: usize,
+) {
+    let skills = benchmark_query_values(mentions, EntityType::Skill);
+    let titles = benchmark_query_values(mentions, EntityType::Title);
+    let companies = benchmark_query_values(mentions, EntityType::Company);
+    let schools = benchmark_query_values(mentions, EntityType::School);
+    let majors = benchmark_query_values(mentions, EntityType::Major);
+    let certificates = benchmark_query_values(mentions, EntityType::Certificate);
+    let locations = benchmark_query_values(mentions, EntityType::Location);
+    let degrees = benchmark_query_values(mentions, EntityType::Degree);
+
+    for title in &titles {
+        for skill in &skills {
+            insert_benchmark_query_candidate(queries, &[title, skill], max_queries);
+        }
+        for company in &companies {
+            insert_benchmark_query_candidate(queries, &[company, title], max_queries);
+        }
+        for location in &locations {
+            insert_benchmark_query_candidate(queries, &[location, title], max_queries);
+        }
+    }
+    for school in &schools {
+        for major in &majors {
+            insert_benchmark_query_candidate(queries, &[school, major], max_queries);
+        }
+    }
+    for skill in &skills {
+        insert_benchmark_query_candidate(queries, &[skill], max_queries);
+    }
+    for certificate in &certificates {
+        insert_benchmark_query_candidate(queries, &[certificate], max_queries);
+    }
+    for degree in &degrees {
+        for skill in &skills {
+            insert_benchmark_query_candidate(queries, &[degree, skill], max_queries);
+        }
+    }
+}
+
+fn benchmark_query_values(mentions: &[EntityMention], entity_type: EntityType) -> Vec<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type
+                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| {
+            let value = mention
+                .normalized_value
+                .as_deref()
+                .unwrap_or(&mention.raw_value);
+            normalize_benchmark_query_value(value)
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn normalize_benchmark_query_value(value: &str) -> Option<String> {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = normalized.trim();
+    if normalized.len() < 2
+        || normalized.len() > 120
+        || normalized.contains('@')
+        || normalized.contains('/')
+        || normalized.contains('\\')
+    {
+        return None;
+    }
+    Some(normalized.to_string())
+}
+
+fn insert_benchmark_query_candidate(
+    queries: &mut BTreeSet<String>,
+    parts: &[&String],
+    max_queries: usize,
+) {
+    if queries.len() >= max_queries {
+        return;
+    }
+    let query = parts
+        .iter()
+        .map(|part| part.as_str())
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if normalize_benchmark_query_value(&query).is_some() {
+        queries.insert(query);
+    }
+}
+
+fn add_keyword_fallback_queries(
+    text: &str,
+    queries: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+    max_queries: usize,
+) -> bool {
+    let mut inserted = false;
+    for token in keyword_fallback_tokens(text) {
+        if queries.len() >= max_queries {
+            break;
+        }
+        if seen.insert(token.clone()) {
+            queries.push(token);
+            inserted = true;
+        }
+    }
+    inserted
+}
+
+fn keyword_fallback_tokens(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .filter(|segment| {
+            !segment.contains('@')
+                && !segment.contains('/')
+                && !segment.contains('\\')
+                && segment.chars().filter(|ch| ch.is_ascii_digit()).count() < 5
+        })
+        .filter_map(normalize_keyword_fallback_token)
+        .collect()
+}
+
+fn normalize_keyword_fallback_token(segment: &str) -> Option<String> {
+    let normalized = segment
+        .chars()
+        .filter(|ch| ch.is_alphanumeric() || *ch == '+' || *ch == '#')
+        .collect::<String>()
+        .to_lowercase();
+    let char_count = normalized.chars().count();
+    if !(3..=40).contains(&char_count)
+        || normalized.chars().all(|ch| ch.is_ascii_digit())
+        || is_keyword_fallback_stopword(&normalized)
+    {
+        return None;
+    }
+    Some(normalized)
+}
+
+fn is_keyword_fallback_stopword(value: &str) -> bool {
+    matches!(
+        value,
+        "and"
+            | "are"
+            | "candidate"
+            | "email"
+            | "for"
+            | "from"
+            | "has"
+            | "local"
+            | "ocr"
+            | "only"
+            | "phone"
+            | "resume"
+            | "that"
+            | "the"
+            | "this"
+            | "with"
+    )
+}
+
+fn benchmark_corpus_summary_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let args = parse_benchmark_corpus_summary_args(args)?;
+    let store = open_store(data_dir)?;
+    let summary = benchmark_corpus_summary(data_dir, &store)?;
+
+    if args.json {
+        let report = serde_json::json!({
+            "schema_version": "benchmark-corpus-summary.v1",
+            "privacy_boundary": "redacted_local_aggregate",
+            "document_count": summary.document_count,
+            "searchable_document_count": summary.searchable_document_count,
+            "vector_indexed_document_count": summary.vector_indexed_document_count,
+            "active_vector_document_count": summary.active_vector_document_count,
+            "vector_count": summary.vector_count,
+            "vector_deleted_count": summary.vector_deleted_count,
+            "vector_index_state": summary.vector_index_state,
+            "vector_search_backend": summary.vector_search_backend,
+            "hot_index_fully_covered": summary.hot_index_fully_covered,
+            "document_status_counts": summary.document_status_counts,
+            "ingest_job_status_counts": summary.ingest_job_status_counts,
+            "ingest_job_kind_status_counts": summary.ingest_job_kind_status_counts,
+            "ingest_job_failure_counts": summary.ingest_job_failure_counts,
+            "contains_raw_resume_text": false,
+            "contains_resume_paths": false,
+            "contains_queries": false,
+            "contains_sample_ids": false,
+        });
+        let report = serde_json::to_string_pretty(&report)
+            .map_err(|_| CliError::user("benchmark corpus summary unavailable"))?;
+        println!("{report}");
+        return Ok(());
+    }
+
+    println!("resume-ir benchmark corpus summary");
+    println!("privacy boundary: redacted local aggregate");
+    println!("documents: {}", summary.document_count);
+    println!(
+        "searchable documents: {}",
+        summary.searchable_document_count
+    );
+    println!(
+        "vector indexed documents: {}",
+        summary.vector_indexed_document_count
+    );
+    println!(
+        "active vector documents: {}",
+        summary.active_vector_document_count
+    );
+    println!("vector count: {}", summary.vector_count);
+    println!("vector tombstones: {}", summary.vector_deleted_count);
+    println!("vector index: {}", summary.vector_index_state);
+    println!("vector backend: {}", summary.vector_search_backend);
+    println!(
+        "hot index fully covered: {}",
+        summary.hot_index_fully_covered
+    );
+    println!(
+        "document status counts: {}",
+        redacted_count_map_label(&summary.document_status_counts)
+    );
+    println!(
+        "ingest job status counts: {}",
+        redacted_count_map_label(&summary.ingest_job_status_counts)
+    );
+    println!(
+        "ingest job failure counts: {}",
+        redacted_count_map_label(&summary.ingest_job_failure_counts)
+    );
+    println!("raw resume text: <redacted>");
+    println!("resume paths: <redacted>");
+    println!("queries: <redacted>");
+    println!("sample ids: <redacted>");
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BenchmarkCorpusSummary {
+    document_count: u64,
+    searchable_document_count: u64,
+    vector_indexed_document_count: u64,
+    active_vector_document_count: u64,
+    vector_count: u64,
+    vector_deleted_count: u64,
+    vector_index_state: &'static str,
+    vector_search_backend: &'static str,
+    hot_index_fully_covered: bool,
+    document_status_counts: BTreeMap<String, u64>,
+    ingest_job_status_counts: BTreeMap<String, u64>,
+    ingest_job_kind_status_counts: BTreeMap<String, BTreeMap<String, u64>>,
+    ingest_job_failure_counts: BTreeMap<String, u64>,
+}
+
+fn benchmark_corpus_summary(data_dir: &Path, store: &MetaStore) -> Result<BenchmarkCorpusSummary> {
+    let document_count = store.visible_document_count().map_err(CliError::store)?;
+    let summary = store.status_summary().map_err(CliError::store)?;
+    let documents = store.visible_documents().map_err(CliError::store)?;
+    let ingest_jobs = store.ingest_jobs().map_err(CliError::store)?;
+    let document_status_counts = benchmark_document_status_counts(&documents);
+    let ingest_job_status_counts = benchmark_ingest_job_status_counts(&ingest_jobs);
+    let ingest_job_kind_status_counts = benchmark_ingest_job_kind_status_counts(&ingest_jobs);
+    let ingest_job_failure_counts = benchmark_ingest_job_failure_counts(&ingest_jobs);
+    let searchable_document_ids = store
+        .searchable_document_ids()
+        .map_err(CliError::store)?
+        .into_iter()
+        .map(|document_id| document_id.to_string())
+        .collect::<BTreeSet<_>>();
+    let vector_diagnostic = inspect_vector_index(data_dir);
+    let vector_coverage = inspect_persistent_vector_document_coverage(
+        data_dir.join("vector-index"),
+        &searchable_document_ids,
+    );
+    let vector_indexed_document_count = u64::try_from(vector_coverage.covered_document_count())
+        .map_err(|_| CliError::user("benchmark corpus vector coverage count is too large"))?;
+    let active_vector_document_count = u64::try_from(vector_coverage.active_document_count())
+        .map_err(|_| CliError::user("benchmark corpus vector document count is too large"))?;
+    let vector_count = u64::try_from(vector_diagnostic.vector_count())
+        .map_err(|_| CliError::user("benchmark corpus vector count is too large"))?;
+    let vector_deleted_count = u64::try_from(vector_diagnostic.deleted_count())
+        .map_err(|_| CliError::user("benchmark corpus vector tombstone count is too large"))?;
+    let hot_index_fully_covered = document_count > 0
+        && summary.searchable_documents >= document_count
+        && vector_indexed_document_count >= document_count;
+
+    Ok(BenchmarkCorpusSummary {
+        document_count,
+        searchable_document_count: summary.searchable_documents,
+        vector_indexed_document_count,
+        active_vector_document_count,
+        vector_count,
+        vector_deleted_count,
+        vector_index_state: vector_diagnostic.state_label(),
+        vector_search_backend: vector_diagnostic.backend_json_label(),
+        hot_index_fully_covered,
+        document_status_counts,
+        ingest_job_status_counts,
+        ingest_job_kind_status_counts,
+        ingest_job_failure_counts,
+    })
+}
+
+fn benchmark_document_status_counts(documents: &[Document]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for document in documents {
+        increment_count(&mut counts, document_status_label(document.status));
+    }
+    counts
+}
+
+fn benchmark_ingest_job_status_counts(jobs: &[meta_store::IngestJob]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for job in jobs {
+        increment_count(&mut counts, ingest_job_status_label(job.status));
+    }
+    counts
+}
+
+fn benchmark_ingest_job_kind_status_counts(
+    jobs: &[meta_store::IngestJob],
+) -> BTreeMap<String, BTreeMap<String, u64>> {
+    let mut counts = BTreeMap::new();
+    for job in jobs {
+        let kind_counts = counts
+            .entry(ingest_job_kind_label(job.kind).to_string())
+            .or_default();
+        increment_count(kind_counts, ingest_job_status_label(job.status));
+    }
+    counts
+}
+
+fn benchmark_ingest_job_failure_counts(jobs: &[meta_store::IngestJob]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for job in jobs {
+        if let Some(failure_kind) = job.failure_kind {
+            increment_count(&mut counts, ingest_job_failure_kind_label(failure_kind));
+        }
+    }
+    counts
+}
+
+fn increment_count(counts: &mut BTreeMap<String, u64>, label: &'static str) {
+    *counts.entry(label.to_string()).or_default() += 1;
+}
+
+fn redacted_count_map_label(counts: &BTreeMap<String, u64>) -> String {
+    if counts.is_empty() {
+        return "{}".to_string();
+    }
+
+    counts
+        .iter()
+        .map(|(label, count)| format!("{label}={count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BenchmarkCorpusSummaryArgs {
+    json: bool,
+}
+
+fn parse_benchmark_corpus_summary_args(args: &[String]) -> Result<BenchmarkCorpusSummaryArgs> {
+    let mut json = false;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => json = true,
+            _ => return Err(CliError::usage(benchmark_corpus_summary_usage())),
+        }
+    }
+    Ok(BenchmarkCorpusSummaryArgs { json })
+}
+
+fn benchmark_corpus_summary_usage() -> &'static str {
+    "usage: resume-cli benchmark-corpus-summary [--json]"
+}
+
+fn benchmark_query_env(name: &str) -> Result<String> {
+    std::env::var(name).map_err(|_| CliError::user("benchmark query input is unavailable"))
+}
+
+fn benchmark_query_top_k() -> Result<usize> {
+    let value = std::env::var("RESUME_IR_QUERY_TOP_K")
+        .map_err(|_| CliError::user("benchmark query top-k is invalid"))?;
+    parse_positive_usize(&value).map_err(|_| CliError::user("benchmark query top-k is invalid"))
+}
+
+fn benchmark_query_mode() -> Result<SearchMode> {
+    let value = std::env::var("RESUME_IR_QUERY_MODE")
+        .map_err(|_| CliError::user("benchmark query mode is invalid"))?;
+    SearchMode::parse(&value).ok_or_else(|| CliError::user("benchmark query mode is invalid"))
+}
+
+fn benchmark_query_protocol_usage() -> &'static str {
+    "usage: resume-cli benchmark-query-protocol [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>]"
+}
+
+enum LocalSearchOutcome {
+    Hits(Vec<SearchOutputHit>),
+    FullTextIndexUnavailable,
+}
+
+fn run_local_search(data_dir: &Path, search_args: &SearchArgs) -> Result<LocalSearchOutcome> {
     let candidate_limit = search_args
         .top_k
         .saturating_mul(5)
@@ -2125,17 +13098,19 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
             let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
                 .map_err(CliError::fulltext)?
             else {
-                println!("search index not available yet");
-                println!("results: 0");
-                return Ok(());
+                return Ok(LocalSearchOutcome::FullTextIndexUnavailable);
             };
             let store = open_store(data_dir)?;
-            let fulltext_hits = run_fulltext_search(&index, &store, &search_args, candidate_limit)?;
-            fulltext_hits.into_iter().take(search_args.top_k).collect()
+            let fulltext_hits = run_fulltext_search(&index, &store, search_args, candidate_limit)?;
+            attach_soft_dedupe_hints(
+                &store,
+                fulltext_hits.into_iter().take(search_args.top_k).collect(),
+            )?
         }
         SearchMode::Semantic => {
             let store = open_store(data_dir)?;
-            run_semantic_search(data_dir, &store, &search_args, candidate_limit)?
+            let hits = run_semantic_search(data_dir, &store, search_args, candidate_limit)?;
+            attach_soft_dedupe_hints(&store, hits)?
         }
         SearchMode::Hybrid => {
             let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
@@ -2146,15 +13121,29 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 ));
             };
             let store = open_store(data_dir)?;
-            let fulltext_hits = run_fulltext_search(&index, &store, &search_args, candidate_limit)?;
-            let vector_hits = run_semantic_search(data_dir, &store, &search_args, candidate_limit)?;
-            fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k)
+            let fulltext_hits = run_fulltext_search(&index, &store, search_args, candidate_limit)?;
+            let vector_hits = run_semantic_search(data_dir, &store, search_args, candidate_limit)?;
+            let hits = fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k);
+            attach_soft_dedupe_hints(&store, hits)?
         }
     };
 
-    print_search_hits(hits);
+    Ok(LocalSearchOutcome::Hits(hits))
+}
 
-    Ok(())
+fn record_search_query_observation(
+    data_dir: &Path,
+    mode: SearchMode,
+    duration: Duration,
+    result_count: usize,
+) {
+    let Ok(observed_at) = current_timestamp() else {
+        return;
+    };
+    let Ok(store) = open_store(data_dir) else {
+        return;
+    };
+    let _ = store.record_query_observation(mode.label(), duration, result_count, observed_at);
 }
 
 fn search_ipc_command(endpoint: &IpcSearchEndpoint, search_args: &SearchArgs) -> Result<()> {
@@ -2225,7 +13214,23 @@ fn search_ipc_request_body(search_args: &SearchArgs) -> String {
 fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
     serde_json::json!({
         "degree_min": filters.degree_min().map(DegreeLevel::canonical),
+        "names_any": filters.names_any(),
+        "school_tiers_any": filters
+            .school_tiers_any()
+            .iter()
+            .map(|school_tier| school_tier.canonical())
+            .collect::<Vec<_>>(),
+        "schools_any": filters.schools_any(),
+        "majors_any": filters.majors_any(),
+        "certificates_any": filters.certificates_any(),
+        "date_range_overlaps": filters
+            .date_range_overlaps()
+            .map(|date_range| date_range.canonical()),
+        "companies_any": filters.companies_any(),
+        "titles_any": filters.titles_any(),
+        "locations_any": filters.locations_any(),
         "skills_any": filters.skills_any(),
+        "contact_hashes_any": filters.contact_hashes_any(),
         "years_experience_min": filters.years_experience_min(),
     })
 }
@@ -2264,6 +13269,22 @@ fn render_search_ipc_result(body: &serde_json::Value) -> Result<()> {
         println!("version_id: {version_id}");
         println!("file_name: {}", redact_contact_values(file_name));
         println!("snippet: {}", redact_contact_values(snippet));
+        if let Some(hint) = result.get("soft_dedupe") {
+            let suspected_versions = hint
+                .get("suspected_versions")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default();
+            let max_confidence = hint
+                .get("max_confidence")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or_default();
+            if suspected_versions > 0 {
+                println!(
+                    "soft_dedupe: suspected_versions={} max_confidence={:.2} folded=false",
+                    suspected_versions, max_confidence
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -2276,15 +13297,254 @@ fn run_fulltext_search(
 ) -> Result<Vec<SearchOutputHit>> {
     let plan = plan_search(&search_args.query, candidate_limit)
         .map_err(|_| CliError::user("search query is empty"))?;
-    let hits = index
-        .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
-        .map_err(CliError::fulltext)?;
+    let allowed_doc_ids = field_filter_doc_id_prefilter(store, &search_args.filters)?;
+    let query = SearchQuery::new(plan.query_text()).with_limit(plan.limit());
+    let hits = match &allowed_doc_ids {
+        Some(doc_ids) => index.search_allowed_doc_ids(query, doc_ids),
+        None => index.search(query),
+    }
+    .map_err(CliError::fulltext)?;
 
     if search_args.filters.is_empty() {
         visible_hits(store, hits, candidate_limit)
     } else {
         filter_hits(store, hits, &search_args.filters, candidate_limit)
     }
+}
+
+fn field_filter_doc_id_prefilter(
+    store: &MetaStore,
+    filters: &SearchFilters,
+) -> Result<Option<BTreeSet<String>>> {
+    if filters.is_empty() {
+        return Ok(None);
+    }
+
+    let mut allowed_doc_ids = None;
+    if let Some(degree_min) = filters.degree_min() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Degree,
+                    &degree_filter_values(degree_min),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    false,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.names_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Name,
+                    filters.names_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.school_tiers_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            school_tier_filter_doc_ids(store, filters.school_tiers_any())
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.schools_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::School,
+                    filters.schools_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.majors_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Major,
+                    filters.majors_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.certificates_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Certificate,
+                    filters.certificates_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if let Some(date_range) = filters.date_range_overlaps() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_date_range_overlap(
+                    date_range.start_month(),
+                    date_range.end_month(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.companies_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Company,
+                    filters.companies_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.titles_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Title,
+                    filters.titles_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.locations_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Location,
+                    filters.locations_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.skills_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_entity_values(
+                    EntityType::Skill,
+                    filters.skills_any(),
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                    true,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+    if !filters.contact_hashes_any().is_empty() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_contact_hashes(&contact_hash_filter_values(
+                    filters.contact_hashes_any(),
+                )?)
+                .map_err(CliError::store)?,
+        );
+    }
+    if let Some(years_min) = filters.years_experience_min() {
+        merge_filter_doc_ids(
+            &mut allowed_doc_ids,
+            store
+                .searchable_document_ids_with_numeric_entity_min(
+                    EntityType::YearsExperience,
+                    years_min,
+                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
+                )
+                .map_err(CliError::store)?,
+        );
+    }
+
+    Ok(allowed_doc_ids)
+}
+
+fn contact_hash_filter_values(contact_hashes: &[String]) -> Result<Vec<ContactHash>> {
+    contact_hashes
+        .iter()
+        .map(|contact_hash| {
+            ContactHash::from_keyed_digest(contact_hash.clone())
+                .map_err(|_| CliError::user("search contact filter is invalid"))
+        })
+        .collect()
+}
+
+fn school_tier_filter_doc_ids(
+    store: &MetaStore,
+    school_tiers: &[SchoolTier],
+) -> meta_store::Result<Vec<DocumentId>> {
+    let known_values = school_tiers
+        .iter()
+        .filter(|school_tier| **school_tier != SchoolTier::Unknown)
+        .map(|school_tier| school_tier.canonical().to_string())
+        .collect::<Vec<_>>();
+    let mut document_ids = Vec::new();
+    if !known_values.is_empty() {
+        document_ids.extend(store.searchable_document_ids_with_entity_values(
+            EntityType::SchoolTier,
+            &known_values,
+            FIELD_FILTER_CONFIDENCE_THRESHOLD,
+            false,
+        )?);
+    }
+    if school_tiers.contains(&SchoolTier::Unknown) {
+        document_ids.extend(store.searchable_document_ids_without_entity_type(
+            EntityType::SchoolTier,
+            FIELD_FILTER_CONFIDENCE_THRESHOLD,
+        )?);
+    }
+    Ok(document_ids)
+}
+
+fn merge_filter_doc_ids(current: &mut Option<BTreeSet<String>>, next: Vec<DocumentId>) {
+    let next = next
+        .into_iter()
+        .map(|document_id| document_id.to_string())
+        .collect::<BTreeSet<_>>();
+    match current {
+        Some(current) => {
+            *current = current.intersection(&next).cloned().collect();
+        }
+        None => *current = Some(next),
+    }
+}
+
+fn degree_filter_values(min_degree: DegreeLevel) -> Vec<String> {
+    [
+        DegreeLevel::HighSchool,
+        DegreeLevel::Associate,
+        DegreeLevel::Bachelor,
+        DegreeLevel::Master,
+        DegreeLevel::Doctor,
+    ]
+    .into_iter()
+    .filter(|degree| *degree >= min_degree)
+    .map(|degree| degree.canonical().to_string())
+    .collect()
 }
 
 fn print_search_hits(hits: Vec<SearchOutputHit>) {
@@ -2295,6 +13555,12 @@ fn print_search_hits(hits: Vec<SearchOutputHit>) {
         println!("version_id: {}", hit.version_id);
         println!("file_name: {}", hit.file_name);
         println!("snippet: {}", hit.snippet);
+        if let Some(hint) = hit.soft_dedupe_hint {
+            println!(
+                "soft_dedupe: suspected_versions={} max_confidence={:.2} folded=false",
+                hint.suspected_versions, hint.max_confidence
+            );
+        }
     }
 }
 
@@ -2521,8 +13787,10 @@ fn is_valid_detail_field_type_label(value: &str) -> bool {
         "name"
             | "email"
             | "phone"
+            | "wechat"
             | "school"
             | "degree"
+            | "major"
             | "company"
             | "title"
             | "education"
@@ -2638,14 +13906,21 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 }
 
 fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    if args.len() != 2 || args.first().map(String::as_str) != Some("--doc-id") {
-        return Err(CliError::usage(
-            "usage: resume-cli delete --doc-id <doc_id>",
-        ));
+    let delete_args = parse_delete_args(args)?;
+    if delete_args.ipc_auto {
+        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
+        let endpoint = discover_delete_ipc_endpoint(data_dir)?;
+        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
+        verify_auto_ipc_status(&status_endpoint)?;
+        let token_file = auto_ipc_token_file(data_dir);
+        return delete_ipc_command_with_token_file(&endpoint, &token_file, &delete_args);
+    }
+    if let Some(endpoint) = &delete_args.ipc_endpoint {
+        return delete_ipc_command(endpoint, &delete_args);
     }
 
-    let document_id =
-        DocumentId::from_str(&args[1]).map_err(|_| CliError::user("delete doc id is invalid"))?;
+    let document_id = DocumentId::from_str(&delete_args.doc_id)
+        .map_err(|_| CliError::user("delete doc id is invalid"))?;
     let store = open_store(data_dir)?;
     let now = current_timestamp()?;
     let Some(deleted_document) = store
@@ -2654,7 +13929,9 @@ fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
     else {
         return Err(CliError::user("delete document was not found"));
     };
-    let rebuild = rebuild_full_text_index(data_dir, &store, now).map_err(CliError::import)?;
+    let deleted_doc_ids = BTreeSet::from([deleted_document.id.as_str().to_string()]);
+    let rebuild = remove_documents_from_full_text_index(data_dir, &store, &deleted_doc_ids, now)
+        .map_err(CliError::import)?;
 
     println!("delete completed");
     println!("doc_id: {}", deleted_document.id);
@@ -2663,6 +13940,524 @@ fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("indexed documents: {}", rebuild.indexed_documents);
 
     Ok(())
+}
+
+struct DeleteArgs {
+    doc_id: String,
+    ipc_auto: bool,
+    ipc_endpoint: Option<IpcDeleteEndpoint>,
+    ipc_token_file: Option<PathBuf>,
+}
+
+fn parse_delete_args(args: &[String]) -> Result<DeleteArgs> {
+    let mut doc_id = None;
+    let mut ipc_auto = false;
+    let mut ipc_endpoint = None;
+    let mut ipc_token_file = None;
+    let mut index = 0_usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--doc-id" => {
+                if doc_id.is_some() {
+                    return Err(CliError::usage(delete_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(delete_usage()));
+                };
+                if value.trim().is_empty() {
+                    return Err(CliError::usage(delete_usage()));
+                }
+                doc_id = Some(value.clone());
+                index += 2;
+            }
+            "--ipc" => {
+                if ipc_auto || ipc_endpoint.is_some() {
+                    return Err(CliError::usage(delete_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(delete_usage()));
+                };
+                if value == "auto" {
+                    ipc_auto = true;
+                } else {
+                    ipc_endpoint = Some(parse_delete_ipc_endpoint(value)?);
+                }
+                index += 2;
+            }
+            "--ipc-token-file" => {
+                if ipc_token_file.is_some() {
+                    return Err(CliError::usage(delete_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(delete_usage()));
+                };
+                ipc_token_file = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(delete_usage())),
+        }
+    }
+
+    if ipc_auto && ipc_token_file.is_some() {
+        return Err(CliError::usage(delete_usage()));
+    }
+    if !ipc_auto && ipc_endpoint.is_some() != ipc_token_file.is_some() {
+        return Err(CliError::usage(delete_usage()));
+    }
+
+    Ok(DeleteArgs {
+        doc_id: doc_id.ok_or_else(|| CliError::usage(delete_usage()))?,
+        ipc_auto,
+        ipc_endpoint,
+        ipc_token_file,
+    })
+}
+
+fn delete_usage() -> &'static str {
+    "usage: resume-cli delete --doc-id <doc_id> [--ipc auto|<http://127.0.0.1:port/delete|/status> --ipc-token-file <path>]"
+}
+
+fn parse_delete_ipc_endpoint(value: &str) -> Result<IpcDeleteEndpoint> {
+    let rest = value
+        .strip_prefix("http://")
+        .ok_or_else(|| CliError::usage(delete_usage()))?;
+    let (authority, path) = rest
+        .split_once('/')
+        .ok_or_else(|| CliError::usage(delete_usage()))?;
+    if path != "delete" && path != "status" {
+        return Err(CliError::usage(delete_usage()));
+    }
+
+    let addr = SocketAddr::from_str(authority).map_err(|_| CliError::usage(delete_usage()))?;
+    if !addr.ip().is_loopback() {
+        return Err(CliError::usage("delete ipc endpoint must be loopback"));
+    }
+
+    Ok(IpcDeleteEndpoint { addr })
+}
+
+fn delete_ipc_command(endpoint: &IpcDeleteEndpoint, delete_args: &DeleteArgs) -> Result<()> {
+    let token_file = delete_args
+        .ipc_token_file
+        .as_ref()
+        .ok_or_else(|| CliError::usage(delete_usage()))?;
+    delete_ipc_command_with_token_file(endpoint, token_file, delete_args)
+}
+
+fn delete_ipc_command_with_token_file(
+    endpoint: &IpcDeleteEndpoint,
+    token_file: &Path,
+    delete_args: &DeleteArgs,
+) -> Result<()> {
+    let token = fs::read_to_string(token_file)
+        .map_err(|_| CliError::user("unable to read daemon delete ipc token"))?;
+    let token = validate_daemon_ipc_token(&token, "daemon delete ipc token is invalid")?;
+    let body = serde_json::json!({
+        "doc_id": delete_args.doc_id.as_str(),
+    })
+    .to_string();
+
+    let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
+        .map_err(|_| CliError::user("unable to connect to daemon delete ipc"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon delete ipc"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|_| CliError::user("unable to configure daemon delete ipc"))?;
+    let request = format!(
+        "POST /delete HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        endpoint.addr,
+        token,
+        body.len(),
+        body
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|_| CliError::user("unable to request daemon delete ipc"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|_| CliError::user("unable to read daemon delete ipc"))?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| CliError::user("daemon delete ipc response is invalid"))?;
+    let status_line = headers.lines().next().unwrap_or_default();
+    if !status_line.starts_with("HTTP/1.1 200 ") && !status_line.starts_with("HTTP/1.0 200 ") {
+        return Err(CliError::user("daemon delete ipc returned an error"));
+    }
+
+    let body: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| CliError::user("daemon delete ipc returned invalid json"))?;
+    render_delete_ipc_result(&body, delete_args.doc_id.as_str())?;
+    Ok(())
+}
+
+fn render_delete_ipc_result(body: &serde_json::Value, expected_doc_id: &str) -> Result<()> {
+    if json_str(body, "schema_version") != Some("daemon.delete.v1")
+        || json_str(body, "status") != Some("ok")
+    {
+        return Err(CliError::user(
+            "daemon delete ipc returned invalid protocol",
+        ));
+    }
+    let doc_id = json_str(body, "doc_id")
+        .ok_or_else(|| CliError::user("daemon delete ipc returned invalid protocol"))?;
+    if doc_id != expected_doc_id || DocumentId::from_str(doc_id).is_err() {
+        return Err(CliError::user(
+            "daemon delete ipc returned invalid protocol",
+        ));
+    }
+    let index_rebuilt = body
+        .get("index_rebuilt")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| CliError::user("daemon delete ipc returned invalid protocol"))?;
+    let indexed_documents = body
+        .get("indexed_documents")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| CliError::user("daemon delete ipc returned invalid protocol"))?;
+
+    println!("delete completed");
+    println!("doc_id: {doc_id}");
+    println!("status: deleted");
+    println!("index rebuilt: {index_rebuilt}");
+    println!("indexed documents: {indexed_documents}");
+    Ok(())
+}
+
+fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    if args != ["--deleted"] {
+        return Err(CliError::usage(purge_usage()));
+    }
+
+    let store = open_store(data_dir)?;
+    let deleted_document_ids = store.deleted_document_ids().map_err(CliError::store)?;
+    let deleted_doc_id_set = deleted_document_ids
+        .iter()
+        .map(|document_id| document_id.to_string())
+        .collect::<BTreeSet<_>>();
+    let mut deleted_content_hashes = BTreeSet::new();
+    for document_id in &deleted_document_ids {
+        if let Some(document) = store.document_by_id(document_id).map_err(CliError::store)? {
+            if let Some(content_hash) = document.content_hash {
+                deleted_content_hashes.insert(content_hash);
+            }
+        }
+    }
+    let live_content_hashes = store
+        .visible_documents()
+        .map_err(CliError::store)?
+        .into_iter()
+        .filter_map(|document| document.content_hash)
+        .collect::<BTreeSet<_>>();
+    deleted_content_hashes.retain(|content_hash| !live_content_hashes.contains(content_hash));
+    let ocr_cache_hashes = deleted_content_hashes.into_iter().collect::<Vec<_>>();
+    let residual_probe =
+        PurgeResidualProbe::collect(&store, &deleted_document_ids, &ocr_cache_hashes)?;
+
+    let vector_documents_purged = purge_vector_documents(data_dir, &deleted_doc_id_set)?;
+    let import_task_purge = store
+        .purge_import_tasks_for_deleted_document_roots(&deleted_document_ids)
+        .map_err(CliError::store)?;
+    let ingest_job_purge = store
+        .purge_ingest_jobs_for_documents(&deleted_document_ids)
+        .map_err(CliError::store)?;
+    let ocr_cache_purge = store
+        .purge_ocr_page_cache_by_content_hashes(&ocr_cache_hashes)
+        .map_err(CliError::store)?;
+    let now = current_timestamp()?;
+    let rebuild = if deleted_document_ids.is_empty() {
+        None
+    } else {
+        Some(rebuild_full_text_index(data_dir, &store, now).map_err(CliError::import)?)
+    };
+    let snapshot_purge =
+        purge_obsolete_snapshots(&data_dir.join("search-index")).map_err(CliError::fulltext)?;
+    let purged_documents = store.purge_deleted_documents().map_err(CliError::store)?;
+    let residual_scan = residual_probe.scan_data_dir(data_dir)?;
+    if residual_scan.retained_markers > 0 {
+        return Err(CliError::user(
+            "purge residual scan detected retained deleted material",
+        ));
+    }
+
+    println!("purge completed");
+    println!("scope: deleted");
+    println!("purged documents: {purged_documents}");
+    println!("index rebuilt: {}", rebuild.is_some());
+    println!(
+        "indexed documents: {}",
+        rebuild
+            .as_ref()
+            .map(|summary| summary.indexed_documents)
+            .unwrap_or(0)
+    );
+    println!(
+        "full-text snapshots purged: {}",
+        snapshot_purge.removed_snapshots()
+    );
+    println!(
+        "full-text staging purged: {}",
+        snapshot_purge.removed_staging()
+    );
+    println!("vector documents purged: {vector_documents_purged}");
+    println!("purged import tasks: {}", import_task_purge.tasks());
+    println!(
+        "purged import scan scopes: {}",
+        import_task_purge.scan_scopes()
+    );
+    println!(
+        "purged import scan errors: {}",
+        import_task_purge.scan_errors()
+    );
+    println!(
+        "purged import cancellations: {}",
+        import_task_purge.cancellations()
+    );
+    println!("ingest jobs purged: {}", ingest_job_purge.jobs());
+    println!(
+        "embedding job specs purged: {}",
+        ingest_job_purge.embedding_specs()
+    );
+    println!("ocr cache entries purged: {}", ocr_cache_purge.entries());
+    println!("ocr word boxes purged: {}", ocr_cache_purge.word_boxes());
+    println!("residual scan: clear");
+    println!(
+        "residual markers checked: {}",
+        residual_scan.markers_checked
+    );
+    println!("residual files scanned: {}", residual_scan.files_scanned);
+    println!("residual bytes scanned: {}", residual_scan.bytes_scanned);
+    println!("metadata vacuum: yes");
+    println!("physical purge scope: local best-effort, not forensic erase");
+
+    Ok(())
+}
+
+#[derive(Default)]
+struct PurgeResidualProbe {
+    markers: BTreeSet<Vec<u8>>,
+}
+
+impl PurgeResidualProbe {
+    fn collect(
+        store: &MetaStore,
+        document_ids: &[DocumentId],
+        ocr_cache_hashes: &[String],
+    ) -> Result<Self> {
+        let mut probe = Self::default();
+
+        for document_id in document_ids {
+            probe.add_marker(document_id.as_str());
+            let Some(document) = store.document_by_id(document_id).map_err(CliError::store)? else {
+                continue;
+            };
+            probe.add_marker(&document.source_uri);
+            probe.add_marker(&document.normalized_path);
+            probe.add_marker(&document.file_name);
+
+            for version in store
+                .resume_versions_for_document(&document.id)
+                .map_err(CliError::store)?
+            {
+                probe.add_marker(version.id.as_str());
+                if let Some(raw_text) = &version.raw_text {
+                    probe.add_marker(raw_text);
+                }
+                if let Some(clean_text) = &version.clean_text {
+                    probe.add_marker(clean_text);
+                }
+
+                for mention in store
+                    .entity_mentions_for_version(&version.id)
+                    .map_err(CliError::store)?
+                {
+                    probe.add_marker(&mention.raw_value);
+                    if let Some(normalized_value) = &mention.normalized_value {
+                        probe.add_marker(normalized_value);
+                    }
+                }
+            }
+        }
+
+        for marker in store
+            .import_root_markers_for_deleted_document_roots(document_ids)
+            .map_err(CliError::store)?
+        {
+            probe.add_marker(&marker);
+        }
+
+        for entry in store
+            .ocr_page_cache_entries_for_content_hashes(ocr_cache_hashes)
+            .map_err(CliError::store)?
+        {
+            if let Some(text) = entry.text() {
+                probe.add_marker(text);
+            }
+            for word_box in entry.word_boxes() {
+                probe.add_marker(word_box.text());
+            }
+        }
+
+        Ok(probe)
+    }
+
+    fn add_marker(&mut self, value: &str) {
+        let marker = value.trim().as_bytes();
+        if marker.len() >= PURGE_RESIDUAL_MARKER_MIN_BYTES {
+            self.markers.insert(marker.to_vec());
+        }
+    }
+
+    fn scan_data_dir(&self, data_dir: &Path) -> Result<PurgeResidualScan> {
+        let markers_checked = self.markers.len();
+        let Some(max_marker_len) = self.markers.iter().map(Vec::len).max() else {
+            return Ok(PurgeResidualScan {
+                markers_checked,
+                ..PurgeResidualScan::default()
+            });
+        };
+
+        let mut scan = PurgeResidualScan {
+            markers_checked,
+            ..PurgeResidualScan::default()
+        };
+        let mut pending_dirs = vec![data_dir.to_path_buf()];
+        while let Some(dir) = pending_dirs.pop() {
+            let entries = fs::read_dir(&dir)
+                .map_err(|_| CliError::user("purge residual scan could not read local artifact"))?;
+            for entry in entries {
+                let entry = entry.map_err(|_| {
+                    CliError::user("purge residual scan could not read local artifact")
+                })?;
+                let file_type = entry.file_type().map_err(|_| {
+                    CliError::user("purge residual scan could not read local artifact")
+                })?;
+                if file_type.is_dir() {
+                    pending_dirs.push(entry.path());
+                } else if file_type.is_file() {
+                    scan.files_scanned += 1;
+                    let file_scan = scan_file_for_purge_residual_markers(
+                        &entry.path(),
+                        &self.markers,
+                        max_marker_len,
+                    )?;
+                    scan.bytes_scanned = scan
+                        .bytes_scanned
+                        .checked_add(file_scan.bytes_scanned)
+                        .ok_or_else(|| {
+                            CliError::user("purge residual scan byte count overflowed")
+                        })?;
+                    if file_scan.retained_marker {
+                        scan.retained_markers += 1;
+                    }
+                } else {
+                    return Err(CliError::user(
+                        "purge residual scan blocked by unsupported local artifact",
+                    ));
+                }
+            }
+        }
+
+        Ok(scan)
+    }
+}
+
+#[derive(Default)]
+struct PurgeResidualScan {
+    markers_checked: usize,
+    files_scanned: usize,
+    bytes_scanned: u64,
+    retained_markers: usize,
+}
+
+#[derive(Default)]
+struct PurgeResidualFileScan {
+    bytes_scanned: u64,
+    retained_marker: bool,
+}
+
+fn scan_file_for_purge_residual_markers(
+    path: &Path,
+    markers: &BTreeSet<Vec<u8>>,
+    max_marker_len: usize,
+) -> Result<PurgeResidualFileScan> {
+    let mut file = fs::File::open(path)
+        .map_err(|_| CliError::user("purge residual scan could not read local artifact"))?;
+    let mut scan = PurgeResidualFileScan::default();
+    let mut buffer = vec![0_u8; PURGE_RESIDUAL_SCAN_CHUNK_BYTES];
+    let mut carry = Vec::new();
+    let carry_len = max_marker_len.saturating_sub(1);
+
+    loop {
+        let bytes_read = file
+            .read(&mut buffer)
+            .map_err(|_| CliError::user("purge residual scan could not read local artifact"))?;
+        if bytes_read == 0 {
+            return Ok(scan);
+        }
+
+        scan.bytes_scanned = scan
+            .bytes_scanned
+            .checked_add(
+                u64::try_from(bytes_read)
+                    .map_err(|_| CliError::user("purge residual scan byte count overflowed"))?,
+            )
+            .ok_or_else(|| CliError::user("purge residual scan byte count overflowed"))?;
+        let mut window = Vec::with_capacity(carry.len() + bytes_read);
+        window.extend_from_slice(&carry);
+        window.extend_from_slice(&buffer[..bytes_read]);
+
+        if purge_residual_window_contains_marker(&window, markers) {
+            scan.retained_marker = true;
+            return Ok(scan);
+        }
+
+        carry.clear();
+        if carry_len > 0 {
+            let start = window.len().saturating_sub(carry_len);
+            carry.extend_from_slice(&window[start..]);
+        }
+    }
+}
+
+fn purge_residual_window_contains_marker(buffer: &[u8], markers: &BTreeSet<Vec<u8>>) -> bool {
+    markers.iter().any(|marker| {
+        marker.len() <= buffer.len() && buffer.windows(marker.len()).any(|window| window == marker)
+    })
+}
+
+fn purge_vector_documents(data_dir: &Path, doc_ids: &BTreeSet<String>) -> Result<usize> {
+    if doc_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let vector_root = data_dir.join("vector-index");
+    let inspection = inspect_persistent_vector_snapshot(&vector_root);
+    match (inspection.state(), inspection.snapshot()) {
+        (PersistentVectorSnapshotState::Missing, _) => Ok(0),
+        (
+            PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered,
+            Some(snapshot),
+        ) => {
+            let index = PersistentVectorIndex::open(&vector_root, snapshot.dimension())
+                .map_err(CliError::vector)?;
+            index.purge_doc_ids(doc_ids).map_err(CliError::vector)
+        }
+        (PersistentVectorSnapshotState::Corrupt, _) => {
+            Err(CliError::user("purge blocked: vector index is corrupt"))
+        }
+        (PersistentVectorSnapshotState::Unreadable, _) => {
+            Err(CliError::user("purge blocked: vector index is unreadable"))
+        }
+        _ => Err(CliError::user("purge blocked: vector index is not ready")),
+    }
+}
+
+fn purge_usage() -> &'static str {
+    "usage: resume-cli purge --deleted"
 }
 
 fn task_control_command(data_dir: &Path, args: &[String], paused: bool) -> Result<()> {
@@ -2790,10 +14585,12 @@ fn parse_cancel_import_args(args: &[String]) -> Result<CancelImportArgs> {
     })
 }
 
+fn cancel_usage_text() -> &'static str {
+    "usage: resume-cli cancel import [--ipc auto|<http://127.0.0.1:port/imports/cancel|/status> --ipc-token-file <path>] --task-id <id>"
+}
+
 fn cancel_usage() -> CliError {
-    CliError::usage(
-        "usage: resume-cli cancel import [--ipc auto|<http://127.0.0.1:port/imports/cancel|/status> --ipc-token-file <path>] --task-id <id>",
-    )
+    CliError::usage(cancel_usage_text())
 }
 
 fn parse_worker_task_control_args(args: &[String]) -> Result<WorkerTaskKind> {
@@ -2825,8 +14622,12 @@ fn worker_task_status_label(paused: bool) -> &'static str {
     }
 }
 
+fn task_control_usage_text() -> &'static str {
+    "usage: resume-cli pause --task ocr OR resume --task ocr"
+}
+
 fn task_control_usage() -> CliError {
-    CliError::usage("usage: resume-cli pause --task ocr OR resume --task ocr")
+    CliError::usage(task_control_usage_text())
 }
 
 fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -2845,11 +14646,11 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    let Some(command) = worker_args.command.clone() else {
+    if worker_args.command.is_none() && worker_args.tesseract_command.is_none() {
         return Err(CliError::user(
             "ocr worker blocked: local OCR command not configured",
         ));
-    };
+    }
 
     let Some(job) = store
         .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
@@ -2861,7 +14662,7 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Ok(());
     };
 
-    let result = run_claimed_ocr_job(data_dir, &store, &job, &worker_args, command, now);
+    let result = run_claimed_ocr_job(data_dir, &store, &job, &worker_args, now);
     match result {
         Ok(summary) => {
             println!("ocr worker: completed");
@@ -2871,7 +14672,11 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
             Ok(())
         }
         Err(error) => {
-            let _ = store.update_job_status(&job.id, IngestJobStatus::FailedRetryable, now);
+            if let Ok(Some(current_job)) = store.ingest_job_by_id(&job.id) {
+                if current_job.status == IngestJobStatus::Running {
+                    let _ = store.update_job_status(&job.id, IngestJobStatus::FailedRetryable, now);
+                }
+            }
             Err(error)
         }
     }
@@ -2882,10 +14687,9 @@ fn run_claimed_ocr_job(
     store: &MetaStore,
     job: &meta_store::IngestJob,
     worker_args: &OcrWorkerArgs,
-    command: PathBuf,
     now: UnixTimestamp,
 ) -> Result<OcrWorkerSummary> {
-    let Some(mut document) = store
+    let Some(document) = store
         .document_by_id(&job.document_id)
         .map_err(CliError::store)?
     else {
@@ -2898,106 +14702,289 @@ fn run_claimed_ocr_job(
         .content_hash
         .clone()
         .ok_or_else(|| CliError::user("ocr worker document is missing content hash"))?;
-    let cache_key = OcrPageCacheKey::new(
-        content_hash,
-        1,
-        worker_args.render_dpi,
-        worker_args.lang.as_str(),
-        worker_args.profile.as_str(),
-    )
-    .map_err(CliError::store)?;
-
-    if let Some(entry) = store
-        .ocr_page_cache_entry(&cache_key)
-        .map_err(CliError::store)?
-        .filter(|entry| entry.status() == meta_store::OcrPageCacheStatus::Succeeded)
-    {
-        if let Some(text) = entry.text() {
-            let _ = index_ocr_text(data_dir, store, &document.id, text, entry.confidence(), now)
-                .map_err(CliError::import)?;
-        } else {
-            document.status = DocumentStatus::OcrDone;
-            document.updated_at = now;
-            store.upsert_document(&document).map_err(CliError::store)?;
-        }
-        store
-            .update_job_status(&job.id, IngestJobStatus::Completed, now)
-            .map_err(CliError::store)?;
-        return Ok(OcrWorkerSummary {
-            documents_processed: 1,
-            cache_writes: 0,
-            cache_hits: 1,
-        });
-    }
-
     let bytes = fs::read(&document.normalized_path)
         .map_err(|_| CliError::user("ocr worker could not read document bytes"))?;
-    let client = LocalOcrCommandClient::new(
-        LocalOcrCommandSpec::new(
-            command,
-            Vec::<String>::new(),
-            worker_args.engine_profile.as_str(),
-        )
-        .map_err(CliError::ocr)?,
-    );
-    let request = OcrPageRequest::new(
-        RenderedPage::new(1, worker_args.render_dpi, bytes).map_err(CliError::ocr)?,
-        OcrOptions::new(worker_args.lang.as_str(), worker_args.profile.as_str())
-            .map_err(CliError::ocr)?,
-    )
-    .map_err(CliError::ocr)?;
-
-    match client.recognize_page(
-        request,
-        OcrWorkerBudget::new(worker_args.page_timeout_ms).map_err(CliError::ocr)?,
-        &CancellationToken::new(),
-    ) {
-        Ok(page) => {
-            let entry = OcrPageCacheEntry::succeeded(
-                cache_key,
-                page.text(),
-                page.confidence(),
-                page.engine_profile(),
-                page.duration_ms(),
+    let page_count =
+        detect_ocr_page_count(&document.extension, &bytes).map_err(CliError::import)?;
+    if page_count > worker_args.max_pages_per_document {
+        store
+            .update_job_status_with_failure_kind(
+                &job.id,
+                IngestJobStatus::FailedRetryable,
+                Some(IngestJobFailureKind::OcrPageBudgetExceeded),
                 now,
             )
             .map_err(CliError::store)?;
-            store
-                .upsert_ocr_page_cache_entry(&entry)
-                .map_err(CliError::store)?;
-            let _ = index_ocr_text(
-                data_dir,
-                store,
-                &document.id,
-                page.text(),
-                Some(page.confidence()),
-                now,
-            )
-            .map_err(CliError::import)?;
-            store
-                .update_job_status(&job.id, IngestJobStatus::Completed, now)
-                .map_err(CliError::store)?;
-            Ok(OcrWorkerSummary {
-                documents_processed: 1,
-                cache_writes: 1,
-                cache_hits: 0,
-            })
-        }
-        Err(error) => {
-            let entry =
-                OcrPageCacheEntry::failed_retryable(cache_key, format!("{:?}", error.kind()), now)
-                    .map_err(CliError::store)?;
-            store
-                .upsert_ocr_page_cache_entry(&entry)
-                .map_err(CliError::store)?;
-            store
-                .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
-                .map_err(CliError::store)?;
-            Err(CliError::user(
-                "ocr worker blocked: local OCR command failed or unavailable",
-            ))
-        }
+        return Err(CliError::user(
+            "ocr worker blocked: OCR page count exceeds configured limit",
+        ));
     }
+    let budget = OcrWorkerBudget::new(worker_args.page_timeout_ms).map_err(CliError::ocr)?;
+    let cancellation = CancellationToken::new();
+    let options = OcrOptions::new(worker_args.lang.as_str(), worker_args.profile.as_str())
+        .map_err(CliError::ocr)?;
+    let command_client = worker_args
+        .command
+        .clone()
+        .map(|command| {
+            LocalOcrCommandSpec::new(
+                command,
+                Vec::<String>::new(),
+                worker_args.engine_profile.as_str(),
+            )
+            .map(LocalOcrCommandClient::new)
+            .map_err(CliError::ocr)
+        })
+        .transpose()?;
+    let tesseract_client = worker_args
+        .tesseract_command
+        .clone()
+        .map(|tesseract_command| {
+            TesseractOcrSpec::new(tesseract_command, worker_args.engine_profile.as_str())
+                .map(TesseractOcrClient::new)
+                .map_err(CliError::ocr)
+        })
+        .transpose()?;
+    let renderer = worker_args
+        .render_command
+        .clone()
+        .map(|render_command| {
+            LocalPdfRenderCommandSpec::new(render_command, Vec::<String>::new())
+                .map(LocalPdfRenderCommandClient::new)
+                .map_err(CliError::ocr)
+        })
+        .transpose()?;
+    let pdftoppm_renderer = worker_args
+        .pdftoppm_command
+        .clone()
+        .map(|pdftoppm_command| {
+            PdftoppmRenderSpec::new(pdftoppm_command)
+                .map(PdftoppmPdfRenderer::new)
+                .map_err(CliError::ocr)
+        })
+        .transpose()?;
+
+    let mut page_texts = Vec::new();
+    let mut confidence_sum = 0.0_f32;
+    let mut confidence_count = 0_usize;
+    let mut cache_writes = 0_usize;
+    let mut cache_hits = 0_usize;
+
+    for page_no in 1..=page_count {
+        let cache_key = OcrPageCacheKey::new(
+            content_hash.clone(),
+            page_no,
+            worker_args.render_dpi,
+            worker_args.lang.as_str(),
+            worker_args.profile.as_str(),
+        )
+        .map_err(CliError::store)?;
+
+        if let Some(entry) = store
+            .ocr_page_cache_entry(&cache_key)
+            .map_err(CliError::store)?
+            .filter(|entry| entry.status() == meta_store::OcrPageCacheStatus::Succeeded)
+        {
+            page_texts.push(entry.text().unwrap_or("").to_string());
+            if let Some(confidence) = entry.confidence() {
+                confidence_sum += confidence;
+                confidence_count += 1;
+            }
+            cache_hits += 1;
+            continue;
+        }
+
+        if command_client.is_none() {
+            if let Some(tesseract_command) = worker_args.tesseract_command.as_ref() {
+                match inspect_tesseract_language_availability(
+                    tesseract_command,
+                    worker_args.lang.as_str(),
+                ) {
+                    TesseractLanguageAvailability::Available => {}
+                    TesseractLanguageAvailability::Missing => {
+                        let entry = OcrPageCacheEntry::failed_retryable(
+                            cache_key,
+                            "LanguageUnavailable",
+                            now,
+                        )
+                        .map_err(CliError::store)?;
+                        store
+                            .upsert_ocr_page_cache_entry(&entry)
+                            .map_err(CliError::store)?;
+                        store
+                            .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+                            .map_err(CliError::store)?;
+                        return Err(CliError::user(
+                            "ocr worker blocked: requested OCR language pack is unavailable",
+                        ));
+                    }
+                    TesseractLanguageAvailability::Unknown => {
+                        let entry = OcrPageCacheEntry::failed_retryable(
+                            cache_key,
+                            "WorkerUnavailable",
+                            now,
+                        )
+                        .map_err(CliError::store)?;
+                        store
+                            .upsert_ocr_page_cache_entry(&entry)
+                            .map_err(CliError::store)?;
+                        store
+                            .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+                            .map_err(CliError::store)?;
+                        return Err(CliError::user(
+                            "ocr worker blocked: local OCR command failed or unavailable",
+                        ));
+                    }
+                }
+            }
+        }
+
+        let rendered_page = if let Some(renderer) = &renderer {
+            match renderer.render_page(
+                &bytes,
+                page_no,
+                worker_args.render_dpi,
+                budget,
+                &cancellation,
+            ) {
+                Ok(rendered_page) => rendered_page,
+                Err(error) => {
+                    let entry = OcrPageCacheEntry::failed_retryable(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
+                    .map_err(CliError::store)?;
+                    store
+                        .upsert_ocr_page_cache_entry(&entry)
+                        .map_err(CliError::store)?;
+                    store
+                        .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+                        .map_err(CliError::store)?;
+                    return Err(CliError::user(
+                        "ocr worker blocked: local OCR command failed or unavailable",
+                    ));
+                }
+            }
+        } else if let Some(renderer) = &pdftoppm_renderer {
+            match renderer.render_page(
+                &bytes,
+                page_no,
+                worker_args.render_dpi,
+                budget,
+                &cancellation,
+            ) {
+                Ok(rendered_page) => rendered_page,
+                Err(error) => {
+                    let entry = OcrPageCacheEntry::failed_retryable(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
+                    .map_err(CliError::store)?;
+                    store
+                        .upsert_ocr_page_cache_entry(&entry)
+                        .map_err(CliError::store)?;
+                    store
+                        .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+                        .map_err(CliError::store)?;
+                    return Err(CliError::user(
+                        "ocr worker blocked: local OCR command failed or unavailable",
+                    ));
+                }
+            }
+        } else {
+            RenderedPage::new(page_no, worker_args.render_dpi, bytes.clone())
+                .map_err(CliError::ocr)?
+        };
+        let request = OcrPageRequest::new(rendered_page, options.clone()).map_err(CliError::ocr)?;
+
+        let page_result = if let Some(client) = &command_client {
+            client.recognize_page(request, budget, &cancellation)
+        } else if let Some(client) = &tesseract_client {
+            client.recognize_page(request, budget, &cancellation)
+        } else {
+            return Err(CliError::user(
+                "ocr worker blocked: local OCR command not configured",
+            ));
+        };
+        let page = match page_result {
+            Ok(page) => page,
+            Err(error) => {
+                let entry = OcrPageCacheEntry::failed_retryable(
+                    cache_key,
+                    format!("{:?}", error.kind()),
+                    now,
+                )
+                .map_err(CliError::store)?;
+                store
+                    .upsert_ocr_page_cache_entry(&entry)
+                    .map_err(CliError::store)?;
+                store
+                    .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+                    .map_err(CliError::store)?;
+                return Err(CliError::user(
+                    "ocr worker blocked: local OCR command failed or unavailable",
+                ));
+            }
+        };
+        let word_boxes = ocr_word_boxes_for_cache(&page)?;
+        let entry = OcrPageCacheEntry::succeeded_with_word_boxes(
+            cache_key,
+            page.text(),
+            page.confidence(),
+            page.engine_profile(),
+            page.duration_ms(),
+            word_boxes,
+            now,
+        )
+        .map_err(CliError::store)?;
+        store
+            .upsert_ocr_page_cache_entry(&entry)
+            .map_err(CliError::store)?;
+        page_texts.push(page.text().to_string());
+        confidence_sum += page.confidence();
+        confidence_count += 1;
+        cache_writes += 1;
+    }
+
+    let combined_text = page_texts.join("\n");
+    let confidence = (confidence_count > 0).then_some(confidence_sum / confidence_count as f32);
+    let _ = index_ocr_text(
+        data_dir,
+        store,
+        &document.id,
+        &combined_text,
+        confidence,
+        Some(page_count),
+        now,
+    )
+    .map_err(CliError::import)?;
+    store
+        .update_job_status(&job.id, IngestJobStatus::Completed, now)
+        .map_err(CliError::store)?;
+    Ok(OcrWorkerSummary {
+        documents_processed: 1,
+        cache_writes,
+        cache_hits,
+    })
+}
+
+fn ocr_word_boxes_for_cache(page: &ocr_client::OcrPage) -> Result<Vec<meta_store::OcrWordBox>> {
+    page.word_boxes()
+        .iter()
+        .map(|word_box| {
+            meta_store::OcrWordBox::new(
+                word_box.text(),
+                word_box.left(),
+                word_box.top(),
+                word_box.width(),
+                word_box.height(),
+                word_box.confidence(),
+            )
+            .map_err(CliError::store)
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3010,21 +14997,29 @@ struct OcrWorkerSummary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OcrWorkerArgs {
     command: Option<PathBuf>,
+    tesseract_command: Option<PathBuf>,
+    render_command: Option<PathBuf>,
+    pdftoppm_command: Option<PathBuf>,
     engine_profile: String,
     lang: String,
     profile: String,
     render_dpi: u32,
     page_timeout_ms: u64,
+    max_pages_per_document: u32,
 }
 
 fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
     let mut seen_once = false;
     let mut command = None;
+    let mut tesseract_command = None;
+    let mut render_command = None;
+    let mut pdftoppm_command = None;
     let mut engine_profile = "local-command".to_string();
     let mut lang = "eng".to_string();
     let mut profile = "balanced".to_string();
     let mut render_dpi = 300_u32;
     let mut page_timeout_ms = 30_000_u64;
+    let mut max_pages_per_document = DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT;
     let mut index = 0;
 
     while index < args.len() {
@@ -3045,6 +15040,39 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
                     return Err(ocr_worker_usage());
                 }
                 command = Some(PathBuf::from(value));
+                index += 1;
+            }
+            "--tesseract-command" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(ocr_worker_usage());
+                };
+                if tesseract_command.is_some() {
+                    return Err(ocr_worker_usage());
+                }
+                tesseract_command = Some(PathBuf::from(value));
+                index += 1;
+            }
+            "--render-command" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(ocr_worker_usage());
+                };
+                if render_command.is_some() {
+                    return Err(ocr_worker_usage());
+                }
+                render_command = Some(PathBuf::from(value));
+                index += 1;
+            }
+            "--pdftoppm-command" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(ocr_worker_usage());
+                };
+                if pdftoppm_command.is_some() {
+                    return Err(ocr_worker_usage());
+                }
+                pdftoppm_command = Some(PathBuf::from(value));
                 index += 1;
             }
             "--engine-profile" => {
@@ -3104,6 +15132,18 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
                     .ok_or_else(ocr_worker_usage)?;
                 index += 1;
             }
+            "--max-pages-per-document" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(ocr_worker_usage());
+                };
+                max_pages_per_document = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(ocr_worker_usage)?;
+                index += 1;
+            }
             _ => return Err(ocr_worker_usage()),
         }
     }
@@ -3111,21 +15151,33 @@ fn parse_ocr_worker_args(args: &[String]) -> Result<OcrWorkerArgs> {
     if !seen_once {
         return Err(ocr_worker_usage());
     }
+    if command.is_some() && tesseract_command.is_some() {
+        return Err(ocr_worker_usage());
+    }
+    if render_command.is_some() && pdftoppm_command.is_some() {
+        return Err(ocr_worker_usage());
+    }
 
     Ok(OcrWorkerArgs {
         command,
+        tesseract_command,
+        render_command,
+        pdftoppm_command,
         engine_profile,
         lang,
         profile,
         render_dpi,
         page_timeout_ms,
+        max_pages_per_document,
     })
 }
 
+fn ocr_worker_usage_text() -> &'static str {
+    "usage: resume-cli ocr-worker --once [--command <path>|--tesseract-command <path>] [--render-command <path>|--pdftoppm-command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>] [--max-pages-per-document <n>]"
+}
+
 fn ocr_worker_usage() -> CliError {
-    CliError::usage(
-        "usage: resume-cli ocr-worker --once [--command <path>] [--engine-profile <name>] [--lang <lang>] [--profile <profile>] [--render-dpi <dpi>] [--page-timeout-ms <ms>]",
-    )
+    CliError::usage(ocr_worker_usage_text())
 }
 
 fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -3142,9 +15194,17 @@ fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let dimension = worker_args.dimension.ok_or_else(embed_worker_usage)?;
     let store = open_store(data_dir)?;
     let candidates = embedding_candidates(&store, worker_args.max_docs)?;
-    let documents_considered = candidates.len();
+    let embedding_summary = run_local_embedding_jobs(
+        data_dir,
+        &candidates,
+        command,
+        model_id,
+        dimension,
+        worker_args.max_text_bytes,
+        worker_args.timeout_ms,
+    )?;
 
-    if candidates.is_empty() {
+    if embedding_summary.documents_considered == 0 {
         let vector_diagnostic = inspect_vector_index(data_dir);
         println!("embedding worker: completed");
         println!("model id: {model_id}");
@@ -3155,22 +15215,62 @@ fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Ok(());
     }
 
+    let vector_diagnostic = inspect_vector_index(data_dir);
+    println!("embedding worker: completed");
+    println!("model id: {model_id}");
+    println!("dimension: {dimension}");
+    println!(
+        "documents considered: {}",
+        embedding_summary.documents_considered
+    );
+    println!(
+        "documents embedded: {}",
+        embedding_summary.documents_embedded
+    );
+    println!("vector inputs: {}", embedding_summary.vector_inputs);
+    println!("vector index: {}", vector_diagnostic.index_label());
+
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LocalEmbeddingRunSummary {
+    documents_considered: usize,
+    documents_embedded: usize,
+    vector_inputs: usize,
+}
+
+fn run_local_embedding_jobs(
+    data_dir: &Path,
+    candidates: &[EmbedWorkerCandidate],
+    command: PathBuf,
+    model_id: &str,
+    dimension: usize,
+    max_text_bytes: usize,
+    timeout_ms: u64,
+) -> Result<LocalEmbeddingRunSummary> {
+    let documents_considered = candidates.len();
+    if candidates.is_empty() {
+        return Ok(LocalEmbeddingRunSummary {
+            documents_considered,
+            documents_embedded: 0,
+            vector_inputs: 0,
+        });
+    }
+
     let embedder = LocalEmbeddingCommandEmbedder::new(
         LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
             .map_err(CliError::embedding)?
-            .with_timeout_ms(worker_args.timeout_ms)
+            .with_timeout_ms(timeout_ms)
             .map_err(CliError::embedding)?,
     );
-    let vector_inputs = embedding_inputs_for_candidates(&candidates);
+    let vector_inputs = embedding_inputs_for_candidates(candidates);
     let inputs = vector_inputs
         .iter()
         .map(|input| EmbeddingInput::new(input.input_id.as_str(), input.text.as_str()))
         .collect::<Vec<_>>();
     let vectors = embedder
-        .embed_batch(
-            &inputs,
-            EmbeddingBudget::new(inputs.len(), worker_args.max_text_bytes),
-        )
+        .embed_batch(&inputs, EmbeddingBudget::new(inputs.len(), max_text_bytes))
         .map_err(CliError::embedding)?;
     let vector_documents = vectors
         .into_iter()
@@ -3189,16 +15289,11 @@ fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .map_err(CliError::vector)?;
     index.upsert(vector_documents).map_err(CliError::vector)?;
 
-    let vector_diagnostic = inspect_vector_index(data_dir);
-    println!("embedding worker: completed");
-    println!("model id: {model_id}");
-    println!("dimension: {dimension}");
-    println!("documents considered: {documents_considered}");
-    println!("documents embedded: {}", candidates.len());
-    println!("vector inputs: {}", inputs.len());
-    println!("vector index: {}", vector_diagnostic.index_label());
-
-    Ok(())
+    Ok(LocalEmbeddingRunSummary {
+        documents_considered,
+        documents_embedded: candidates.len(),
+        vector_inputs: inputs.len(),
+    })
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -3472,28 +15567,59 @@ fn valid_cli_identifier(value: &str) -> bool {
         && !value.contains('\t')
 }
 
-fn embed_worker_usage() -> CliError {
-    CliError::usage(
-        "usage: resume-cli embed-worker --once [--command <path>] [--model-id <id>] [--dimension <n>] [--max-docs <n>] [--max-text-bytes <bytes>] [--timeout-ms <ms>]",
-    )
+fn embed_worker_usage_text() -> &'static str {
+    "usage: resume-cli embed-worker --once [--command <path>] [--model-id <id>] [--dimension <n>] [--max-docs <n>] [--max-text-bytes <bytes>] [--timeout-ms <ms>]"
 }
 
-fn doctor_command(data_dir: &Path) -> Result<()> {
+fn embed_worker_usage() -> CliError {
+    CliError::usage(embed_worker_usage_text())
+}
+
+fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let diagnostic_args = parse_doctor_args(args)?;
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
+    let scan_error_breakdown = store
+        .import_scan_error_breakdown()
+        .map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
+    let resource_telemetry = collect_resource_telemetry(data_dir);
+    let ocr_runtime = inspect_ocr_runtime(&diagnostic_args.ocr_lang);
+    let metadata_encryption = store.metadata_encryption_state();
 
     println!("resume-ir doctor");
     println!("metadata: ok");
+    println!("metadata encryption: {}", metadata_encryption.label());
+    println!("ocr cache encryption: {}", metadata_encryption.label());
+    println!(
+        "metadata encryption remediation: {}",
+        metadata_encryption_remediation(metadata_encryption)
+    );
     println!("indexed documents: {}", summary.indexed_documents);
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr queue: {}", summary.ocr_queue_depth);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
+    println!(
+        "ocr page budget blocked: {}",
+        summary.ocr_page_budget_blocked
+    );
+    if summary.ocr_page_budget_blocked > 0 {
+        println!("ocr remediation: {}", OCR_PAGE_BUDGET_REMEDIATION);
+    }
+    println!(
+        "ocr language unavailable: {}",
+        summary.ocr_language_unavailable
+    );
+    if summary.ocr_language_unavailable > 0 {
+        println!("ocr language remediation: {}", OCR_LANGUAGE_REMEDIATION);
+    }
     println!("entity mentions: {}", summary.entity_mentions);
     println!("import scan scopes: {}", summary.import_scan_scopes);
     println!("import scan errors: {}", summary.import_scan_errors);
+    print_import_scan_error_breakdown(&scan_error_breakdown);
+    print_query_latency_summary(&summary.query_latency);
     println!("recovery queue: {}", summary.recovery_queue_depth);
     println!("index health: {}", index_health_label(summary.index_health));
     println!(
@@ -3522,25 +15648,50 @@ fn doctor_command(data_dir: &Path) -> Result<()> {
     );
     println!("staging orphans: {}", index_diagnostic.staging_orphans());
     println!("contact hash key: {}", contact_key.state().label());
+    println!("resource telemetry: {}", resource_telemetry.status_label());
+    println!(
+        "data disk total bytes: {}",
+        resource_telemetry.format_disk_total()
+    );
+    println!(
+        "data disk available bytes: {}",
+        resource_telemetry.format_disk_available()
+    );
+    println!(
+        "process memory bytes: {}",
+        resource_telemetry.format_process_memory()
+    );
+    println!("cpu cores: {}", resource_telemetry.cpu_cores);
+    println!("ocr renderer pdftoppm: {}", ocr_runtime.pdftoppm.label());
+    println!("ocr engine tesseract: {}", ocr_runtime.tesseract.label());
+    println!(
+        "ocr language {}: {}",
+        ocr_runtime.requested_language,
+        ocr_runtime.requested_language_status.label()
+    );
     println!("fault simulations: available");
-    println!("fault simulation hooks: daemon_restart,index_snapshot_corrupt,disk_space_low");
+    println!(
+        "fault simulation hooks: daemon_restart,daemon_kill,index_snapshot_corrupt,disk_space_low,permission_denied,file_lock,metadata_migration,model_checksum,ocr_crash,battery_mode,external_drive_disconnect"
+    );
     println!("diagnostics redaction: available");
 
     Ok(())
 }
 
 fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    if args != ["--redact"] {
-        return Err(CliError::usage(
-            "usage: resume-cli export-diagnostics --redact",
-        ));
-    }
+    let diagnostic_args = parse_export_diagnostics_args(args)?;
 
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
+    let scan_error_breakdown = store
+        .import_scan_error_breakdown()
+        .map_err(CliError::store)?;
     let index_diagnostic = inspect_search_index(data_dir);
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
+    let resource_telemetry = collect_resource_telemetry(data_dir);
+    let ocr_runtime = inspect_ocr_runtime(&diagnostic_args.ocr_lang);
+    let metadata_encryption = store.metadata_encryption_state();
 
     println!("{{");
     println!("  \"schema_version\": \"diagnostics.v1\",");
@@ -3555,7 +15706,43 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
         summary.searchable_documents
     );
     println!("    \"ocr_queue_depth\": {},", summary.ocr_queue_depth);
+    println!(
+        "    \"metadata_encryption\": \"{}\",",
+        metadata_encryption.label()
+    );
+    println!(
+        "    \"ocr_cache_encryption\": \"{}\",",
+        metadata_encryption.label()
+    );
+    println!(
+        "    \"metadata_encryption_remediation\": \"{}\",",
+        metadata_encryption_remediation(metadata_encryption)
+    );
     println!("    \"ocr_jobs_queued\": {},", summary.ocr_jobs_queued);
+    println!(
+        "    \"ocr_page_budget_blocked\": {},",
+        summary.ocr_page_budget_blocked
+    );
+    println!(
+        "    \"ocr_remediation\": \"{}\",",
+        if summary.ocr_page_budget_blocked > 0 {
+            OCR_PAGE_BUDGET_REMEDIATION
+        } else {
+            "none"
+        }
+    );
+    println!(
+        "    \"ocr_language_unavailable\": {},",
+        summary.ocr_language_unavailable
+    );
+    println!(
+        "    \"ocr_language_remediation\": \"{}\",",
+        if summary.ocr_language_unavailable > 0 {
+            OCR_LANGUAGE_REMEDIATION
+        } else {
+            "none"
+        }
+    );
     println!("    \"entity_mentions\": {},", summary.entity_mentions);
     println!(
         "    \"import_scan_scopes\": {},",
@@ -3565,6 +15752,9 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "    \"import_scan_errors\": {},",
         summary.import_scan_errors
     );
+    println!("    \"import_scan_error_breakdown\": [");
+    print_import_scan_error_breakdown_json(&scan_error_breakdown, "      ");
+    println!("    ],");
     println!(
         "    \"recovery_queue_depth\": {}",
         summary.recovery_queue_depth
@@ -3577,6 +15767,10 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!(
         "  \"vector_index_state\": \"{}\",",
         vector_diagnostic.state_label()
+    );
+    println!(
+        "  \"vector_index_backend\": \"{}\",",
+        vector_diagnostic.backend_json_label()
     );
     println!(
         "  \"vector_index_vectors\": {},",
@@ -3614,26 +15808,422 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "  \"query_smoke\": \"{}\",",
         index_diagnostic.query_smoke_json_label()
     );
+    println!("  \"query_latency\": {{");
+    println!(
+        "    \"sample_count\": {},",
+        summary.query_latency.sample_count
+    );
+    println!(
+        "    \"p50_ms\": {},",
+        format_json_optional_u64(summary.query_latency.p50_ms)
+    );
+    println!(
+        "    \"p95_ms\": {},",
+        format_json_optional_u64(summary.query_latency.p95_ms)
+    );
+    println!(
+        "    \"p99_ms\": {},",
+        format_json_optional_u64(summary.query_latency.p99_ms)
+    );
+    println!(
+        "    \"last_result_count\": {},",
+        format_json_optional_u64(summary.query_latency.last_result_count)
+    );
+    println!("    \"raw_queries\": \"<redacted>\"");
+    println!("  }},");
     println!(
         "  \"contact_hash_key\": \"{}\",",
         contact_key.state().label()
     );
+    println!("  \"resource_telemetry\": {{");
+    println!("    \"status\": \"{}\",", resource_telemetry.status_label());
+    println!("    \"paths\": \"<redacted>\",");
+    println!(
+        "    \"data_disk_total_bytes\": {},",
+        resource_telemetry.format_json_disk_total()
+    );
+    println!(
+        "    \"data_disk_available_bytes\": {},",
+        resource_telemetry.format_json_disk_available()
+    );
+    println!(
+        "    \"process_memory_bytes\": {},",
+        resource_telemetry.format_json_process_memory()
+    );
+    println!("    \"cpu_cores\": {}", resource_telemetry.cpu_cores);
+    println!("  }},");
+    println!("  \"ocr_runtime\": {{");
+    println!("    \"paths\": \"<redacted>\",");
+    println!("    \"pdftoppm\": \"{}\",", ocr_runtime.pdftoppm.label());
+    println!("    \"tesseract\": \"{}\",", ocr_runtime.tesseract.label());
+    println!(
+        "    \"requested_language\": \"{}\",",
+        ocr_runtime.requested_language
+    );
+    println!(
+        "    \"requested_language_status\": \"{}\"",
+        ocr_runtime.requested_language_status.label()
+    );
+    println!("  }},");
     println!("  \"fault_simulations\": [");
     println!("    \"daemon_restart\",");
+    println!("    \"daemon_kill\",");
     println!("    \"index_snapshot_corrupt\",");
-    println!("    \"disk_space_low\"");
+    println!("    \"disk_space_low\",");
+    println!("    \"permission_denied\",");
+    println!("    \"file_lock\",");
+    println!("    \"metadata_migration\",");
+    println!("    \"model_checksum\",");
+    println!("    \"ocr_crash\",");
+    println!("    \"battery_mode\",");
+    println!("    \"external_drive_disconnect\"");
     println!("  ],");
-    println!("  \"scope\": \"redacted skeleton; no raw resume text, paths, or queries included\"");
+    println!("  \"diagnostic_scope\": {{");
+    println!("    \"metadata\": \"aggregate_counts\",");
+    println!("    \"search_index\": \"state_and_snapshot_health\",");
+    println!("    \"vector_index\": \"state_backend_and_counts\",");
+    println!("    \"query_latency\": \"aggregate_observations\",");
+    println!("    \"runtime_dependencies\": \"presence_only\",");
+    println!("    \"fault_simulations\": \"available_cases_only\"");
+    println!("  }},");
+    println!("  \"evidence_level\": \"local_aggregate_only\",");
+    println!("  \"scope\": \"redacted local aggregate diagnostics; no raw resume text, paths, queries, tokens, or index segment contents included\"");
     println!("}}");
 
     Ok(())
 }
 
-fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
-    let Some(query) = args.first() else {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiagnosticArgs {
+    ocr_lang: String,
+}
+
+fn parse_doctor_args(args: &[String]) -> Result<DiagnosticArgs> {
+    parse_diagnostic_ocr_args(args, doctor_usage())
+}
+
+fn parse_export_diagnostics_args(args: &[String]) -> Result<DiagnosticArgs> {
+    if args.first().map(String::as_str) != Some("--redact") {
+        return Err(CliError::usage(export_diagnostics_usage()));
+    }
+    parse_diagnostic_ocr_args(&args[1..], export_diagnostics_usage())
+}
+
+fn doctor_usage() -> &'static str {
+    "usage: resume-cli doctor [--ocr-lang <lang>]"
+}
+
+fn export_diagnostics_usage() -> &'static str {
+    "usage: resume-cli export-diagnostics --redact [--ocr-lang <lang>]"
+}
+
+fn parse_diagnostic_ocr_args(args: &[String], usage: &'static str) -> Result<DiagnosticArgs> {
+    let mut ocr_lang = "eng".to_string();
+    let mut seen_ocr_lang = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--ocr-lang" => {
+                if seen_ocr_lang {
+                    return Err(CliError::usage(usage));
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(CliError::usage(usage));
+                };
+                ocr_lang = parse_ocr_diagnostic_language(value, usage)?;
+                seen_ocr_lang = true;
+                index += 1;
+            }
+            _ => return Err(CliError::usage(usage)),
+        }
+    }
+
+    Ok(DiagnosticArgs { ocr_lang })
+}
+
+fn parse_ocr_diagnostic_language(value: &str, usage: &'static str) -> Result<String> {
+    if !valid_ocr_diagnostic_language(value) {
+        return Err(CliError::usage(usage));
+    }
+    Ok(value.to_string())
+}
+
+fn valid_ocr_diagnostic_language(value: &str) -> bool {
+    ocr_language_components(value).is_some()
+}
+
+fn ocr_language_components(value: &str) -> Option<Vec<&str>> {
+    if value.is_empty() || value.len() > 80 {
+        return None;
+    }
+
+    let mut components = Vec::new();
+    for component in value.split('+') {
+        if component.is_empty()
+            || !component.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            })
+        {
+            return None;
+        }
+        components.push(component);
+    }
+
+    Some(components)
+}
+
+#[derive(Debug, Clone)]
+struct ResourceTelemetry {
+    data_disk_total_bytes: Option<u64>,
+    data_disk_available_bytes: Option<u64>,
+    process_memory_bytes: Option<u64>,
+    cpu_cores: usize,
+}
+
+impl ResourceTelemetry {
+    fn status_label(&self) -> &'static str {
+        if self.data_disk_total_bytes.is_some()
+            && self.data_disk_available_bytes.is_some()
+            && self.process_memory_bytes.is_some()
+            && self.cpu_cores > 0
+        {
+            "available"
+        } else {
+            "degraded"
+        }
+    }
+
+    fn format_disk_total(&self) -> String {
+        format_optional_u64(self.data_disk_total_bytes)
+    }
+
+    fn format_disk_available(&self) -> String {
+        format_optional_u64(self.data_disk_available_bytes)
+    }
+
+    fn format_process_memory(&self) -> String {
+        format_optional_u64(self.process_memory_bytes)
+    }
+
+    fn format_json_disk_total(&self) -> String {
+        format_json_optional_u64(self.data_disk_total_bytes)
+    }
+
+    fn format_json_disk_available(&self) -> String {
+        format_json_optional_u64(self.data_disk_available_bytes)
+    }
+
+    fn format_json_process_memory(&self) -> String {
+        format_json_optional_u64(self.process_memory_bytes)
+    }
+}
+
+fn collect_resource_telemetry(data_dir: &Path) -> ResourceTelemetry {
+    let (data_disk_total_bytes, data_disk_available_bytes) = data_disk_telemetry(data_dir)
+        .map(|disk| (Some(disk.total_bytes), Some(disk.available_bytes)))
+        .unwrap_or((None, None));
+    let process_memory_bytes = process_memory_bytes();
+    let cpu_cores = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(0);
+
+    ResourceTelemetry {
+        data_disk_total_bytes,
+        data_disk_available_bytes,
+        process_memory_bytes,
+        cpu_cores,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OcrRuntimeDiagnostic {
+    pdftoppm: OcrRuntimeState,
+    tesseract: OcrRuntimeState,
+    requested_language: String,
+    requested_language_status: OcrRuntimeState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OcrRuntimeState {
+    Available,
+    Missing,
+    Unknown,
+}
+
+impl OcrRuntimeState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Missing => "missing",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+fn inspect_ocr_runtime(requested_language: &str) -> OcrRuntimeDiagnostic {
+    inspect_ocr_runtime_with_commands(requested_language, None, None)
+}
+
+fn inspect_ocr_runtime_with_commands(
+    requested_language: &str,
+    pdftoppm_command: Option<&PathBuf>,
+    tesseract_command: Option<&PathBuf>,
+) -> OcrRuntimeDiagnostic {
+    let discovered_pdftoppm;
+    let pdftoppm = match pdftoppm_command {
+        Some(command) => Some(command),
+        None => {
+            discovered_pdftoppm = find_command_in_path("pdftoppm");
+            discovered_pdftoppm.as_ref()
+        }
+    };
+    let discovered_tesseract;
+    let tesseract = match tesseract_command {
+        Some(command) => Some(command),
+        None => {
+            discovered_tesseract = find_command_in_path("tesseract");
+            discovered_tesseract.as_ref()
+        }
+    };
+    let requested_language_status = tesseract
+        .map(|path| inspect_tesseract_language(path, requested_language))
+        .unwrap_or(OcrRuntimeState::Missing);
+
+    OcrRuntimeDiagnostic {
+        pdftoppm: tool_state(pdftoppm),
+        tesseract: tool_state(tesseract),
+        requested_language: requested_language.to_string(),
+        requested_language_status,
+    }
+}
+
+fn tool_state(path: Option<&PathBuf>) -> OcrRuntimeState {
+    if path.is_some_and(|path| is_executable_file(path)) {
+        OcrRuntimeState::Available
+    } else {
+        OcrRuntimeState::Missing
+    }
+}
+
+fn inspect_tesseract_language(command_path: &Path, language: &str) -> OcrRuntimeState {
+    let Some(requested_languages) = ocr_language_components(language) else {
+        return OcrRuntimeState::Missing;
+    };
+    let Ok(output) = Command::new(command_path).arg("--list-langs").output() else {
+        return OcrRuntimeState::Unknown;
+    };
+    if !output.status.success() {
+        return OcrRuntimeState::Unknown;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let available_languages = stdout
+        .lines()
+        .chain(stderr.lines())
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    if requested_languages.iter().all(|language| {
+        available_languages
+            .iter()
+            .any(|available| available == language)
+    }) {
+        OcrRuntimeState::Available
+    } else {
+        OcrRuntimeState::Missing
+    }
+}
+
+fn find_command_in_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|path| path.join(name))
+            .find(|path| is_executable_file(path))
+    })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        metadata.permissions().mode() & 0o111 != 0
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DiskTelemetry {
+    total_bytes: u64,
+    available_bytes: u64,
+}
+
+fn data_disk_telemetry(data_dir: &Path) -> Option<DiskTelemetry> {
+    let target = nearest_existing_ancestor(data_dir)?;
+    let disks = Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing().with_storage());
+
+    disks
+        .list()
+        .iter()
+        .filter(|disk| target.starts_with(disk.mount_point()))
+        .max_by_key(|disk| disk.mount_point().components().count())
+        .map(|disk| DiskTelemetry {
+            total_bytes: disk.total_space(),
+            available_bytes: disk.available_space(),
+        })
+}
+
+fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut current = path;
+    loop {
+        if current.exists() {
+            return Some(current.to_path_buf());
+        }
+        current = current.parent()?;
+    }
+}
+
+fn process_memory_bytes() -> Option<u64> {
+    let pid = get_current_pid().ok()?;
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_memory().without_tasks(),
+    );
+    system.process(pid).map(|process| process.memory())
+}
+
+fn format_optional_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn format_json_optional_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
+    if args.is_empty() {
         return Err(CliError::usage(search_usage()));
     };
 
+    let mut query = None;
     let mut top_k = 10_usize;
     let mut filters = SearchFilters::default();
     let mut mode = SearchMode::FullText;
@@ -3645,10 +16235,22 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
     let mut ipc_auto = false;
     let mut ipc_endpoint = None;
     let mut ipc_token_file = None;
-    let mut index = 1_usize;
+    let mut contact_hashes_any = Vec::new();
+    let mut contact_hasher = None;
+    let mut index = 0_usize;
 
     while index < args.len() {
         match args[index].as_str() {
+            "--query-file" => {
+                if query.is_some() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                query = Some(read_search_query_file(Path::new(value))?);
+                index += 2;
+            }
             "--ipc" => {
                 if ipc_auto || ipc_endpoint.is_some() {
                     return Err(CliError::usage(search_usage()));
@@ -3743,6 +16345,143 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
                 filters = filters.with_degree_min(degree);
                 index += 2;
             }
+            "--name" | "--names-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let names = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .collect::<Vec<_>>();
+                if names.is_empty() {
+                    return Err(CliError::user("search name filter is invalid"));
+                }
+                filters = filters.with_names_any(names);
+                index += 2;
+            }
+            "--school-tier" | "--school-tier-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let mut school_tiers = Vec::new();
+                for school_tier in value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|school_tier| !school_tier.is_empty())
+                {
+                    school_tiers.push(
+                        SchoolTier::parse(school_tier).ok_or_else(|| {
+                            CliError::user("search school tier filter is invalid")
+                        })?,
+                    );
+                }
+                if school_tiers.is_empty() {
+                    return Err(CliError::user("search school tier filter is invalid"));
+                }
+                filters = filters.with_school_tiers_any(school_tiers);
+                index += 2;
+            }
+            "--school" | "--schools-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let schools = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|school| !school.is_empty())
+                    .collect::<Vec<_>>();
+                if schools.is_empty() {
+                    return Err(CliError::user("search school filter is invalid"));
+                }
+                filters = filters.with_schools_any(schools);
+                index += 2;
+            }
+            "--major" | "--majors-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let majors = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|major| !major.is_empty())
+                    .collect::<Vec<_>>();
+                if majors.is_empty() {
+                    return Err(CliError::user("search major filter is invalid"));
+                }
+                filters = filters.with_majors_any(majors);
+                index += 2;
+            }
+            "--certificate" | "--certificates-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let certificates = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|certificate| !certificate.is_empty())
+                    .collect::<Vec<_>>();
+                if certificates.is_empty() {
+                    return Err(CliError::user("search certificate filter is invalid"));
+                }
+                filters = filters.with_certificates_any(certificates);
+                index += 2;
+            }
+            "--date-range-overlaps" | "--date-range-overlap" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let Some(date_range) = DateRange::parse(value) else {
+                    return Err(CliError::user("search date range filter is invalid"));
+                };
+                filters = filters.with_date_range_overlaps(&date_range.canonical());
+                index += 2;
+            }
+            "--company" | "--companies-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let companies = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|company| !company.is_empty())
+                    .collect::<Vec<_>>();
+                if companies.is_empty() {
+                    return Err(CliError::user("search company filter is invalid"));
+                }
+                filters = filters.with_companies_any(companies);
+                index += 2;
+            }
+            "--title" | "--titles-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let titles = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+                    .collect::<Vec<_>>();
+                if titles.is_empty() {
+                    return Err(CliError::user("search title filter is invalid"));
+                }
+                filters = filters.with_titles_any(titles);
+                index += 2;
+            }
+            "--location" | "--locations-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let locations = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|location| !location.is_empty())
+                    .collect::<Vec<_>>();
+                if locations.is_empty() {
+                    return Err(CliError::user("search location filter is invalid"));
+                }
+                filters = filters.with_locations_any(locations);
+                index += 2;
+            }
             "--skills-any" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(search_usage()));
@@ -3753,6 +16492,46 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
                         .map(str::trim)
                         .filter(|skill| !skill.is_empty()),
                 );
+                index += 2;
+            }
+            "--email" | "--emails-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let values = comma_values(value);
+                if values.is_empty() {
+                    return Err(CliError::user("search email filter is invalid"));
+                }
+                for value in values {
+                    let normalized = normalize_search_email(value)
+                        .ok_or_else(|| CliError::user("search email filter is invalid"))?;
+                    contact_hashes_any.push(hash_search_contact(
+                        data_dir,
+                        &mut contact_hasher,
+                        ContactKind::Email,
+                        &normalized,
+                    )?);
+                }
+                index += 2;
+            }
+            "--phone" | "--phones-any" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(search_usage()));
+                };
+                let values = comma_values(value);
+                if values.is_empty() {
+                    return Err(CliError::user("search phone filter is invalid"));
+                }
+                for value in values {
+                    let normalized = normalize_search_phone(value)
+                        .ok_or_else(|| CliError::user("search phone filter is invalid"))?;
+                    contact_hashes_any.push(hash_search_contact(
+                        data_dir,
+                        &mut contact_hasher,
+                        ContactKind::Phone,
+                        &normalized,
+                    )?);
+                }
                 index += 2;
             }
             "--years-experience-min" => {
@@ -3779,6 +16558,14 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
                     .ok_or_else(|| CliError::user("search top-k is invalid"))?;
                 index += 2;
             }
+            value if !value.starts_with("--") && query.is_none() => {
+                let value = value.trim();
+                if value.is_empty() {
+                    return Err(CliError::usage(search_usage()));
+                }
+                query = Some(value.to_string());
+                index += 1;
+            }
             _ => return Err(CliError::usage(search_usage())),
         }
     }
@@ -3788,9 +16575,13 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
     if !ipc_auto && ipc_endpoint.is_some() != ipc_token_file.is_some() {
         return Err(CliError::usage(search_usage()));
     }
+    if !contact_hashes_any.is_empty() {
+        filters = filters.with_contact_hashes_any(contact_hashes_any);
+    }
+    let query = query.ok_or_else(|| CliError::usage(search_usage()))?;
 
     Ok(SearchArgs {
-        query: query.clone(),
+        query,
         top_k,
         filters,
         mode,
@@ -3806,7 +16597,95 @@ fn parse_search_args(args: &[String]) -> Result<SearchArgs> {
 }
 
 fn search_usage() -> &'static str {
-    "usage: resume-cli search <query> [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--skills-any <skill[,skill...]>] [--years-experience-min <years>] [--top-k <n>]"
+    "usage: resume-cli search (<query>|--query-file <path>) [--ipc auto|<http://127.0.0.1:port/search|/status> --ipc-token-file <path>] [--mode fulltext|semantic|hybrid] [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>] [--degree <level>] [--name <name[,name...]>] [--names-any <name[,name...]>] [--school-tier <tier[,tier...]>] [--school <school[,school...]>] [--schools-any <school[,school...]>] [--major <major[,major...]>] [--majors-any <major[,major...]>] [--certificate <cert[,cert...]>] [--certificates-any <cert[,cert...]>] [--date-range-overlaps <YYYY-MM/YYYY-MM|YYYY-MM/PRESENT>] [--company <company[,company...]>] [--companies-any <company[,company...]>] [--title <title[,title...]>] [--titles-any <title[,title...]>] [--location <location[,location...]>] [--locations-any <location[,location...]>] [--skills-any <skill[,skill...]>] [--email <email[,email...]>] [--phone <phone[,phone...]>] [--years-experience-min <years>] [--top-k <n>]"
+}
+
+fn read_search_query_file(path: &Path) -> Result<String> {
+    let query =
+        fs::read_to_string(path).map_err(|_| CliError::user("search query file is unavailable"))?;
+    let query = query.trim();
+    if query.is_empty() {
+        return Err(CliError::user("search query file is empty"));
+    }
+    Ok(query.to_string())
+}
+
+fn comma_values(value: &str) -> Vec<&str> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn hash_search_contact(
+    data_dir: &Path,
+    hasher: &mut Option<ContactHasher>,
+    kind: ContactKind,
+    normalized_value: &str,
+) -> Result<String> {
+    if hasher.is_none() {
+        *hasher = Some(ContactHasher::load_or_create(data_dir).map_err(CliError::privacy)?);
+    }
+    let hasher = hasher.as_ref().expect("contact hasher initialized");
+    Ok(hasher
+        .hash_contact(kind, normalized_value)
+        .map_err(CliError::privacy)?
+        .as_str()
+        .to_string())
+}
+
+fn normalize_search_email(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.chars().any(char::is_whitespace)
+        || !value.contains('@')
+        || !value.rsplit_once('@')?.1.contains('.')
+    {
+        return None;
+    }
+    Some(value.to_ascii_lowercase())
+}
+
+fn normalize_search_phone(value: &str) -> Option<String> {
+    let raw = value.trim();
+    let digits = raw
+        .chars()
+        .filter(|character| character.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+    if raw.starts_with('+') && (11..=15).contains(&digits.len()) {
+        return Some(format!("+{digits}"));
+    }
+    if let Some(rest) = digits.strip_prefix("0086") {
+        if is_china_mobile(rest) {
+            return Some(format!("+86{rest}"));
+        }
+    }
+    if let Some(rest) = digits.strip_prefix("86") {
+        if is_china_mobile(rest) {
+            return Some(format!("+86{rest}"));
+        }
+    }
+    if is_china_mobile(&digits) {
+        return Some(format!("+86{digits}"));
+    }
+    if digits.len() == 10 {
+        return Some(format!("+1{digits}"));
+    }
+    if digits.len() == 11 && digits.starts_with('1') {
+        return Some(format!("+{digits}"));
+    }
+    None
+}
+
+fn is_china_mobile(digits: &str) -> bool {
+    let bytes = digits.as_bytes();
+    digits.len() == 11
+        && bytes.first() == Some(&b'1')
+        && bytes.get(1).is_some_and(|byte| matches!(byte, b'3'..=b'9'))
 }
 
 fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
@@ -3950,6 +16829,7 @@ fn run_semantic_search(
     let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
         .map_err(CliError::vector)?;
     let vector_limit = search_args.vector_top_k.unwrap_or(candidate_limit);
+    let allowed_doc_ids = field_filter_doc_id_prefilter(store, &search_args.filters)?;
     let vector_hits = vector_index
         .knn_for_model(
             QueryVector::new(query_vector.values().to_vec()).map_err(CliError::vector)?,
@@ -3958,13 +16838,22 @@ fn run_semantic_search(
         )
         .map_err(CliError::vector)?;
 
-    vector_output_hits(store, vector_hits, &search_args.filters, search_args.top_k)
+    vector_output_hits(
+        store,
+        vector_hits,
+        &search_args.filters,
+        allowed_doc_ids.as_ref(),
+        search_args.top_k,
+    )
 }
 
 fn vector_snapshot_dimension(data_dir: &Path) -> Result<usize> {
     let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
     match (inspection.state(), inspection.snapshot()) {
-        (PersistentVectorSnapshotState::Ready, Some(snapshot)) => Ok(snapshot.dimension()),
+        (
+            PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered,
+            Some(snapshot),
+        ) => Ok(snapshot.dimension()),
         (PersistentVectorSnapshotState::Missing, _) => Err(CliError::user(
             "semantic search unavailable: vector index is missing",
         )),
@@ -3984,12 +16873,18 @@ fn vector_output_hits(
     store: &MetaStore,
     hits: Vec<VectorHit>,
     filters: &SearchFilters,
+    allowed_doc_ids: Option<&BTreeSet<String>>,
     top_k: usize,
 ) -> Result<Vec<SearchOutputHit>> {
     let mut visible = Vec::new();
     let mut seen_candidate_keys = BTreeSet::new();
 
     for (rank, hit) in hits.into_iter().enumerate() {
+        if let Some(allowed_doc_ids) = allowed_doc_ids {
+            if !allowed_doc_ids.contains(hit.doc_id()) {
+                continue;
+            }
+        }
         let Some((document, version)) = hydrate_visible_document_version(store, hit.doc_id())?
         else {
             continue;
@@ -4013,6 +16908,7 @@ fn vector_output_hits(
             file_name: redact_contact_values(&document.file_name),
             snippet: "semantic match".to_string(),
             candidate_key,
+            soft_dedupe_hint: None,
         });
         if visible.len() == top_k {
             break;
@@ -4133,6 +17029,156 @@ fn rerank_output_hits(mut hits: Vec<SearchOutputHit>) -> Vec<SearchOutputHit> {
     hits
 }
 
+fn attach_soft_dedupe_hints(
+    store: &MetaStore,
+    mut hits: Vec<SearchOutputHit>,
+) -> Result<Vec<SearchOutputHit>> {
+    let hints = hits
+        .iter()
+        .map(|hit| soft_dedupe_hint_for_hit(store, hit))
+        .collect::<Result<Vec<_>>>()?;
+    for (hit, hint) in hits.iter_mut().zip(hints) {
+        hit.soft_dedupe_hint = hint;
+    }
+    Ok(hits)
+}
+
+fn soft_dedupe_hint_for_hit(
+    store: &MetaStore,
+    hit: &SearchOutputHit,
+) -> Result<Option<SoftDedupeHint>> {
+    if hit.candidate_key.starts_with("candidate:") {
+        return Ok(None);
+    }
+    let Some(profile) = dedupe_profile_for_hit(store, hit)? else {
+        return Ok(None);
+    };
+    let Some(name) = profile.name() else {
+        return Ok(None);
+    };
+    let candidate_doc_ids = store
+        .searchable_document_ids_with_entity_values(
+            EntityType::Name,
+            &[name.to_string()],
+            FIELD_FILTER_CONFIDENCE_THRESHOLD,
+            true,
+        )
+        .map_err(CliError::store)?;
+    let mut suspected_versions = 0_usize;
+    let mut max_confidence = 0.0_f32;
+
+    for candidate_doc_id in candidate_doc_ids.into_iter().take(64) {
+        if candidate_doc_id.as_str() == hit.doc_id {
+            continue;
+        }
+        let versions = store
+            .resume_versions_for_document(&candidate_doc_id)
+            .map_err(CliError::store)?;
+        for version in versions {
+            if version.id.as_str() == hit.version_id
+                || version.visibility != ResumeVisibility::Searchable
+                || version.candidate_id.is_some()
+            {
+                continue;
+            }
+            let other_hit = SearchOutputHit {
+                rank: 0,
+                score: 0.0,
+                doc_id: version.document_id.to_string(),
+                version_id: version.id.to_string(),
+                file_name: String::new(),
+                snippet: String::new(),
+                candidate_key: candidate_fold_key(&version),
+                soft_dedupe_hint: None,
+            };
+            let Some(other_profile) = dedupe_profile_for_hit(store, &other_hit)? else {
+                continue;
+            };
+            if let Some(score) = soft_dedupe_score(&profile, &other_profile) {
+                suspected_versions += 1;
+                max_confidence = max_confidence.max(score.confidence());
+            }
+        }
+    }
+
+    Ok((suspected_versions > 0).then_some(SoftDedupeHint {
+        suspected_versions,
+        max_confidence,
+    }))
+}
+
+fn dedupe_profile_for_hit(
+    store: &MetaStore,
+    hit: &SearchOutputHit,
+) -> Result<Option<DedupeProfile>> {
+    let Ok(version_id) = ResumeVersionId::from_str(&hit.version_id) else {
+        return Ok(None);
+    };
+    let Some(version) = store
+        .resume_version_by_id(&version_id)
+        .map_err(CliError::store)?
+    else {
+        return Ok(None);
+    };
+    if version.document_id.as_str() != hit.doc_id || version.candidate_id.is_some() {
+        return Ok(None);
+    }
+    let mentions = store
+        .entity_mentions_for_version(&version.id)
+        .map_err(CliError::store)?;
+    let Some(name) = best_normalized_entity_value(&mentions, EntityType::Name) else {
+        return Ok(None);
+    };
+    let profile = DedupeProfile::new(hit.doc_id.clone())
+        .with_name(&name)
+        .with_schools(normalized_entity_values(&mentions, EntityType::School))
+        .with_companies(normalized_entity_values(&mentions, EntityType::Company))
+        .with_skills(normalized_entity_values(&mentions, EntityType::Skill));
+
+    Ok(Some(profile))
+}
+
+fn best_normalized_entity_value(
+    mentions: &[EntityMention],
+    entity_type: EntityType,
+) -> Option<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type
+                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| {
+            Some((
+                mention.normalized_value.as_deref()?.to_string(),
+                mention.confidence,
+                mention.span_start.unwrap_or(usize::MAX),
+            ))
+        })
+        .max_by(|left, right| {
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.2.cmp(&left.2))
+                .then_with(|| right.0.cmp(&left.0))
+        })
+        .map(|candidate| candidate.0)
+}
+
+fn normalized_entity_values(mentions: &[EntityMention], entity_type: EntityType) -> Vec<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type
+                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| mention.normalized_value.as_deref())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 fn candidate_fold_key(version: &ResumeVersion) -> String {
     version
         .candidate_id
@@ -4187,6 +17233,11 @@ fn persisted_profile(
     let fields = store
         .entity_mentions_for_version(&version.id)
         .map_err(CliError::store)?;
+    let names = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Name && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
     let degree = fields
         .iter()
         .filter(|field| field.entity_type == EntityType::Degree && field.confidence >= 0.75)
@@ -4197,6 +17248,46 @@ fn persisted_profile(
         .filter(|field| field.entity_type == EntityType::Skill && field.confidence >= 0.75)
         .filter_map(|field| field.normalized_value.as_deref())
         .collect::<Vec<_>>();
+    let certificates = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Certificate && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let date_ranges = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::DateRange && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let schools = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::School && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let majors = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Major && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let companies = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Company && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let titles = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Title && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let locations = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::Location && field.confidence >= 0.75)
+        .filter_map(|field| field.normalized_value.as_deref())
+        .collect::<Vec<_>>();
+    let school_tiers = fields
+        .iter()
+        .filter(|field| field.entity_type == EntityType::SchoolTier && field.confidence >= 0.75)
+        .filter_map(|field| SchoolTier::parse(field.normalized_value.as_deref()?))
+        .collect::<Vec<_>>();
     let years_experience = fields
         .iter()
         .filter(|field| {
@@ -4205,7 +17296,17 @@ fn persisted_profile(
         .filter_map(|field| field.normalized_value.as_deref()?.parse::<f32>().ok())
         .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut profile = ResumeProfile::new(doc_id).with_skills(skills);
+    let mut profile = ResumeProfile::new(doc_id)
+        .with_names(names)
+        .with_school_tiers(school_tiers)
+        .with_schools(schools)
+        .with_majors(majors)
+        .with_certificates(certificates)
+        .with_date_ranges(date_ranges)
+        .with_companies(companies)
+        .with_titles(titles)
+        .with_locations(locations)
+        .with_skills(skills);
     if let Some(degree) = degree {
         profile = profile.with_degree(degree);
     }
@@ -4255,6 +17356,7 @@ struct SearchOutputHit {
     file_name: String,
     snippet: String,
     candidate_key: String,
+    soft_dedupe_hint: Option<SoftDedupeHint>,
 }
 
 impl SearchOutputHit {
@@ -4267,8 +17369,15 @@ impl SearchOutputHit {
             file_name: hit.file_name,
             snippet: hit.snippet,
             candidate_key,
+            soft_dedupe_hint: None,
         }
     }
+}
+
+#[derive(Clone)]
+struct SoftDedupeHint {
+    suspected_versions: usize,
+    max_confidence: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4293,6 +17402,28 @@ impl SearchMode {
             Self::FullText => "fulltext",
             Self::Semantic => "semantic",
             Self::Hybrid => "hybrid",
+        }
+    }
+
+    fn benchmark_layers_label(self) -> &'static str {
+        match self {
+            Self::FullText => "fulltext",
+            Self::Semantic => "vector",
+            Self::Hybrid => "fulltext+field+vector+rrf",
+        }
+    }
+
+    fn benchmark_query_embedding_runtime_label(self) -> &'static str {
+        match self {
+            Self::FullText => "none",
+            Self::Semantic | Self::Hybrid => "local-command",
+        }
+    }
+
+    fn benchmark_query_embedding_invocations(self) -> usize {
+        match self {
+            Self::FullText => 0,
+            Self::Semantic | Self::Hybrid => 1,
         }
     }
 }
@@ -4519,7 +17650,16 @@ impl VectorIndexDiagnostic {
     fn index_label(self) -> &'static str {
         match self.inspection.state() {
             PersistentVectorSnapshotState::Missing => "unavailable",
-            PersistentVectorSnapshotState::Ready => "available (vector snapshot)",
+            PersistentVectorSnapshotState::Ready => match self.search_backend() {
+                Some(VectorSearchBackend::HnswAnn) => "available (hnsw ann vector snapshot)",
+                Some(VectorSearchBackend::LinearScan) => "available (linear vector snapshot)",
+                None => "available (vector snapshot)",
+            },
+            PersistentVectorSnapshotState::Recovered => match self.search_backend() {
+                Some(VectorSearchBackend::HnswAnn) => "recovered (hnsw ann vector snapshot)",
+                Some(VectorSearchBackend::LinearScan) => "recovered (linear vector snapshot)",
+                None => "recovered (vector snapshot)",
+            },
             PersistentVectorSnapshotState::Corrupt => "corrupt",
             PersistentVectorSnapshotState::Unreadable => "unreadable",
         }
@@ -4529,6 +17669,7 @@ impl VectorIndexDiagnostic {
         match self.inspection.state() {
             PersistentVectorSnapshotState::Missing => "unavailable",
             PersistentVectorSnapshotState::Ready => "available",
+            PersistentVectorSnapshotState::Recovered => "recovered",
             PersistentVectorSnapshotState::Corrupt => "corrupt",
             PersistentVectorSnapshotState::Unreadable => "unreadable",
         }
@@ -4547,12 +17688,26 @@ impl VectorIndexDiagnostic {
             .map(|snapshot| snapshot.deleted_count())
             .unwrap_or(0)
     }
+
+    fn backend_json_label(self) -> &'static str {
+        match self.search_backend() {
+            Some(VectorSearchBackend::HnswAnn) => "hnsw_ann",
+            Some(VectorSearchBackend::LinearScan) => "linear_scan",
+            None => "none",
+        }
+    }
+
+    fn search_backend(self) -> Option<VectorSearchBackend> {
+        self.inspection
+            .snapshot()
+            .map(|snapshot| snapshot.search_backend())
+    }
 }
 
 fn open_store(data_dir: &Path) -> Result<MetaStore> {
     fs::create_dir_all(data_dir)
         .map_err(|_| CliError::user("unable to prepare local metadata directory"))?;
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).map_err(CliError::store)?;
+    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
     store.run_migrations().map_err(CliError::store)?;
     Ok(store)
 }
@@ -4589,6 +17744,13 @@ fn index_health_label(status: IndexStateStatus) -> &'static str {
     }
 }
 
+fn metadata_encryption_remediation(state: MetadataEncryptionState) -> &'static str {
+    match state {
+        MetadataEncryptionState::Plaintext => METADATA_ENCRYPTION_REMEDIATION,
+        MetadataEncryptionState::SqlCipher => "",
+    }
+}
+
 fn file_extension_label(extension: &FileExtension) -> &str {
     match extension {
         FileExtension::Docx => "docx",
@@ -4621,6 +17783,35 @@ fn document_status_label(status: DocumentStatus) -> &'static str {
     }
 }
 
+fn ingest_job_kind_label(kind: IngestJobKind) -> &'static str {
+    match kind {
+        IngestJobKind::DiscoverDocument => "discover_document",
+        IngestJobKind::FingerprintDocument => "fingerprint_document",
+        IngestJobKind::ParseDocument => "parse_document",
+        IngestJobKind::OcrDocument => "ocr_document",
+        IngestJobKind::CleanText => "clean_text",
+        IngestJobKind::ExtractFields => "extract_fields",
+        IngestJobKind::UpdateIndex => "update_index",
+    }
+}
+
+fn ingest_job_status_label(status: IngestJobStatus) -> &'static str {
+    match status {
+        IngestJobStatus::Queued => "queued",
+        IngestJobStatus::Running => "running",
+        IngestJobStatus::Interrupted => "interrupted",
+        IngestJobStatus::Completed => "completed",
+        IngestJobStatus::FailedRetryable => "failed_retryable",
+        IngestJobStatus::FailedPermanent => "failed_permanent",
+    }
+}
+
+fn ingest_job_failure_kind_label(kind: IngestJobFailureKind) -> &'static str {
+    match kind {
+        IngestJobFailureKind::OcrPageBudgetExceeded => "ocr_page_budget_exceeded",
+    }
+}
+
 fn resume_visibility_label(visibility: ResumeVisibility) -> &'static str {
     match visibility {
         ResumeVisibility::Searchable => "searchable",
@@ -4634,8 +17825,11 @@ fn entity_type_label(entity_type: &EntityType) -> String {
         EntityType::Name => "name".to_string(),
         EntityType::Email => "email".to_string(),
         EntityType::Phone => "phone".to_string(),
+        EntityType::WeChat => "wechat".to_string(),
         EntityType::School => "school".to_string(),
+        EntityType::SchoolTier => "school_tier".to_string(),
         EntityType::Degree => "degree".to_string(),
+        EntityType::Major => "major".to_string(),
         EntityType::Company => "company".to_string(),
         EntityType::Title => "title".to_string(),
         EntityType::Education => "education".to_string(),
@@ -4736,6 +17930,54 @@ impl fmt::Display for CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launchctl_status_success_with_running_state_reports_running() {
+        let status = service_runtime_state_from_launchctl_result(
+            true,
+            "service = com.resume-ir.daemon\nstate = running\npid = 123\n",
+            "",
+        );
+
+        assert_eq!(status, ServiceRuntimeState::Running);
+        assert_eq!(status.label(), "running");
+    }
+
+    #[test]
+    fn launchctl_status_success_without_running_state_reports_loaded() {
+        let status = service_runtime_state_from_launchctl_result(
+            true,
+            "service = com.resume-ir.daemon\nstate = waiting\n",
+            "",
+        );
+
+        assert_eq!(status, ServiceRuntimeState::Loaded);
+        assert_eq!(status.label(), "loaded");
+    }
+
+    #[test]
+    fn launchctl_status_missing_service_reports_not_loaded_without_path_leak() {
+        let status = service_runtime_state_from_launchctl_result(
+            false,
+            "",
+            "Could not find service \"com.resume-ir.daemon\" in domain gui/501\n",
+        );
+
+        assert_eq!(status, ServiceRuntimeState::NotLoaded);
+        assert_eq!(status.label(), "not_loaded");
+    }
+
+    #[test]
+    fn launchctl_status_unexpected_error_reports_unknown_without_diagnostics() {
+        let status = service_runtime_state_from_launchctl_result(
+            false,
+            "",
+            "Input/output error while reading /Users/private/Library/LaunchAgents/service.plist\n",
+        );
+
+        assert_eq!(status, ServiceRuntimeState::Unknown);
+        assert_eq!(status.label(), "unknown");
+    }
 
     #[test]
     fn embed_worker_debug_output_redacts_candidate_text_and_command_path() {

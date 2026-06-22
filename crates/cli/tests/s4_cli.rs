@@ -9,6 +9,118 @@ use meta_store::{
 };
 
 #[test]
+fn top_level_help_lists_core_operator_workflows_without_data_dir_or_path_leak() {
+    for args in [["--help"].as_slice(), ["help"].as_slice()] {
+        let cwd = temp_dir("top-level-help-cwd");
+        let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .current_dir(&cwd)
+            .args(args)
+            .output()
+            .expect("run resume-cli top-level help");
+
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("resume-cli"));
+        assert!(stdout.contains("Local-first resume import and search"));
+        assert!(stdout.contains("import"));
+        assert!(stdout.contains("search"));
+        assert!(stdout.contains("ocr preflight"));
+        assert!(stdout.contains("model preflight"));
+        assert!(stdout.contains("doctor"));
+        assert!(stdout.contains("export-diagnostics --redact"));
+        assert!(stdout.contains("release-readiness"));
+        assert!(stdout.contains("Performance optimization is deferred"));
+        assert!(!stdout.contains("/Users/"));
+        assert!(!stdout.contains("PRIVATE"));
+        assert!(!cwd.join("local-data").exists());
+        remove_dir(&cwd);
+    }
+}
+
+#[test]
+fn command_help_lists_core_usage_without_data_dir_or_path_leak() {
+    let cases: &[(&[&str], &[&str])] = &[
+        (
+            &["help", "import"],
+            &["usage: resume-cli import", "--root-preset local-discovery"],
+        ),
+        (
+            &["search", "--help"],
+            &[
+                "usage: resume-cli search",
+                "--mode fulltext|semantic|hybrid",
+            ],
+        ),
+        (&["ocr", "--help"], &["usage: resume-cli ocr", "preflight"]),
+        (
+            &["model", "--help"],
+            &["usage: resume-cli model", "preflight"],
+        ),
+        (
+            &["status", "--help"],
+            &["usage: resume-cli status", "--watch-import"],
+        ),
+    ];
+
+    for (args, expected_fragments) in cases {
+        let cwd = temp_dir("command-help-cwd");
+        let data_dir = cwd.join("private-data-dir");
+        let mut command_args = vec!["--data-dir", path_str(&data_dir)];
+        command_args.extend(args.iter().copied());
+
+        let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .current_dir(&cwd)
+            .args(command_args)
+            .output()
+            .expect("run resume-cli command help");
+
+        assert!(output.status.success(), "args {args:?}");
+        assert!(output.stderr.is_empty(), "args {args:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for fragment in *expected_fragments {
+            assert!(
+                stdout.contains(fragment),
+                "args {args:?}, missing {fragment}"
+            );
+        }
+        assert!(!stdout.contains("/Users/"), "args {args:?}");
+        assert!(!stdout.contains("PRIVATE"), "args {args:?}");
+        assert!(!stdout.contains(path_str(&data_dir)), "args {args:?}");
+        assert!(!data_dir.exists(), "args {args:?}");
+        assert!(!cwd.join("local-data").exists(), "args {args:?}");
+        remove_dir(&cwd);
+    }
+
+    let cwd = temp_dir("command-help-after-private-arg-cwd");
+    let data_dir = cwd.join("private-data-dir");
+    let root_dir = cwd.join("private-root-name");
+    fs::create_dir_all(&root_dir).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .current_dir(&cwd)
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&root_dir),
+            "--help",
+        ])
+        .output()
+        .expect("run resume-cli command help after private arg");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("usage: resume-cli import"));
+    assert!(!stdout.contains("import task submitted"));
+    assert!(!stdout.contains(path_str(&root_dir)));
+    assert!(!data_dir.exists());
+    assert!(!cwd.join("local-data").exists());
+    remove_dir(&cwd);
+}
+
+#[test]
 fn status_creates_store_and_reports_empty_aggregates() {
     let data_dir = temp_dir("status-data");
 
@@ -31,7 +143,7 @@ fn status_creates_store_and_reports_empty_aggregates() {
 fn status_reports_latest_import_scan_progress_without_path_leak() {
     let data_dir = temp_dir("status-import-progress-data");
     let private_root = temp_dir("status-import-progress-private-root");
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let now = UnixTimestamp::from_unix_seconds(1_700_000_200);
     let task_id = ImportTaskId::from_non_secret_parts(&["status-import-progress"]);
@@ -82,6 +194,73 @@ fn status_reports_latest_import_scan_progress_without_path_leak() {
     assert!(stdout.contains("latest import searchable documents: 4"));
     assert!(stdout.contains("latest import ocr required documents: 1"));
     assert!(stdout.contains("latest import scan errors: 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&private_root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
+fn status_watch_import_without_ipc_reports_local_import_scan_progress_without_path_leak() {
+    let data_dir = temp_dir("status-watch-import-local-data");
+    let private_root = temp_dir("status-watch-import-local-private-root");
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_700_000_201);
+    let task_id = ImportTaskId::from_non_secret_parts(&["status-watch-import-local"]);
+    store
+        .insert_import_task(&ImportTask {
+            id: task_id.clone(),
+            root_path: path_str(&private_root).to_string(),
+            status: ImportTaskStatus::Completed,
+            queued_at: now,
+            started_at: Some(now),
+            finished_at: Some(now),
+            updated_at: now,
+        })
+        .unwrap();
+    store
+        .upsert_import_scan_scope(&ImportScanScope {
+            import_task_id: task_id,
+            root_kind: ImportRootKind::Explicit,
+            root_preset: None,
+            scan_profile: ImportScanProfile::Explicit,
+            requested_root_path: path_str(&private_root).to_string(),
+            canonical_root_path: path_str(&private_root).to_string(),
+            files_discovered: 3,
+            ignored_entries: 1,
+            scan_errors: 0,
+            searchable_documents: 2,
+            ocr_required_documents: 0,
+            ocr_jobs_queued: 0,
+            failed_documents: 0,
+            deleted_documents: 1,
+            scan_budget_kind: None,
+            scan_budget_limit: None,
+            scan_budget_observed: None,
+            scan_budget_exhausted: false,
+            updated_at: now,
+        })
+        .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "status",
+            "--watch-import",
+        ])
+        .output()
+        .expect("run resume-cli local status --watch-import");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("resume-ir status"));
+    assert!(stdout.contains("latest import files discovered: 3"));
+    assert!(stdout.contains("latest import searchable documents: 2"));
+    assert!(stdout.contains("latest import deleted documents: 1"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&private_root)));
 

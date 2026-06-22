@@ -2,12 +2,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{DocumentId, MetaStore, UnixTimestamp};
+use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
+use meta_store::{
+    DocumentId, ImportTaskId, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrWordBox,
+    UnixTimestamp,
+};
 
 #[test]
 fn delete_soft_tombstones_document_and_removes_it_from_default_search() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("delete-search-data");
     let fixture_root = fixture_root();
     import_fixtures(&data_dir, &fixture_root);
@@ -64,6 +70,7 @@ fn delete_soft_tombstones_document_and_removes_it_from_default_search() {
 
 #[test]
 fn reimport_marks_missing_files_deleted_and_default_search_hides_stale_hits() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("reimport-delete-data");
     let fixture_root = temp_dir("reimport-fixtures");
     copy_fixture_tree(&fixture_root);
@@ -94,6 +101,7 @@ fn reimport_marks_missing_files_deleted_and_default_search_hides_stale_hits() {
 
 #[test]
 fn budgeted_reimport_does_not_mark_unscanned_missing_files_deleted() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("budgeted-reimport-delete-data");
     let fixture_root = temp_dir("budgeted-reimport-fixtures");
     copy_fixture_tree(&fixture_root);
@@ -138,6 +146,7 @@ fn budgeted_reimport_does_not_mark_unscanned_missing_files_deleted() {
 
 #[test]
 fn multi_root_reimport_marks_missing_files_deleted_per_root() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("multi-root-reimport-delete-data");
     let first_root = temp_dir("multi-root-delete-a");
     let second_root = temp_dir("multi-root-delete-b");
@@ -171,6 +180,7 @@ fn multi_root_reimport_marks_missing_files_deleted_per_root() {
 
 #[test]
 fn discovery_profile_reuses_root_scan_without_deleting_skipped_directories() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("discovery-reimport-data");
     let fixture_root = temp_dir("discovery-reimport-fixtures");
     fs::create_dir_all(fixture_root.join("Documents")).unwrap();
@@ -259,6 +269,7 @@ fn discovery_profile_reuses_root_scan_without_deleting_skipped_directories() {
 
 #[test]
 fn default_search_hydrates_metadata_to_hide_deleted_stale_index_hits() {
+    let _guard = s14_test_lock();
     let data_dir = temp_dir("stale-index-delete-data");
     let fixture_root = fixture_root();
     import_fixtures(&data_dir, &fixture_root);
@@ -267,7 +278,7 @@ fn default_search_hydrates_metadata_to_hide_deleted_stale_index_hits() {
     assert!(before.contains("results: 2"));
     let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .mark_document_deleted(
@@ -282,6 +293,382 @@ fn default_search_hydrates_metadata_to_hide_deleted_stale_index_hits() {
     assert!(after.contains("synthetic-java-platform.pdf"));
 
     remove_dir(&data_dir);
+}
+
+#[test]
+fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak() {
+    let _guard = s14_test_lock();
+    let data_dir = temp_dir("purge-deleted-data");
+    let fixture_root = fixture_root();
+    import_fixtures(&data_dir, &fixture_root);
+
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 2"));
+    let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
+    let live_doc_id = doc_id_for_file(&before, "synthetic-java-platform.pdf");
+
+    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
+    vector_index
+        .upsert(vec![
+            VectorDocument::new_for_model(
+                "fixture-model",
+                "fixture-model:deleted-doc",
+                deleted_doc_id.clone(),
+                vec![1.0, 0.0, 0.0, 0.0],
+            )
+            .unwrap(),
+            VectorDocument::new_for_model(
+                "fixture-model",
+                "fixture-model:live-doc",
+                live_doc_id.clone(),
+                vec![0.0, 1.0, 0.0, 0.0],
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+    assert_eq!(vector_index.snapshot().unwrap().vector_count(), 2);
+
+    let deleted_document_id = DocumentId::from_str(&deleted_doc_id).unwrap();
+    let (ocr_cache_key, ocr_job_id, embedding_job_id) = {
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        let deleted_document = store
+            .document_by_id(&deleted_document_id)
+            .unwrap()
+            .expect("deleted candidate document before tombstone");
+        let deleted_version = store
+            .resume_versions_for_document(&deleted_document.id)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("deleted candidate version before tombstone");
+        let content_hash = deleted_document.content_hash.clone().expect("content hash");
+        let ocr_cache_key = OcrPageCacheKey::new(content_hash, 1, 300, "eng", "balanced").unwrap();
+        let ocr_cache_entry = OcrPageCacheEntry::succeeded_with_word_boxes(
+            ocr_cache_key.clone(),
+            "PRIVATE_PURGE_OCR_TEXT_SHOULD_NOT_SURVIVE",
+            0.91,
+            "fixture-ocr-engine",
+            17,
+            vec![OcrWordBox::new("PRIVATE_PURGE_WORD_BOX", 1, 2, 3, 4, 0.88).unwrap()],
+            UnixTimestamp::from_unix_seconds(1_800_014_000),
+        )
+        .unwrap();
+        assert_eq!(ocr_cache_entry.word_boxes().len(), 1);
+        store.upsert_ocr_page_cache_entry(&ocr_cache_entry).unwrap();
+        let ocr_job = store
+            .enqueue_ocr_job_for_document(
+                &deleted_document.id,
+                UnixTimestamp::from_unix_seconds(1_800_014_001),
+            )
+            .unwrap()
+            .job;
+        let embedding_job = store
+            .enqueue_embedding_job_for_resume_version(
+                &deleted_document.id,
+                &deleted_version.id,
+                "fixture-purge-model",
+                4,
+                UnixTimestamp::from_unix_seconds(1_800_014_002),
+            )
+            .unwrap()
+            .job;
+        (ocr_cache_key, ocr_job.id, embedding_job.id)
+    };
+
+    let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "delete",
+            "--doc-id",
+            &deleted_doc_id,
+        ])
+        .output()
+        .expect("run resume-cli delete before purge");
+    assert!(delete.status.success());
+    assert!(snapshot_dir_count(&data_dir) >= 2);
+
+    let purge = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "purge", "--deleted"])
+        .output()
+        .expect("run resume-cli purge");
+
+    assert!(
+        purge.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&purge.stdout),
+        String::from_utf8_lossy(&purge.stderr)
+    );
+    assert!(purge.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&purge.stdout);
+    assert!(stdout.contains("purge completed"));
+    assert!(stdout.contains("scope: deleted"));
+    assert!(stdout.contains("purged documents: 1"));
+    assert!(stdout.contains("index rebuilt: true"));
+    assert!(stdout.contains("vector documents purged: 1"));
+    assert!(stdout.contains("ingest jobs purged: 2"));
+    assert!(stdout.contains("embedding job specs purged: 1"));
+    assert!(stdout.contains("ocr cache entries purged: 1"));
+    assert!(stdout.contains("ocr word boxes purged: 1"));
+    assert!(stdout.contains("residual scan: clear"));
+    let residual_markers_checked: usize = stdout_value(&stdout, "residual markers checked: ")
+        .parse()
+        .unwrap();
+    assert!(residual_markers_checked >= 4);
+    let residual_files_scanned: usize = stdout_value(&stdout, "residual files scanned: ")
+        .parse()
+        .unwrap();
+    assert!(residual_files_scanned > 0);
+    assert!(stdout.contains("metadata vacuum: yes"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains("PRIVATE_PURGE_OCR_TEXT"));
+    assert!(!stdout.contains("PRIVATE"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    assert!(store
+        .document_by_id(&DocumentId::from_str(&deleted_doc_id).unwrap())
+        .unwrap()
+        .is_none());
+    assert!(store
+        .document_by_id(&DocumentId::from_str(&live_doc_id).unwrap())
+        .unwrap()
+        .is_some());
+    assert!(store
+        .ocr_page_cache_entry(&ocr_cache_key)
+        .unwrap()
+        .is_none());
+    assert!(store.ingest_job_by_id(&ocr_job_id).unwrap().is_none());
+    assert!(store.ingest_job_by_id(&embedding_job_id).unwrap().is_none());
+    assert_eq!(snapshot_dir_count(&data_dir), 1);
+    let reopened_vector = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
+    assert_eq!(reopened_vector.snapshot().unwrap().vector_count(), 1);
+
+    let after = search(&data_dir, "Java");
+    assert!(after.contains("results: 1"));
+    assert!(!after.contains("synthetic-java-engineer.docx"));
+    assert!(after.contains("synthetic-java-platform.pdf"));
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn purge_deleted_blocks_when_local_data_artifact_retains_deleted_marker_without_leak() {
+    let _guard = s14_test_lock();
+    let data_dir = temp_dir("purge-deleted-residual-data");
+    let fixture_root = fixture_root();
+    import_fixtures(&data_dir, &fixture_root);
+
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 2"));
+    let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
+
+    let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "delete",
+            "--doc-id",
+            &deleted_doc_id,
+        ])
+        .output()
+        .expect("run resume-cli delete before retained marker purge");
+    assert!(delete.status.success());
+
+    fs::write(
+        data_dir.join("retained-deleted-marker.bin"),
+        &deleted_doc_id,
+    )
+    .unwrap();
+    let purge = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "purge", "--deleted"])
+        .output()
+        .expect("run resume-cli purge with retained marker");
+
+    assert!(!purge.status.success());
+    let stdout = String::from_utf8_lossy(&purge.stdout);
+    let stderr = String::from_utf8_lossy(&purge.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("purge residual scan detected retained deleted material"));
+    assert!(!stderr.contains(&deleted_doc_id));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+    assert!(!stderr.contains("synthetic-java-engineer.docx"));
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn purge_deleted_blocks_when_local_data_artifact_retains_import_root_marker_without_leak() {
+    let _guard = s14_test_lock();
+    let data_dir = temp_dir("purge-import-root-residual-data");
+    let fixture_root = temp_dir("purge-import-root-residual-fixture");
+    fs::copy(
+        fixture_file("synthetic-java-engineer.docx"),
+        fixture_root.join("synthetic-java-engineer.docx"),
+    )
+    .unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+        ])
+        .output()
+        .expect("import single-document root fixture");
+    assert!(import.status.success());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    let task_id = ImportTaskId::from_str(stdout_value(&import_stdout, "task id: ")).unwrap();
+
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 1"));
+    let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
+
+    let private_root_path = {
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+        assert!(task
+            .root_path
+            .contains("purge-import-root-residual-fixture"));
+        task.root_path
+    };
+
+    let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "delete",
+            "--doc-id",
+            &deleted_doc_id,
+        ])
+        .output()
+        .expect("delete single-document imported document");
+    assert!(delete.status.success());
+
+    fs::write(
+        data_dir.join("retained-import-root-marker.bin"),
+        &private_root_path,
+    )
+    .unwrap();
+    let purge = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "purge", "--deleted"])
+        .output()
+        .expect("purge deleted document with retained import root marker");
+
+    assert!(!purge.status.success());
+    let stdout = String::from_utf8_lossy(&purge.stdout);
+    let stderr = String::from_utf8_lossy(&purge.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("purge residual scan detected retained deleted material"));
+    assert!(!stderr.contains(&private_root_path));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+    assert!(!stderr.contains("synthetic-java-engineer.docx"));
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
+}
+
+#[test]
+fn purge_deleted_removes_empty_import_root_task_paths_without_path_leak() {
+    let _guard = s14_test_lock();
+    let data_dir = temp_dir("purge-empty-import-root-data");
+    let fixture_root = temp_dir("purge-empty-import-root-fixture");
+    fs::copy(
+        fixture_file("synthetic-java-engineer.docx"),
+        fixture_root.join("synthetic-java-engineer.docx"),
+    )
+    .unwrap();
+
+    let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+        ])
+        .output()
+        .expect("import single-document root fixture");
+    assert!(
+        import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+    assert!(import.stderr.is_empty());
+    let import_stdout = String::from_utf8_lossy(&import.stdout);
+    let task_id = ImportTaskId::from_str(stdout_value(&import_stdout, "task id: ")).unwrap();
+
+    let before = search(&data_dir, "Java");
+    assert!(before.contains("results: 1"));
+    let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
+
+    let private_root_path = {
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        let task = store.import_task_by_id(&task_id).unwrap().unwrap();
+        let scope = store
+            .import_scan_scope_by_task_id(&task_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(scope.canonical_root_path, task.root_path);
+        assert!(task.root_path.contains("purge-empty-import-root-fixture"));
+        task.root_path
+    };
+
+    let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "delete",
+            "--doc-id",
+            &deleted_doc_id,
+        ])
+        .output()
+        .expect("delete single-document imported document");
+    assert!(delete.status.success());
+
+    let purge = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "purge", "--deleted"])
+        .output()
+        .expect("purge deleted single-document imported document");
+    assert!(
+        purge.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&purge.stdout),
+        String::from_utf8_lossy(&purge.stderr)
+    );
+    assert!(purge.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&purge.stdout);
+    assert!(stdout.contains("purge completed"));
+    assert!(stdout.contains("purged import tasks: 1"));
+    assert!(stdout.contains("purged import scan scopes: 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(&private_root_path));
+    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(!stdout.contains("synthetic-java-engineer.docx"));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    assert!(store.import_task_by_id(&task_id).unwrap().is_none());
+    assert!(store
+        .import_scan_scope_by_task_id(&task_id)
+        .unwrap()
+        .is_none());
+    assert!(store
+        .document_by_id(&DocumentId::from_str(&deleted_doc_id).unwrap())
+        .unwrap()
+        .is_none());
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
 }
 
 fn import_fixtures(data_dir: &Path, fixture_root: &Path) {
@@ -324,6 +711,14 @@ fn import_multi_root_fixtures(data_dir: &Path, first_root: &Path, second_root: &
     );
 }
 
+fn s14_test_lock() -> MutexGuard<'static, ()> {
+    static S14_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    S14_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn copy_fixture_tree(target_root: &Path) {
     for entry in fs::read_dir(fixture_root()).unwrap() {
         let entry = entry.unwrap();
@@ -363,6 +758,13 @@ fn doc_id_for_file(search_output: &str, file_name: &str) -> String {
     panic!("file not found in search output: {file_name}");
 }
 
+fn stdout_value<'a>(stdout: &'a str, prefix: &str) -> &'a str {
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .expect("stdout value")
+}
+
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -371,6 +773,22 @@ fn fixture_root() -> PathBuf {
 
 fn fixture_file(name: &str) -> PathBuf {
     fixture_root().join(name)
+}
+
+fn snapshot_dir_count(data_dir: &Path) -> usize {
+    let snapshots = data_dir.join("search-index").join("snapshots");
+    match fs::read_dir(snapshots) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .map(|file_type| file_type.is_dir())
+                    .unwrap_or(false)
+            })
+            .count(),
+        Err(_) => 0,
+    }
 }
 
 fn temp_dir(label: &str) -> PathBuf {

@@ -123,20 +123,831 @@ fn search_supports_degree_filter_and_top_k_without_query_echo() {
     remove_dir(&data_dir);
 }
 
+#[test]
+fn search_accepts_query_file_without_query_file_path_leak() {
+    let data_dir = temp_dir("search-query-file-data");
+    let query_dir = temp_dir("search-query-file-private-input");
+    let query_file = query_dir.join("private-query-file.txt");
+    fs::write(&query_file, "Java\n").unwrap();
+    import_fixtures(&data_dir);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "--query-file",
+            path_str(&query_file),
+            "--degree",
+            "bachelor",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run search from query file");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 2"));
+    assert!(stdout.contains("synthetic-java-engineer.docx"));
+    assert!(stdout.contains("synthetic-java-platform.pdf"));
+    assert!(!stdout.contains(path_str(&query_file)));
+    assert!(!stdout.contains(path_str(&query_dir)));
+    assert!(!stdout.contains("query:"));
+
+    let duplicate = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "Java",
+            "--query-file",
+            path_str(&query_file),
+        ])
+        .output()
+        .expect("reject duplicate query inputs");
+    assert!(!duplicate.status.success());
+    let duplicate_stdout = String::from_utf8_lossy(&duplicate.stdout);
+    let duplicate_stderr = String::from_utf8_lossy(&duplicate.stderr);
+    assert!(!duplicate_stdout.contains(path_str(&query_file)));
+    assert!(!duplicate_stderr.contains(path_str(&query_file)));
+    assert!(!duplicate_stdout.contains(path_str(&query_dir)));
+    assert!(!duplicate_stderr.contains(path_str(&query_dir)));
+
+    let missing_query_file = query_dir.join("missing-private-query.txt");
+    let missing = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "--query-file",
+            path_str(&missing_query_file),
+        ])
+        .output()
+        .expect("reject missing query file without path leak");
+    assert!(!missing.status.success());
+    let missing_stdout = String::from_utf8_lossy(&missing.stdout);
+    let missing_stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(missing_stderr.contains("search query file is unavailable"));
+    assert!(!missing_stdout.contains(path_str(&missing_query_file)));
+    assert!(!missing_stderr.contains(path_str(&missing_query_file)));
+    assert!(!missing_stdout.contains(path_str(&query_dir)));
+    assert!(!missing_stderr.contains(path_str(&query_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&query_dir);
+}
+
+#[test]
+fn filtered_search_prefilters_fields_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-prefilter-data");
+    let resume_root = temp_dir("search-filter-prefilter-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("decoy-{index}.txt")),
+            format!("Candidate Decoy {index}\nSkills: Java\n{noisy_query_text}\n"),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("target-rust-candidate.txt"),
+        "Candidate Target\nSkills: Rust\nneedle\n",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--skills-any",
+            "rust",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run prefiltered skill search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("target-rust-candidate.txt"));
+    assert!(!stdout.contains("decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
+fn filtered_search_prefilters_name_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-name-data");
+    let resume_root = temp_dir("search-filter-name-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("name-decoy-{index}.txt")),
+            format!("Name: Synthetic Decoy {index}\nSkills: Java\n{noisy_query_text}\n"),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("name-target.txt"),
+        "Name: Synthetic Target\nSkills: Java\nneedle\n",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--name",
+            "Synthetic Target",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run name-filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("name-target.txt"));
+    assert!(!stdout.contains("name-decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
+fn filtered_search_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-unknown-tier-data");
+    let resume_root = temp_dir("search-filter-unknown-tier-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("known-tier-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Known Tier Decoy {index}
+Education
+School: Synthetic 985 University (985/211/dual first class)
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("unknown-tier-target.txt"),
+        "\
+Candidate Unknown Tier Target
+Education
+School: Synthetic Regional College
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--school-tier",
+            "unknown",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run unknown school-tier filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("unknown-tier-target.txt"));
+    assert!(!stdout.contains("known-tier-decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
+fn filtered_search_prefilters_school_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-school-data");
+    let resume_root = temp_dir("search-filter-school-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("school-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate School Decoy {index}
+Education
+School: Synthetic Search College
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("school-target.txt"),
+        "\
+Candidate School Target
+Education
+School: Synthetic Institute of Technology
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--school",
+            "Synthetic Institute of Technology",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run school filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("school-target.txt"));
+    assert!(!stdout.contains("school-decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
+fn filtered_search_prefilters_certificates_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-certificate-data");
+    let resume_root = temp_dir("search-filter-certificate-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("certificate-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Certificate Decoy {index}
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("certificate-target.txt"),
+        "\
+Candidate Certificate Target
+Certifications
+PMP
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--certificate",
+            "PMP",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run certificate filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("certificate-target.txt"));
+    assert!(!stdout.contains("certificate-decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
+fn filtered_search_prefilters_date_range_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-date-range-data");
+    let resume_root = temp_dir("search-filter-date-range-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("date-range-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Date Range Decoy {index}
+Experience
+Synthetic Search Inc.
+2017-01 - 2018-12
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("date-range-target.txt"),
+        "\
+Candidate Date Range Target
+Experience
+Synthetic Payments Inc.
+2020-03 - 2022-06
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--date-range-overlaps",
+            "2021-01/2021-12",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run date range filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("date-range-target.txt"));
+    assert!(!stdout.contains("date-range-decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
+fn filtered_search_accepts_chinese_present_date_range_without_query_or_path_leak() {
+    let data_dir = temp_dir("search-filter-chinese-present-date-data");
+    let resume_root = temp_dir("search-filter-chinese-present-date-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..4 {
+        fs::write(
+            resume_root.join(format!("present-date-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Present Date Decoy {index}
+Email: present-date-decoy-{index}@example.test
+Experience
+2018年1月 - 2020年12月
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("present-date-target.txt"),
+        "\
+Candidate Present Date Target
+Email: present-date-target@example.test
+Experience
+2020年1月 - 至今
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--date-range-overlaps",
+            "2024-01/至今",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run Chinese present date range filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("present-date-target.txt"));
+    assert!(!stdout.contains("present-date-decoy-"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("present-date-target@example.test"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
+fn filtered_search_accepts_chinese_year_month_date_range_without_query_or_path_leak() {
+    let data_dir = temp_dir("search-filter-chinese-year-month-date-data");
+    let resume_root = temp_dir("search-filter-chinese-year-month-date-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..4 {
+        fs::write(
+            resume_root.join(format!("year-month-date-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Year Month Date Decoy {index}
+Email: year-month-date-decoy-{index}@example.test
+Experience
+2018年1月 - 2019年12月
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("year-month-date-target.txt"),
+        "\
+Candidate Year Month Date Target
+Email: year-month-date-target@example.test
+Experience
+2020年1月 - 2024年3月
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--date-range-overlaps",
+            "2020年1月/2024年3月",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run Chinese year-month date range filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("year-month-date-target.txt"));
+    assert!(!stdout.contains("year-month-date-decoy-"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&resume_root)));
+    assert!(!stdout.contains("year-month-date-target@example.test"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
+fn filtered_search_prefilters_company_and_title_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-company-title-data");
+    let resume_root = temp_dir("search-filter-company-title-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("role-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Role Decoy {index}
+Experience
+Synthetic Search Inc.
+Product Manager
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("role-target.txt"),
+        "\
+Candidate Role Target
+Experience
+Synthetic Payments Inc.
+Senior Backend Engineer
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--company",
+            "Synthetic Payments Inc.",
+            "--title",
+            "Backend Engineer",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run company-title filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("role-target.txt"));
+    assert!(!stdout.contains("role-decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
+fn filtered_search_prefilters_location_before_fulltext_top_k_cutoff() {
+    let data_dir = temp_dir("search-filter-location-data");
+    let resume_root = temp_dir("search-filter-location-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("location-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Location Decoy {index}
+Location: Beijing
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("location-target.txt"),
+        "\
+Candidate Location Target
+Location: Shanghai, China
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--location",
+            "Shanghai",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run location filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("location-target.txt"));
+    assert!(!stdout.contains("location-decoy-"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
+#[test]
+fn filtered_search_prefilters_contact_hash_before_fulltext_top_k_cutoff_without_contact_leak() {
+    let data_dir = temp_dir("search-filter-contact-data");
+    let resume_root = temp_dir("search-filter-contact-resumes");
+    let noisy_query_text = std::iter::repeat_n("needle", 100)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for index in 0..5 {
+        fs::write(
+            resume_root.join(format!("contact-decoy-{index}.txt")),
+            format!(
+                "\
+Candidate Contact Decoy {index}
+Email: decoy-{index}@example.test
+Phone: +1 212-555-010{index}
+Skills: Java
+{noisy_query_text}
+"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        resume_root.join("contact-target.txt"),
+        "\
+Candidate Contact Target
+Email: target-contact@example.test
+Phone: +1 212-555-0199
+Skills: Java
+needle
+",
+    )
+    .unwrap();
+
+    import_root(&data_dir, &resume_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "needle",
+            "--email",
+            "TARGET-CONTACT@example.test",
+            "--phone",
+            "212-555-0199",
+            "--top-k",
+            "1",
+        ])
+        .output()
+        .expect("run contact filtered search");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("contact-target.txt"));
+    assert!(!stdout.contains("contact-decoy-"));
+    assert!(!stdout.contains("target-contact@example.test"));
+    assert!(!stdout.contains("TARGET-CONTACT@example.test"));
+    assert!(!stdout.contains("212-555-0199"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&resume_root);
+}
+
 fn import_fixtures(data_dir: &Path) {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("tests/fixtures/resumes");
+    import_root(data_dir, &fixture_root);
+}
+
+fn import_root(data_dir: &Path, root: &Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
             path_str(data_dir),
             "import",
             "--root",
-            path_str(&fixture_root),
+            path_str(root),
         ])
         .output()
-        .expect("import fixtures");
+        .expect("import root");
     assert!(output.status.success());
 }
 

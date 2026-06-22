@@ -107,7 +107,7 @@ fn seed_detail_resume(
     private_tail: &str,
 ) {
     let now = UnixTimestamp::from_unix_seconds(1_800_049_000);
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_document(&Document {
@@ -212,7 +212,7 @@ fn seed_detail_resume(
 
 fn seed_deleted_resume(data_dir: &Path, document_id: &DocumentId, version_id: &ResumeVersionId) {
     let now = UnixTimestamp::from_unix_seconds(1_800_049_001);
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_document(&Document {

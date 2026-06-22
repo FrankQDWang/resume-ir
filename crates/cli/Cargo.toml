@@ -10,7 +10,10 @@ name = "resume-cli"
 path = "src/main.rs"
 
 [dependencies]
+benchmark-runner = { path = "../benchmark-runner" }
 embedder = { path = "../embedder" }
+fs-crawler = { path = "../fs-crawler" }
+fs4 = "0.13.1"
 import-pipeline = { path = "../import-pipeline" }
 index-fulltext = { path = "../index-fulltext" }
 index-vector = { path = "../index-vector" }
@@ -18,9 +21,12 @@ meta-store = { path = "../meta-store" }
 ocr-client = { path = "../ocr-client" }
 privacy = { path = "../privacy" }
 rank-fusion = { path = "../rank-fusion" }
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
 search-planner = { path = "../search-planner" }
 sectionizer = { path = "../sectionizer" }
 serde_json = "1"
+sha2 = "0.10"
+sysinfo = { version = "0.39.3", default-features = false, features = ["disk", "system"] }
 
 [lints]
 workspace = true

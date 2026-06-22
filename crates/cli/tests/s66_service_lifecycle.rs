@@ -9,7 +9,9 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
     let launch_agent_dir = temp_path("service-private-launch-agents");
     let daemon_dir = temp_dir("daemon & private bin");
     let daemon_binary = daemon_dir.join("resume-daemon");
+    let ocr_command = daemon_dir.join("ocr-worker");
     fs::write(&daemon_binary, "#!/bin/sh\n").unwrap();
+    fs::write(&ocr_command, "#!/bin/sh\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -21,6 +23,10 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
             path_str(&launch_agent_dir),
             "--daemon-binary",
             path_str(&daemon_binary),
+            "--ocr-command",
+            path_str(&ocr_command),
+            "--ocr-max-pages-per-document",
+            "7",
         ])
         .output()
         .expect("run service install");
@@ -39,6 +45,7 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&launch_agent_dir)));
     assert!(!stdout.contains(path_str(&daemon_binary)));
+    assert!(!stdout.contains(path_str(&ocr_command)));
 
     let plist_path = launch_agent_dir.join("com.resume-ir.daemon.plist");
     let plist = fs::read_to_string(&plist_path).expect("read launch agent plist");
@@ -51,6 +58,11 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
     assert!(plist.contains("--work-index"));
     assert!(plist.contains("--ipc-listen"));
     assert!(plist.contains("127.0.0.1:0"));
+    assert!(plist.contains("--work-ocr"));
+    assert!(plist.contains("--ocr-command"));
+    assert!(plist.contains(&path_str(&ocr_command).replace('&', "&amp;")));
+    assert!(plist.contains("--ocr-max-pages-per-document"));
+    assert!(plist.contains("<string>7</string>"));
     assert!(plist.contains("<key>RunAtLoad</key>"));
     assert!(plist.contains("<key>KeepAlive</key>"));
     assert!(data_dir.join("logs").exists());
@@ -99,6 +111,7 @@ fn service_status_and_uninstall_are_redacted_and_preserve_user_data() {
     let stdout = String::from_utf8_lossy(&status.stdout);
     assert!(stdout.contains("service: installed"));
     assert!(stdout.contains("label: com.resume-ir.daemon"));
+    assert!(stdout.contains("runtime: "));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&launch_agent_dir)));
 
@@ -136,6 +149,7 @@ fn service_status_and_uninstall_are_redacted_and_preserve_user_data() {
     assert!(status_after.status.success());
     let stdout = String::from_utf8_lossy(&status_after.stdout);
     assert!(stdout.contains("service: not installed"));
+    assert!(stdout.contains("runtime: not_loaded"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&launch_agent_dir)));
 
@@ -197,6 +211,72 @@ fn service_start_and_stop_dry_run_do_not_load_or_leak_local_paths() {
 }
 
 #[test]
+fn windows_service_dry_run_actions_do_not_touch_disk_or_leak_local_paths() {
+    let data_dir = temp_path("windows-service-private-data");
+    let launch_agent_dir = temp_dir("windows-service-private-launch-agents");
+    let daemon_dir = temp_dir("windows-service-private-bin");
+    let daemon_binary = daemon_dir.join("resume-daemon.exe");
+    fs::write(&daemon_binary, "synthetic windows daemon\n").unwrap();
+
+    let install = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "service",
+            "install",
+            "--platform",
+            "windows-service",
+            "--daemon-binary",
+            path_str(&daemon_binary),
+            "--dry-run",
+        ])
+        .env_remove("HOME")
+        .output()
+        .expect("run windows service install dry-run");
+    assert_windows_service_dry_run(
+        &install,
+        "service: install dry-run",
+        "sc.exe create: <redacted>",
+        &[&data_dir, &launch_agent_dir, &daemon_binary],
+    );
+    assert!(
+        !launch_agent_dir.join("com.resume-ir.daemon.plist").exists(),
+        "Windows service dry-run must not create a LaunchAgent plist"
+    );
+
+    for (action, expected_command) in [
+        ("status", "sc.exe query: <redacted>"),
+        ("start", "sc.exe start: <redacted>"),
+        ("stop", "sc.exe stop: <redacted>"),
+        ("uninstall", "sc.exe delete: <redacted>"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .args([
+                "--data-dir",
+                path_str(&data_dir),
+                "service",
+                action,
+                "--platform",
+                "windows-service",
+                "--dry-run",
+            ])
+            .env_remove("HOME")
+            .output()
+            .unwrap_or_else(|_| panic!("run windows service {action} dry-run"));
+        assert_windows_service_dry_run(
+            &output,
+            &format!("service: {action} dry-run"),
+            expected_command,
+            &[&data_dir, &launch_agent_dir, &daemon_binary],
+        );
+    }
+
+    remove_dir(&data_dir);
+    remove_dir(&launch_agent_dir);
+    remove_dir(&daemon_dir);
+}
+
+#[test]
 fn service_rejects_invalid_label_without_path_leak() {
     let data_dir = temp_path("service-invalid-label-private-data");
     let launch_agent_dir = temp_path("service-invalid-label-private-launch-agents");
@@ -228,6 +308,30 @@ fn service_rejects_invalid_label_without_path_leak() {
     assert!(!stderr.contains(path_str(&daemon_binary)));
 
     remove_file(&daemon_binary);
+}
+
+fn assert_windows_service_dry_run(
+    output: &std::process::Output,
+    expected_status: &str,
+    expected_command: &str,
+    private_paths: &[&Path],
+) {
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(expected_status));
+    assert!(stdout.contains("label: com.resume-ir.daemon"));
+    assert!(stdout.contains("platform: windows-service"));
+    assert!(stdout.contains(expected_command));
+    assert!(stdout.contains("paths: <redacted>"));
+    for path in private_paths {
+        assert!(!stdout.contains(path_str(path)));
+    }
 }
 
 fn temp_path(label: &str) -> PathBuf {

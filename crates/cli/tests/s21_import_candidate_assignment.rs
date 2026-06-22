@@ -50,7 +50,8 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
     let key_material = fs::read_to_string(&key_path).expect("read contact hash key");
     assert_eq!(key_material.trim().len(), 64);
     assert!(!key_material.contains("Shared.Candidate"));
-    assert!(!key_material.contains("415"));
+    assert!(!key_material.contains("415-555-0132"));
+    assert!(!key_material.contains("+14155550132"));
     #[cfg(unix)]
     assert_eq!(key_mode(&key_path) & 0o777, 0o600);
 
@@ -68,7 +69,7 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
         "same hashed contact should assign one candidate"
     );
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let candidate = store
         .candidate_by_id(&first_candidate_id)
@@ -151,7 +152,7 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
     assert!(versions_after_reimport
         .iter()
         .all(|version| { version.candidate_id.as_ref() == Some(&first_candidate_id) }));
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let candidate = store
         .candidate_by_id(&first_candidate_id)
@@ -191,7 +192,7 @@ fn reimport_preserves_existing_candidate_assignment_without_contacts() {
         .expect("imported version");
     assert!(version.candidate_id.is_none());
     let manual_candidate_id = CandidateId::from_non_secret_parts(&["s21", "manual-candidate"]);
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_candidate(&Candidate {
@@ -235,7 +236,7 @@ fn reimport_preserves_existing_candidate_assignment_without_contacts() {
 }
 
 fn searchable_versions(data_dir: &Path) -> Vec<ResumeVersion> {
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let mut versions = Vec::new();
     for document in store.visible_documents().unwrap() {

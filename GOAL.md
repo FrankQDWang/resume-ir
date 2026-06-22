@@ -9,3 +9,35 @@
 3. 采用倒排索引、结构化字段索引、向量索引分层设计，支持关键词、字段、语义、混合检索。
 4. 对百万级简历库，热索引状态下以 P95 混合查询 `<200ms` 作为工程目标；低配机器允许关闭 OCR/向量/重排序以保稳定。
 5. 全量数据、索引、日志、缓存默认本地保存；敏感信息默认脱敏、加密、可删除、可审计。
+
+## 当前阶段边界
+
+当前阶段不要求极致性能优化，也不因为真实 1 万简历 benchmark
+延迟高而无限循环。当前完成线是：
+
+1. 完成本地导入、增量管理、全文/字段/语义/混合检索的可用闭环，并
+   生成可复现 current-stage dry-run、smoke、blocked handoff、观测指标和
+   真实本机 1 万份本地验证流程。若 full 10k/8000 hot-index/500-query
+   baseline 因 OCR backlog 或性能预算阻塞，记录 redacted aggregate
+   blocked summary，不把它作为当前阶段收口 gate。
+2. 保留指定目录扫描；全盘扫描视为用户把根目录或磁盘作为扫描根的同一能力。
+3. OCR/PDF/model runtime 采用 bundled-first 方向：默认产品体验应尽量随
+   安装包提供可审查 runtime，并保留 external override。Tesseract/tessdata
+   可作为 Apache-2.0 OCR 方案；PDF renderer 优先评估可宽松分发的
+   bundled 方案，Poppler/pdftoppm 可在 GPL-compatible license、
+   source-offer、notice、checksum、SBOM 和 installer composition 审查完成后
+   进入打包方案。
+4. 完成 runtime manifest、checksum/license 记录、依赖检测、失败提示和
+   runbook；不要把“未选择 OCR runtime”作为本阶段未知 blocker。
+5. 完成 macOS/Windows install、upgrade、uninstall、rollback 的脚本、
+   dry-run、CI evidence 和 runbook。
+6. Signing 和 notarization 只完成自动化脚本、CI secret 接口、fail-closed
+   gate 和文档；真实证书、开发者账号、私钥和 notarization credentials
+   由人类后续提供。
+7. Embedding runtime 必须走真实本地方案、manifest、checksum、license
+   记录和失败闭环；若模型权重 license 未确认，标为 external/legal
+   blocked，不伪造完成。
+
+full hot-index baseline 压实、500-query 私有 benchmark、百万级真实语料验证、
+P95/P99 压低和查询热路径极限调优迁入后续“性能极致优化” goal；可视化 UI
+迁入后续 UI/manual usage goal。

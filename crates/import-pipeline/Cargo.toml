@@ -12,6 +12,7 @@ fs-crawler = { path = "../fs-crawler" }
 index-fulltext = { path = "../index-fulltext" }
 meta-store = { path = "../meta-store" }
 parser-common = { path = "../parser-common" }
+parser-doc = { path = "../parser-doc" }
 parser-docx = { path = "../parser-docx" }
 parser-pdf = { path = "../parser-pdf" }
 parser-text = { path = "../parser-text" }

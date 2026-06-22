@@ -7,3 +7,6 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+ab_glyph = "0.2"

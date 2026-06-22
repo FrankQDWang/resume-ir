@@ -8,6 +8,36 @@ use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{IndexState, IndexStateStatus, MetaStore, UnixTimestamp};
 
 #[test]
+fn doctor_uses_sqlcipher_metadata_by_default_without_key_or_path_leak() {
+    let data_dir = temp_path("doctor-sqlcipher-private-data");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("metadata encryption: sqlcipher"));
+    assert!(stdout.contains("ocr cache encryption: sqlcipher"));
+    assert!(!stdout.contains("enable SQLCipher metadata encryption before production release"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    let encrypted_bytes = fs::read(data_dir.join("metadata.sqlite3")).unwrap();
+    assert!(!encrypted_bytes.starts_with(b"SQLite format 3"));
+    let metadata_key =
+        fs::read_to_string(data_dir.join("metadata-secrets/metadata-sqlcipher-key-v1"))
+            .expect("metadata SQLCipher key");
+    assert!(!stdout.contains(metadata_key.trim()));
+    assert!(MetaStore::open(data_dir.join("metadata.sqlite3"))
+        .and_then(|store| store.schema_version().map(|_| ()))
+        .is_err());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn doctor_reports_no_index_without_path_or_fake_benchmark() {
     let data_dir = temp_path("doctor-private-data");
 
@@ -25,6 +55,9 @@ fn doctor_reports_no_index_without_path_or_fake_benchmark() {
     assert!(stdout.contains("vector index: unavailable"));
     assert!(stdout.contains("query smoke: skipped (no full-text index)"));
     assert!(stdout.contains("contact hash key: missing"));
+    assert!(stdout.contains("metadata encryption: sqlcipher"));
+    assert!(stdout.contains("ocr cache encryption: sqlcipher"));
+    assert!(!stdout.contains("enable SQLCipher metadata encryption before production release"));
     assert!(stdout.contains("fault simulations: available"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!data_dir
@@ -59,7 +92,7 @@ fn doctor_handles_corrupt_index_snapshot_without_path_leak() {
 }
 
 #[test]
-fn export_diagnostics_redact_outputs_skeleton_without_paths() {
+fn export_diagnostics_redact_outputs_local_aggregate_evidence_without_paths() {
     let data_dir = temp_path("diagnostics-private-data");
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -81,8 +114,29 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
     assert!(stdout.contains("\"search_index_state\": \"unavailable\""));
     assert!(stdout.contains("\"vector_index_state\": \"unavailable\""));
     assert!(stdout.contains("\"contact_hash_key\": \"missing\""));
+    assert!(stdout.contains("\"metadata_encryption\": \"sqlcipher\""));
+    assert!(stdout.contains("\"ocr_cache_encryption\": \"sqlcipher\""));
+    assert!(!stdout.contains("enable SQLCipher metadata encryption before production release"));
+    assert!(stdout.contains("\"evidence_level\": \"local_aggregate_only\""));
+    assert!(stdout.contains("\"diagnostic_scope\": {"));
+    assert!(stdout.contains("\"metadata\": \"aggregate_counts\""));
+    assert!(stdout.contains("\"search_index\": \"state_and_snapshot_health\""));
+    assert!(stdout.contains("\"vector_index\": \"state_backend_and_counts\""));
+    assert!(stdout.contains("\"query_latency\": \"aggregate_observations\""));
+    assert!(stdout.contains("\"runtime_dependencies\": \"presence_only\""));
+    assert!(stdout.contains("\"fault_simulations\": \"available_cases_only\""));
     assert!(stdout.contains("\"daemon_restart\""));
+    assert!(stdout.contains("\"daemon_kill\""));
     assert!(stdout.contains("\"disk_space_low\""));
+    assert!(stdout.contains("\"file_lock\""));
+    assert!(stdout.contains("\"metadata_migration\""));
+    assert!(stdout.contains("\"ocr_crash\""));
+    assert!(stdout.contains("\"model_checksum\""));
+    assert!(stdout.contains("\"battery_mode\""));
+    assert!(stdout.contains("\"external_drive_disconnect\""));
+    assert!(!stdout.contains("skeleton"));
+    assert!(!stdout.contains("fake"));
+    assert!(!stdout.contains("synthetic-only"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!data_dir
         .join("secrets")
@@ -90,6 +144,287 @@ fn export_diagnostics_redact_outputs_skeleton_without_paths() {
         .exists());
 
     remove_dir(&data_dir);
+}
+
+#[test]
+fn doctor_and_diagnostics_report_redacted_resource_telemetry() {
+    let data_dir = temp_dir("diagnostics-resource-private-data");
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with resource telemetry");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("resource telemetry: available"));
+    assert!(stdout.contains("data disk total bytes: "));
+    assert!(stdout.contains("data disk available bytes: "));
+    assert!(stdout.contains("process memory bytes: "));
+    assert!(stdout.contains("cpu cores: "));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with resource telemetry");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"resource_telemetry\": {"));
+    assert!(stdout.contains("\"status\": \"available\""));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(stdout.contains("\"data_disk_total_bytes\": "));
+    assert!(stdout.contains("\"data_disk_available_bytes\": "));
+    assert!(stdout.contains("\"process_memory_bytes\": "));
+    assert!(stdout.contains("\"cpu_cores\": "));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let telemetry = json["resource_telemetry"].as_object().unwrap();
+    assert_eq!(telemetry["status"], "available");
+    assert_eq!(telemetry["paths"], "<redacted>");
+    assert!(telemetry["data_disk_total_bytes"].as_u64().unwrap() > 0);
+    assert!(telemetry["data_disk_available_bytes"].as_u64().unwrap() > 0);
+    assert!(telemetry["process_memory_bytes"].as_u64().unwrap() > 0);
+    assert!(telemetry["cpu_cores"].as_u64().unwrap() > 0);
+
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_and_diagnostics_report_ocr_runtime_without_paths_or_language_dump() {
+    let data_dir = temp_dir("diagnostics-ocr-runtime-private-data");
+    let bin_dir = temp_dir("diagnostics-ocr-runtime-private-bin");
+    write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
+    write_executable(
+        &bin_dir,
+        "tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--list-langs" ]; then
+  printf 'List of available languages (2):\n'
+  printf 'eng\n'
+  printf 'chi_sim\n'
+  exit 0
+fi
+exit 9
+"#,
+    );
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with OCR runtime diagnostics");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("ocr renderer pdftoppm: available"));
+    assert!(stdout.contains("ocr engine tesseract: available"));
+    assert!(stdout.contains("ocr language eng: available"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stdout.contains("chi_sim"));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with OCR runtime diagnostics");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"ocr_runtime\": {"));
+    assert!(stdout.contains("\"pdftoppm\": \"available\""));
+    assert!(stdout.contains("\"tesseract\": \"available\""));
+    assert!(stdout.contains("\"requested_language\": \"eng\""));
+    assert!(stdout.contains("\"requested_language_status\": \"available\""));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stdout.contains("chi_sim"));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_and_diagnostics_check_requested_ocr_language_without_language_dump() {
+    let data_dir = temp_dir("diagnostics-ocr-runtime-custom-lang-data");
+    let bin_dir = temp_dir("diagnostics-ocr-runtime-custom-lang-bin");
+    write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
+    write_executable(
+        &bin_dir,
+        "tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--list-langs" ]; then
+  printf 'List of available languages (3):\n'
+  printf 'eng\n'
+  printf 'chi_sim\n'
+  printf 'jpn\n'
+  exit 0
+fi
+exit 9
+"#,
+    );
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--ocr-lang",
+            "chi_sim",
+        ])
+        .output()
+        .expect("run resume-cli doctor with requested OCR language");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("ocr renderer pdftoppm: available"));
+    assert!(stdout.contains("ocr engine tesseract: available"));
+    assert!(stdout.contains("ocr language chi_sim: available"));
+    assert!(!stdout.contains("ocr language eng:"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stdout.contains("jpn"));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+            "--ocr-lang",
+            "chi_sim",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with requested OCR language");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"ocr_runtime\": {"));
+    assert!(stdout.contains("\"pdftoppm\": \"available\""));
+    assert!(stdout.contains("\"tesseract\": \"available\""));
+    assert!(stdout.contains("\"requested_language\": \"chi_sim\""));
+    assert!(stdout.contains("\"requested_language_status\": \"available\""));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(!stdout.contains("\"tesseract_eng\""));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+    assert!(!stdout.contains("jpn"));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_and_diagnostics_check_combined_ocr_languages_without_language_dump() {
+    let data_dir = temp_dir("diagnostics-ocr-runtime-combined-lang-data");
+    let bin_dir = temp_dir("diagnostics-ocr-runtime-combined-lang-bin");
+    write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
+    write_executable(
+        &bin_dir,
+        "tesseract",
+        r#"#!/bin/sh
+if [ "$1" = "--list-langs" ]; then
+  printf 'List of available languages (3):\n'
+  printf 'eng\n'
+  printf 'chi_sim\n'
+  printf 'jpn\n'
+  exit 0
+fi
+exit 9
+"#,
+    );
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--ocr-lang",
+            "eng+chi_sim",
+        ])
+        .output()
+        .expect("run resume-cli doctor with combined OCR languages");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("ocr renderer pdftoppm: available"));
+    assert!(stdout.contains("ocr engine tesseract: available"));
+    assert!(stdout.contains("ocr language eng+chi_sim: available"));
+    assert!(!stdout.contains("ocr language jpn:"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+            "--ocr-lang",
+            "eng+chi_sim",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with combined OCR languages");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"ocr_runtime\": {"));
+    assert!(stdout.contains("\"pdftoppm\": \"available\""));
+    assert!(stdout.contains("\"tesseract\": \"available\""));
+    assert!(stdout.contains("\"requested_language\": \"eng+chi_sim\""));
+    assert!(stdout.contains("\"requested_language_status\": \"available\""));
+    assert!(stdout.contains("\"paths\": \"<redacted>\""));
+    assert!(!stdout.contains("\"jpn\""));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_reports_non_executable_ocr_tools_as_missing_without_paths() {
+    let data_dir = temp_dir("diagnostics-ocr-runtime-nonexec-data");
+    let bin_dir = temp_dir("diagnostics-ocr-runtime-nonexec-bin");
+    write_private_file(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .env("PATH", path_str(&bin_dir))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with non-executable OCR runtime");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("ocr renderer pdftoppm: missing"));
+    assert!(stdout.contains("ocr engine tesseract: missing"));
+    assert!(stdout.contains("ocr language eng: missing"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&bin_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&bin_dir);
 }
 
 #[test]
@@ -111,7 +446,7 @@ fn doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_valu
     assert!(doctor.status.success());
     assert!(doctor.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&doctor.stdout);
-    assert!(stdout.contains("vector index: available (vector snapshot)"));
+    assert!(stdout.contains("vector index: available (hnsw ann vector snapshot)"));
     assert!(stdout.contains("vector index vectors: 2"));
     assert!(stdout.contains("vector index tombstones: 1"));
     assert!(!stdout.contains(path_str(&data_dir)));
@@ -130,10 +465,73 @@ fn doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_valu
     assert!(export.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&export.stdout);
     assert!(stdout.contains("\"vector_index_state\": \"available\""));
+    assert!(stdout.contains("\"vector_index_backend\": \"hnsw_ann\""));
     assert!(stdout.contains("\"vector_index_vectors\": 2"));
     assert!(stdout.contains("\"vector_index_tombstones\": 1"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains("1.0"));
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn doctor_and_diagnostics_report_recovered_vector_snapshot_without_path_or_values() {
+    let data_dir = temp_dir("diagnostics-vector-recovered-private-data");
+    let vector_root = data_dir.join("vector-index");
+    let vector_index = PersistentVectorIndex::open(&vector_root, 4).unwrap();
+    vector_index
+        .upsert(vec![VectorDocument::new(
+            "vec_recovered",
+            "doc_recovered",
+            vec![1.0, 0.0, 0.0, 0.0],
+        )
+        .unwrap()])
+        .unwrap();
+    vector_index
+        .upsert(vec![VectorDocument::new(
+            "vec_corrupt_active",
+            "doc_corrupt_active",
+            vec![0.0, 1.0, 0.0, 0.0],
+        )
+        .unwrap()])
+        .unwrap();
+    fs::write(
+        vector_root.join("vector.snapshot"),
+        "not a valid encrypted vector snapshot",
+    )
+    .unwrap();
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(&data_dir), "doctor"])
+        .output()
+        .expect("run resume-cli doctor with recovered vector index");
+    assert!(doctor.status.success());
+    assert!(doctor.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(stdout.contains("vector index: recovered (hnsw ann vector snapshot)"));
+    assert!(stdout.contains("vector index vectors: 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains("1.0"));
+    assert!(!stdout.contains("vec_recovered"));
+
+    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "export-diagnostics",
+            "--redact",
+        ])
+        .output()
+        .expect("run resume-cli export-diagnostics with recovered vector index");
+    assert!(export.status.success());
+    assert!(export.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(stdout.contains("\"vector_index_state\": \"recovered\""));
+    assert!(stdout.contains("\"vector_index_backend\": \"hnsw_ann\""));
+    assert!(stdout.contains("\"vector_index_vectors\": 1"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains("1.0"));
+    assert!(!stdout.contains("vec_recovered"));
 
     remove_dir(&data_dir);
 }
@@ -239,7 +637,7 @@ fn doctor_and_diagnostics_report_metadata_index_health_with_active_snapshot() {
     .unwrap();
     fs::create_dir_all(data_dir.join("search-index").join("staging").join("orphan")).unwrap();
 
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_index_state(&IndexState {
@@ -327,7 +725,7 @@ fn doctor_and_search_use_last_good_snapshot_after_active_snapshot_corruption() {
         index_root
             .join("snapshots")
             .join("fulltext-1800004000-1-0-0")
-            .join("meta.json"),
+            .join("fulltext.snapshot.enc"),
         b"not a valid active snapshot",
     )
     .unwrap();
@@ -389,7 +787,7 @@ fn seed_searchable_metadata(data_dir: &Path) -> (String, String) {
     let now = UnixTimestamp::from_unix_seconds(1_800_003_000);
     let document_id = DocumentId::from_non_secret_parts(&["s26", "recovered"]);
     let version_id = ResumeVersionId::from_non_secret_parts(&["s26", "recovered-version"]);
-    let store = MetaStore::open(data_dir.join("metadata.sqlite3")).unwrap();
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     store
         .upsert_document(&Document {
@@ -447,4 +845,28 @@ fn path_str(path: &Path) -> &str {
 
 fn remove_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
+}
+
+#[cfg(unix)]
+fn write_executable(directory: &Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = directory.join(name);
+    fs::write(&path, body).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
+}
+
+#[cfg(unix)]
+fn write_private_file(directory: &Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = directory.join(name);
+    fs::write(&path, body).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o600);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
 }

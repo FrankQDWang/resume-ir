@@ -1,7 +1,7 @@
 use std::process::Command;
 
 #[test]
-fn daemon_binary_exposes_skeleton_identity() {
+fn daemon_binary_exposes_identity() {
     let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .arg("--identity")
         .output()

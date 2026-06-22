@@ -1,0 +1,454 @@
+# OCR and Embedding Worker Runbook
+
+## Scope
+
+Local-only runbook for the configured OCR and embedding command workers. Do not
+upload command input files, worker logs, model caches, vector snapshots,
+databases, indexes, or local data directories. Synthetic fixtures are required
+for public reproduction.
+
+The product does not ship a reviewed bundled runtime pack or embedding model
+yet. Those remain BLOCKED until OCR runtime, model, language-pack, and PDF
+renderer licenses are reviewed and distribution is approved.
+
+## Bundled-first runtime decision
+
+The product runtime direction is bundled-first: installers should include a
+reviewed local OCR/PDF runtime pack when license, checksum, notices, and
+upgrade/rollback evidence are complete. External override remains supported for
+operators who need to pin an already installed runtime or test a reviewed local
+binary. All evidence must record `runtime_distribution_mode` and
+`runtime_package_binaries_included` so a local external command is never
+mistaken for an included product runtime. The privacy sentinel
+`runtime_binaries_included` must remain false because local evidence packages
+must not contain runtime binary contents.
+
+Tesseract/tessdata is the preferred OCR engine/language-pack stack. PDFium is
+the preferred bundled renderer candidate because its license posture is lighter.
+Poppler/pdftoppm remains acceptable when it is operationally better, but a
+bundled Poppler release must use a GPL-compatible product distribution such as
+GPL-3.0-or-later and must include the exact license text, notices, source-offer,
+SBOM entries, artifact checksums, and installer composition evidence. A
+user-supplied Poppler command can still be used through the external override
+path when the default bundle is unavailable or under review.
+Use `scripts/release/create-runtime-bundle-manifest.sh` during release dry-runs
+to produce the redacted `release.runtime_bundle.v1` manifest for reviewed local
+runtime artifacts. The manifest records basenames, byte counts, sha256 hashes,
+license IDs, sources, notices, and source-offer evidence only; it does not
+commit or upload runtime binaries.
+
+For the current-stage private 10k validation flow, use
+`scripts/local/run-current-stage-validation.sh` as the orchestration entrypoint.
+Its dry-run prints a redacted local-only plan; execute mode runs the same
+preflight, manifest, OCR worker, embedding worker, benchmark, diagnostics, and
+release-readiness steps locally without uploading evidence.
+
+## PDF Renderer License Boundary
+
+The repository source license is GPL-3.0-or-later for the bundled-first
+Poppler/pdftoppm path. If a release bundles Poppler binaries, that release
+remains a GPL-family distribution review item. The installer/release evidence
+must record the exact installed Poppler license from the selected distribution,
+include the required license/source-offer materials, and pass legal review
+before the release blocker can be cleared. Runtime manifests should record the
+exact installed Poppler license, version, artifact checksum, runtime source, and
+reviewed status instead of assuming permissive renderer terms.
+
+This is no longer an unresolved runtime-choice blocker. Current engineering
+work is dependency detection, local manifest validation, checksum/license
+recording, fail-closed operator errors, and redacted diagnostics. If the
+operator does not have Tesseract, tessdata, or pdftoppm installed, commands
+should report the missing dependency and remediation without printing local
+paths, raw resume text, OCR text, page images, command stderr, model caches, or
+index contents.
+
+PDFium remains the preferred bundled renderer candidate if it satisfies quality
+and platform requirements. MuPDF and Ghostscript can be evaluated as external
+command adapters or commercial-license options, but their AGPL/commercial
+license posture needs the same explicit release review before bundling.
+
+## OCR Runtime Preflight
+
+Canonical local command form:
+`resume-cli ocr preflight --json`.
+
+Before running OCR workers, check that the selected bundled runtime or external
+override is discoverable without printing command paths:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr preflight --json \
+  --ocr-lang eng
+```
+
+If the operator keeps tools outside `PATH`, pass explicit local command paths:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr preflight --json \
+  --ocr-lang eng \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command>
+```
+
+The JSON schema is `ocr-runtime-preflight.v1`. The command exits nonzero when
+`pdftoppm`, `tesseract`, or the requested Tesseract language pack is missing or
+unknown. When dependencies are available, it also runs one synthetic local runtime probe:
+render a blank local PDF through `pdftoppm`, pass the rendered page to
+Tesseract, and require a successful TSV response. The JSON includes
+`runtime_probe` with `passed`, `failed`, or `not_run`, and remediation such as
+installing Poppler/pdftoppm, Tesseract/tessdata, the requested language pack, or
+fixing the local render/OCR commands. Output must keep paths as `<redacted>` and
+must not print command paths, OCR text, page images, Tesseract language dumps,
+synthetic probe payloads, model caches, indexes, or local data directories.
+
+## OCR Runtime Manifest Validation
+
+Canonical local draft command form:
+`resume-cli ocr draft-manifest --out <path>`.
+
+After dependency preflight, create a local-only manifest draft from the selected
+external commands and language pack:
+
+```bash
+scripts/local/prepare-local-ocr-runtime-manifest.sh \
+  --out <local-ocr-runtime-manifest.json> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --language eng \
+  --language-pack <local-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --reviewed
+```
+
+When `--tesseract-command` or `--pdftoppm-command` is omitted, the preparation
+script discovers the external commands with `command -v tesseract` and
+`command -v pdftoppm`. It does not install, download, bundle, upload, or print
+runtime paths or OCR artifacts. Omit `--reviewed` when legal review is not
+complete; the script exits nonzero and reports the OCR runtime as
+external/legal/runtime BLOCKED.
+
+The lower-level manifest command remains available when an operator needs to
+pin explicit command paths:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr draft-manifest \
+  --out <local-ocr-runtime-manifest.json> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language eng \
+  --language-pack <local-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --reviewed
+```
+
+`resume-cli ocr draft-manifest` intentionally receives explicit command paths
+because the manifest records checksums for exact local artifacts. The
+current-stage orchestration script may discover those paths with
+`command -v tesseract` and `command -v pdftoppm` when its own
+`--tesseract-command` or `--pdftoppm-command` flags are omitted, but the draft
+manifest output and all current-stage summaries must keep runtime paths
+redacted.
+
+For a Tesseract combined language such as `eng+chi_sim`, provide one
+`--language-pack <lang>=<local-tessdata-file>` argument for each language:
+
+```bash
+scripts/local/prepare-local-ocr-runtime-manifest.sh \
+  --out <local-ocr-runtime-manifest.json> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --language eng+chi_sim \
+  --language-pack eng=<local-eng-tessdata-file> \
+  --language-pack chi_sim=<local-chi-sim-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --reviewed
+```
+
+Equivalent lower-level command:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr draft-manifest \
+  --out <local-ocr-runtime-manifest.json> \
+  --runtime-pack-id <reviewed-runtime-pack-id> \
+  --tesseract-command <local-tesseract-command> \
+  --pdftoppm-command <local-pdftoppm-command> \
+  --language eng+chi_sim \
+  --language-pack eng=<local-eng-tessdata-file> \
+  --language-pack chi_sim=<local-chi-sim-tessdata-file> \
+  --engine-license Apache-2.0 \
+  --renderer-license <installed-poppler-license> \
+  --language-license Apache-2.0 \
+  --reviewed
+```
+
+The draft command writes the manifest to the local `--out` file and keeps stdout
+redacted. The manifest file itself contains local artifact paths because the
+validator must read those files to verify checksums. Do not commit, upload, or
+paste this manifest unless it has been separately reviewed and stripped of local
+paths. Omit `--reviewed` when legal review is not complete; subsequent
+validation and release-readiness intake must then fail closed.
+
+Canonical local command form:
+`resume-cli ocr validate-manifest --manifest <path>`.
+
+Validate a reviewed local OCR runtime pack before wiring it into OCR workers:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr validate-manifest \
+  --manifest <local-ocr-runtime-manifest.json>
+```
+
+The manifest schema is `resume-ir.ocr-runtime-manifest.v1` with a
+`runtime_pack_id` and one or more `components`. Each component entry must
+include `id`, `kind`, `engine`, `version`, `artifact.path`, `artifact.sha256`,
+and a `license` object with `id` and `reviewed: true`. Supported component
+kinds are `ocr-engine`, `pdf-renderer`, and `ocr-language-pack`. Optional
+`languages` entries must include `id`, `artifact.path`, `artifact.sha256`, and
+a reviewed license.
+
+The validator reads only local files, verifies artifact checksums, and blocks
+unreviewed licenses. It must not print local paths, runtime bytes, language pack
+bytes, or complete digests.
+
+## Embedding Runtime Preflight
+
+Canonical local command form:
+`resume-cli model preflight --json`.
+
+Before running embedding workers or semantic search, verify the reviewed model
+manifest and local embedding command without printing paths:
+
+```bash
+resume-cli --data-dir <local-data-dir> model preflight --json \
+  --manifest <local-model-manifest.json> \
+  --embedding-command <local-embedding-command> \
+  --model-id <reviewed-model-id> \
+  --dimension <dimension>
+```
+
+The JSON schema is `embedding-runtime-preflight.v1`. The command validates the
+model manifest checksum/license evidence, confirms that the requested embedding
+model id and dimension are present, then runs one synthetic local protocol probe
+through the configured command. The JSON includes `embedding_protocol` with
+`passed`, `failed`, or `not_run`. It exits nonzero when the embedding command is
+missing, not executable, or does not speak `resume-ir-embedding-v1` for the
+requested model and dimension. It must not execute a network API, download model
+weights, print command paths, print model bytes, print embedding vectors, print
+synthetic probe text, or include model caches, indexes, or local data
+directories.
+
+### Local sentence-transformers adapter
+
+The repository includes
+`scripts/local/embedding-runtime-sentence-transformers.py` as a reproducible
+external command adapter for local sentence-transformers models. It reads the
+private input file path from `RESUME_IR_EMBEDDING_INPUT_PATH`, verifies
+`RESUME_IR_EMBEDDING_MODEL_ID` and `RESUME_IR_EMBEDDING_DIMENSION`, loads a
+locally cached sentence-transformers model, and writes only the
+`resume-ir-embedding-v1` stdout protocol. It must not print local paths, raw
+resume text, model bytes, cache locations, or embedding input payloads.
+
+Current-stage smoke validation may use
+`sentence-transformers/all-MiniLM-L6-v2` with dimension `384` after the
+operator has reviewed the current model card/license and recorded a local model
+manifest. The model remains an external local runtime artifact; do not commit or
+upload model weights, model caches, generated manifests with local paths, vector
+snapshots, SQLite databases, query sets, or diagnostics.
+
+Use the local manifest preparation helper to turn an already cached
+sentence-transformers snapshot into a reviewed local model manifest. The helper
+does not download weights. It reads the local Hugging Face cache, requires the
+model card license to match the requested license, uses `model.safetensors` as
+the checksum-bearing artifact, calls `resume-cli model draft-manifest`, validates
+the manifest, and prints only redacted status output:
+
+```bash
+scripts/local/prepare-local-embedding-model-manifest.sh \
+  --out <local-model-manifest.json> \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-pack-id sentence-transformers-all-MiniLM-L6-v2-local \
+  --dimension 384 \
+  --license Apache-2.0
+```
+
+If the local cache, model card, `model.safetensors`, or license match is
+missing, the helper exits nonzero and the embedding runtime remains
+external/legal/runtime BLOCKED. The generated manifest contains local artifact
+paths and must stay local.
+
+By default, the adapter loads with local-files-only behavior so preflight and
+worker execution do not implicitly download model weights. To intentionally
+prepare a local cache, run the download in a private local environment first,
+then switch back to offline execution:
+
+```bash
+uv venv .cache/resume-ir-embedding-runtime-py312 --python <python-3.12>
+uv pip install --python .cache/resume-ir-embedding-runtime-py312/bin/python \
+  sentence-transformers
+PATH=<repo>/.cache/resume-ir-embedding-runtime-py312/bin:$PATH \
+RESUME_IR_SENTENCE_TRANSFORMERS_ALLOW_DOWNLOAD=1 \
+RESUME_IR_SENTENCE_TRANSFORMERS_MODEL=sentence-transformers/all-MiniLM-L6-v2 \
+RESUME_IR_EMBEDDING_INPUT_PATH=<synthetic-local-input> \
+RESUME_IR_EMBEDDING_MODEL_ID=sentence-transformers/all-MiniLM-L6-v2 \
+RESUME_IR_EMBEDDING_DIMENSION=384 \
+scripts/local/embedding-runtime-sentence-transformers.py
+```
+
+Use the adapter as the embedding command after the model is locally available:
+
+```bash
+resume-cli --data-dir <local-data-dir> model preflight --json \
+  --manifest <local-model-manifest.json> \
+  --embedding-command scripts/local/embedding-runtime-sentence-transformers.py \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --dimension 384
+```
+
+For `model draft-manifest`, use a local reviewed descriptor or actual model
+artifact file that represents the selected local model cache and records the
+reviewed license/checksum evidence. The product has not bundled that model; if
+the model card, artifact checksum, or license review is not confirmed, leave the
+manifest unreviewed and treat embedding runtime as BLOCKED.
+
+## Model Manifest Validation
+
+Canonical local draft command form:
+`resume-cli model draft-manifest --out <path>`.
+
+After selecting a local offline embedding artifact, create a local-only model
+manifest draft:
+
+```bash
+resume-cli --data-dir <local-data-dir> model draft-manifest \
+  --out <local-model-manifest.json> \
+  --model-pack-id <reviewed-model-pack-id> \
+  --model-id <reviewed-model-id> \
+  --model-type embedding \
+  --dimension <dimension> \
+  --format <model-format> \
+  --artifact <local-model-artifact> \
+  --license <model-license-id> \
+  --reviewed
+```
+
+The draft command writes the manifest to the local `--out` file and keeps stdout
+redacted. The manifest file itself contains the local artifact path because the
+validator must read the model file to verify its checksum. Do not commit,
+upload, or paste this manifest unless it has been separately reviewed and
+stripped of local paths.
+
+Omit `--reviewed` when model weight license review is not complete. Validation,
+preflight, release-readiness, vector-quality, and private benchmark gates must
+then fail closed.
+
+Canonical local command form:
+`resume-cli model validate-manifest --manifest <path>`.
+
+Validate a reviewed local model pack before wiring it into an embedding or OCR
+worker:
+
+```bash
+resume-cli --data-dir <local-data-dir> model validate-manifest \
+  --manifest <local-model-manifest.json>
+```
+
+The manifest schema is `resume-ir.model-manifest.v1` with a `model_pack_id` and
+one or more `models`. Each model entry must include `id`, `type`, `format`,
+`artifact.path`, `artifact.sha256`, and a `license` object with `id` and
+`reviewed: true`. Embedding models must also include `dim`.
+
+The validator reads only local files, verifies artifact checksums, and blocks
+unreviewed licenses. It must not print local paths, model bytes, or complete
+digests.
+
+## OCR Worker
+
+Canonical local command form: `resume-cli ocr-worker --once`.
+
+Foreground one-shot OCR worker:
+
+```bash
+resume-cli --data-dir <local-data-dir> ocr-worker --once \
+  --command <local-ocr-command>
+```
+
+Daemon one-shot OCR worker:
+
+```bash
+resume-daemon --data-dir <local-data-dir> run --foreground --once \
+  --work-ocr-once \
+  --ocr-command <local-ocr-command>
+```
+
+Daemon loop with status IPC:
+
+```bash
+resume-daemon --data-dir <local-data-dir> run --foreground \
+  --work-ocr \
+  --ocr-command <local-ocr-command> \
+  --ipc-listen 127.0.0.1:0
+```
+
+If a command crashes or returns malformed output, the worker must not print OCR
+stdout, OCR stderr, input bytes, or paths. The document should remain
+`OcrRequired`, the job should be `FailedRetryable`, and the OCR cache should
+record a retryable failure without text. Validate with:
+
+```bash
+cargo test -p resume-cli --test s15_ocr_handoff --locked
+cargo test -p resume-daemon --test s50_ocr_worker --locked
+```
+
+## Embedding Worker
+
+Foreground one-shot embedding worker:
+
+```bash
+resume-cli --data-dir <local-data-dir> embed-worker --once \
+  --command <local-embedding-command> \
+  --model-id <reviewed-model-id> \
+  --dimension <dimension>
+```
+
+Daemon one-shot embedding worker:
+
+```bash
+resume-daemon --data-dir <local-data-dir> run --foreground --once \
+  --work-embeddings-once \
+  --embedding-command <local-embedding-command> \
+  --embedding-model-id <reviewed-model-id> \
+  --embedding-dimension <dimension>
+```
+
+Use only reviewed local commands. Do not use commands that call a network API or
+download model weights at runtime. Do not upload model outputs or vector
+snapshots.
+
+## Recovery Checks
+
+After a worker failure:
+
+```bash
+resume-cli --data-dir <local-data-dir> status
+resume-cli --data-dir <local-data-dir> doctor
+resume-cli --data-dir <local-data-dir> export-diagnostics --redact
+```
+
+The output should show retryable queues without raw resume text, complete paths,
+command paths, OCR text, or vector values.
+
+## Known Blockers
+
+- licensed OCR runtime and language-pack distribution is BLOCKED until reviewed
+  runtime manifests are available and approved
+- licensed model distribution is BLOCKED
+- full non-English OCR quality validation is not complete
+- full-library scanned resume OCR proof beyond bounded witness budgets is not
+  complete
+- real large-corpus OCR throughput proof is not complete
+- Windows command process-tree validation is not complete
+- macOS and Windows service-level worker validation is not complete

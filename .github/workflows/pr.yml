@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -31,6 +31,11 @@ jobs:
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
+
+      - name: Install OCR renderer dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils tesseract-ocr pango1.0-tools fonts-dejavu-core
 
       - name: Metadata
         run: cargo metadata --no-deps --locked
@@ -44,11 +49,29 @@ jobs:
       - name: Tests
         run: cargo test --workspace --locked
 
+      - name: CLI closed-loop check
+        run: ./scripts/ci/check-cli-closed-loop.sh
+
+      - name: Daemon closed-loop check
+        run: ./scripts/ci/check-daemon-closed-loop.sh
+
+      - name: Daemon incremental import check
+        run: ./scripts/ci/check-daemon-incremental-import.sh
+
       - name: License check
         run: ./scripts/ci/check-licenses.sh
 
+      - name: Runbook check
+        run: ./scripts/ci/check-runbooks.sh
+
+      - name: Current-stage handoff check
+        run: ./scripts/ci/check-current-stage-handoff.sh
+
+      - name: Workflow check
+        run: ./scripts/ci/check-workflows.sh
+
       - name: Benchmark smoke
-        run: cargo run -p benchmark-runner --bin resume-benchmark --locked -- synthetic-query --documents 24 --queries 6 --top-k 5 --json
+        run: ./scripts/ci/check-benchmark-smoke.sh
 
       - name: Public repository guard
         run: ./scripts/ci/guard-public-repo.sh

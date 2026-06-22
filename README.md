@@ -56,4 +56,7 @@ Do not import real resumes, upload data, push, release, sign binaries, or run he
 
 ## License
 
-This repository is licensed under the MIT License. See `LICENSE`.
+Current source code is licensed under GNU GPL v3 or later. See `LICENSE` and
+`LICENSES/README.md`. Bundled runtime releases use this GPL-compatible distribution
+boundary and still must include reviewed third-party license notices,
+source-offer material, checksums, and SBOM evidence.

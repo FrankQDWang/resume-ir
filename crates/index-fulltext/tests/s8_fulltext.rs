@@ -1,15 +1,21 @@
+use std::collections::BTreeSet;
 use std::fs;
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{
-    inspect_snapshot_root, publish_snapshot, redact_contact_values, FullTextIndex, IndexDocument,
-    IndexSection, SearchQuery, SnapshotReadTarget, SnapshotRootState,
+    inspect_snapshot_root, publish_incremental_snapshot, publish_snapshot, redact_contact_values,
+    FullTextIndex, IndexDocument, IndexSection, SearchQuery, SnapshotReadTarget, SnapshotRootState,
 };
 use tantivy::collector::TopDocs;
 use tantivy::query::AllQuery;
 use tantivy::schema::{TantivyDocument, Value};
 use tantivy::Index;
+
+const SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS: usize = 100;
+const SNAPSHOT_TEST_WRITE_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 #[test]
 fn exposes_index_fulltext_crate_identity() {
@@ -212,9 +218,8 @@ fn snippets_redact_contact_values_near_query_matches() {
             doc_id: "doc_contact".to_string(),
             version_id: "ver_contact".to_string(),
             file_name: "synthetic-contact.pdf".to_string(),
-            clean_text:
-                "Built Java. Phone: +14155550132 Alt: 4155550132 Email: Shared.Candidate@Example.Test"
-                    .to_string(),
+            clean_text: "Java WeChat: Candidate_2026 Email: a@b.test Phone: +14155550132"
+                .to_string(),
             sections: vec![IndexSection {
                 section_type: "experience".to_string(),
                 text: "Built Java ranking services".to_string(),
@@ -233,7 +238,9 @@ fn snippets_redact_contact_values_near_query_matches() {
     assert!(hits[0].snippet.contains("Java"));
     assert!(hits[0].snippet.contains("<redacted-email>"));
     assert!(hits[0].snippet.contains("<redacted-phone>"));
-    assert!(!hits[0].snippet.contains("Shared.Candidate"));
+    assert!(hits[0].snippet.contains("<redacted-wechat>"));
+    assert!(!hits[0].snippet.contains("a@b.test"));
+    assert!(!hits[0].snippet.contains("Candidate_2026"));
     assert!(!hits[0].snippet.contains("415"));
     remove_dir(&index_dir);
 }
@@ -321,8 +328,8 @@ fn published_snapshot_becomes_active_without_reading_staging_orphans() {
     )
     .unwrap();
     fs::create_dir_all(index_root.join("staging").join("orphan-bad")).unwrap();
-    fs::write(
-        index_root
+    write_snapshot_test_file_with_retry(
+        &index_root
             .join("staging")
             .join("orphan-bad")
             .join("meta.json"),
@@ -353,6 +360,199 @@ fn published_snapshot_becomes_active_without_reading_staging_orphans() {
 }
 
 #[test]
+fn published_snapshot_encrypts_payload_at_rest() {
+    let index_root = temp_dir("published-encrypted-snapshot");
+    let snapshot_name = "fulltext-1800003000-1-0-0";
+    let private_payload = "PRIVATE_FULLTEXT_PAYLOAD_SECRET_1800003000";
+
+    publish_snapshot(
+        &index_root,
+        snapshot_name,
+        [IndexDocument {
+            doc_id: "doc_private_fulltext".to_string(),
+            version_id: "ver_private_fulltext".to_string(),
+            file_name: "synthetic-private-fulltext.pdf".to_string(),
+            clean_text: format!("Rust local search {private_payload}"),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: format!("Search evidence {private_payload}"),
+            }],
+            is_deleted: false,
+        }],
+    )
+    .unwrap();
+
+    let snapshot_dir = index_root.join("snapshots").join(snapshot_name);
+    let envelope = fs::read(snapshot_dir.join("fulltext.snapshot.enc")).unwrap();
+    assert!(envelope.starts_with(b"resume-ir-fulltext-snapshot-encrypted-v1\n"));
+    assert!(!snapshot_dir.join("meta.json").exists());
+    let snapshot_bytes = recursive_bytes(&snapshot_dir);
+    assert!(!String::from_utf8_lossy(&snapshot_bytes).contains(private_payload));
+
+    let reopened = FullTextIndex::open_active(&index_root).unwrap().unwrap();
+    let hits = reopened
+        .search(SearchQuery::new("Rust local search").with_limit(5))
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].doc_id, "doc_private_fulltext");
+    assert!(hits[0].snippet.contains("Rust"));
+
+    remove_dir(&index_root);
+}
+
+#[test]
+fn published_snapshot_schema_mismatch_falls_back_to_last_good_snapshot() {
+    let index_root = temp_dir("snapshot-schema-mismatch");
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800003100-1-0-0",
+        [java_payment_document(false)],
+    )
+    .unwrap();
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800003200-1-0-0",
+        [IndexDocument {
+            doc_id: "doc_future_schema".to_string(),
+            version_id: "ver_future_schema".to_string(),
+            file_name: "synthetic-future-schema.pdf".to_string(),
+            clean_text: "future schema active snapshot".to_string(),
+            sections: vec![IndexSection {
+                section_type: "experience".to_string(),
+                text: "future schema active snapshot".to_string(),
+            }],
+            is_deleted: false,
+        }],
+    )
+    .unwrap();
+
+    let manifest_path = index_root
+        .join("snapshots")
+        .join("fulltext-1800003200-1-0-0")
+        .join("snapshot-manifest.json");
+    let manifest = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest.contains("\"schema_version\":\"fulltext.snapshot.v1\""));
+    assert!(!manifest.contains("Java payment"));
+    fs::write(
+        &manifest_path,
+        "{\"schema_version\":\"fulltext.snapshot.v999\",\"index_schema\":\"future-fulltext-schema\",\"payload\":\"PRIVATE future schema text\"}\n",
+    )
+    .unwrap();
+
+    let inspection = inspect_snapshot_root(&index_root).unwrap();
+    assert_eq!(inspection.state(), SnapshotRootState::Recovered);
+    assert_eq!(
+        inspection.active_snapshot(),
+        Some("fulltext-1800003200-1-0-0")
+    );
+    assert_eq!(
+        inspection.fallback_snapshot(),
+        Some("fulltext-1800003100-1-0-0")
+    );
+
+    let index = FullTextIndex::open_active(&index_root).unwrap().unwrap();
+    let recovered_hits = index
+        .search(SearchQuery::new("Java payment").with_limit(5))
+        .unwrap();
+    assert_eq!(recovered_hits.len(), 1);
+    assert_eq!(recovered_hits[0].doc_id, "doc_java_payment");
+    assert!(index
+        .search(SearchQuery::new("future schema").with_limit(5))
+        .unwrap()
+        .is_empty());
+
+    remove_dir(&index_root);
+}
+
+#[test]
+fn incremental_snapshot_inherits_replaces_and_excludes_documents() {
+    let index_root = temp_dir("incremental-snapshot");
+
+    publish_snapshot(
+        &index_root,
+        "fulltext-1800004000-1-0-0",
+        [
+            java_payment_document(false),
+            IndexDocument {
+                doc_id: "doc_backend".to_string(),
+                version_id: "ver_backend_old".to_string(),
+                file_name: "synthetic-backend-old.pdf".to_string(),
+                clean_text: "Rust backend retiredtoken".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: "Rust backend retiredtoken".to_string(),
+                }],
+                is_deleted: false,
+            },
+        ],
+    )
+    .unwrap();
+
+    publish_incremental_snapshot(
+        &index_root,
+        "fulltext-1800005000-1-0-0",
+        [
+            IndexDocument {
+                doc_id: "doc_backend".to_string(),
+                version_id: "ver_backend_new".to_string(),
+                file_name: "synthetic-backend-new.pdf".to_string(),
+                clean_text: "Go backend updated snapshot token".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "experience".to_string(),
+                    text: "Go backend updated".to_string(),
+                }],
+                is_deleted: false,
+            },
+            IndexDocument {
+                doc_id: "doc_python".to_string(),
+                version_id: "ver_python_new".to_string(),
+                file_name: "synthetic-python-new.pdf".to_string(),
+                clean_text: "Python ranking new snapshot token".to_string(),
+                sections: vec![IndexSection {
+                    section_type: "skill".to_string(),
+                    text: "Python ranking".to_string(),
+                }],
+                is_deleted: false,
+            },
+        ],
+        &BTreeSet::from(["doc_java_payment".to_string()]),
+    )
+    .unwrap();
+
+    let inspection = inspect_snapshot_root(&index_root).unwrap();
+    assert_eq!(inspection.state(), SnapshotRootState::Ready);
+    assert_eq!(
+        inspection.active_snapshot(),
+        Some("fulltext-1800005000-1-0-0")
+    );
+
+    let index = FullTextIndex::open_active(&index_root).unwrap().unwrap();
+    assert!(index
+        .search(SearchQuery::new("Java payment").with_limit(5))
+        .unwrap()
+        .is_empty());
+    assert!(index
+        .search(SearchQuery::new("retiredtoken").with_limit(5))
+        .unwrap()
+        .is_empty());
+
+    let updated_hits = index
+        .search(SearchQuery::new("Go backend").with_limit(5))
+        .unwrap();
+    assert_eq!(updated_hits.len(), 1);
+    assert_eq!(updated_hits[0].doc_id, "doc_backend");
+    assert_eq!(updated_hits[0].version_id, "ver_backend_new");
+
+    let new_hits = index
+        .search(SearchQuery::new("Python ranking").with_limit(5))
+        .unwrap();
+    assert_eq!(new_hits.len(), 1);
+    assert_eq!(new_hits[0].doc_id, "doc_python");
+
+    remove_dir(&index_root);
+}
+
+#[test]
 fn active_snapshot_corruption_falls_back_to_last_good_snapshot() {
     let index_root = temp_dir("snapshot-fallback");
     publish_snapshot(
@@ -377,11 +577,11 @@ fn active_snapshot_corruption_falls_back_to_last_good_snapshot() {
         }],
     )
     .unwrap();
-    fs::write(
-        index_root
+    write_snapshot_test_file_with_retry(
+        &index_root
             .join("snapshots")
             .join("fulltext-1800002000-1-0-0")
-            .join("meta.json"),
+            .join("fulltext.snapshot.enc"),
         b"not a valid active snapshot",
     )
     .unwrap();
@@ -449,6 +649,47 @@ fn remove_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
 }
 
+fn write_snapshot_test_file_with_retry(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    for attempt in 0..SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS {
+        match fs::write(path, bytes) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt + 1 < SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS
+                    && is_transient_snapshot_test_write_error(&error) =>
+            {
+                thread::sleep(SNAPSHOT_TEST_WRITE_RETRY_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(io::Error::other("snapshot test write retry exhausted"))
+}
+
+fn is_transient_snapshot_test_write_error(error: &io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        ErrorKind::Interrupted | ErrorKind::PermissionDenied | ErrorKind::WouldBlock
+    ) {
+        return true;
+    }
+
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(), Some(32 | 33 | 145)) {
+        return true;
+    }
+
+    let diagnostic = error.to_string().to_ascii_lowercase();
+    diagnostic.contains("os error 5")
+        || diagnostic.contains("os error 32")
+        || diagnostic.contains("os error 33")
+        || diagnostic.contains("os error 145")
+        || diagnostic.contains("access is denied")
+        || diagnostic.contains("permission denied")
+        || diagnostic.contains("being used by another process")
+        || diagnostic.contains("locked a portion of the file")
+}
+
 fn stored_text_dump(index_dir: &Path) -> String {
     let index = Index::open_in_dir(index_dir).unwrap();
     let schema = index.schema();
@@ -477,4 +718,18 @@ fn stored_text_dump(index_dir: &Path) -> String {
     }
 
     values.join("\n")
+}
+
+fn recursive_bytes(root: &Path) -> Vec<u8> {
+    let mut output = Vec::new();
+    for entry in fs::read_dir(root).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_dir() {
+            output.extend(recursive_bytes(&path));
+        } else {
+            output.extend(fs::read(path).unwrap());
+        }
+    }
+    output
 }

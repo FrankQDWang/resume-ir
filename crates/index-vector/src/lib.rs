@@ -2,17 +2,44 @@ pub fn crate_name() -> &'static str {
     "index-vector"
 }
 
+use fs4::fs_std::FileExt;
+use hnsw_rs::prelude::{DistCosine, Hnsw};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, File};
+use std::fmt::Write as FmtWrite;
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    XChaCha20Poly1305, XNonce,
+};
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 const SNAPSHOT_FILE: &str = "vector.snapshot";
 const SNAPSHOT_TMP_FILE: &str = "vector.snapshot.tmp";
-const SNAPSHOT_HEADER_V1: &str = "resume-ir-vector-index-v1";
-const SNAPSHOT_HEADER_V2: &str = "resume-ir-vector-index-v2";
+const SNAPSHOT_LAST_GOOD_FILE: &str = "vector.snapshot.last-good";
+const SNAPSHOT_LAST_GOOD_TMP_FILE: &str = "vector.snapshot.last-good.tmp";
+const SNAPSHOT_MANIFEST_FILE: &str = "vector.snapshot.manifest";
+const SNAPSHOT_LAST_GOOD_MANIFEST_FILE: &str = "vector.snapshot.last-good.manifest";
+const SNAPSHOT_KEY_FILE: &str = "vector.snapshot.key-v1";
+const SNAPSHOT_LOCK_FILE: &str = "vector.lock";
+const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "vector.snapshot.v1";
+const VECTOR_INDEX_SCHEMA_VERSION: &str = "hnsw-vector.v1";
+const VECTOR_SEARCH_BACKEND_MANIFEST: &str = "hnsw_ann";
+const SNAPSHOT_ENCRYPTION_MANIFEST: &str = "xchacha20poly1305.v1";
+const SNAPSHOT_HEADER_ENCRYPTED_V1: &str = "resume-ir-vector-index-encrypted-v1";
+const SNAPSHOT_PLAINTEXT_HEADER_V1: &str = "resume-ir-vector-index-plaintext-v1";
+const SNAPSHOT_KEY_LEN: usize = 32;
+const SNAPSHOT_NONCE_LEN: usize = 24;
+const HNSW_MAX_CONNECTIONS: usize = 24;
+const HNSW_MAX_LAYERS: usize = 16;
+const HNSW_EF_CONSTRUCTION: usize = 200;
+const HNSW_EF_SEARCH: usize = 64;
 
 pub trait VectorIndex {
     fn upsert(&self, vectors: Vec<VectorDocument>) -> Result<(), VectorIndexError>;
@@ -46,7 +73,16 @@ pub struct PersistentVectorIndex {
     dimension: usize,
     snapshot_path: PathBuf,
     temp_path: PathBuf,
+    manifest_path: PathBuf,
+    temp_manifest_path: PathBuf,
+    last_good_path: PathBuf,
+    last_good_temp_path: PathBuf,
+    last_good_manifest_path: PathBuf,
+    last_good_manifest_temp_path: PathBuf,
+    key_path: PathBuf,
+    lock_path: PathBuf,
     state: Mutex<IndexState>,
+    ann_backend: Mutex<HnswSearchBackend>,
 }
 
 impl PersistentVectorIndex {
@@ -62,23 +98,153 @@ impl PersistentVectorIndex {
         fs::create_dir_all(root).map_err(|_| VectorIndexError::Storage)?;
         let snapshot_path = root.join(SNAPSHOT_FILE);
         let temp_path = root.join(SNAPSHOT_TMP_FILE);
-        let state = if snapshot_path.exists() {
-            read_snapshot(&snapshot_path, dimension)?
-        } else {
-            IndexState::default()
-        };
+        let manifest_path = root.join(SNAPSHOT_MANIFEST_FILE);
+        let temp_manifest_path = snapshot_manifest_path(&temp_path);
+        let last_good_path = root.join(SNAPSHOT_LAST_GOOD_FILE);
+        let last_good_temp_path = root.join(SNAPSHOT_LAST_GOOD_TMP_FILE);
+        let last_good_manifest_path = root.join(SNAPSHOT_LAST_GOOD_MANIFEST_FILE);
+        let last_good_manifest_temp_path = snapshot_manifest_path(&last_good_temp_path);
+        let key_path = root.join(SNAPSHOT_KEY_FILE);
+        let lock_path = root.join(SNAPSHOT_LOCK_FILE);
+        let state =
+            read_snapshot_with_recovery(&snapshot_path, &last_good_path, &key_path, dimension)?
+                .unwrap_or_default();
+        let ann_backend = HnswSearchBackend::build(&state);
 
         Ok(Self {
             dimension,
             snapshot_path,
             temp_path,
+            manifest_path,
+            temp_manifest_path,
+            last_good_path,
+            last_good_temp_path,
+            last_good_manifest_path,
+            last_good_manifest_temp_path,
+            key_path,
+            lock_path,
             state: Mutex::new(state),
+            ann_backend: Mutex::new(ann_backend),
         })
     }
 
     fn persist_state(&self, state: &IndexState) -> Result<(), VectorIndexError> {
-        write_snapshot(&self.temp_path, self.dimension, state)?;
+        write_snapshot(&self.temp_path, &self.key_path, self.dimension, state)?;
+        write_snapshot_manifest(&self.temp_manifest_path, self.dimension)?;
+        self.refresh_last_good_snapshot()?;
         fs::rename(&self.temp_path, &self.snapshot_path).map_err(|_| VectorIndexError::Storage)?;
+        fs::rename(&self.temp_manifest_path, &self.manifest_path)
+            .map_err(|_| VectorIndexError::Storage)?;
+        Ok(())
+    }
+
+    fn refresh_last_good_snapshot(&self) -> Result<(), VectorIndexError> {
+        if !self.snapshot_path.exists() {
+            return Ok(());
+        }
+
+        match read_snapshot(&self.snapshot_path, &self.key_path, self.dimension) {
+            Ok(_) => {}
+            Err(VectorIndexError::CorruptSnapshot) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+
+        let snapshot_bytes =
+            fs::read(&self.snapshot_path).map_err(|_| VectorIndexError::Storage)?;
+        let manifest_bytes =
+            fs::read(&self.manifest_path).map_err(|_| VectorIndexError::Storage)?;
+        let mut file = create_private_file(&self.last_good_temp_path)?;
+        file.write_all(&snapshot_bytes)
+            .map_err(|_| VectorIndexError::Storage)?;
+        file.sync_all().map_err(|_| VectorIndexError::Storage)?;
+        let mut manifest_file = create_private_file(&self.last_good_manifest_temp_path)?;
+        manifest_file
+            .write_all(&manifest_bytes)
+            .map_err(|_| VectorIndexError::Storage)?;
+        manifest_file
+            .sync_all()
+            .map_err(|_| VectorIndexError::Storage)?;
+        fs::rename(&self.last_good_temp_path, &self.last_good_path)
+            .map_err(|_| VectorIndexError::Storage)?;
+        fs::rename(
+            &self.last_good_manifest_temp_path,
+            &self.last_good_manifest_path,
+        )
+        .map_err(|_| VectorIndexError::Storage)?;
+        Ok(())
+    }
+
+    pub fn purge_doc_ids(&self, doc_ids: &BTreeSet<String>) -> Result<usize, VectorIndexError> {
+        if doc_ids.is_empty() {
+            return Ok(0);
+        }
+
+        self.mutate_latest_state(|state| {
+            let vector_ids = state
+                .vectors
+                .values()
+                .filter(|vector| doc_ids.contains(vector.doc_id()))
+                .map(|vector| vector.vector_id().to_string())
+                .collect::<Vec<_>>();
+            let removed = vector_ids.len();
+            for vector_id in vector_ids {
+                state.vectors.remove(&vector_id);
+                state.deleted.remove(&vector_id);
+            }
+            Ok(removed)
+        })
+    }
+
+    fn mutate_latest_state<T>(
+        &self,
+        mutate: impl FnOnce(&mut IndexState) -> Result<T, VectorIndexError>,
+    ) -> Result<T, VectorIndexError> {
+        let lock_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&self.lock_path)
+            .map_err(|_| VectorIndexError::Storage)?;
+        lock_file
+            .lock_exclusive()
+            .map_err(|_| VectorIndexError::Storage)?;
+        let result = self.mutate_latest_state_locked(mutate);
+        lock_file.unlock().map_err(|_| VectorIndexError::Storage)?;
+        result
+    }
+
+    fn mutate_latest_state_locked<T>(
+        &self,
+        mutate: impl FnOnce(&mut IndexState) -> Result<T, VectorIndexError>,
+    ) -> Result<T, VectorIndexError> {
+        let mut latest = self.read_latest_state()?;
+        let output = mutate(&mut latest)?;
+        self.persist_state(&latest)?;
+        {
+            let mut state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
+            *state = latest;
+            self.rebuild_ann_backend(&state)?;
+        }
+        Ok(output)
+    }
+
+    fn read_latest_state(&self) -> Result<IndexState, VectorIndexError> {
+        Ok(read_snapshot_with_recovery(
+            &self.snapshot_path,
+            &self.last_good_path,
+            &self.key_path,
+            self.dimension,
+        )?
+        .unwrap_or_default())
+    }
+
+    fn rebuild_ann_backend(&self, state: &IndexState) -> Result<(), VectorIndexError> {
+        let mut ann_backend = self
+            .ann_backend
+            .lock()
+            .map_err(|_| VectorIndexError::Poisoned)?;
+        *ann_backend = HnswSearchBackend::build(state);
         Ok(())
     }
 }
@@ -86,18 +252,147 @@ impl PersistentVectorIndex {
 pub fn inspect_persistent_vector_snapshot(
     root: impl AsRef<Path>,
 ) -> PersistentVectorSnapshotInspection {
-    let snapshot_path = root.as_ref().join(SNAPSHOT_FILE);
+    let root = root.as_ref();
+    let snapshot_path = root.join(SNAPSHOT_FILE);
+    let last_good_path = root.join(SNAPSHOT_LAST_GOOD_FILE);
+    let key_path = root.join(SNAPSHOT_KEY_FILE);
     if !snapshot_path.exists() {
+        if last_good_path.exists() {
+            return inspect_recovered_vector_snapshot(&last_good_path, &key_path);
+        }
         return PersistentVectorSnapshotInspection {
             state: PersistentVectorSnapshotState::Missing,
             snapshot: None,
         };
     }
 
-    match read_snapshot_unchecked_dimension(&snapshot_path) {
+    match read_snapshot_unchecked_dimension(&snapshot_path, &key_path) {
         Ok((dimension, state)) => PersistentVectorSnapshotInspection {
             state: PersistentVectorSnapshotState::Ready,
-            snapshot: Some(snapshot_from_state(&state, dimension)),
+            snapshot: Some(snapshot_from_state(
+                &state,
+                dimension,
+                VectorSearchBackend::HnswAnn,
+            )),
+        },
+        Err(VectorIndexError::Storage) => PersistentVectorSnapshotInspection {
+            state: PersistentVectorSnapshotState::Unreadable,
+            snapshot: None,
+        },
+        Err(_) => inspect_recovered_vector_snapshot(&last_good_path, &key_path),
+    }
+}
+
+pub fn inspect_persistent_vector_document_coverage(
+    root: impl AsRef<Path>,
+    document_ids: &BTreeSet<String>,
+) -> PersistentVectorDocumentCoverageInspection {
+    let root = root.as_ref();
+    let snapshot_path = root.join(SNAPSHOT_FILE);
+    let last_good_path = root.join(SNAPSHOT_LAST_GOOD_FILE);
+    let key_path = root.join(SNAPSHOT_KEY_FILE);
+    if !snapshot_path.exists() {
+        if last_good_path.exists() {
+            return inspect_recovered_vector_document_coverage(
+                &last_good_path,
+                &key_path,
+                document_ids,
+            );
+        }
+        return PersistentVectorDocumentCoverageInspection {
+            state: PersistentVectorSnapshotState::Missing,
+            active_document_count: 0,
+            covered_document_count: 0,
+        };
+    }
+
+    match read_snapshot_unchecked_dimension(&snapshot_path, &key_path) {
+        Ok((_, state)) => vector_document_coverage_from_state(
+            PersistentVectorSnapshotState::Ready,
+            &state,
+            document_ids,
+        ),
+        Err(VectorIndexError::Storage) => PersistentVectorDocumentCoverageInspection {
+            state: PersistentVectorSnapshotState::Unreadable,
+            active_document_count: 0,
+            covered_document_count: 0,
+        },
+        Err(_) => {
+            inspect_recovered_vector_document_coverage(&last_good_path, &key_path, document_ids)
+        }
+    }
+}
+
+pub fn reset_persistent_vector_snapshots_for_rebuild(
+    root: impl AsRef<Path>,
+) -> Result<(), VectorIndexError> {
+    let root = root.as_ref();
+    for path in [
+        root.join(SNAPSHOT_FILE),
+        root.join(SNAPSHOT_TMP_FILE),
+        root.join(SNAPSHOT_MANIFEST_FILE),
+        snapshot_manifest_path(&root.join(SNAPSHOT_TMP_FILE)),
+        root.join(SNAPSHOT_LAST_GOOD_FILE),
+        root.join(SNAPSHOT_LAST_GOOD_TMP_FILE),
+        root.join(SNAPSHOT_LAST_GOOD_MANIFEST_FILE),
+        snapshot_manifest_path(&root.join(SNAPSHOT_LAST_GOOD_TMP_FILE)),
+    ] {
+        remove_snapshot_file_if_exists(&path)?;
+    }
+    Ok(())
+}
+
+fn inspect_recovered_vector_document_coverage(
+    last_good_path: &Path,
+    key_path: &Path,
+    document_ids: &BTreeSet<String>,
+) -> PersistentVectorDocumentCoverageInspection {
+    if !last_good_path.exists() {
+        return PersistentVectorDocumentCoverageInspection {
+            state: PersistentVectorSnapshotState::Corrupt,
+            active_document_count: 0,
+            covered_document_count: 0,
+        };
+    }
+
+    match read_snapshot_unchecked_dimension(last_good_path, key_path) {
+        Ok((_, state)) => vector_document_coverage_from_state(
+            PersistentVectorSnapshotState::Recovered,
+            &state,
+            document_ids,
+        ),
+        Err(VectorIndexError::Storage) => PersistentVectorDocumentCoverageInspection {
+            state: PersistentVectorSnapshotState::Unreadable,
+            active_document_count: 0,
+            covered_document_count: 0,
+        },
+        Err(_) => PersistentVectorDocumentCoverageInspection {
+            state: PersistentVectorSnapshotState::Corrupt,
+            active_document_count: 0,
+            covered_document_count: 0,
+        },
+    }
+}
+
+fn inspect_recovered_vector_snapshot(
+    last_good_path: &Path,
+    key_path: &Path,
+) -> PersistentVectorSnapshotInspection {
+    if !last_good_path.exists() {
+        return PersistentVectorSnapshotInspection {
+            state: PersistentVectorSnapshotState::Corrupt,
+            snapshot: None,
+        };
+    }
+
+    match read_snapshot_unchecked_dimension(last_good_path, key_path) {
+        Ok((dimension, state)) => PersistentVectorSnapshotInspection {
+            state: PersistentVectorSnapshotState::Recovered,
+            snapshot: Some(snapshot_from_state(
+                &state,
+                dimension,
+                VectorSearchBackend::HnswAnn,
+            )),
         },
         Err(VectorIndexError::Storage) => PersistentVectorSnapshotInspection {
             state: PersistentVectorSnapshotState::Unreadable,
@@ -107,6 +402,27 @@ pub fn inspect_persistent_vector_snapshot(
             state: PersistentVectorSnapshotState::Corrupt,
             snapshot: None,
         },
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PersistentVectorDocumentCoverageInspection {
+    state: PersistentVectorSnapshotState,
+    active_document_count: usize,
+    covered_document_count: usize,
+}
+
+impl PersistentVectorDocumentCoverageInspection {
+    pub fn state(self) -> PersistentVectorSnapshotState {
+        self.state
+    }
+
+    pub fn active_document_count(self) -> usize {
+        self.active_document_count
+    }
+
+    pub fn covered_document_count(self) -> usize {
+        self.covered_document_count
     }
 }
 
@@ -130,6 +446,7 @@ impl PersistentVectorSnapshotInspection {
 pub enum PersistentVectorSnapshotState {
     Missing,
     Ready,
+    Recovered,
     Corrupt,
     Unreadable,
 }
@@ -150,26 +467,31 @@ impl VectorIndex for PersistentVectorIndex {
             validate_dimension(self.dimension, vector.values())?;
         }
 
-        let mut state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        for vector in vectors {
-            state.deleted.remove(vector.vector_id());
-            state.vectors.insert(vector.vector_id().to_string(), vector);
-        }
-        self.persist_state(&state)
+        self.mutate_latest_state(|state| {
+            for vector in vectors {
+                state.deleted.remove(vector.vector_id());
+                state.vectors.insert(vector.vector_id().to_string(), vector);
+            }
+            Ok(())
+        })
     }
 
     fn mark_deleted(&self, vector_ids: &[&str]) -> Result<(), VectorIndexError> {
-        let mut state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        for vector_id in vector_ids {
-            state.deleted.insert((*vector_id).to_string());
-        }
-        self.persist_state(&state)
+        self.mutate_latest_state(|state| {
+            for vector_id in vector_ids {
+                state.deleted.insert((*vector_id).to_string());
+            }
+            Ok(())
+        })
     }
 
     fn knn(&self, query: QueryVector, k: usize) -> Result<Vec<VectorHit>, VectorIndexError> {
         validate_dimension(self.dimension, query.values())?;
-        let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(knn_from_state(&state, query.values(), k, None))
+        let ann_backend = self
+            .ann_backend
+            .lock()
+            .map_err(|_| VectorIndexError::Poisoned)?;
+        Ok(ann_backend.knn(query.values(), k, None))
     }
 
     fn knn_for_model(
@@ -180,13 +502,20 @@ impl VectorIndex for PersistentVectorIndex {
     ) -> Result<Vec<VectorHit>, VectorIndexError> {
         validate_dimension(self.dimension, query.values())?;
         validate_model_id(model_id)?;
-        let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(knn_from_state(&state, query.values(), k, Some(model_id)))
+        let ann_backend = self
+            .ann_backend
+            .lock()
+            .map_err(|_| VectorIndexError::Poisoned)?;
+        Ok(ann_backend.knn(query.values(), k, Some(model_id)))
     }
 
     fn snapshot(&self) -> Result<VectorSnapshot, VectorIndexError> {
         let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(snapshot_from_state(&state, self.dimension))
+        Ok(snapshot_from_state(
+            &state,
+            self.dimension,
+            VectorSearchBackend::HnswAnn,
+        ))
     }
 }
 
@@ -229,7 +558,11 @@ impl VectorIndex for InMemoryVectorIndex {
 
     fn snapshot(&self) -> Result<VectorSnapshot, VectorIndexError> {
         let state = self.state.lock().map_err(|_| VectorIndexError::Poisoned)?;
-        Ok(snapshot_from_state(&state, self.dimension))
+        Ok(snapshot_from_state(
+            &state,
+            self.dimension,
+            VectorSearchBackend::LinearScan,
+        ))
     }
 }
 
@@ -237,6 +570,145 @@ impl VectorIndex for InMemoryVectorIndex {
 struct IndexState {
     vectors: BTreeMap<String, VectorDocument>,
     deleted: BTreeSet<String>,
+}
+
+struct HnswSearchBackend {
+    all: Option<HnswShard>,
+    by_model: BTreeMap<String, HnswShard>,
+}
+
+impl HnswSearchBackend {
+    fn build(state: &IndexState) -> Self {
+        let active_documents = state
+            .vectors
+            .values()
+            .filter(|vector| !state.deleted.contains(vector.vector_id()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut by_model_documents = BTreeMap::<String, Vec<VectorDocument>>::new();
+        for vector in &active_documents {
+            if let Some(model_id) = effective_model_id(vector) {
+                by_model_documents
+                    .entry(model_id.to_string())
+                    .or_default()
+                    .push(vector.clone());
+            }
+        }
+        let by_model = by_model_documents
+            .into_iter()
+            .filter_map(|(model_id, documents)| {
+                HnswShard::build(documents).map(|shard| (model_id, shard))
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        Self {
+            all: HnswShard::build(active_documents),
+            by_model,
+        }
+    }
+
+    fn knn(&self, query: &[f32], k: usize, model_id: Option<&str>) -> Vec<VectorHit> {
+        if k == 0 {
+            return Vec::new();
+        }
+        match model_id {
+            Some(model_id) => self
+                .by_model
+                .get(model_id)
+                .map(|shard| shard.knn(query, k))
+                .unwrap_or_default(),
+            None => self
+                .all
+                .as_ref()
+                .map(|shard| shard.knn(query, k))
+                .unwrap_or_default(),
+        }
+    }
+}
+
+struct HnswShard {
+    index: Hnsw<'static, f32, DistCosine>,
+    documents: Vec<VectorDocument>,
+}
+
+impl HnswShard {
+    fn build(documents: Vec<VectorDocument>) -> Option<Self> {
+        if documents.is_empty() {
+            return None;
+        }
+        let max_layer = HNSW_MAX_LAYERS
+            .min((documents.len() as f32).ln().trunc() as usize)
+            .max(1);
+        let mut index = Hnsw::<f32, DistCosine>::new(
+            HNSW_MAX_CONNECTIONS,
+            documents.len(),
+            max_layer,
+            HNSW_EF_CONSTRUCTION,
+            DistCosine {},
+        );
+        for (external_id, document) in documents.iter().enumerate() {
+            index.insert((document.values(), external_id));
+        }
+        index.set_searching_mode(true);
+
+        Some(Self { index, documents })
+    }
+
+    fn knn(&self, query: &[f32], k: usize) -> Vec<VectorHit> {
+        let candidate_count = k.min(self.documents.len());
+        if candidate_count == 0 {
+            return Vec::new();
+        }
+        let ef_search = HNSW_EF_SEARCH.max(candidate_count);
+        let mut hits = self
+            .index
+            .search(query, candidate_count, ef_search)
+            .into_iter()
+            .filter_map(|neighbour| self.documents.get(neighbour.d_id))
+            .map(|vector| {
+                VectorHit::new(
+                    vector.vector_id().to_string(),
+                    vector.doc_id().to_string(),
+                    cosine_similarity(query, vector.values()),
+                )
+            })
+            .collect::<Vec<_>>();
+        if hits.len() < candidate_count {
+            let mut seen_vector_ids = hits
+                .iter()
+                .map(|hit| hit.vector_id().to_string())
+                .collect::<BTreeSet<_>>();
+            let mut backfill_hits = self
+                .documents
+                .iter()
+                .filter(|vector| seen_vector_ids.insert(vector.vector_id().to_string()))
+                .map(|vector| {
+                    VectorHit::new(
+                        vector.vector_id().to_string(),
+                        vector.doc_id().to_string(),
+                        cosine_similarity(query, vector.values()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            backfill_hits.sort_by(|left, right| {
+                right
+                    .score()
+                    .partial_cmp(&left.score())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.doc_id().cmp(right.doc_id()))
+            });
+            hits.extend(backfill_hits.into_iter().take(candidate_count - hits.len()));
+        }
+        hits.sort_by(|left, right| {
+            right
+                .score()
+                .partial_cmp(&left.score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.doc_id().cmp(right.doc_id()))
+        });
+        hits.truncate(k);
+        hits
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -385,7 +857,9 @@ impl fmt::Debug for VectorHit {
 pub struct VectorSnapshot {
     vector_count: usize,
     deleted_count: usize,
+    document_count: usize,
     dimension: usize,
+    search_backend: VectorSearchBackend,
 }
 
 impl VectorSnapshot {
@@ -397,9 +871,23 @@ impl VectorSnapshot {
         self.deleted_count
     }
 
+    pub fn document_count(self) -> usize {
+        self.document_count
+    }
+
     pub fn dimension(self) -> usize {
         self.dimension
     }
+
+    pub fn search_backend(self) -> VectorSearchBackend {
+        self.search_backend
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VectorSearchBackend {
+    LinearScan,
+    HnswAnn,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -486,10 +974,13 @@ fn knn_from_state(
 }
 
 fn vector_matches_model(vector: &VectorDocument, model_id: &str) -> bool {
-    match vector.model_id() {
-        Some(vector_model_id) => vector_model_id == model_id,
-        None => legacy_vector_model_id(vector.vector_id()) == Some(model_id),
-    }
+    effective_model_id(vector) == Some(model_id)
+}
+
+fn effective_model_id(vector: &VectorDocument) -> Option<&str> {
+    vector
+        .model_id()
+        .or_else(|| legacy_vector_model_id(vector.vector_id()))
 }
 
 fn legacy_vector_model_id(vector_id: &str) -> Option<&str> {
@@ -499,16 +990,54 @@ fn legacy_vector_model_id(vector_id: &str) -> Option<&str> {
         .filter(|model_id| !model_id.is_empty())
 }
 
-fn snapshot_from_state(state: &IndexState, dimension: usize) -> VectorSnapshot {
+fn snapshot_from_state(
+    state: &IndexState,
+    dimension: usize,
+    search_backend: VectorSearchBackend,
+) -> VectorSnapshot {
     VectorSnapshot {
         vector_count: state.vectors.len(),
         deleted_count: state.deleted.len(),
+        document_count: active_vector_document_ids(state).len(),
         dimension,
+        search_backend,
     }
 }
 
-fn read_snapshot(path: &Path, expected_dimension: usize) -> Result<IndexState, VectorIndexError> {
-    let (actual_dimension, state) = read_snapshot_unchecked_dimension(path)?;
+fn vector_document_coverage_from_state(
+    state_label: PersistentVectorSnapshotState,
+    state: &IndexState,
+    document_ids: &BTreeSet<String>,
+) -> PersistentVectorDocumentCoverageInspection {
+    let active_document_ids = active_vector_document_ids(state);
+    let covered_document_count = active_document_ids
+        .iter()
+        .filter(|document_id| document_ids.contains::<str>(*document_id))
+        .count();
+
+    PersistentVectorDocumentCoverageInspection {
+        state: state_label,
+        active_document_count: active_document_ids.len(),
+        covered_document_count,
+    }
+}
+
+fn active_vector_document_ids(state: &IndexState) -> BTreeSet<&str> {
+    state
+        .vectors
+        .values()
+        .filter(|vector| !state.deleted.contains(vector.vector_id()))
+        .map(VectorDocument::doc_id)
+        .collect()
+}
+
+fn read_snapshot(
+    path: &Path,
+    key_path: &Path,
+    expected_dimension: usize,
+) -> Result<IndexState, VectorIndexError> {
+    validate_snapshot_manifest(path, Some(expected_dimension))?;
+    let (actual_dimension, state) = read_snapshot_unchecked_dimension(path, key_path)?;
     if actual_dimension != expected_dimension {
         return Err(VectorIndexError::InvalidDimension {
             expected: expected_dimension,
@@ -519,19 +1048,92 @@ fn read_snapshot(path: &Path, expected_dimension: usize) -> Result<IndexState, V
     Ok(state)
 }
 
-fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState), VectorIndexError> {
+fn read_snapshot_with_recovery(
+    snapshot_path: &Path,
+    last_good_path: &Path,
+    key_path: &Path,
+    expected_dimension: usize,
+) -> Result<Option<IndexState>, VectorIndexError> {
+    if snapshot_path.exists() {
+        return match read_snapshot(snapshot_path, key_path, expected_dimension) {
+            Ok(state) => Ok(Some(state)),
+            Err(VectorIndexError::CorruptSnapshot) => {
+                if !last_good_path.exists() {
+                    return Err(VectorIndexError::CorruptSnapshot);
+                }
+                read_snapshot(last_good_path, key_path, expected_dimension).map(Some)
+            }
+            Err(error) => Err(error),
+        };
+    }
+
+    read_last_good_snapshot(last_good_path, key_path, expected_dimension)
+}
+
+fn read_last_good_snapshot(
+    last_good_path: &Path,
+    key_path: &Path,
+    expected_dimension: usize,
+) -> Result<Option<IndexState>, VectorIndexError> {
+    if !last_good_path.exists() {
+        return Ok(None);
+    }
+
+    read_snapshot(last_good_path, key_path, expected_dimension).map(Some)
+}
+
+fn read_snapshot_unchecked_dimension(
+    path: &Path,
+    key_path: &Path,
+) -> Result<(usize, IndexState), VectorIndexError> {
+    validate_snapshot_manifest(path, None)?;
     let file = File::open(path).map_err(|_| VectorIndexError::Storage)?;
     let mut lines = BufReader::new(file).lines();
     let header = lines
         .next()
         .ok_or(VectorIndexError::CorruptSnapshot)?
         .map_err(|_| VectorIndexError::Storage)?;
+    if header != SNAPSHOT_HEADER_ENCRYPTED_V1 {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    let nonce_hex = lines
+        .next()
+        .ok_or(VectorIndexError::CorruptSnapshot)?
+        .map_err(|_| VectorIndexError::Storage)?;
+    let ciphertext_hex = lines
+        .next()
+        .ok_or(VectorIndexError::CorruptSnapshot)?
+        .map_err(|_| VectorIndexError::Storage)?;
+    if lines.next().is_some() {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    let nonce = decode_fixed_hex::<SNAPSHOT_NONCE_LEN>(&nonce_hex)?;
+    let ciphertext = decode_hex(&ciphertext_hex)?;
+    let key = read_snapshot_key(key_path)?;
+    let cipher = XChaCha20Poly1305::new((&key).into());
+    let plaintext = cipher
+        .decrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: &ciphertext,
+                aad: SNAPSHOT_HEADER_ENCRYPTED_V1.as_bytes(),
+            },
+        )
+        .map_err(|_| VectorIndexError::CorruptSnapshot)?;
+
+    parse_snapshot_plaintext(&plaintext)
+}
+
+fn parse_snapshot_plaintext(bytes: &[u8]) -> Result<(usize, IndexState), VectorIndexError> {
+    let mut lines = BufReader::new(bytes).lines();
+    let header = lines
+        .next()
+        .ok_or(VectorIndexError::CorruptSnapshot)?
+        .map_err(|_| VectorIndexError::Storage)?;
     let mut header_parts = header.split('\t');
-    let snapshot_version = match header_parts.next() {
-        Some(SNAPSHOT_HEADER_V1) => SnapshotVersion::V1,
-        Some(SNAPSHOT_HEADER_V2) => SnapshotVersion::V2,
-        _ => return Err(VectorIndexError::CorruptSnapshot),
-    };
+    if header_parts.next() != Some(SNAPSHOT_PLAINTEXT_HEADER_V1) {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
     if header_parts.next() != Some("dimension") {
         return Err(VectorIndexError::CorruptSnapshot);
     }
@@ -543,7 +1145,6 @@ fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState),
     if header_parts.next().is_some() {
         return Err(VectorIndexError::CorruptSnapshot);
     }
-
     let mut state = IndexState::default();
     for line in lines {
         let line = line.map_err(|_| VectorIndexError::Storage)?;
@@ -553,28 +1154,17 @@ fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState),
                 let vector_id =
                     decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
                 let doc_id = decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
-                let first_payload =
+                let model_id =
                     decode_field(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
-                let (model_id, values) = match snapshot_version {
-                    SnapshotVersion::V1 => {
-                        if parts.next().is_some() {
-                            return Err(VectorIndexError::CorruptSnapshot);
-                        }
-                        (None, decode_values(&first_payload)?)
-                    }
-                    SnapshotVersion::V2 => {
-                        let values =
-                            decode_values(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
-                        if parts.next().is_some() {
-                            return Err(VectorIndexError::CorruptSnapshot);
-                        }
-                        if first_payload.is_empty() {
-                            (None, values)
-                        } else {
-                            validate_model_id(&first_payload)?;
-                            (Some(first_payload), values)
-                        }
-                    }
+                let values = decode_values(parts.next().ok_or(VectorIndexError::CorruptSnapshot)?)?;
+                if parts.next().is_some() {
+                    return Err(VectorIndexError::CorruptSnapshot);
+                }
+                let model_id = if model_id.is_empty() {
+                    None
+                } else {
+                    validate_model_id(&model_id)?;
+                    Some(model_id)
                 };
                 validate_dimension(actual_dimension, &values)?;
                 let mut document = VectorDocument::new(vector_id.clone(), doc_id, values)?;
@@ -596,23 +1186,137 @@ fn read_snapshot_unchecked_dimension(path: &Path) -> Result<(usize, IndexState),
     Ok((actual_dimension, state))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SnapshotVersion {
-    V1,
-    V2,
-}
-
 fn write_snapshot(
     path: &Path,
+    key_path: &Path,
     dimension: usize,
     state: &IndexState,
 ) -> Result<(), VectorIndexError> {
-    let mut file = File::create(path).map_err(|_| VectorIndexError::Storage)?;
-    writeln!(file, "{SNAPSHOT_HEADER_V2}\tdimension\t{dimension}")
+    let plaintext = snapshot_plaintext(dimension, state)?;
+    let key = load_or_create_snapshot_key(key_path)?;
+    let nonce = random_nonce()?;
+    let cipher = XChaCha20Poly1305::new((&key).into());
+    let ciphertext = cipher
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext.as_bytes(),
+                aad: SNAPSHOT_HEADER_ENCRYPTED_V1.as_bytes(),
+            },
+        )
         .map_err(|_| VectorIndexError::Storage)?;
+
+    let mut file = create_private_file(path)?;
+    writeln!(file, "{SNAPSHOT_HEADER_ENCRYPTED_V1}").map_err(|_| VectorIndexError::Storage)?;
+    writeln!(file, "{}", encode_hex(&nonce)).map_err(|_| VectorIndexError::Storage)?;
+    writeln!(file, "{}", encode_hex(&ciphertext)).map_err(|_| VectorIndexError::Storage)?;
+    file.sync_all().map_err(|_| VectorIndexError::Storage)?;
+    Ok(())
+}
+
+fn snapshot_manifest_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(SNAPSHOT_FILE);
+    path.with_file_name(format!("{file_name}.manifest"))
+}
+
+fn validate_snapshot_manifest(
+    snapshot_path: &Path,
+    expected_dimension: Option<usize>,
+) -> Result<(), VectorIndexError> {
+    let manifest_path = snapshot_manifest_path(snapshot_path);
+    let manifest = match fs::read_to_string(&manifest_path) {
+        Ok(manifest) => manifest,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(VectorIndexError::CorruptSnapshot);
+        }
+        Err(_) => return Err(VectorIndexError::Storage),
+    };
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest).map_err(|_| VectorIndexError::CorruptSnapshot)?;
+
+    if manifest
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str)
+        != Some(SNAPSHOT_MANIFEST_SCHEMA_VERSION)
+    {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    if manifest
+        .get("index_schema")
+        .and_then(serde_json::Value::as_str)
+        != Some(VECTOR_INDEX_SCHEMA_VERSION)
+    {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    if manifest
+        .get("search_backend")
+        .and_then(serde_json::Value::as_str)
+        != Some(VECTOR_SEARCH_BACKEND_MANIFEST)
+    {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    if manifest
+        .get("encryption")
+        .and_then(serde_json::Value::as_str)
+        != Some(SNAPSHOT_ENCRYPTION_MANIFEST)
+    {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+
+    let actual_dimension = manifest
+        .get("dimension")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or(VectorIndexError::CorruptSnapshot)?;
+    if actual_dimension == 0 {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    if let Some(expected_dimension) = expected_dimension {
+        validate_manifest_dimension(expected_dimension, actual_dimension)?;
+    }
+
+    Ok(())
+}
+
+fn validate_manifest_dimension(
+    expected_dimension: usize,
+    actual_dimension: usize,
+) -> Result<(), VectorIndexError> {
+    if expected_dimension == actual_dimension {
+        Ok(())
+    } else {
+        Err(VectorIndexError::InvalidDimension {
+            expected: expected_dimension,
+            actual: actual_dimension,
+        })
+    }
+}
+
+fn write_snapshot_manifest(path: &Path, dimension: usize) -> Result<(), VectorIndexError> {
+    let manifest = serde_json::json!({
+        "schema_version": SNAPSHOT_MANIFEST_SCHEMA_VERSION,
+        "index_schema": VECTOR_INDEX_SCHEMA_VERSION,
+        "dimension": dimension,
+        "search_backend": VECTOR_SEARCH_BACKEND_MANIFEST,
+        "encryption": SNAPSHOT_ENCRYPTION_MANIFEST,
+    })
+    .to_string();
+    write_private_file(path, manifest.as_bytes())
+}
+
+fn snapshot_plaintext(dimension: usize, state: &IndexState) -> Result<String, VectorIndexError> {
+    let mut output = String::new();
+    writeln!(
+        output,
+        "{SNAPSHOT_PLAINTEXT_HEADER_V1}\tdimension\t{dimension}"
+    )
+    .map_err(|_| VectorIndexError::Storage)?;
     for vector in state.vectors.values() {
         writeln!(
-            file,
+            output,
             "V\t{}\t{}\t{}\t{}",
             encode_field(vector.vector_id()),
             encode_field(vector.doc_id()),
@@ -622,10 +1326,120 @@ fn write_snapshot(
         .map_err(|_| VectorIndexError::Storage)?;
     }
     for vector_id in &state.deleted {
-        writeln!(file, "D\t{}", encode_field(vector_id)).map_err(|_| VectorIndexError::Storage)?;
+        writeln!(output, "D\t{}", encode_field(vector_id))
+            .map_err(|_| VectorIndexError::Storage)?;
     }
+    Ok(output)
+}
+
+fn load_or_create_snapshot_key(
+    key_path: &Path,
+) -> Result<[u8; SNAPSHOT_KEY_LEN], VectorIndexError> {
+    match read_snapshot_key(key_path) {
+        Ok(key) => Ok(key),
+        Err(VectorIndexError::Storage) if !key_path.exists() => {
+            let key = random_key()?;
+            write_private_file(key_path, encode_hex(&key).as_bytes())?;
+            Ok(key)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn read_snapshot_key(key_path: &Path) -> Result<[u8; SNAPSHOT_KEY_LEN], VectorIndexError> {
+    let value = fs::read_to_string(key_path).map_err(|_| VectorIndexError::Storage)?;
+    decode_fixed_hex::<SNAPSHOT_KEY_LEN>(value.trim())
+}
+
+fn random_key() -> Result<[u8; SNAPSHOT_KEY_LEN], VectorIndexError> {
+    let mut key = [0_u8; SNAPSHOT_KEY_LEN];
+    getrandom::getrandom(&mut key).map_err(|_| VectorIndexError::Storage)?;
+    Ok(key)
+}
+
+fn random_nonce() -> Result<[u8; SNAPSHOT_NONCE_LEN], VectorIndexError> {
+    let mut nonce = [0_u8; SNAPSHOT_NONCE_LEN];
+    getrandom::getrandom(&mut nonce).map_err(|_| VectorIndexError::Storage)?;
+    Ok(nonce)
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), VectorIndexError> {
+    let mut file = create_private_file(path)?;
+    file.write_all(bytes)
+        .map_err(|_| VectorIndexError::Storage)?;
+    file.write_all(b"\n")
+        .map_err(|_| VectorIndexError::Storage)?;
     file.sync_all().map_err(|_| VectorIndexError::Storage)?;
+    restrict_private_file_permissions(path)?;
     Ok(())
+}
+
+fn create_private_file(path: &Path) -> Result<File, VectorIndexError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|_| VectorIndexError::Storage)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let file = options.open(path).map_err(|_| VectorIndexError::Storage)?;
+    restrict_private_file_permissions(path)?;
+    Ok(file)
+}
+
+fn remove_snapshot_file_if_exists(path: &Path) -> Result<(), VectorIndexError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(VectorIndexError::Storage),
+    }
+}
+
+#[cfg(unix)]
+fn restrict_private_file_permissions(path: &Path) -> Result<(), VectorIndexError> {
+    let mut permissions = fs::metadata(path)
+        .map_err(|_| VectorIndexError::Storage)?
+        .permissions();
+    permissions.set_mode(0o600);
+    fs::set_permissions(path, permissions).map_err(|_| VectorIndexError::Storage)
+}
+
+#[cfg(not(unix))]
+fn restrict_private_file_permissions(_path: &Path) -> Result<(), VectorIndexError> {
+    Ok(())
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
+}
+
+fn decode_fixed_hex<const N: usize>(value: &str) -> Result<[u8; N], VectorIndexError> {
+    let bytes = decode_hex(value)?;
+    bytes
+        .try_into()
+        .map_err(|_| VectorIndexError::CorruptSnapshot)
+}
+
+fn decode_hex(value: &str) -> Result<Vec<u8>, VectorIndexError> {
+    if !value.len().is_multiple_of(2) {
+        return Err(VectorIndexError::CorruptSnapshot);
+    }
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    let mut index = 0;
+    while index < value.len() {
+        let byte = u8::from_str_radix(&value[index..index + 2], 16)
+            .map_err(|_| VectorIndexError::CorruptSnapshot)?;
+        bytes.push(byte);
+        index += 2;
+    }
+    Ok(bytes)
 }
 
 fn encode_values(values: &[f32]) -> String {

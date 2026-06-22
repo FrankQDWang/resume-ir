@@ -1,15 +1,16 @@
 use std::fs;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use meta_store::{
     Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
     EntityMentionId, EntityType, FileExtension, ImportRootKind, ImportRootPreset,
     ImportScanBudgetKind, ImportScanError, ImportScanErrorKind, ImportScanErrorOperation,
-    ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
-    IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus, MetaStore,
-    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion, ResumeVersionId,
+    ImportScanErrorSummary, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexState, IndexStateStatus, IngestJob, IngestJobFailureKind, IngestJobId,
+    IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState, OcrPageCacheEntry,
+    OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ResumeVersion, ResumeVersionId,
     ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
 };
 use rusqlite::{params, Connection};
@@ -23,9 +24,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,]
     );
-    assert_eq!(store.schema_version().unwrap(), 14);
+    assert_eq!(store.schema_version().unwrap(), 20);
 
     for table_name in [
         "candidate",
@@ -41,13 +42,137 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "import_scan_error",
         "embedding_job_spec",
         "import_task_cancellation",
+        "query_observation",
+        "candidate_contact_conflict",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 14);
+    assert_eq!(store.schema_version().unwrap(), 20);
+}
+
+#[test]
+fn metadata_encryption_state_reports_plaintext_until_sqlcipher_is_enabled() {
+    let store = migrated_store();
+
+    assert_eq!(
+        store.metadata_encryption_state(),
+        MetadataEncryptionState::Plaintext
+    );
+    assert_eq!(store.metadata_encryption_state().label(), "plaintext");
+}
+
+#[test]
+fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_header() {
+    let db_path = temp_db_path("encrypted-metadata-store");
+    let key = [7_u8; 32];
+    let wrong_key = [8_u8; 32];
+    let document = document(
+        "encrypted-store-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+
+    {
+        let store = MetaStore::open_encrypted(&db_path, &key).unwrap();
+        assert_eq!(
+            store.metadata_encryption_state(),
+            MetadataEncryptionState::SqlCipher
+        );
+        assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
+        store.run_migrations().unwrap();
+        store.upsert_document(&document).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 20);
+    }
+
+    let encrypted_bytes = fs::read(&db_path).unwrap();
+    assert!(!encrypted_bytes.starts_with(b"SQLite format 3"));
+    assert!(!encrypted_bytes
+        .windows(b"encrypted-store-document".len())
+        .any(|window| window == b"encrypted-store-document"));
+
+    let plaintext_open_error = MetaStore::open(&db_path)
+        .and_then(|store| store.schema_version().map(|_| ()))
+        .unwrap_err();
+    assert_redacted_store_error(plaintext_open_error);
+
+    let wrong_key_error = MetaStore::open_encrypted(&db_path, &wrong_key).unwrap_err();
+    assert_redacted_store_error(wrong_key_error);
+
+    let reopened = MetaStore::open_encrypted(&db_path, &key).unwrap();
+    assert_eq!(
+        reopened.metadata_encryption_state(),
+        MetadataEncryptionState::SqlCipher
+    );
+    assert_eq!(
+        reopened.document_by_id(&document.id).unwrap().unwrap().id,
+        document.id
+    );
+
+    remove_temp_db(&db_path);
+}
+
+#[test]
+fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
+    let data_dir = temp_data_dir("plaintext-metadata-migration");
+    let db_path = meta_store::metadata_store_path(&data_dir);
+    let document = document(
+        "plaintext-migration-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let mut version = resume_version("plaintext-migration-version", document.id.clone());
+    version.clean_text = Some("SYNTHETIC PLAINTEXT MIGRATION CLEAN TEXT".to_string());
+
+    {
+        let plaintext = MetaStore::open(&db_path).unwrap();
+        plaintext.run_migrations().unwrap();
+        plaintext.upsert_document(&document).unwrap();
+        plaintext.upsert_resume_version(&version).unwrap();
+        assert_eq!(plaintext.schema_version().unwrap(), 20);
+        assert_eq!(
+            plaintext.metadata_encryption_state(),
+            MetadataEncryptionState::Plaintext
+        );
+    }
+
+    let plaintext_bytes = fs::read(&db_path).unwrap();
+    assert!(plaintext_bytes.starts_with(b"SQLite format 3"));
+
+    let migrated = MetaStore::open_data_dir(&data_dir).unwrap();
+    assert_eq!(
+        migrated.metadata_encryption_state(),
+        MetadataEncryptionState::SqlCipher
+    );
+    assert_eq!(migrated.schema_version().unwrap(), 20);
+    assert_eq!(
+        migrated.document_by_id(&document.id).unwrap().unwrap().id,
+        document.id
+    );
+    assert_eq!(
+        migrated
+            .resume_version_by_id(&version.id)
+            .unwrap()
+            .unwrap()
+            .clean_text,
+        version.clean_text
+    );
+
+    let encrypted_bytes = fs::read(&db_path).unwrap();
+    assert!(!encrypted_bytes.starts_with(b"SQLite format 3"));
+    assert!(!encrypted_bytes
+        .windows(b"PLAINTEXT MIGRATION".len())
+        .any(|window| window == b"PLAINTEXT MIGRATION"));
+    assert!(meta_store::metadata_encryption_key_path(&data_dir).exists());
+
+    let plaintext_open_error = MetaStore::open(&db_path)
+        .and_then(|store| store.schema_version().map(|_| ()))
+        .unwrap_err();
+    assert_redacted_store_error(plaintext_open_error);
+
+    remove_temp_dir(&data_dir);
 }
 
 #[test]
@@ -295,6 +420,21 @@ fn import_scan_errors_replace_and_query_without_exposing_path_digest() {
         first_errors
     );
     assert_eq!(store.status_summary().unwrap().import_scan_errors, 2);
+    assert_eq!(
+        store.import_scan_error_breakdown().unwrap(),
+        vec![
+            ImportScanErrorSummary {
+                kind: ImportScanErrorKind::PermissionDenied,
+                operation: ImportScanErrorOperation::ReadDirectory,
+                count: 1,
+            },
+            ImportScanErrorSummary {
+                kind: ImportScanErrorKind::LockedOrUnreadable,
+                operation: ImportScanErrorOperation::Fingerprint,
+                count: 1,
+            },
+        ]
+    );
 
     let debug = format!(
         "{:?}",
@@ -312,6 +452,14 @@ fn import_scan_errors_replace_and_query_without_exposing_path_digest() {
         replacement
     );
     assert_eq!(store.status_summary().unwrap().import_scan_errors, 1);
+    assert_eq!(
+        store.import_scan_error_breakdown().unwrap(),
+        vec![ImportScanErrorSummary {
+            kind: ImportScanErrorKind::Io,
+            operation: ImportScanErrorOperation::NormalizePath,
+            count: 1,
+        }]
+    );
 }
 
 #[test]
@@ -359,6 +507,136 @@ fn candidates_persist_and_are_found_only_by_hashed_contact_material() {
     assert!(!debug.contains(phone_hash.as_str()));
     assert!(!debug.contains("Synthetic Candidate"));
     assert!(!debug.contains("synthetic-key"));
+}
+
+#[test]
+fn searchable_document_ids_with_contact_hashes_matches_visible_versions_only() {
+    let store = migrated_store();
+    let email_hash = contact_hash('a');
+    let phone_hash = contact_hash('b');
+    let deleted_hash = contact_hash('c');
+    let hidden_hash = contact_hash('d');
+    let failed_hash = contact_hash('e');
+    let other_hash = contact_hash('f');
+    let visible_doc = document("contact-visible", false, DocumentStatus::Searchable);
+    let visible_version = resume_version("contact-visible-version", visible_doc.id.clone());
+    let deleted_doc = document("contact-deleted", true, DocumentStatus::Searchable);
+    let deleted_version = resume_version("contact-deleted-version", deleted_doc.id.clone());
+    let hidden_doc = document("contact-hidden", false, DocumentStatus::Searchable);
+    let mut hidden_version = resume_version("contact-hidden-version", hidden_doc.id.clone());
+    hidden_version.visibility = ResumeVisibility::Hidden;
+    let partial_doc = document("contact-partial", false, DocumentStatus::IndexedPartial);
+    let partial_version = resume_version("contact-partial-version", partial_doc.id.clone());
+    let failed_doc = document("contact-failed", false, DocumentStatus::FailedPermanent);
+    let failed_version = resume_version("contact-failed-version", failed_doc.id.clone());
+
+    for document in [
+        visible_doc.clone(),
+        deleted_doc.clone(),
+        hidden_doc.clone(),
+        partial_doc.clone(),
+        failed_doc.clone(),
+    ] {
+        store.upsert_document(&document).unwrap();
+    }
+    for version in [
+        visible_version.clone(),
+        deleted_version.clone(),
+        hidden_version.clone(),
+        partial_version.clone(),
+        failed_version.clone(),
+    ] {
+        store.upsert_resume_version(&version).unwrap();
+    }
+
+    let visible_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["contact-visible-candidate"]),
+        primary_name: None,
+        phone_hash: None,
+        email_hash: Some(email_hash.clone()),
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let partial_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["contact-partial-candidate"]),
+        primary_name: None,
+        phone_hash: Some(phone_hash.clone()),
+        email_hash: None,
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let deleted_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["contact-deleted-candidate"]),
+        primary_name: None,
+        phone_hash: None,
+        email_hash: Some(deleted_hash.clone()),
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let hidden_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["contact-hidden-candidate"]),
+        primary_name: None,
+        phone_hash: Some(hidden_hash.clone()),
+        email_hash: None,
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let failed_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["contact-failed-candidate"]),
+        primary_name: None,
+        phone_hash: Some(failed_hash.clone()),
+        email_hash: None,
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    for candidate in [
+        visible_candidate.clone(),
+        partial_candidate.clone(),
+        deleted_candidate.clone(),
+        hidden_candidate.clone(),
+        failed_candidate.clone(),
+    ] {
+        store.upsert_candidate(&candidate).unwrap();
+    }
+    store
+        .assign_candidate_to_version(&visible_version.id, &visible_candidate.id)
+        .unwrap();
+    store
+        .assign_candidate_to_version(&partial_version.id, &partial_candidate.id)
+        .unwrap();
+    store
+        .assign_candidate_to_version(&deleted_version.id, &deleted_candidate.id)
+        .unwrap();
+    store
+        .assign_candidate_to_version(&hidden_version.id, &hidden_candidate.id)
+        .unwrap();
+    store
+        .assign_candidate_to_version(&failed_version.id, &failed_candidate.id)
+        .unwrap();
+
+    let matches = store
+        .searchable_document_ids_with_contact_hashes(&[
+            email_hash,
+            phone_hash.clone(),
+            deleted_hash,
+            hidden_hash,
+            failed_hash,
+            other_hash,
+        ])
+        .unwrap();
+    let mut expected = vec![visible_doc.id, partial_doc.id.clone()];
+    expected.sort();
+    assert_eq!(matches, expected);
+
+    let phone_matches = store
+        .searchable_document_ids_with_contact_hashes(&[phone_hash])
+        .unwrap();
+    assert_eq!(phone_matches, vec![partial_doc.id]);
 }
 
 #[test]
@@ -454,6 +732,75 @@ fn hashed_contact_assignment_reuses_candidate_and_updates_version_count() {
 }
 
 #[test]
+fn contact_hash_assignment_records_conflict_without_hash_or_contact_leakage() {
+    let store = migrated_store();
+    let email_hash = contact_hash('8');
+    let phone_hash = contact_hash('9');
+    let email_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["s181", "email-candidate"]),
+        primary_name: None,
+        phone_hash: None,
+        email_hash: Some(email_hash.clone()),
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let phone_candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["s181", "phone-candidate"]),
+        primary_name: None,
+        phone_hash: Some(phone_hash.clone()),
+        email_hash: None,
+        dedupe_key: None,
+        merge_confidence: Some(1.0),
+        version_count: 0,
+    };
+    let document = document(
+        "candidate-contact-conflict-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let version = resume_version("candidate-contact-conflict-version", document.id.clone());
+
+    store.upsert_candidate(&email_candidate).unwrap();
+    store.upsert_candidate(&phone_candidate).unwrap();
+    store.upsert_document(&document).unwrap();
+    store.upsert_resume_version(&version).unwrap();
+
+    assert_eq!(
+        store
+            .assign_candidate_from_hashed_contacts(
+                &version.id,
+                Some(&email_hash),
+                Some(&phone_hash)
+            )
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .resume_version_by_id(&version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        None
+    );
+
+    let conflicts = store.candidate_contact_conflicts().unwrap();
+    assert_eq!(conflicts.len(), 1);
+    let conflict = &conflicts[0];
+    assert_eq!(conflict.resume_version_id, version.id);
+    assert_eq!(conflict.email_candidate_id, email_candidate.id);
+    assert_eq!(conflict.phone_candidate_id, phone_candidate.id);
+    assert_eq!(conflict.updated_at, UnixTimestamp::from_unix_seconds(0));
+
+    let debug = format!("{conflict:?}");
+    assert!(!debug.contains(email_hash.as_str()));
+    assert!(!debug.contains(phone_hash.as_str()));
+    assert!(!debug.contains("candidate@example"));
+    assert!(!debug.contains("+14155550100"));
+}
+
+#[test]
 fn explicit_candidate_assignment_requires_existing_candidate() {
     let store = migrated_store();
     let document = document(
@@ -495,6 +842,86 @@ fn explicit_candidate_assignment_requires_existing_candidate() {
             .unwrap()
             .candidate_id,
         Some(candidate.id)
+    );
+}
+
+#[test]
+fn unassign_candidate_versions_clears_assignments_and_refreshes_count() {
+    let store = migrated_store();
+    let first_document = document(
+        "candidate-unassign-first-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let second_document = document(
+        "candidate-unassign-second-document",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let first_version = resume_version(
+        "candidate-unassign-first-version",
+        first_document.id.clone(),
+    );
+    let second_version = resume_version(
+        "candidate-unassign-second-version",
+        second_document.id.clone(),
+    );
+    let candidate = Candidate {
+        id: CandidateId::from_non_secret_parts(&["s178", "candidate-unassign"]),
+        primary_name: None,
+        phone_hash: None,
+        email_hash: None,
+        dedupe_key: Some("candidate-review-manual-v1".to_string()),
+        merge_confidence: Some(0.91),
+        version_count: 0,
+    };
+
+    store.upsert_document(&first_document).unwrap();
+    store.upsert_document(&second_document).unwrap();
+    store.upsert_resume_version(&first_version).unwrap();
+    store.upsert_resume_version(&second_version).unwrap();
+    store.upsert_candidate(&candidate).unwrap();
+    store
+        .assign_candidate_to_version(&first_version.id, &candidate.id)
+        .unwrap();
+    store
+        .assign_candidate_to_version(&second_version.id, &candidate.id)
+        .unwrap();
+    assert_eq!(
+        store
+            .candidate_by_id(&candidate.id)
+            .unwrap()
+            .unwrap()
+            .version_count,
+        2
+    );
+
+    let unassigned = store.unassign_candidate_versions(&candidate.id).unwrap();
+
+    assert_eq!(unassigned, 2);
+    assert_eq!(
+        store
+            .candidate_by_id(&candidate.id)
+            .unwrap()
+            .unwrap()
+            .version_count,
+        0
+    );
+    assert_eq!(
+        store
+            .resume_version_by_id(&first_version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        None
+    );
+    assert_eq!(
+        store
+            .resume_version_by_id(&second_version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        None
     );
 }
 
@@ -756,6 +1183,65 @@ fn retryable_queue_excludes_live_running_jobs() {
 }
 
 #[test]
+fn stale_running_ingest_jobs_are_recovered_to_interrupted_for_retry() {
+    let store = migrated_store();
+    let document = document(
+        "stale-ingest-recovery-document-placeholder",
+        false,
+        DocumentStatus::OcrRequired,
+    );
+    store.upsert_document(&document).unwrap();
+    let stale_started = UnixTimestamp::from_unix_seconds(1_800_000_010);
+    let fresh_started = UnixTimestamp::from_unix_seconds(1_800_000_090);
+    let recover_at = UnixTimestamp::from_unix_seconds(1_800_000_120);
+    let stale_before = UnixTimestamp::from_unix_seconds(1_800_000_060);
+    let claim_at = UnixTimestamp::from_unix_seconds(1_800_000_130);
+
+    let stale = job(
+        "stale-running-ingest-placeholder",
+        &document.id,
+        IngestJobStatus::Running,
+        1,
+        3,
+    )
+    .started_at(stale_started)
+    .updated_at(stale_started);
+    let fresh = job(
+        "fresh-running-ingest-placeholder",
+        &document.id,
+        IngestJobStatus::Running,
+        1,
+        3,
+    )
+    .started_at(fresh_started)
+    .updated_at(fresh_started);
+    store.insert_ingest_job(&stale).unwrap();
+    store.insert_ingest_job(&fresh).unwrap();
+
+    let recovered = store
+        .recover_stale_running_ingest_jobs(recover_at, stale_before)
+        .unwrap();
+    assert_eq!(recovered, 1);
+
+    let recovered_job = store.ingest_job_by_id(&stale.id).unwrap().unwrap();
+    assert_eq!(recovered_job.status, IngestJobStatus::Interrupted);
+    assert_eq!(recovered_job.started_at, Some(stale_started));
+    assert_eq!(recovered_job.updated_at, recover_at);
+    assert_eq!(recovered_job.attempt_count, 1);
+    assert_eq!(
+        store.ingest_job_by_id(&fresh.id).unwrap().unwrap().status,
+        IngestJobStatus::Running
+    );
+
+    let claimed = store.claim_next_job(claim_at).unwrap().unwrap();
+    assert_eq!(claimed.id, stale.id);
+    assert_eq!(claimed.status, IngestJobStatus::Running);
+    assert_eq!(claimed.attempt_count, 2);
+    assert_eq!(claimed.started_at, Some(claim_at));
+    assert_eq!(store.claim_next_job(claim_at).unwrap(), None);
+}
+
+#[test]
 fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
     let store = migrated_store();
     let document = document(
@@ -987,6 +1473,65 @@ fn embedding_update_jobs_are_scoped_by_model_and_dimension() {
 }
 
 #[test]
+fn completed_embedding_update_jobs_can_be_requeued_for_vector_snapshot_rebuild() {
+    let store = migrated_store();
+    let document = document(
+        "embedding-rebuild-document-placeholder",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let version = resume_version("embedding-rebuild-version-placeholder", document.id.clone());
+    let queued_at = UnixTimestamp::from_unix_seconds(1_800_000_760);
+    let claim_at = UnixTimestamp::from_unix_seconds(1_800_000_770);
+    let complete_at = UnixTimestamp::from_unix_seconds(1_800_000_780);
+    let requeue_at = UnixTimestamp::from_unix_seconds(1_800_000_790);
+    let reclaim_at = UnixTimestamp::from_unix_seconds(1_800_000_800);
+
+    store.upsert_document(&document).unwrap();
+    store.upsert_resume_version(&version).unwrap();
+    let enqueued = store
+        .enqueue_embedding_job_for_resume_version(
+            &document.id,
+            &version.id,
+            "fixture-local-model",
+            4,
+            queued_at,
+        )
+        .unwrap();
+    let claimed = store
+        .claim_next_embedding_job("fixture-local-model", 4, claim_at)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, enqueued.job.id);
+    store
+        .update_job_status(&claimed.id, IngestJobStatus::Completed, complete_at)
+        .unwrap();
+
+    let requeued = store
+        .requeue_completed_embedding_jobs_for_model("fixture-local-model", 4, requeue_at)
+        .unwrap();
+    assert_eq!(requeued, 1);
+    assert_eq!(
+        store
+            .requeue_completed_embedding_jobs_for_model("other-model", 4, requeue_at)
+            .unwrap(),
+        0
+    );
+    let job = store.ingest_job_by_id(&claimed.id).unwrap().unwrap();
+    assert_eq!(job.status, IngestJobStatus::Queued);
+    assert_eq!(job.attempt_count, 0);
+    assert_eq!(store.status_summary().unwrap().embedding_queue_depth, 1);
+
+    let reclaimed = store
+        .claim_next_embedding_job("fixture-local-model", 4, reclaim_at)
+        .unwrap()
+        .unwrap();
+    assert_eq!(reclaimed.id, claimed.id);
+    assert_eq!(reclaimed.status, IngestJobStatus::Running);
+    assert_eq!(reclaimed.attempt_count, 1);
+}
+
+#[test]
 fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
     let store = migrated_store();
     let key = OcrPageCacheKey::new(
@@ -1041,6 +1586,45 @@ fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
 }
 
 #[test]
+fn ocr_page_cache_persists_word_boxes_without_debug_payload_leak() {
+    let store = migrated_store();
+    let key =
+        OcrPageCacheKey::new("synthetic-bbox-content-hash", 1, 300, "eng", "balanced").unwrap();
+    let word_boxes = vec![
+        OcrWordBox::new("SecretName", 12, 34, 56, 18, 0.92).unwrap(),
+        OcrWordBox::new("Rust", 72, 34, 40, 18, 0.88).unwrap(),
+    ];
+    let success = OcrPageCacheEntry::succeeded_with_word_boxes(
+        key.clone(),
+        "SecretName Rust",
+        0.90,
+        "fixture-tesseract",
+        33,
+        word_boxes.clone(),
+        UnixTimestamp::from_unix_seconds(1_800_000_810),
+    )
+    .unwrap();
+
+    store.upsert_ocr_page_cache_entry(&success).unwrap();
+
+    let loaded = store
+        .ocr_page_cache_entry(&key)
+        .unwrap()
+        .expect("ocr cache entry");
+    assert_eq!(loaded.word_boxes(), word_boxes.as_slice());
+    assert_eq!(loaded.word_boxes()[0].text(), "SecretName");
+    assert_eq!(loaded.word_boxes()[0].left(), 12);
+    assert_eq!(loaded.word_boxes()[0].top(), 34);
+    assert_eq!(loaded.word_boxes()[0].width(), 56);
+    assert_eq!(loaded.word_boxes()[0].height(), 18);
+    assert_eq!(loaded.word_boxes()[0].confidence(), 0.92);
+
+    let debug = format!("{loaded:?} {:?}", loaded.word_boxes());
+    assert!(!debug.contains("SecretName"));
+    assert!(!debug.contains("synthetic-bbox-content-hash"));
+}
+
+#[test]
 fn ocr_page_cache_rejects_invalid_keys_and_confidence() {
     assert!(OcrPageCacheKey::new("", 1, 300, "eng", "balanced").is_err());
     assert!(OcrPageCacheKey::new("hash", 0, 300, "eng", "balanced").is_err());
@@ -1054,6 +1638,9 @@ fn ocr_page_cache_rejects_invalid_keys_and_confidence() {
         UnixTimestamp::from_unix_seconds(1_800_000_802),
     )
     .is_err());
+    assert!(OcrWordBox::new("", 1, 1, 1, 1, 0.5).is_err());
+    assert!(OcrWordBox::new("word", 1, 1, 0, 1, 0.5).is_err());
+    assert!(OcrWordBox::new("word", 1, 1, 1, 1, 1.5).is_err());
 }
 
 #[test]
@@ -1115,6 +1702,248 @@ fn entity_mentions_replace_query_and_redact_values() {
 }
 
 #[test]
+fn entity_mentions_accept_major_values_for_searchable_prefilter() {
+    let store = migrated_store();
+    let target_document = document("major-target-document", false, DocumentStatus::Searchable);
+    let target_version = resume_version("major-target-version", target_document.id.clone());
+    let decoy_document = document("major-decoy-document", false, DocumentStatus::Searchable);
+    let decoy_version = resume_version("major-decoy-version", decoy_document.id.clone());
+    store.upsert_document(&target_document).unwrap();
+    store.upsert_resume_version(&target_version).unwrap();
+    store.upsert_document(&decoy_document).unwrap();
+    store.upsert_resume_version(&decoy_version).unwrap();
+
+    let target_major = entity_mention(
+        "major-target",
+        &target_version.id,
+        EntityType::Major,
+        "Computer Science",
+        Some("computer_science"),
+        20..36,
+        0.92,
+    );
+    let decoy_major = entity_mention(
+        "major-decoy",
+        &decoy_version.id,
+        EntityType::Major,
+        "Economics",
+        Some("economics"),
+        20..29,
+        0.92,
+    );
+    store
+        .replace_entity_mentions(&target_version.id, &[target_major])
+        .unwrap();
+    store
+        .replace_entity_mentions(&decoy_version.id, &[decoy_major])
+        .unwrap();
+
+    let mentions = store
+        .entity_mentions_for_version(&target_version.id)
+        .unwrap();
+    assert_eq!(mentions[0].entity_type, EntityType::Major);
+    assert_eq!(
+        mentions[0].normalized_value.as_deref(),
+        Some("computer_science")
+    );
+    assert!(!format!("{:?}", mentions[0]).contains("Computer Science"));
+
+    let document_ids = store
+        .searchable_document_ids_with_entity_values(
+            EntityType::Major,
+            &["computer_science".to_string()],
+            0.75,
+            true,
+        )
+        .unwrap();
+    assert_eq!(document_ids, vec![target_document.id]);
+}
+
+#[test]
+fn searchable_document_ids_without_entity_type_matches_visible_versions_only() {
+    let store = migrated_store();
+    let no_tier_document = document("without-school-tier", false, DocumentStatus::Searchable);
+    let known_tier_document = document("with-school-tier", false, DocumentStatus::Searchable);
+    let low_confidence_document = document(
+        "low-confidence-school-tier",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let hidden_version_document = document(
+        "hidden-school-tier-version",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let discovered_document =
+        document("discovered-without-tier", false, DocumentStatus::Discovered);
+    let deleted_document = document("deleted-without-tier", true, DocumentStatus::Deleted);
+    for document in [
+        &no_tier_document,
+        &known_tier_document,
+        &low_confidence_document,
+        &hidden_version_document,
+        &discovered_document,
+        &deleted_document,
+    ] {
+        store.upsert_document(document).unwrap();
+    }
+
+    let no_tier_version =
+        resume_version("without-school-tier-version", no_tier_document.id.clone());
+    let known_tier_version =
+        resume_version("with-school-tier-version", known_tier_document.id.clone());
+    let low_confidence_version = resume_version(
+        "low-confidence-school-tier-version",
+        low_confidence_document.id.clone(),
+    );
+    let mut hidden_version = resume_version(
+        "hidden-school-tier-version",
+        hidden_version_document.id.clone(),
+    );
+    hidden_version.visibility = ResumeVisibility::Hidden;
+    let discovered_version = resume_version(
+        "discovered-without-tier-version",
+        discovered_document.id.clone(),
+    );
+    let deleted_version =
+        resume_version("deleted-without-tier-version", deleted_document.id.clone());
+    for version in [
+        &no_tier_version,
+        &known_tier_version,
+        &low_confidence_version,
+        &hidden_version,
+        &discovered_version,
+        &deleted_version,
+    ] {
+        store.upsert_resume_version(version).unwrap();
+    }
+
+    let known_tier = entity_mention(
+        "known-school-tier",
+        &known_tier_version.id,
+        EntityType::SchoolTier,
+        "985",
+        Some("985"),
+        10..13,
+        0.95,
+    );
+    store
+        .replace_entity_mentions(&known_tier_version.id, &[known_tier])
+        .unwrap();
+    let low_confidence_tier = entity_mention(
+        "low-confidence-school-tier",
+        &low_confidence_version.id,
+        EntityType::SchoolTier,
+        "985",
+        Some("985"),
+        10..13,
+        0.40,
+    );
+    store
+        .replace_entity_mentions(&low_confidence_version.id, &[low_confidence_tier])
+        .unwrap();
+
+    let document_ids = store
+        .searchable_document_ids_without_entity_type(EntityType::SchoolTier, 0.75)
+        .unwrap();
+
+    assert_eq!(
+        document_ids,
+        vec![low_confidence_document.id, no_tier_document.id]
+    );
+}
+
+#[test]
+fn searchable_document_ids_with_date_range_overlap_matches_visible_versions_only() {
+    let store = migrated_store();
+    let overlapping_document = document("date-range-overlap", false, DocumentStatus::Searchable);
+    let open_ended_document = document("date-range-open-ended", false, DocumentStatus::Searchable);
+    let before_document = document("date-range-before", false, DocumentStatus::Searchable);
+    let low_confidence_document = document(
+        "date-range-low-confidence",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let hidden_version_document = document(
+        "date-range-hidden-version",
+        false,
+        DocumentStatus::Searchable,
+    );
+    let deleted_document = document("date-range-deleted", true, DocumentStatus::Deleted);
+    for document in [
+        &overlapping_document,
+        &open_ended_document,
+        &before_document,
+        &low_confidence_document,
+        &hidden_version_document,
+        &deleted_document,
+    ] {
+        store.upsert_document(document).unwrap();
+    }
+
+    let overlapping_version = resume_version(
+        "date-range-overlap-version",
+        overlapping_document.id.clone(),
+    );
+    let open_ended_version = resume_version(
+        "date-range-open-ended-version",
+        open_ended_document.id.clone(),
+    );
+    let before_version = resume_version("date-range-before-version", before_document.id.clone());
+    let low_confidence_version = resume_version(
+        "date-range-low-confidence-version",
+        low_confidence_document.id.clone(),
+    );
+    let mut hidden_version = resume_version(
+        "date-range-hidden-version",
+        hidden_version_document.id.clone(),
+    );
+    hidden_version.visibility = ResumeVisibility::Hidden;
+    let deleted_version = resume_version("date-range-deleted-version", deleted_document.id.clone());
+    for version in [
+        &overlapping_version,
+        &open_ended_version,
+        &before_version,
+        &low_confidence_version,
+        &hidden_version,
+        &deleted_version,
+    ] {
+        store.upsert_resume_version(version).unwrap();
+    }
+
+    for (version, normalized_value, confidence) in [
+        (&overlapping_version, "2020-03/2022-06", 0.95),
+        (&open_ended_version, "2020-03/PRESENT", 0.95),
+        (&before_version, "2017-01/2018-12", 0.95),
+        (&low_confidence_version, "2020-03/2022-06", 0.40),
+        (&hidden_version, "2020-03/2022-06", 0.95),
+        (&deleted_version, "2020-03/2022-06", 0.95),
+    ] {
+        let mention = entity_mention(
+            normalized_value,
+            &version.id,
+            EntityType::DateRange,
+            normalized_value,
+            Some(normalized_value),
+            10..27,
+            confidence,
+        );
+        store
+            .replace_entity_mentions(&version.id, &[mention])
+            .unwrap();
+    }
+
+    let document_ids = store
+        .searchable_document_ids_with_date_range_overlap(2021 * 12 + 1, Some(2021 * 12 + 12), 0.75)
+        .unwrap();
+
+    assert_eq!(
+        document_ids,
+        vec![open_ended_document.id, overlapping_document.id]
+    );
+}
+
+#[test]
 fn contact_entity_mentions_do_not_persist_contact_values() {
     let db_path = temp_db_path("private-contact-mention");
     let store = MetaStore::open(&db_path).unwrap();
@@ -1146,6 +1975,15 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
         42..56,
         0.98,
     );
+    let wechat = entity_mention(
+        "private-wechat",
+        &version.id,
+        EntityType::WeChat,
+        "Candidate_2026",
+        Some("candidate_2026"),
+        57..71,
+        0.97,
+    );
     let skill = entity_mention(
         "private-skill",
         &version.id,
@@ -1157,7 +1995,7 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     );
 
     store
-        .replace_entity_mentions(&version.id, &[email, phone, skill.clone()])
+        .replace_entity_mentions(&version.id, &[email, phone, wechat, skill.clone()])
         .unwrap();
 
     let mentions = store.entity_mentions_for_version(&version.id).unwrap();
@@ -1183,6 +2021,17 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     assert_eq!(phone.confidence, 0.98);
     assert_eq!(phone.extractor, "rules-v1");
 
+    let wechat = mentions
+        .iter()
+        .find(|mention| mention.entity_type == EntityType::WeChat)
+        .expect("wechat mention");
+    assert_eq!(wechat.raw_value, "<redacted:wechat>");
+    assert_eq!(wechat.normalized_value, None);
+    assert_eq!(wechat.span_start, Some(57));
+    assert_eq!(wechat.span_end, Some(71));
+    assert_eq!(wechat.confidence, 0.97);
+    assert_eq!(wechat.extractor, "rules-v1");
+
     assert!(mentions.iter().any(|mention| mention == &skill));
     let joined = mentions
         .iter()
@@ -1193,15 +2042,20 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     assert!(!joined.contains("sensitive.candidate@example.test"));
     assert!(!joined.contains("415"));
     assert!(!joined.contains("+14155550132"));
+    assert!(!joined.contains("Candidate_2026"));
+    assert!(!joined.contains("candidate_2026"));
 
     let raw_connection = open_raw_connection(&db_path);
     let raw_dump = raw_entity_mention_value_dump(&raw_connection);
     assert!(raw_dump.contains("<redacted:email>"));
     assert!(raw_dump.contains("<redacted:phone>"));
+    assert!(raw_dump.contains("<redacted:wechat>"));
     assert!(!raw_dump.contains("Sensitive.Candidate"));
     assert!(!raw_dump.contains("sensitive.candidate@example.test"));
     assert!(!raw_dump.contains("415"));
     assert!(!raw_dump.contains("+14155550132"));
+    assert!(!raw_dump.contains("Candidate_2026"));
+    assert!(!raw_dump.contains("candidate_2026"));
 
     remove_temp_db(&db_path);
 }
@@ -1253,7 +2107,10 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
     {
         let connection = open_raw_connection(&db_path);
         connection
-            .execute("DELETE FROM schema_migrations WHERE version IN (6, 7)", [])
+            .execute(
+                "DELETE FROM schema_migrations WHERE version IN (6, 7, 15)",
+                [],
+            )
             .unwrap();
         connection
             .execute("DROP TABLE IF EXISTS ocr_page_cache", [])
@@ -1297,8 +2154,8 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[6, 7]);
-        assert_eq!(reopened.schema_version().unwrap(), 14);
+        assert_eq!(report.applied_versions(), &[6, 7, 15]);
+        assert_eq!(reopened.schema_version().unwrap(), 20);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -1514,7 +2371,7 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
         partial,
         failed_retryable,
         failed_permanent,
-        ocr_required,
+        ocr_required.clone(),
         embedding_waiting.clone(),
         deleted,
     ] {
@@ -1531,6 +2388,29 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
             4,
             now,
         )
+        .unwrap();
+    let mut ocr_language_job = job(
+        "status-ocr-language-placeholder",
+        &ocr_required.id,
+        IngestJobStatus::FailedRetryable,
+        1,
+        3,
+    );
+    ocr_language_job.kind = IngestJobKind::OcrDocument;
+    store.insert_ingest_job(&ocr_language_job).unwrap();
+    let ocr_language_cache_key = OcrPageCacheKey::new(
+        ocr_required.content_hash.clone().unwrap(),
+        1,
+        300,
+        "eng+chi_sim",
+        "balanced",
+    )
+    .unwrap();
+    let ocr_language_cache_entry =
+        OcrPageCacheEntry::failed_retryable(ocr_language_cache_key, "LanguageUnavailable", now)
+            .unwrap();
+    store
+        .upsert_ocr_page_cache_entry(&ocr_language_cache_entry)
         .unwrap();
 
     let running = job(
@@ -1574,11 +2454,87 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
     assert_eq!(summary.failed_permanent, 1);
     assert_eq!(summary.ocr_queue_depth, 1);
     assert_eq!(summary.embedding_queue_depth, 1);
-    assert_eq!(summary.recovery_queue_depth, 1);
+    assert_eq!(summary.recovery_queue_depth, 2);
     assert_eq!(summary.import_tasks_queued, 1);
     assert_eq!(summary.import_tasks_recoverable, 0);
+    assert_eq!(summary.ocr_jobs_queued, 1);
+    assert_eq!(summary.ocr_language_unavailable, 1);
     assert_eq!(summary.index_health, IndexStateStatus::Building);
     assert_eq!(summary.last_snapshot_id.as_deref(), Some("snapshot-v1"));
+}
+
+#[test]
+fn query_observations_are_aggregated_without_query_text() {
+    let store = migrated_store();
+    let now = UnixTimestamp::from_unix_seconds(1_800_010_000);
+
+    for (offset, duration_ms, result_count) in [(0, 5, 2), (1, 20, 1), (2, 100, 0), (3, 200, 4)] {
+        store
+            .record_query_observation(
+                "fulltext",
+                Duration::from_millis(duration_ms),
+                result_count,
+                UnixTimestamp::from_unix_seconds(now.as_unix_seconds() + offset),
+            )
+            .unwrap();
+    }
+
+    let summary = store.status_summary().unwrap();
+
+    assert_eq!(summary.query_latency.sample_count, 4);
+    assert_eq!(summary.query_latency.p50_ms, Some(20));
+    assert_eq!(summary.query_latency.p95_ms, Some(200));
+    assert_eq!(summary.query_latency.p99_ms, Some(200));
+    assert_eq!(summary.query_latency.last_result_count, Some(4));
+    assert_eq!(
+        summary.query_latency.last_observed_at,
+        Some(UnixTimestamp::from_unix_seconds(1_800_010_003))
+    );
+    assert!(store
+        .record_query_observation("private query text", Duration::from_millis(1), 0, now,)
+        .is_err());
+}
+
+#[test]
+fn ocr_job_failure_kind_persists_reports_and_clears_on_retry_claim() {
+    let store = migrated_store();
+    let now = UnixTimestamp::from_unix_seconds(1_800_010_000);
+    let document = document(
+        "ocr-page-budget-document-placeholder",
+        false,
+        DocumentStatus::OcrRequired,
+    );
+    let mut job = job(
+        "ocr-page-budget-job-placeholder",
+        &document.id,
+        IngestJobStatus::FailedRetryable,
+        1,
+        3,
+    )
+    .finished_at(now);
+    job.kind = IngestJobKind::OcrDocument;
+    job.failure_kind = Some(IngestJobFailureKind::OcrPageBudgetExceeded);
+
+    store.upsert_document(&document).unwrap();
+    store.insert_ingest_job(&job).unwrap();
+
+    let persisted = store.ingest_job_by_id(&job.id).unwrap().unwrap();
+    assert_eq!(
+        persisted.failure_kind,
+        Some(IngestJobFailureKind::OcrPageBudgetExceeded)
+    );
+    assert_eq!(store.status_summary().unwrap().ocr_page_budget_blocked, 1);
+
+    let claimed = store
+        .claim_next_job_by_kind(
+            IngestJobKind::OcrDocument,
+            UnixTimestamp::from_unix_seconds(1_800_010_050),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.status, IngestJobStatus::Running);
+    assert_eq!(claimed.failure_kind, None);
+    assert_eq!(store.status_summary().unwrap().ocr_page_budget_blocked, 0);
 }
 
 #[test]
@@ -1603,12 +2559,94 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 14);
+        assert_eq!(reopened.schema_version().unwrap(), 20);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
 
     remove_temp_db(&db_path);
+}
+
+#[test]
+fn purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_documents() {
+    let store = migrated_store();
+    let root_path = "synthetic/import/root";
+    let mut first_document = document("purge-import-root-first", false, DocumentStatus::Searchable);
+    let mut second_document = document(
+        "purge-import-root-second",
+        false,
+        DocumentStatus::Searchable,
+    );
+    first_document.normalized_path = format!("{root_path}/first.pdf");
+    second_document.normalized_path = format!("{root_path}/second.pdf");
+    let task = import_task(
+        "purge-import-root-task",
+        root_path,
+        ImportTaskStatus::Queued,
+    );
+
+    store.upsert_document(&first_document).unwrap();
+    store.upsert_document(&second_document).unwrap();
+    store.insert_import_task(&task).unwrap();
+    store
+        .mark_document_deleted(
+            &first_document.id,
+            UnixTimestamp::from_unix_seconds(1_800_014_010),
+        )
+        .unwrap();
+
+    let retained = store
+        .purge_import_tasks_for_deleted_document_roots(std::slice::from_ref(&first_document.id))
+        .unwrap();
+
+    assert_eq!(retained.tasks(), 0);
+    assert!(store.import_task_by_id(&task.id).unwrap().is_some());
+
+    store
+        .mark_document_deleted(
+            &second_document.id,
+            UnixTimestamp::from_unix_seconds(1_800_014_020),
+        )
+        .unwrap();
+    let purged = store
+        .purge_import_tasks_for_deleted_document_roots(&[first_document.id, second_document.id])
+        .unwrap();
+
+    assert_eq!(purged.tasks(), 1);
+    assert!(store.import_task_by_id(&task.id).unwrap().is_none());
+}
+
+#[test]
+fn purge_import_tasks_matches_windows_canonical_root_to_normalized_document_path() {
+    let store = migrated_store();
+    let mut document = document(
+        "purge-import-root-windows",
+        false,
+        DocumentStatus::Searchable,
+    );
+    document.source_uri = "file://c:/Synthetic/Import Root/resume.docx".to_string();
+    document.normalized_path = "c:/Synthetic/Import Root/resume.docx".to_string();
+    let task = import_task(
+        "purge-import-root-windows-task",
+        r"\\?\C:\Synthetic\Import Root",
+        ImportTaskStatus::Queued,
+    );
+
+    store.upsert_document(&document).unwrap();
+    store.insert_import_task(&task).unwrap();
+    store
+        .mark_document_deleted(
+            &document.id,
+            UnixTimestamp::from_unix_seconds(1_800_014_030),
+        )
+        .unwrap();
+
+    let purged = store
+        .purge_import_tasks_for_deleted_document_roots(std::slice::from_ref(&document.id))
+        .unwrap();
+
+    assert_eq!(purged.tasks(), 1);
+    assert!(store.import_task_by_id(&task.id).unwrap().is_none());
 }
 
 #[test]
@@ -2038,7 +3076,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             .unwrap();
         connection
             .execute(
-                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)",
+                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15)",
                 [],
             )
             .unwrap();
@@ -2049,9 +3087,9 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
         let report = reopened.run_migrations().unwrap();
         assert_eq!(
             report.applied_versions(),
-            &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+            &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 14);
+        assert_eq!(reopened.schema_version().unwrap(), 20);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -2083,7 +3121,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 14);
+        assert_eq!(reopened.schema_version().unwrap(), 20);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 
@@ -2399,10 +3437,24 @@ fn temp_db_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("resume-ir-s3-{label}-{unique}.sqlite3"))
 }
 
+fn temp_data_dir(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("resume-ir-s3-{label}-{unique}"));
+    fs::create_dir_all(&path).unwrap();
+    path
+}
+
 fn remove_temp_db(db_path: &PathBuf) {
     let _ = fs::remove_file(db_path);
     let _ = fs::remove_file(format!("{}-wal", db_path.display()));
     let _ = fs::remove_file(format!("{}-shm", db_path.display()));
+}
+
+fn remove_temp_dir(path: &PathBuf) {
+    let _ = fs::remove_dir_all(path);
 }
 
 fn document(label: &str, is_deleted: bool, status: DocumentStatus) -> Document {
@@ -2491,6 +3543,7 @@ fn job(
         started_at: None,
         finished_at: None,
         updated_at: now,
+        failure_kind: None,
     }
 }
 
@@ -2511,6 +3564,7 @@ fn import_task(label: &str, root_path: &str, status: ImportTaskStatus) -> Import
 trait IngestJobTestExt {
     fn started_at(self, timestamp: UnixTimestamp) -> Self;
     fn finished_at(self, timestamp: UnixTimestamp) -> Self;
+    fn updated_at(self, timestamp: UnixTimestamp) -> Self;
     fn resume_version_id(self, id: ResumeVersionId) -> Self;
 }
 
@@ -2522,6 +3576,11 @@ impl IngestJobTestExt for IngestJob {
 
     fn finished_at(mut self, timestamp: UnixTimestamp) -> Self {
         self.finished_at = Some(timestamp);
+        self
+    }
+
+    fn updated_at(mut self, timestamp: UnixTimestamp) -> Self {
+        self.updated_at = timestamp;
         self
     }
 

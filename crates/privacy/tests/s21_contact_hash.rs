@@ -3,9 +3,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use privacy::{
-    contact_hash_key_path, inspect_contact_hash_key, ContactHashKeyState, ContactHasher,
-    ContactKind,
+    backup_contact_hash_key, contact_hash_key_path, inspect_contact_hash_key,
+    restore_contact_hash_key, ContactHashKeyState, ContactHasher, ContactKind,
 };
+
+const BACKUP_PASSPHRASE: &[u8] = b"synthetic local backup passphrase";
+const WRONG_BACKUP_PASSPHRASE: &[u8] = b"synthetic wrong backup passphrase";
 
 #[test]
 fn contact_hasher_outputs_stable_lowercase_redacted_hashes() {
@@ -56,6 +59,128 @@ fn contact_hash_key_is_created_locally_without_contact_material() {
     );
 
     remove_dir(&data_dir);
+}
+
+#[test]
+fn contact_hash_key_backup_and_restore_round_trip_without_leaking_key_or_contacts() {
+    let data_dir = temp_dir("privacy-key-backup-source");
+    let restore_dir = temp_dir("privacy-key-backup-target");
+    let backup_dir = temp_dir("privacy-key-backup-output");
+    let backup_path = backup_dir.join("contact-key.backup");
+    let private_email = "shared.candidate@example.test";
+    let private_phone = "+14155550132";
+
+    let source = ContactHasher::load_or_create(&data_dir).unwrap();
+    let source_hash = source
+        .hash_contact(ContactKind::Email, private_email)
+        .unwrap();
+    let key_path = contact_hash_key_path(&data_dir);
+    let key_material = fs::read_to_string(&key_path).unwrap();
+
+    let backup = backup_contact_hash_key(&data_dir, &backup_path, BACKUP_PASSPHRASE).unwrap();
+    assert_eq!(
+        inspect_contact_hash_key(&restore_dir).unwrap().state(),
+        ContactHashKeyState::Missing
+    );
+    assert!(backup_path.exists());
+    #[cfg(unix)]
+    assert_eq!(key_mode(&backup_path) & 0o777, 0o600);
+    let backup_material = fs::read_to_string(&backup_path).unwrap();
+    assert!(backup_material.contains("resume-ir-contact-hash-key-backup-v2"));
+    assert!(!backup_material.contains("resume-ir-contact-hash-key-v1"));
+    assert!(!backup_material.contains(private_email));
+    assert!(!backup_material.contains(private_phone));
+    assert!(!backup_material.contains("synthetic local backup passphrase"));
+    assert!(!backup_material.contains(key_material.trim()));
+    assert!(!format!("{backup:?}").contains(path_str(&data_dir)));
+    assert!(!format!("{backup:?}").contains(path_str(&backup_path)));
+    assert!(!format!("{backup:?}").contains(key_material.trim()));
+
+    let restore = restore_contact_hash_key(&restore_dir, &backup_path, BACKUP_PASSPHRASE).unwrap();
+    let restored = ContactHasher::load_or_create(&restore_dir).unwrap();
+    assert_eq!(
+        source_hash,
+        restored
+            .hash_contact(ContactKind::Email, private_email)
+            .unwrap()
+    );
+    let restored_key_path = contact_hash_key_path(&restore_dir);
+    #[cfg(unix)]
+    assert_eq!(key_mode(&restored_key_path) & 0o777, 0o600);
+    assert!(!format!("{restore:?}").contains(path_str(&restore_dir)));
+    assert!(!format!("{restore:?}").contains(path_str(&backup_path)));
+    assert!(!format!("{restore:?}").contains(key_material.trim()));
+
+    remove_dir(&data_dir);
+    remove_dir(&restore_dir);
+    remove_dir(&backup_dir);
+}
+
+#[test]
+fn contact_hash_key_restore_refuses_to_overwrite_existing_key() {
+    let source_dir = temp_dir("privacy-key-restore-source");
+    let target_dir = temp_dir("privacy-key-restore-target");
+    let backup_dir = temp_dir("privacy-key-restore-output");
+    let backup_path = backup_dir.join("contact-key.backup");
+    let private_email = "shared.candidate@example.test";
+
+    let source = ContactHasher::load_or_create(&source_dir).unwrap();
+    let source_hash = source
+        .hash_contact(ContactKind::Email, private_email)
+        .unwrap();
+    backup_contact_hash_key(&source_dir, &backup_path, BACKUP_PASSPHRASE).unwrap();
+
+    let target = ContactHasher::load_or_create(&target_dir).unwrap();
+    let target_hash = target
+        .hash_contact(ContactKind::Email, private_email)
+        .unwrap();
+    assert_ne!(source_hash, target_hash);
+
+    let error = restore_contact_hash_key(&target_dir, &backup_path, BACKUP_PASSPHRASE).unwrap_err();
+    assert_eq!(error.to_string(), "privacy key already exists");
+    assert!(!format!("{error:?}").contains(path_str(&target_dir)));
+    assert!(!format!("{error:?}").contains(path_str(&backup_path)));
+
+    let still_target = ContactHasher::load_or_create(&target_dir).unwrap();
+    assert_eq!(
+        target_hash,
+        still_target
+            .hash_contact(ContactKind::Email, private_email)
+            .unwrap()
+    );
+
+    remove_dir(&source_dir);
+    remove_dir(&target_dir);
+    remove_dir(&backup_dir);
+}
+
+#[test]
+fn contact_hash_key_restore_with_wrong_passphrase_refuses_without_creating_key() {
+    let source_dir = temp_dir("privacy-key-wrong-passphrase-source");
+    let target_dir = temp_dir("privacy-key-wrong-passphrase-target");
+    let backup_dir = temp_dir("privacy-key-wrong-passphrase-output");
+    let backup_path = backup_dir.join("contact-key.backup");
+
+    ContactHasher::load_or_create(&source_dir).unwrap();
+    backup_contact_hash_key(&source_dir, &backup_path, BACKUP_PASSPHRASE).unwrap();
+
+    let error =
+        restore_contact_hash_key(&target_dir, &backup_path, WRONG_BACKUP_PASSPHRASE).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "privacy key backup is invalid or cannot be decrypted"
+    );
+    assert_eq!(
+        inspect_contact_hash_key(&target_dir).unwrap().state(),
+        ContactHashKeyState::Missing
+    );
+    assert!(!format!("{error:?}").contains(path_str(&target_dir)));
+    assert!(!format!("{error:?}").contains(path_str(&backup_path)));
+    assert!(!format!("{error:?}").contains("synthetic wrong backup passphrase"));
+
+    remove_dir(&source_dir);
+    remove_dir(&target_dir);
+    remove_dir(&backup_dir);
 }
 
 #[test]
