@@ -45,15 +45,14 @@ release-readiness steps locally without uploading evidence.
 
 ## PDF Renderer License Boundary
 
-MIT is not a product packaging constraint. The repository can keep MIT-licensed
-source while a bundled runtime release uses the license required by its reviewed
-runtime components. If a release bundles Poppler binaries, that release becomes
-a GPL-family distribution review item. The installer/release evidence must
-record the exact installed Poppler license from the selected distribution,
+The repository source license is GPL-3.0-or-later for the bundled-first
+Poppler/pdftoppm path. If a release bundles Poppler binaries, that release
+remains a GPL-family distribution review item. The installer/release evidence
+must record the exact installed Poppler license from the selected distribution,
 include the required license/source-offer materials, and pass legal review
 before the release blocker can be cleared. Runtime manifests should record the
 exact installed Poppler license, version, artifact checksum, runtime source, and
-reviewed status instead of assuming Poppler is MIT-licensed.
+reviewed status instead of assuming permissive renderer terms.
 
 This is no longer an unresolved runtime-choice blocker. Current engineering
 work is dependency detection, local manifest validation, checksum/license

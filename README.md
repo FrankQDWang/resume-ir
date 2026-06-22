@@ -56,7 +56,7 @@ Do not import real resumes, upload data, push, release, sign binaries, or run he
 
 ## License
 
-Current source code is licensed under the MIT License. See `LICENSE`. This is
-not a product packaging constraint; the source or release distribution license
-may change before stable release when bundled OCR/PDF/model runtime components
-require a different reviewed license. See `LICENSES/README.md`.
+Current source code is licensed under GNU GPL v3 or later. See `LICENSE` and
+`LICENSES/README.md`. Bundled runtime releases use this GPL-compatible distribution
+boundary and still must include reviewed third-party license notices,
+source-offer material, checksums, and SBOM evidence.

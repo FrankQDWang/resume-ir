@@ -1234,8 +1234,8 @@ fn release_readiness_rejects_release_sbom_unknown_package_field_without_path_lea
     fs::write(
         &release_sbom,
         release_sbom_manifest().replace(
-            "\"filesAnalyzed\":false,\"licenseDeclared\":\"MIT\"",
-            "\"filesAnalyzed\":false,\"diagnostic_note\":\"redacted\",\"licenseDeclared\":\"MIT\"",
+            "\"filesAnalyzed\":false,\"licenseDeclared\":\"GPL-3.0-or-later\"",
+            "\"filesAnalyzed\":false,\"diagnostic_note\":\"redacted\",\"licenseDeclared\":\"GPL-3.0-or-later\"",
         ),
     )
     .unwrap();
@@ -4492,9 +4492,9 @@ fn release_sbom_manifest() -> String {
         "\"documentNamespace\":\"https://github.com/FrankQDWang/resume-ir/sbom/v0.0.0\",",
         "\"creationInfo\":{\"created\":\"2026-06-10T00:00:00Z\",\"creators\":[\"Tool: resume-ir-release-sbom\"]},",
         "\"packages\":[",
-        "{\"SPDXID\":\"SPDXRef-Package-resume-cli\",\"name\":\"resume-cli\",\"versionInfo\":\"0.1.0\",\"filesAnalyzed\":false,\"licenseDeclared\":\"MIT\",\"externalRefs\":[{\"referenceCategory\":\"PACKAGE-MANAGER\",\"referenceType\":\"purl\",\"referenceLocator\":\"pkg:cargo/resume-cli@0.1.0\"}]},",
-        "{\"SPDXID\":\"SPDXRef-Package-resume-daemon\",\"name\":\"resume-daemon\",\"versionInfo\":\"0.1.0\",\"filesAnalyzed\":false,\"licenseDeclared\":\"MIT\",\"externalRefs\":[{\"referenceCategory\":\"PACKAGE-MANAGER\",\"referenceType\":\"purl\",\"referenceLocator\":\"pkg:cargo/resume-daemon@0.1.0\"}]},",
-        "{\"SPDXID\":\"SPDXRef-Package-benchmark-runner\",\"name\":\"benchmark-runner\",\"versionInfo\":\"0.1.0\",\"filesAnalyzed\":false,\"licenseDeclared\":\"MIT\",\"externalRefs\":[{\"referenceCategory\":\"PACKAGE-MANAGER\",\"referenceType\":\"purl\",\"referenceLocator\":\"pkg:cargo/benchmark-runner@0.1.0\"}]},",
+        "{\"SPDXID\":\"SPDXRef-Package-resume-cli\",\"name\":\"resume-cli\",\"versionInfo\":\"0.1.0\",\"filesAnalyzed\":false,\"licenseDeclared\":\"GPL-3.0-or-later\",\"externalRefs\":[{\"referenceCategory\":\"PACKAGE-MANAGER\",\"referenceType\":\"purl\",\"referenceLocator\":\"pkg:cargo/resume-cli@0.1.0\"}]},",
+        "{\"SPDXID\":\"SPDXRef-Package-resume-daemon\",\"name\":\"resume-daemon\",\"versionInfo\":\"0.1.0\",\"filesAnalyzed\":false,\"licenseDeclared\":\"GPL-3.0-or-later\",\"externalRefs\":[{\"referenceCategory\":\"PACKAGE-MANAGER\",\"referenceType\":\"purl\",\"referenceLocator\":\"pkg:cargo/resume-daemon@0.1.0\"}]},",
+        "{\"SPDXID\":\"SPDXRef-Package-benchmark-runner\",\"name\":\"benchmark-runner\",\"versionInfo\":\"0.1.0\",\"filesAnalyzed\":false,\"licenseDeclared\":\"GPL-3.0-or-later\",\"externalRefs\":[{\"referenceCategory\":\"PACKAGE-MANAGER\",\"referenceType\":\"purl\",\"referenceLocator\":\"pkg:cargo/benchmark-runner@0.1.0\"}]},",
         "{\"SPDXID\":\"SPDXRef-Runtime-tesseract\",\"name\":\"tesseract\",\"versionInfo\":\"v0.0.0\",\"downloadLocation\":\"https://github.com/tesseract-ocr/tesseract\",\"filesAnalyzed\":false,\"licenseDeclared\":\"Apache-2.0\",\"checksums\":[{\"algorithm\":\"SHA256\",\"checksumValue\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"annotations\":[{\"annotationType\":\"OTHER\",\"annotator\":\"Tool: resume-ir-release-sbom\",\"annotationDate\":\"2026-06-10T00:00:00Z\",\"comment\":\"runtime_distribution_mode=bundled\"},{\"annotationType\":\"OTHER\",\"annotator\":\"Tool: resume-ir-release-sbom\",\"annotationDate\":\"2026-06-10T00:00:00Z\",\"comment\":\"runtime_package_binaries_included=true\"},{\"annotationType\":\"OTHER\",\"annotator\":\"Tool: resume-ir-release-sbom\",\"annotationDate\":\"2026-06-10T00:00:00Z\",\"comment\":\"runtime_binaries_included=false\"},{\"annotationType\":\"OTHER\",\"annotator\":\"Tool: resume-ir-release-sbom\",\"annotationDate\":\"2026-06-10T00:00:00Z\",\"comment\":\"runtime_component_kind=ocr-engine\"},{\"annotationType\":\"OTHER\",\"annotator\":\"Tool: resume-ir-release-sbom\",\"annotationDate\":\"2026-06-10T00:00:00Z\",\"comment\":\"runtime_component_file=tesseract\"},{\"annotationType\":\"OTHER\",\"annotator\":\"Tool: resume-ir-release-sbom\",\"annotationDate\":\"2026-06-10T00:00:00Z\",\"comment\":\"source_offer_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}],\"externalRefs\":[{\"referenceCategory\":\"OTHER\",\"referenceType\":\"persistent-id\",\"referenceLocator\":\"runtime-bundle:reviewed-runtime-pack:tesseract\"}]}",
         "],",
         "\"relationships\":[",

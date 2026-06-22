@@ -30,7 +30,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 version = "0.1.0"
-license = "MIT"
+license = "GPL-3.0-or-later"
 publish = false
 
 [workspace.lints.rust]

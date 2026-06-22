@@ -75,6 +75,13 @@ for package in metadata.get("packages", []):
     license_file = package.get("license_file")
     source = package.get("source")
 
+    if source is None:
+        if license_expr != "GPL-3.0-or-later":
+            failures.append(
+                f"{name}: workspace package license must be GPL-3.0-or-later for bundled Poppler/pdftoppm distribution"
+            )
+            continue
+
     if not license_expr:
         if source is None and license_file:
             continue
