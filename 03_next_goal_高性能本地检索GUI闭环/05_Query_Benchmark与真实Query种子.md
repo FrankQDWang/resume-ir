@@ -86,7 +86,28 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
 | semantic | 验证 semantic recall 和 partial | 自然语言能力描述 |
 | extreme | 验证超长、互斥、冷词、错别字、空结果 | 不要求高召回，但要求不拖垮 |
 
-## 5. 生成策略
+## 5. 查询语义冻结
+
+性能优化前冻结以下业务语义：
+
+1. simple text query 使用空格分隔词项时，默认语义是 required-all，即非停用词全部必须参与匹配。
+2. OR 只能由显式布尔语法、显式 mode 或 GUI 明确选项触发。
+3. quoted phrase 是短语约束，不等同于普通 token 拆分。
+4. 字段过滤是 hard filter，必须先于 ranking、fusion、rerank 和 snippet 执行。
+5. 空 query、超长 query、互斥 query、极冷词 query 必须有有界响应和可解释 partial/zero-result 状态。
+6. benchmark 调优不得改变 simple text、phrase、field filter、explicit OR 的语义。
+
+文档层验收：
+
+| Check | 期望 |
+|---|---|
+| term reorder | simple terms 重排后 result set 在 ranking tolerance 内稳定 |
+| add required term | 加 required term 后候选集合不得变大 |
+| explicit OR | 只有显式 OR 可以扩大 simple term 匹配 |
+| field filter | 增加 hard filter 后候选集合不得变大 |
+| smoke vs W1 | smoke 结果不得声称完整 500-query baseline |
+
+## 6. 生成策略
 
 1. 从 artifacts 读取允许字段。
 2. 提取 query 形态和 term 组合。
@@ -96,7 +117,7 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
 6. 与本地字段派生 query 合并。
 7. 输出本地私有 query-set 和可提交 redacted summary。
 
-## 6. Benchmark 输出
+## 7. Benchmark 输出
 
 每个 bucket 必须输出：
 
@@ -116,7 +137,7 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
 14. hot_path_parsing=false。
 15. hot_path_heavy_model_inference=false。
 
-## 7. 验收红线
+## 8. 验收红线
 
 1. 任何 stdout/stderr、summary、diagnostics 中出现 raw query 内容，失败。
 2. 任何提交文件中出现 private artifact path、resume path、candidate text，失败。
