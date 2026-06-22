@@ -41,3 +41,15 @@
 full hot-index baseline 压实、500-query 私有 benchmark、百万级真实语料验证、
 P95/P99 压低和查询热路径极限调优迁入后续“性能极致优化” goal；可视化 UI
 迁入后续 UI/manual usage goal。
+
+## 当前活跃后续目标
+
+当前活跃后续目标是 `03_next_goal_高性能本地检索GUI闭环/`：在本地隐私边界内完成高性能检索、GUI、手工/Codex 结对闭环验证的执行合同和后续实现。
+
+该目标的硬边界：
+
+1. 查询热路径只允许检索、过滤、融合、bulk hydrate 和 snippet 返回；不得触发 OCR、全文解析或重模型推理。
+2. 简单空格 query 的业务语义在性能优化前冻结，不得为了降低延迟改变召回语义。
+3. daemon IPC/diagnostics contract 必须先版本化，GUI 只能依赖版本化 contract。
+4. benchmark 证据必须区分 smoke、W0、W1、本机私有、soak/fault 和 GUI/manual，不得混用。
+5. 真实简历、raw query、候选结果、路径、token、trace、diagnostics package 和模型缓存不得提交。

@@ -36,4 +36,9 @@
 - `03_next_goal_高性能本地检索GUI闭环/09_安全隐私与本地证据边界.md`
 - `03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md`
 - `03_next_goal_高性能本地检索GUI闭环/11_一页版目标图.md`
+- `03_next_goal_高性能本地检索GUI闭环/12_Review问题映射与修复责任.md`
+- `03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md`
+- `03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md`
+- `docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md`
+- `docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md`
 - `GOAL.md`
