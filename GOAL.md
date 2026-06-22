@@ -38,13 +38,21 @@
    记录和失败闭环；若模型权重 license 未确认，标为 external/legal
    blocked，不伪造完成。
 
-full hot-index baseline 压实、500-query 私有 benchmark、百万级真实语料验证、
-P95/P99 压低和查询热路径极限调优迁入后续“性能极致优化” goal；可视化 UI
-迁入后续 UI/manual usage goal。
+以上是上一 current-stage 收口边界，不是下一阶段性能目标的降级口径。full hot-index baseline 压实、500-query 私有 benchmark、百万级真实语料验证、P95/P99 压低、查询热路径极限调优和可视化 UI 已迁入下面的活跃后续目标。
 
 ## 当前活跃后续目标
 
 当前活跃后续目标是 `03_next_goal_高性能本地检索GUI闭环/`：在本地隐私边界内完成高性能检索、GUI、手工/Codex 结对闭环验证的执行合同和后续实现。
+
+机器可读目标锁是 `ACTIVE_GOAL.toml`；性能验收红线是 `perf/acceptance-matrix.toml`。两者只定义公开可提交的合同与 redacted aggregate 证据形状，不授权提交私有 benchmark 数据。
+
+权威顺序：
+
+1. 本文件定义产品级目标和阶段边界。
+2. `ACTIVE_GOAL.toml` 锁定当前活跃目标、允许路径、隐私边界和 PR 状态。
+3. `03_next_goal_高性能本地检索GUI闭环/` 定义该目标的系统设计、数据模型、状态机、失败模式和验收门槛。
+4. `perf/` 定义可机器读取的验收矩阵、Loop 状态报告 schema 和实验报告 schema。
+5. `docs/superpowers/` 记录本次目标文档修复的 spec 与 linked implementation plan。
 
 该目标的硬边界：
 

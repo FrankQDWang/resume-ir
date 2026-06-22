@@ -1,0 +1,130 @@
+schema_version = "resume-ir.perf.acceptance-matrix.v1"
+goal_id = "resume-ir.performance-gui-loop.2026-06"
+date = "2026-06-22"
+
+[evidence_lanes.smoke]
+data = "synthetic_or_public_tiny"
+may_be_committed = true
+purpose = "fast_regression_signal"
+cannot_claim = ["w1_private_baseline", "million_scale_readiness", "gui_manual_complete"]
+
+[evidence_lanes.w0_docs]
+data = "public_docs_and_machine_contracts"
+may_be_committed = true
+purpose = "docs_pr_review_gate"
+required_for_current_pr = true
+required_commands = [
+  "git diff --check -- GOAL.md MANIFEST.md ACTIVE_GOAL.toml docs/superpowers 03_next_goal_高性能本地检索GUI闭环 perf",
+  "./scripts/ci/guard-public-repo.sh",
+]
+
+[evidence_lanes.w1_private]
+data = "local_private_resumes_and_local_private_query_set"
+may_be_committed = false
+committed_summary = "hashes_counts_percentiles_and_redacted_aggregates_only"
+purpose = "local_real_workload_performance_gate"
+
+[evidence_lanes.soak_fault]
+data = "local_controlled_fault_runs"
+may_be_committed = "redacted_aggregate_only"
+purpose = "resident_daemon_recovery_and_queue_pressure_gate"
+
+[evidence_lanes.gui_manual]
+data = "local_gui_and_versioned_daemon_contract"
+may_be_committed = "redacted_checklist_only"
+purpose = "manual_and_codex_closed_loop_gate"
+
+[w0_docs_redlines]
+docs_only = true
+machine_contracts_parse = true
+review_ledger_has_status_fields = true
+active_goal_toml_exists = true
+private_data_in_git = false
+
+[w1_private_10k_redlines]
+min_document_count = 10000
+min_searchable_document_count = 8000
+min_query_count = 500
+spawn_per_query = false
+resident_daemon_required = true
+query_set_sha256_required = true
+holdout_sha256_required = true
+trace_summary_redacted = true
+contains_raw_resume_text = false
+contains_raw_query_text = false
+contains_candidate_results = false
+contains_local_paths = false
+hot_path_ocr = false
+hot_path_parsing = false
+hot_path_heavy_model_inference = false
+
+[w1_private_10k_redlines.latency_p95_ms]
+keyword = 150
+field_filter = 180
+hybrid = 250
+semantic = 500
+extreme = 500
+
+[w1_private_10k_redlines.latency_p99_ms]
+keyword = 300
+field_filter = 350
+hybrid = 500
+semantic = 1000
+extreme = 1000
+
+[w1_private_10k_redlines.stage_p95_ms]
+query_parse = 5
+prefilter = 20
+bm25 = 80
+ann = 180
+fusion = 15
+bulk_hydrate = 60
+snippet = 60
+
+[incremental_redlines.zero_change]
+max_reparse_count = 0
+max_full_rebuilds = 0
+max_changed_manifest_rows = 0
+must_report_elapsed_ms = true
+
+[incremental_redlines.small_churn]
+churn_percentages = [1, 5, 10]
+max_rebuild_scope = "changed_files_plus_dirty_subtree_only"
+full_rebuild_allowed = false
+
+[first_searchable_redlines]
+level1_visible_before_parse = true
+level2_visible_without_ocr = true
+level2_visible_without_semantic = true
+ttf100_required = true
+ttf1000_required = true
+
+[governor_redlines]
+sample_window_seconds = 10
+sustained_windows_to_degrade = 3
+sustained_windows_to_recover = 6
+min_dwell_seconds = 60
+interactive_p95_ms_degrade = 200
+interactive_p95_ms_pause_background = 400
+queue_delay_ms_overload = 200
+rss_budget_mb_default = 2048
+major_faults_per_second_degrade = 100
+fsync_p95_ms_degrade = 100
+battery_percent_energy_saver = 20
+
+[gui_redlines]
+representative_rows = 100000
+visible_rows_min = 100
+scroll_update_hz_min = 10
+interactive_search_qps_min = 10
+keyboard_access_required = true
+contrast_ratio_min = 4.5
+touch_target_px_min = 44
+versioned_ipc_only = true
+
+[completion]
+requires_w0_docs = true
+requires_w1_private = true
+requires_soak_fault = true
+requires_gui_manual = true
+requires_no_open_review_blockers = true

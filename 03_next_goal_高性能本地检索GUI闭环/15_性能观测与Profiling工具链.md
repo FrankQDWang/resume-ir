@@ -1,0 +1,67 @@
+# 性能观测与 Profiling 工具链
+
+本文件冻结后续性能优化的观测面。没有 baseline、trace、histogram 和 profiler evidence，不允许声明性能优化完成。
+
+## 1. 观测原则
+
+1. 先观测，再改热路径。
+2. 每个优化切片必须先记录 baseline，再记录优化后结果。
+3. 所有性能声明必须绑定 evidence lane：`smoke`、`W0`、`W1`、`soak/fault` 或 `GUI/manual`。
+4. 私有 W1 只提交 redacted aggregate，不提交 raw query、真实简历、路径、trace 原文或 diagnostics package。
+5. profiler 结果只能提交符号化摘要和本地文件 hash，不提交本机路径。
+
+## 2. Instrumentation Contract
+
+Rust 实现必须在热路径保留结构化 span 和 stage metrics：
+
+| Stage | 必需字段 | 禁止 |
+|---|---|---|
+| query_parse | `request_id`, `query_shape`, `term_count`, `mode` | raw query text |
+| prefilter | `candidate_count_before`, `candidate_count_after`, `filter_count` | field value 原文 |
+| bm25 | `segment_count`, `candidate_count`, `elapsed_ms` | stored body |
+| ann | `enabled`, `candidate_count`, `elapsed_ms`, `partial_reason` | embedding payload |
+| fusion | `input_counts`, `output_count`, `elapsed_ms` | candidate identity 明文 |
+| bulk_hydrate | `top_k`, `hydrated_count`, `elapsed_ms` | local path |
+| snippet | `snippet_count`, `elapsed_ms`, `partial_reason` | raw snippet text in committed evidence |
+
+每个 stage 必须能汇总到 histogram。W1 报告至少包含 P50/P95/P99、stage P95、RSS peak、CPU aggregate、disk read/write aggregate。
+
+## 3. Toolchain
+
+| 层 | 工具 | 用途 | 证据 |
+|---|---|---|---|
+| micro benchmark | Criterion 或等价 Rust benchmark | parser、prefilter、fusion、hydrate 的小范围回归 | public/synthetic summary |
+| latency histogram | hdrhistogram 或等价结构 | resident daemon batch 的 percentile | redacted bucket histogram |
+| structured tracing | `tracing` spans | stage latency、queue delay、partial reason | redacted span summary |
+| macOS sampling | Samply 或 Instruments | CPU 火焰图、allocator、IO hotspot | symbol summary + local capture hash |
+| Windows sampling | WPR/WPA 或 ETW consumer | CPU、disk、queue hotspot | symbol summary + local capture hash |
+| long run | resident daemon soak harness | restart、cancel、overload、journal gap | soak/fault aggregate |
+
+工具选择可以在实现期替换，但输出字段不能弱化。替换工具必须继续满足 `perf/experiment-report.schema.json`。
+
+## 4. Baseline Sequence
+
+每个性能切片进入实现前必须执行：
+
+1. 锁定 `ACTIVE_GOAL.toml` 和 `perf/acceptance-matrix.toml` 的版本。
+2. 运行 smoke 或 W0 baseline，确认公开验证仍可复现。
+3. 对 W1 私有目标，运行 resident daemon baseline，禁止 per-query process spawn。
+4. 捕获 stage histogram、resource aggregate 和 profiler summary。
+5. 在 Loop 状态中进入 `baseline_validated`，再进入 `profile_captured`。
+6. 按 hotspot 优先级选择单个优化切片。
+
+## 5. Completion Redlines
+
+任何性能切片满足以下任一条件时不得标为 complete：
+
+1. 没有 baseline。
+2. 只报告均值，没有 P95/P99。
+3. 只报告端到端 latency，没有 stage latency。
+4. 只使用 per-query process spawn benchmark 声称 daemon 性能。
+5. 没有证明 hot path 中 OCR、全文解析、重模型推理为 false。
+6. 没有说明 query semantics 版本。
+7. smoke 或 synthetic 结果被当成 W1 私有基线。
+
+## 6. Evidence Shape
+
+后续实验报告必须能通过 `perf/experiment-report.schema.json` 校验。报告中 `thresholds.matrix` 必须指向 `perf/acceptance-matrix.toml`，并列出所有 failed redlines。未达标可以进入 `blocked` 或下一优化切片，但不能改写验收门槛后宣布通过。

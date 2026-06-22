@@ -1,6 +1,6 @@
 # MANIFEST
 
-生成时间：2026-05-30
+生成时间：2026-06-22
 
 文件清单：
 
@@ -39,6 +39,14 @@
 - `03_next_goal_高性能本地检索GUI闭环/12_Review问题映射与修复责任.md`
 - `03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md`
 - `03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md`
+- `03_next_goal_高性能本地检索GUI闭环/15_性能观测与Profiling工具链.md`
+- `03_next_goal_高性能本地检索GUI闭环/16_跨平台全盘发现与增量Journal契约.md`
+- `03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md`
 - `docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md`
 - `docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md`
+- `ACTIVE_GOAL.toml`
+- `perf/README.md`
+- `perf/acceptance-matrix.toml`
+- `perf/loop-state.schema.json`
+- `perf/experiment-report.schema.json`
 - `GOAL.md`

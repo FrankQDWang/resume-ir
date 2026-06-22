@@ -1,0 +1,58 @@
+schema_version = "resume-ir.active-goal.v1"
+goal_id = "resume-ir.performance-gui-loop.2026-06"
+status = "request_changes_repair_pending_review"
+date = "2026-06-22"
+
+[authority]
+root_goal = "GOAL.md"
+active_goal_docs_root = "03_next_goal_高性能本地检索GUI闭环"
+spec = "docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md"
+plan = "docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md"
+review_ledger = "03_next_goal_高性能本地检索GUI闭环/12_Review问题映射与修复责任.md"
+loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md"
+acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
+
+[scope.current_pr]
+docs_only = true
+production_code_allowed = false
+private_benchmark_allowed = false
+allowed_paths = [
+  "GOAL.md",
+  "MANIFEST.md",
+  "ACTIVE_GOAL.toml",
+  "03_next_goal_高性能本地检索GUI闭环/",
+  "docs/superpowers/",
+  "perf/",
+]
+
+[contracts]
+query_semantics = "simple_text_required_all_terms_v1"
+ipc_contract = "resume-ir.ipc.v2"
+diagnostics_contract = "resume-ir.diagnostics.v2"
+evidence_matrix = "resume-ir.perf.acceptance-matrix.v1"
+loop_state_schema = "perf/loop-state.schema.json"
+experiment_report_schema = "perf/experiment-report.schema.json"
+
+[privacy]
+public_repo_boundary = "redacted_aggregate_only"
+contains_raw_resume_text = false
+contains_raw_query_text = false
+contains_candidate_results = false
+contains_local_paths = false
+contains_tokens = false
+contains_diagnostics_package = false
+contains_model_cache = false
+
+[loop]
+workflow_state = "evidence_review"
+experiment_state = "contract_locked"
+blocked_threshold_count = 3
+same_blocker_retries_without_new_evidence = "forbidden"
+smoke_as_w1_evidence = "forbidden"
+query_semantics_relaxation_for_latency = "forbidden"
+
+[pull_request]
+number = 10
+state = "open"
+draft = true
+review_status = "request_changes"

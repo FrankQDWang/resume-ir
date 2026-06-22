@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/resume-ir/perf/loop-state.schema.json",
+  "title": "resume-ir loop state report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "goal_id",
+    "workflow_state",
+    "experiment_state",
+    "evidence_lane",
+    "allowed_paths",
+    "verification",
+    "privacy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "resume-ir.loop-state-report.v1"
+    },
+    "goal_id": {
+      "const": "resume-ir.performance-gui-loop.2026-06"
+    },
+    "workflow_state": {
+      "enum": [
+        "intake",
+        "ceo_reviewed",
+        "plan_ready",
+        "plan_reviewed",
+        "slice_active",
+        "red_check_written",
+        "implementation_active",
+        "verification_active",
+        "evidence_review",
+        "slice_complete",
+        "blocked",
+        "goal_complete"
+      ]
+    },
+    "experiment_state": {
+      "enum": [
+        "not_started",
+        "contract_locked",
+        "baseline_validated",
+        "profile_captured",
+        "hotspot_prioritized",
+        "optimization_slice_active",
+        "regression_checked",
+        "w1_accepted",
+        "soak_accepted",
+        "gui_accepted",
+        "blocked",
+        "complete"
+      ]
+    },
+    "evidence_lane": {
+      "enum": ["smoke", "w0_docs", "w1_private", "soak_fault", "gui_manual"]
+    },
+    "allowed_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "current_slice": {
+      "type": "string"
+    },
+    "blocked_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "same_blocker_key": {
+      "type": "string"
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commands", "all_required_commands_ran", "claim"],
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command", "exit_code", "evidence_ref"],
+            "properties": {
+              "command": { "type": "string", "minLength": 1 },
+              "exit_code": { "type": "integer" },
+              "evidence_ref": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "all_required_commands_ran": { "type": "boolean" },
+        "claim": {
+          "enum": ["pass", "fail", "blocked", "partial"]
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contains_raw_resume_text",
+        "contains_raw_query_text",
+        "contains_candidate_results",
+        "contains_local_paths",
+        "contains_tokens",
+        "contains_diagnostics_package"
+      ],
+      "properties": {
+        "contains_raw_resume_text": { "const": false },
+        "contains_raw_query_text": { "const": false },
+        "contains_candidate_results": { "const": false },
+        "contains_local_paths": { "const": false },
+        "contains_tokens": { "const": false },
+        "contains_diagnostics_package": { "const": false }
+      }
+    }
+  }
+}

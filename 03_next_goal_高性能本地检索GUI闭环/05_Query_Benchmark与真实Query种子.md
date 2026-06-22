@@ -90,22 +90,28 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
 
 性能优化前冻结以下业务语义：
 
-1. simple text query 使用空格分隔词项时，默认语义是 required-all，即非停用词全部必须参与匹配。
+1. simple text query 使用空格分隔词项时，默认语义是 required-all，即所有规范化词项全部必须参与匹配。
 2. OR 只能由显式布尔语法、显式 mode 或 GUI 明确选项触发。
 3. quoted phrase 是短语约束，不等同于普通 token 拆分。
 4. 字段过滤是 hard filter，必须先于 ranking、fusion、rerank 和 snippet 执行。
 5. 空 query、超长 query、互斥 query、极冷词 query 必须有有界响应和可解释 partial/zero-result 状态。
 6. benchmark 调优不得改变 simple text、phrase、field filter、explicit OR 的语义。
 
+Stopword、synonym、stemming、typo expansion 和 semantic expansion 都不是 simple text 默认语义的一部分。若后续产品要支持，必须作为显式 mode 或独立语义版本进入 spec/plan/review，不能在性能优化中静默启用。
+
 文档层验收：
 
-| Check | 期望 |
-|---|---|
-| term reorder | simple terms 重排后 result set 在 ranking tolerance 内稳定 |
-| add required term | 加 required term 后候选集合不得变大 |
-| explicit OR | 只有显式 OR 可以扩大 simple term 匹配 |
-| field filter | 增加 hard filter 后候选集合不得变大 |
-| smoke vs W1 | smoke 结果不得声称完整 500-query baseline |
+| Check | 候选集合公式 | 期望 |
+|---|---|---|
+| term reorder | `C(a b c) == C(c b a)` | simple terms 重排后候选集合完全一致；ranking 可不同但必须解释 |
+| add required term | `C(a b c) subset C(a b)` | 加 required term 后候选集合不得变大 |
+| explicit OR | `C(a OR b)` may superset `C(a b)` | 只有显式 OR 可以扩大 simple term 匹配 |
+| phrase | `C("a b") subset C(a b)` | phrase 是更强约束，不得扩大候选集合 |
+| field filter | `C(a b + filter:x) subset C(a b)` | 增加 hard filter 后候选集合不得变大 |
+| zero/partial | `C(q)` bounded | 空、超长、互斥和极冷词必须返回有界、可解释结果 |
+| smoke vs W1 | lane invariant | smoke 结果不得声称完整 500-query baseline |
+
+这些 checks 必须在 P2 query semantics implementation 中成为 metamorphic tests；没有通过前，不允许进入热路径优化。
 
 ## 6. 生成策略
 
@@ -143,3 +149,6 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
 2. 任何提交文件中出现 private artifact path、resume path、candidate text，失败。
 3. 500-query benchmark 不足 500 条时，不得声称完整性能基线完成。
 4. smoke profile 可以小样本，但必须标明 `percentile_confidence=smoke`。
+5. W1 私有 query set 必须分为 tune 与 holdout，公开证据只提交各自 hash、count 和 bucket count。
+6. 调参只能读取 tune aggregate；最终完成声明必须包含 holdout aggregate，并通过同一语义版本。
+7. 任一 query extractor version、artifact input hash、query semantics version 或 dataset hash 变化，都必须生成新的 baseline，不得和旧 baseline 混报。

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/resume-ir/perf/experiment-report.schema.json",
+  "title": "resume-ir redacted experiment report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "goal_id",
+    "evidence_lane",
+    "dataset",
+    "query_set",
+    "thresholds",
+    "privacy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "resume-ir.experiment-report.v1"
+    },
+    "goal_id": {
+      "const": "resume-ir.performance-gui-loop.2026-06"
+    },
+    "evidence_lane": {
+      "enum": ["smoke", "w0_docs", "w1_private", "soak_fault", "gui_manual"]
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset_sha256", "document_count", "searchable_document_count"],
+      "properties": {
+        "dataset_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "document_count": { "type": "integer", "minimum": 0 },
+        "searchable_document_count": { "type": "integer", "minimum": 0 },
+        "vector_indexed_document_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "query_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query_set_sha256", "holdout_sha256", "query_count", "bucket_counts"],
+      "properties": {
+        "query_set_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "holdout_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "query_count": { "type": "integer", "minimum": 0 },
+        "bucket_counts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "p50_ms": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 } },
+        "p95_ms": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 } },
+        "p99_ms": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 } },
+        "stage_p95_ms": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 } }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rss_peak_mb": { "type": "number", "minimum": 0 },
+        "cpu_pct_avg": { "type": "number", "minimum": 0 },
+        "disk_read_mb": { "type": "number", "minimum": 0 },
+        "disk_write_mb": { "type": "number", "minimum": 0 }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matrix", "passed"],
+      "properties": {
+        "matrix": { "const": "perf/acceptance-matrix.toml" },
+        "passed": { "type": "boolean" },
+        "failed_redlines": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "hot_path": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ocr": { "const": false },
+        "parsing": { "const": false },
+        "heavy_model_inference": { "const": false },
+        "spawn_per_query": { "const": false }
+      }
+    },
+    "profiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tracing_spans_present": { "type": "boolean" },
+        "histogram_bins_present": { "type": "boolean" },
+        "profiler_capture_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contains_raw_resume_text",
+        "contains_raw_query_text",
+        "contains_candidate_results",
+        "contains_local_paths",
+        "contains_tokens",
+        "contains_diagnostics_package",
+        "trace_summary_redacted"
+      ],
+      "properties": {
+        "contains_raw_resume_text": { "const": false },
+        "contains_raw_query_text": { "const": false },
+        "contains_candidate_results": { "const": false },
+        "contains_local_paths": { "const": false },
+        "contains_tokens": { "const": false },
+        "contains_diagnostics_package": { "const": false },
+        "trace_summary_redacted": { "const": true }
+      }
+    }
+  }
+}

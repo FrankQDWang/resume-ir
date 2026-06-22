@@ -1,6 +1,6 @@
 # PR #10 Documentation Contract Hardening Spec
 
-Status: ready for fw-plan-review
+Status: request-changes repair implemented; pending fw-review
 Date: 2026-06-22
 Linked plan: `../plans/2026-06-22-performance-goal-doc-contract.md`
 Execution scope: documentation contract only
@@ -13,15 +13,22 @@ The next phase will include broad breaking changes across search performance, da
 
 ## Verified Baseline
 
-Current repository facts from the fw-office-hours and fw-ceo-review read-only audit:
+Repository facts from the original fw-office-hours and fw-ceo-review read-only audit:
 
 - Branch: `codex/high-performance-local-search-gui-docs`.
 - PR: `#10`, draft/open, base `main`, title `[codex] add high performance search GUI goal docs`.
-- Diff against `origin/main`: 13 documentation files, 880 insertions.
+- Initial diff against `origin/main`: 13 documentation files, 880 insertions.
 - Worktree: clean at review time; no stash.
 - Existing `docs/` contains only reports and runbooks; there is no `docs/superpowers/` directory before this fw-plan stage.
-- `GOAL.md` still states the current stage does not require extreme performance, while lines later move full hot-index baseline, 500-query benchmark, P95/P99 reduction, and UI into follow-up goals. That conflicts with the active next-goal package.
+- At the initial audit, `GOAL.md` stated the current stage did not require extreme performance, while lines later moved full hot-index baseline, 500-query benchmark, P95/P99 reduction, and UI into follow-up goals. That was the authority conflict this repair addresses.
 - `tokei` baseline excluding `target`, `.git`, `local-data`, and `artifacts`: 89 Rust files, 100,361 Rust lines, 92,571 Rust code lines; 49 Markdown files, 26,493 Markdown lines; 223 total files, 152,198 total lines.
+
+Request-changes repair facts:
+
+- PR #10 remains draft/open while documentation blockers are repaired.
+- The repair explicitly adds machine-readable public contract files: `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, `perf/loop-state.schema.json`, and `perf/experiment-report.schema.json`.
+- The repair remains docs/data only. It does not touch `crates/`, `scripts/`, `Cargo.toml`, `Cargo.lock`, tests, private resumes, raw query files, local artifacts, diagnostics packages, or model caches.
+- Current `tokei` baseline excluding `target`, `.git`, `local-data`, `artifacts`, and `.worktrees`: 236 total files, 154,006 total lines; 89 Rust files, 100,361 Rust lines; 58 Markdown files, 27,738 Markdown lines.
 
 Technical evidence behind the documentation risk:
 
@@ -51,9 +58,11 @@ In scope for the planned change:
 
 - `GOAL.md`
 - `MANIFEST.md`
+- `ACTIVE_GOAL.toml`
 - `03_next_goal_高性能本地检索GUI闭环/`
 - `docs/superpowers/specs/`
 - `docs/superpowers/plans/`
+- `perf/`
 
 Out of scope for the planned change:
 
@@ -75,6 +84,8 @@ Out of scope for the planned change:
 5. Freeze daemon IPC and diagnostics boundaries at the documentation level before GUI work begins.
 6. Define benchmark and evidence lanes that separate smoke, W0 local proof, W1 private proof, soak, fault, and GUI/manual validation.
 7. Keep privacy rules explicit enough that no raw query, resume text, candidate result, path, token, or diagnostic package can enter git.
+8. Add machine-readable public contracts for active goal state, acceptance redlines, loop-state reports, and redacted experiment reports.
+9. Define profiling, platform journal, and all-computer discovery contracts before performance implementation.
 
 ## Non-Goals
 
@@ -83,7 +94,8 @@ Out of scope for the planned change:
 - This change does not stream encrypted snapshot publishing.
 - This change does not create a GUI.
 - This change does not run private benchmark data.
-- This change does not add new CI scripts or code-based policy checks.
+- This change does not add new CI scripts or production code.
+- This change does not claim W1, soak/fault, or GUI/manual evidence is complete.
 
 ## Required Documentation Contract
 
@@ -95,7 +107,7 @@ The planned documentation change must make the relationship among root `GOAL.md`
 - `03_next_goal_高性能本地检索GUI闭环/` becomes the active execution contract for the performance + GUI + closed-loop phase after current-stage closure.
 - `docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md` and its linked plan are the planning artifacts for fixing this PR's documentation contract.
 
-The plan must not silently create a new root machine contract file without plan-review approval. It must define the schema and acceptance expectations inside the goal documentation first.
+The request-changes repair explicitly creates root and `perf/` machine-readable contract files because review found that prose-only contracts were not tight enough. These files are public docs/data artifacts; they do not authorize production code changes or private benchmark execution.
 
 ### 2. Reviewer Issue Mapping
 
@@ -107,6 +119,9 @@ The target documentation package must include a reviewer issue ledger with:
 - Evidence path.
 - Required documentation owner.
 - Acceptance condition.
+- Status.
+- Closure evidence.
+- Closed-by slice or PR marker.
 
 The ledger must include at least these issue classes:
 
@@ -146,6 +161,22 @@ The target docs must define a state machine for long-running Codex work:
 - `verification_active`
 - `evidence_review`
 - `blocked`
+- `slice_complete`
+- `goal_complete`
+
+It must also define the performance experiment state sequence:
+
+- `not_started`
+- `contract_locked`
+- `baseline_validated`
+- `profile_captured`
+- `hotspot_prioritized`
+- `optimization_slice_active`
+- `regression_checked`
+- `w1_accepted`
+- `soak_accepted`
+- `gui_accepted`
+- `blocked`
 - `complete`
 
 Every state must define:
@@ -170,7 +201,8 @@ The state machine must explicitly prevent these failure modes:
 
 The target docs must freeze business-visible query semantics before performance work:
 
-- Simple whitespace text query means all non-stopword terms are required unless the user explicitly selects an OR mode.
+- Simple whitespace text query means all normalized terms are required unless the user explicitly selects an OR mode.
+- Stopword, synonym, stemming, typo, and semantic expansion are not part of the default simple text mode unless introduced as a new explicit semantic version.
 - Quoted phrases remain phrase constraints.
 - Field filters are hard filters and run before ranking.
 - Boolean syntax must be explicit, documented, and tested against the simple text mode.
@@ -179,20 +211,22 @@ The target docs must freeze business-visible query semantics before performance 
 
 The target docs must define metamorphic query checks such as:
 
-- Reordered simple terms should preserve the result set within ranking tolerance.
-- Adding a required term should not increase the unfiltered candidate set.
+- Reordered simple terms must preserve the candidate set exactly; ranking may differ only with documented tie behavior.
+- Adding a required term must produce a subset or equal candidate set.
 - Explicit OR should be the only way to widen simple term matching.
-- Field filters should reduce or preserve candidate count, never widen it.
+- Field filters and phrase constraints should reduce or preserve candidate count, never widen it.
 
 ### 5. Daemon IPC and Diagnostics
 
 The target docs must extend the daemon IPC and diagnostics contract before GUI implementation:
 
-- Request envelope with request id, schema version, deadline, client class, idempotency key, cancel token, and optional batch id.
+- Request envelope with request id, schema version, deadline, client capability, idempotency key, cancel token, and optional batch id.
+- Daemon-derived internal client class, so a client cannot self-report into a higher-priority fairness lane.
+- Local transport and framing rules, including request size limits and no raw query in diagnostics/logs/traces.
 - Search batch contract for GUI and benchmark harness.
 - Cancel contract that works for queued and active long-running requests.
 - Overload response contract with retry timing and degraded-mode explanation.
-- Backpressure and fairness rules separating interactive GUI work, Codex validation work, background import/OCR/vector work, and benchmark work.
+- Backpressure and weighted fairness rules separating interactive GUI work, Codex validation work, background import/OCR/vector work, and benchmark work.
 - Diagnostics contract that remains redacted and aggregate-only.
 
 ### 6. Acceptance Matrix
@@ -203,6 +237,7 @@ The target docs must define a W0/W1 acceptance matrix:
 - W1: local private benchmark using local resumes and local query set, with redacted aggregate evidence only.
 - Soak: resident daemon long-run, restart, fault injection, queue pressure, cancellation, and recovery.
 - GUI/manual: import, status, query, detail, diagnostics, pause/resume/cancel, and failure visibility through versioned daemon contracts.
+- Machine-readable thresholds in `perf/acceptance-matrix.toml`.
 
 Acceptance must distinguish:
 
@@ -210,6 +245,8 @@ Acceptance must distinguish:
 - Evidence required to start implementation.
 - Evidence required to mark each implementation slice complete.
 - Evidence required to declare the whole performance + GUI goal complete.
+
+W1 must include concrete redlines for minimum local document count, searchable count, query count, resident daemon batch execution, no process-spawn-per-query, P95/P99 per query bucket, stage P95, hot-path false flags, zero-change incremental, and privacy booleans.
 
 ### 7. Security and Privacy
 
@@ -220,6 +257,26 @@ The target docs must preserve and sharpen the repository privacy boundary:
 - Candidate cards, resume text, names, contact info, paths, screenshots, browser traces, cookies, and tokens must not be copied into this repository.
 - Benchmark evidence committed to git must be redacted aggregate evidence with hashes and counts only.
 - Diagnostics evidence committed to git must assert that it contains no raw resume text, raw queries, candidate results, paths, or tokens.
+
+### 8. Profiling and Platform Discovery
+
+The target docs must define:
+
+- Required Rust instrumentation spans and stage metrics for query parse, prefilter, BM25, ANN, fusion, bulk hydrate, and snippet.
+- Histogram, profiler summary, and resource aggregate evidence requirements.
+- macOS FSEvents and Windows USN journal contracts, including gap handling, dirty subtree, bounded reconciliation, and fallback manifest diff.
+- Full-computer root-set semantics, symlink/reparse handling, cloud placeholder behavior, permission failures, and external volume offline behavior.
+
+### 9. Machine-Readable Contracts
+
+The docs-hardening repair must add:
+
+- `ACTIVE_GOAL.toml`
+- `perf/acceptance-matrix.toml`
+- `perf/loop-state.schema.json`
+- `perf/experiment-report.schema.json`
+
+These files must parse as TOML/JSON and must encode the public privacy boundary.
 
 ## Acceptance Criteria for the Planned Docs Change
 
@@ -232,10 +289,12 @@ The future docs-hardening implementation is acceptable when:
 5. Query semantics, benchmark privacy, and anti-overfit rules are documented in the query benchmark document.
 6. Daemon IPC and diagnostics contract includes deadline, cancel, batch, overload, fairness, and redaction fields.
 7. Implementation slicing starts with P0 contract/semantics/acceptance and defers code changes until after fw-plan-review.
-8. Verification confirms no planned docs-hardening diff touches implementation code paths.
-9. `git diff --check` passes for the touched documentation files.
-10. `./scripts/ci/guard-public-repo.sh` passes before any public push.
+8. Profiling and platform journal contracts exist before performance implementation starts.
+9. Machine-readable goal, acceptance, loop-state, and experiment-report contracts exist and parse.
+10. Verification confirms no planned docs-hardening diff touches implementation code paths.
+11. `git diff --check` passes for the touched documentation files.
+12. `./scripts/ci/guard-public-repo.sh` passes before any public push.
 
 ## Handoff
 
-After this spec and linked plan are created, the next workflow stage is `fw-plan-review`. Implementation must not begin until plan review approves the documentation-hardening plan.
+After this request-changes repair is committed and pushed, the next workflow stage is `fw-review`. Production performance, daemon, indexing, query parser, GUI, and private benchmark implementation remain out of scope until a later implementation plan is approved.
