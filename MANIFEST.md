@@ -24,4 +24,16 @@
 - `02_execution_plan_执行方案/07_里程碑风险与取舍.md`
 - `02_execution_plan_执行方案/08_依赖许可与参考资料.md`
 - `02_execution_plan_执行方案/09_一页版执行清单.md`
+- `03_next_goal_高性能本地检索GUI闭环/00_阅读顺序.md`
+- `03_next_goal_高性能本地检索GUI闭环/01_目标边界与成功标准.md`
+- `03_next_goal_高性能本地检索GUI闭环/02_系统架构与模块边界.md`
+- `03_next_goal_高性能本地检索GUI闭环/03_数据模型与存储协议.md`
+- `03_next_goal_高性能本地检索GUI闭环/04_数据流与状态机.md`
+- `03_next_goal_高性能本地检索GUI闭环/05_Query_Benchmark与真实Query种子.md`
+- `03_next_goal_高性能本地检索GUI闭环/06_Daemon_IPC与Diagnostics契约.md`
+- `03_next_goal_高性能本地检索GUI闭环/07_GUI与手工Codex闭环.md`
+- `03_next_goal_高性能本地检索GUI闭环/08_失败模式与恢复策略.md`
+- `03_next_goal_高性能本地检索GUI闭环/09_安全隐私与本地证据边界.md`
+- `03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md`
+- `03_next_goal_高性能本地检索GUI闭环/11_一页版目标图.md`
 - `GOAL.md`
