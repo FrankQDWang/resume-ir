@@ -57,7 +57,7 @@ screenshot OCR
 
 Query set 必须先从真实 `source_search` 调用中抽取候选，再筛选一组在 D10K 私有库上可用于稳定比较的固定集合。少量 zero-result query 可以保留为单独 bucket；benchmark 不能被大量搜不到人的 query 主导。冻结后以 `query_set_sha256` 锁定。修改 extraction/redaction 规则必须生成新的 `query_set_sha256`，旧结果不得直接做 before/after 对比。
 
-`query_set_sha256` 是机器合同和公开 summary 的 canonical field。本文若使用 `query_set_hash`，只表示 `query_set_sha256` 的通用 prose alias，不是另一个机器字段。
+所有机器合同、公开 summary、issue/PR evidence 字段统一使用 `query_set_sha256`；不得使用 `query_set_hash` 作为字段名或别名。
 
 ## 2. 本地私有输入
 
