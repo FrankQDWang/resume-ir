@@ -28,13 +28,15 @@ SeekTalent artifacts 只作为 query 和 query 组合形态的原始材料来源
 Allowed source:
 
 ```text
-source_root = ~/Agents/SeekTalent-0.2.4/artifacts/runs
+source_root = $RESUME_IR_QUERY_ARTIFACT_ROOT
 source_glob = **/runtime/trace.log
 event_filter = tool_called
 tool_filter = source_search
 query_source = source_search invocation argument only
 query_extraction_version = trace_source_search_v1
 ```
+
+`RESUME_IR_QUERY_ARTIFACT_ROOT` 必须指向本机 SeekTalent artifacts runs root；extractor 仍只能读取该 root 下的 `runtime/trace.log`，且只抽取 `tool_called` / `source_search` invocation argument。
 
 Forbidden sources:
 

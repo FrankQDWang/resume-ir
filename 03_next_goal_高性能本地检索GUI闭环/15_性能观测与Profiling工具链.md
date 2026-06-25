@@ -21,10 +21,11 @@ Profile issue ledger rules:
 Required profile issue anchors/fields:
 
 ```text
-Profile Lane
+Evidence Lane
+Benchmark Lane
 Dataset
 Corpus Profile Hash
-Query Set Hash or query_set_sha256
+query_set_sha256
 Baseline Command
 Baseline Evidence
 Profiler Evidence
