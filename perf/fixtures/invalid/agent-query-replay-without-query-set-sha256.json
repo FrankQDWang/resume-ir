@@ -130,7 +130,8 @@
     "query_parse_error_rate": 0.01,
     "allowed_claims": [
       "real_agent_workload_latency"
-    ]
+    ],
+    "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555"
   },
   "profiling": {
     "release_build": true,

@@ -563,7 +563,11 @@
         },
         "benchmark_report_hash": { "$ref": "#/$defs/hex64" },
         "benchmark_artifact_id": { "type": "string", "minLength": 1 }
-      }
+      },
+      "anyOf": [
+        { "required": ["benchmark_report_hash"] },
+        { "required": ["benchmark_artifact_id"] }
+      ]
     },
     "repeat_amplification_control": {
       "type": "object",

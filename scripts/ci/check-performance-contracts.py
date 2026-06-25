@@ -30,14 +30,6 @@ REQUIRED_BUCKETS = [
     "semantic",
     "extreme",
 ]
-REQUIRED_COMPLETION_CELLS = {
-    "w0_docs",
-    "D10K_private_calibration",
-    "D100K_weak_host",
-    "D1M_scale",
-    "soak_fault",
-    "gui_manual",
-}
 PRIVACY_FALSE_FIELDS = [
     "contains_raw_resume_text",
     "contains_raw_query_text",
@@ -96,6 +88,13 @@ def require_number_at_least(value: object, minimum: float, path: str) -> None:
 def require_hex64(value: object, path: str) -> None:
     if not isinstance(value, str) or len(value) != 64 or any(ch not in HEX64 for ch in value):
         fail(f"{path}: expected lowercase sha256 hex")
+
+
+def require_main_reachable_commit(value: object, path: str) -> None:
+    if not isinstance(value, str) or not value:
+        fail(f"{path}: expected main-reachable git commit")
+    if value == "working-tree":
+        fail(f"{path}: expected main-reachable git commit, got working-tree")
 
 
 def validate_privacy(report: Mapping[str, object], *, trace_required: bool, path: str) -> None:
@@ -160,6 +159,17 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         fail("matrix.gui_redlines.visible_rows_min must be 20")
     if matrix.get("gui_redlines", {}).get("visible_rows_max") != 60:
         fail("matrix.gui_redlines.visible_rows_max must be 60")
+
+
+def required_completion_cells(matrix: Mapping[str, object]) -> set[str]:
+    completion = require_mapping(matrix.get("completion"), "matrix.completion")
+    cells = require_list(completion.get("goal_complete_requires"), "matrix.completion.goal_complete_requires")
+    if not cells:
+        fail("matrix.completion.goal_complete_requires: must not be empty")
+    for index, cell in enumerate(cells):
+        if not isinstance(cell, str) or not cell:
+            fail(f"matrix.completion.goal_complete_requires[{index}]: expected non-empty string")
+    return set(cells)
 
 
 def validate_thresholds(report: Mapping[str, object], path: str) -> None:
@@ -356,7 +366,7 @@ def validate_experiment_report(value: object, matrix: Mapping[str, object], path
         fail(f"{path}.evidence_lane invalid")
 
 
-def validate_loop_state(value: object, path: str) -> None:
+def validate_loop_state(value: object, matrix: Mapping[str, object], path: str) -> None:
     state = require_mapping(value, path)
     if state.get("schema_version") != "resume-ir.loop-state-report.v2":
         fail(f"{path}.schema_version mismatch")
@@ -382,10 +392,21 @@ def validate_loop_state(value: object, path: str) -> None:
         require_bool(verification.get("all_required_commands_ran"), True, f"{path}.verification.all_required_commands_ran")
         if not commands:
             fail(f"{path}: goal_complete requires at least one command")
-        cells = set(require_list(state.get("accepted_cells"), f"{path}.accepted_cells"))
-        missing = REQUIRED_COMPLETION_CELLS - cells
+        evidence_cells = require_list(state.get("evidence_cells"), f"{path}.evidence_cells")
+        cell_names = set()
+        for index, cell in enumerate(evidence_cells):
+            evidence_cell = require_mapping(cell, f"{path}.evidence_cells[{index}]")
+            cell_name = evidence_cell.get("cell")
+            if not isinstance(cell_name, str) or not cell_name:
+                fail(f"{path}.evidence_cells[{index}].cell: expected non-empty string")
+            cell_names.add(cell_name)
+            require_main_reachable_commit(
+                evidence_cell.get("main_reachable_commit"),
+                f"{path}.evidence_cells[{index}].main_reachable_commit",
+            )
+        missing = required_completion_cells(matrix) - cell_names
         if missing:
-            fail(f"{path}.accepted_cells missing {sorted(missing)}")
+            fail(f"{path}.evidence_cells missing {sorted(missing)}")
     if experiment in {"hypothesis_registered", "accepted", "reverted", "complete"}:
         hypothesis = require_mapping(state.get("hypothesis"), f"{path}.hypothesis")
         for key in ["id", "acceptance_cell", "expected_effect", "before_measurement_ref"]:
@@ -400,7 +421,7 @@ def validate_loop_state(value: object, path: str) -> None:
 def validate_fixture(path: pathlib.Path, matrix: Mapping[str, object]) -> None:
     value = load_json(path)
     if path.name.startswith("loop") or "loop-state" in path.name:
-        validate_loop_state(value, str(path.relative_to(ROOT)))
+        validate_loop_state(value, matrix, str(path.relative_to(ROOT)))
     else:
         validate_experiment_report(value, matrix, str(path.relative_to(ROOT)))
 
@@ -418,7 +439,7 @@ def main() -> int:
         "perf/loop-state.schema.json",
         "resume-ir.loop-state-report.v2",
     )
-    validate_loop_state(load_json(PERF / "current-loop-state.json"), "perf/current-loop-state.json")
+    validate_loop_state(load_json(PERF / "current-loop-state.json"), matrix, "perf/current-loop-state.json")
 
     for path in sorted(VALID_FIXTURES.glob("*.json")):
         validate_fixture(path, matrix)

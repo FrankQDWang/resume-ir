@@ -17,19 +17,20 @@
   "current_slice": "invalid unmerged completion fixture",
   "transition_history": [
     {
-      "from": "pr_opened",
+      "from": "pr_merged",
       "to": "goal_complete",
       "evidence_ref": "schema fixture"
     }
   ],
-  "accepted_cells": [
-    "w0_docs",
-    "d10k_private_calibration",
-    "d100k_weak_host",
-    "d1m_scale",
-    "soak_fault",
-    "gui_manual"
-  ],
+  "hypothesis": {
+    "id": "fixture-hypothesis",
+    "acceptance_cell": "d1m_scale",
+    "expected_effect": "fixture completion evidence is main reachable",
+    "before_measurement_ref": "fixture-before",
+    "after_measurement_ref": "fixture-after",
+    "reprofile_ref": "fixture-reprofile",
+    "decision": "accepted"
+  },
   "evidence_cells": [
     {
       "cell": "w0_docs",
@@ -38,7 +39,97 @@
       "runner_version": "fixture-runner-v1",
       "benchmark_runner_version": "fixture-benchmark-v1",
       "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
-      "main_reachable_commit": "feature-branch"
+      "main_reachable_commit": "abcdef1"
+    },
+    {
+      "cell": "d10k_private_calibration",
+      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "runner_version": "fixture-runner-v1",
+      "benchmark_runner_version": "fixture-benchmark-v1",
+      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "main_reachable_commit": "abcdef1"
+    },
+    {
+      "cell": "d100k_weak_host",
+      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "runner_version": "fixture-runner-v1",
+      "benchmark_runner_version": "fixture-benchmark-v1",
+      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "main_reachable_commit": "abcdef1"
+    },
+    {
+      "cell": "d1m_scale",
+      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "runner_version": "fixture-runner-v1",
+      "benchmark_runner_version": "fixture-benchmark-v1",
+      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "main_reachable_commit": "abcdef1"
+    },
+    {
+      "cell": "soak_fault",
+      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "runner_version": "fixture-runner-v1",
+      "benchmark_runner_version": "fixture-benchmark-v1",
+      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "main_reachable_commit": "abcdef1"
+    },
+    {
+      "cell": "gui_manual",
+      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "runner_version": "fixture-runner-v1",
+      "benchmark_runner_version": "fixture-benchmark-v1",
+      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "main_reachable_commit": "abcdef1"
+    },
+    {
+      "cell": "first_searchable",
+      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "runner_version": "fixture-runner-v1",
+      "benchmark_runner_version": "fixture-benchmark-v1",
+      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "main_reachable_commit": "abcdef1"
+    },
+    {
+      "cell": "full_import_ocr_backlog",
+      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "runner_version": "fixture-runner-v1",
+      "benchmark_runner_version": "fixture-benchmark-v1",
+      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "main_reachable_commit": "abcdef1"
+    },
+    {
+      "cell": "query_hot_path",
+      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "runner_version": "fixture-runner-v1",
+      "benchmark_runner_version": "fixture-benchmark-v1",
+      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "main_reachable_commit": "working-tree"
+    },
+    {
+      "cell": "agent_query_replay",
+      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "runner_version": "fixture-runner-v1",
+      "benchmark_runner_version": "fixture-benchmark-v1",
+      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "main_reachable_commit": "abcdef1"
+    },
+    {
+      "cell": "repeat_amplification_control",
+      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "runner_version": "fixture-runner-v1",
+      "benchmark_runner_version": "fixture-benchmark-v1",
+      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
+      "main_reachable_commit": "abcdef1"
     }
   ],
   "verification": {
