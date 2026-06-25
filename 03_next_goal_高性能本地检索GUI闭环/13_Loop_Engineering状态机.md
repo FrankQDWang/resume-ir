@@ -57,7 +57,7 @@ Terminology map:
 | `verification_active` | 正在运行验收 | `evidence_review` 或 `blocked` | 命令、退出码、摘要 | 只看部分输出就宣布完成 |
 | `evidence_review` | 验证输出已收集 | `slice_complete`, `goal_complete`, `blocked`, 或 `slice_active` | 证据分类、风险说明 | 把 smoke 当 W1 benchmark |
 | `slice_complete` | 当前切片所有验收通过 | `slice_active` 或 `goal_complete` | 切片 diff、命令、证据 lane、隐私检查 | 把单切片完成说成整个目标完成 |
-| `blocked` | 同一阻塞条件连续出现至少 3 次且无新证据路径 | `intake` 或 `ceo_reviewed` | 阻塞条件、连续次数、下一步所需外部输入 | 因任务困难、预算紧或验证慢而提前标 blocked |
+| `blocked` | 同一阻塞条件经过 3 次 distinct `evidence_path` 的 effective retry 后仍复现 | `intake` 或 `ceo_reviewed` | 阻塞条件、连续次数、下一步所需外部输入 | 因任务困难、预算紧或验证慢而提前标 blocked |
 | `goal_complete` | W0、W1、soak/fault、GUI/manual evidence cells 和五个 benchmark lanes 均通过且无开放 blocker | none | 完整验收矩阵、benchmark lane coverage、review closure、隐私检查 | 留下未说明的失败检查 |
 
 ## 2. Active Goal Record
@@ -94,7 +94,7 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 | `accepted` | 当前 scale cell redlines 通过 | `baseline_validated`、`cross_os_passed` 或 `complete` | accepted_cells、contract pins、redacted report |
 | `reverted` | 假设失败或副作用超限 | `bottleneck_selected` 或 `blocked` | revert evidence、failed hypothesis |
 | `cross_os_passed` | macOS/Windows 必需切片通过 | `complete` 或 `baseline_validated` | platform aggregate |
-| `blocked` | 同一 blocker 连续 3 次且无新证据路径 | `contract_locked` 或 `bottleneck_selected` | blocked report |
+| `blocked` | 同一 blocker 经过 3 次 distinct `evidence_path` 的 effective retry 后仍复现 | `contract_locked` 或 `bottleneck_selected` | blocked report |
 | `complete` | 所有 evidence lanes 通过 | none | final redacted aggregate |
 
 性能实现不得从 `contract_locked` 直接跳到 `optimization_slice_active`。没有 baseline、profiler evidence 和可证伪 hypothesis，只能做合同修复或观测面实现，不能声明优化成功。任何 `goal_complete` 状态必须在 `perf/loop-state.schema.json` 中包含 W0、D10K、D100K、D1M、soak/fault、GUI/manual accepted cells。完整 autonomous completion 还必须有五个 benchmark lanes 的 redacted evidence：`first_searchable`、`full_import_ocr_backlog`、`query_hot_path`、`agent_query_replay`、`repeat_amplification_control`。
@@ -115,7 +115,7 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 
 ## 5. Blocked Stop Rule
 
-当同一阻塞条件在同一目标上下文中连续出现至少 3 次，并且没有新的输入、代码变化、环境变化或新证据路径可以改变结果时，状态必须进入 `blocked`。进入 `blocked` 后，报告必须包含：
+当同一阻塞条件在同一目标上下文中经过 3 次 distinct `evidence_path` 的 effective retry 后仍复现，并且没有新的输入、代码变化、环境变化或新证据路径可以改变结果时，状态必须进入 `blocked`。进入 `blocked` 后，报告必须包含：
 
 1. 阻塞命令或证据。
 2. 阻塞条件。
@@ -127,9 +127,10 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 
 Hard retry contract:
 
-1. 每一次同条件 effective retry 都必须记录新的 `evidence_path`，且该路径必须指向新的命令输出、证据源、环境变化、代码变化或配置变化证据。
-2. 没有新的 `evidence_path` 时，不得重复执行同一 retry；runner 必须直接进入 `blocked`，或在 `base_drift` 情况下先执行 reconciliation action，或回到 contract review 修正合同。
-3. 只有同一 blocker 已经过 3 次各自带 distinct `evidence_path` 的 effective retry 后仍复现时，才可进入 `blocked`。
+1. `no_new_evidence_path` 不算 effective retry，也不增加 retry 计数。
+2. 每一次同条件 effective retry 都必须记录新的 `evidence_path`，且该路径必须指向新的命令输出、证据源、环境变化、代码变化或配置变化证据。
+3. 没有新的 `evidence_path` 时，不得重复执行同一 retry；runner 必须进入 reconciliation action，或回到 contract review 寻找新的证据路径或重新分类 blocker。
+4. 只有同一 blocker 已经过 3 次各自带 distinct `evidence_path` 的 effective retry 后仍复现时，才可进入 `blocked`。
 
 `base_drift` 是 reconciliation action，不消耗普通 retry。runner 先同步或 rebase 最新 `main` 并重跑 affected gates；只有相同失败仍复现时才开始计入 retry。
 
