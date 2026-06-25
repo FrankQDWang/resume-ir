@@ -12,6 +12,7 @@ Contract surfaces touched:
 
 - <!-- e.g. CLI args, diagnostics JSON, release-readiness JSON, workflow gate, GitHub template, none -->
 
+<!-- contract:gui_visual_reference -->
 ## GUI Visual Contract
 
 - [ ] GUI PR declares `visual_reference_version` or marks this section not applicable.

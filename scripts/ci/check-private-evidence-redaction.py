@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import subprocess
 import sys
 import tomllib
 
@@ -49,6 +50,17 @@ RAW_PRIVATE_TRUE_PATTERNS = [
 ]
 
 
+def tracked_ui_reference_files() -> list[str]:
+    result = subprocess.run(
+        ["git", "ls-files", "UI-reference"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return [line for line in result.stdout.splitlines() if line]
+
+
 def files_to_scan() -> list[pathlib.Path]:
     paths = [
         ROOT / "AGENTS.md",
@@ -84,6 +96,14 @@ def check_file(path: pathlib.Path) -> None:
 
 
 def main() -> int:
+    ui_reference_files = tracked_ui_reference_files()
+    if ui_reference_files:
+        fail(
+            "UI-reference/ contains tracked local visual reference assets; "
+            "remove these files from git tracking: "
+            + ", ".join(ui_reference_files)
+        )
+
     for path in files_to_scan():
         if path.exists():
             check_file(path)

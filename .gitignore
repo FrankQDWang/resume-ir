@@ -43,6 +43,9 @@ diagnostics*.tar.gz
 /diagnostics/
 /bench-results/
 
+# Local visual reference / prototype assets
+/UI-reference/
+
 # Local model/cache artifacts. Keep manifests and docs trackable, not weights.
 /model-cache/
 /models/cache/
