@@ -17,7 +17,7 @@
 
 这些文件可以提交，因为只含 schema、阈值、状态、synthetic fixtures 和布尔隐私标记，不含真实 query、简历、路径或诊断包。
 
-Policy truth lives in `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, schemas, and the autonomous entrypoint document. Execution truth lives in GitHub PR/issue state, git branch/base sha, benchmark artifact hashes, and only then `perf/current-loop-state.json`.
+Policy truth lives in `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, schemas, and the autonomous entrypoint document. Execution truth lives in GitHub PR/issue state, git branch/base sha, public-safe `benchmark_report_hash` or `benchmark_artifact_id`, and only then `perf/current-loop-state.json`.
 
 ## 2. Goal Lock Rules
 
@@ -31,11 +31,11 @@ Policy truth lives in `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, schemas
 W1、soak/fault 和 GUI/manual 证据必须生成本地私有完整报告，并只把 redacted aggregate summary 带入 git。公开 summary 必须满足：
 
 1. schema version 固定。
-2. dataset 和 query set 使用 hash，不出现路径或原文。
+2. `dataset_sha256` and `query_set_sha256` are public-safe identifiers only: they must come from redacted aggregate manifest, approved opaque manifest, or HMAC-SHA256 opaque manifest. Raw local dataset/query-set hashes remain local-only and must not appear in git or GitHub.
 3. latency 至少包含 P50/P95/P99 和 stage P95。
 4. resources 至少包含 RSS、CPU、disk aggregate。
 5. hot path flags 明确为 false。
-6. profiler capture 只提交 ref/hash，不提交本地 capture 文件。
+6. profiler evidence 只能提交 public-safe redacted symbol-summary/report hash、`benchmark_report_hash`、`benchmark_artifact_id`、approved opaque manifest ref 或 HMAC-SHA256 opaque manifest ref。Raw profiler capture/file hash remains local-only and must not appear in git or GitHub.
 7. thresholds 必须引用 `perf/acceptance-matrix.toml`，并列出 failed redlines。
 
 ## 4. Review Closure

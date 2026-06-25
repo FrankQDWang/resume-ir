@@ -218,6 +218,6 @@ This generic generation strategy is for broad local query seed sets only. It doe
 2. 任何提交文件中出现 private artifact path、resume path、candidate text，失败。
 3. 500-query benchmark 不足 500 条时，不得声称任何 scale gate accepted；D1M 完成声明还必须有至少 25000 request samples。
 4. smoke profile 可以小样本，但必须标明 `percentile_confidence=smoke`。
-5. W1 私有 query set 必须分为 tune 与 holdout，公开证据只提交各自 hash、count 和 bucket count。
+5. W1 私有 query set 必须分为 tune 与 holdout，公开证据只提交 public-safe tune/holdout identifiers、count 和 bucket count。
 6. 调参只能读取 tune aggregate；最终完成声明必须包含 holdout aggregate，并通过同一语义版本。
 7. 任一 query extractor version、artifact input hash、query semantics version 或 dataset hash 变化，都必须生成新的 baseline，不得和旧 baseline 混报。
