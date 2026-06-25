@@ -72,6 +72,15 @@
     "evidence_lane": {
       "enum": ["smoke", "w0_docs", "w1_private", "soak_fault", "gui_manual"]
     },
+    "optimization_layer": { "$ref": "#/$defs/optimization_layer" },
+    "affected_layers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/optimization_layer" },
+      "uniqueItems": true
+    },
+    "platform_lane": { "$ref": "#/$defs/platform_lane" },
+    "visual_reference": { "$ref": "#/$defs/visual_reference" },
+    "layer_closure": { "$ref": "#/$defs/layer_closure" },
     "contract_pins": { "$ref": "#/$defs/contract_pins" },
     "contract_integrity": { "$ref": "#/$defs/contract_integrity" },
     "github_ledger": { "$ref": "#/$defs/github_ledger" },
@@ -378,6 +387,30 @@
         "contains_local_paths": { "const": false },
         "contains_tokens": { "const": false },
         "contains_diagnostics_package": { "const": false }
+      }
+    },
+    "optimization_layer": { "enum": ["L1", "L2", "L3", "L4"] },
+    "platform_lane": { "enum": ["macos_m4_discovery", "windows_weak_host_validation", "cross_os_ci_smoke"] },
+    "visual_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference_role", "default_stack", "production_next_server_allowed"],
+      "properties": {
+        "reference_role": { "const": "visual_baseline_not_functional_clone" },
+        "default_stack": { "const": "tauri_react_vite_tailwind_typescript" },
+        "visual_reference_path": { "const": "UI-reference/" },
+        "production_next_server_allowed": { "const": false },
+        "pixel_level_visual_similarity_required": { "const": true }
+      }
+    },
+    "layer_closure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary_blocker_layer", "closing_layer", "lower_layer_closes_higher_layer_blocker"],
+      "properties": {
+        "primary_blocker_layer": { "$ref": "#/$defs/optimization_layer" },
+        "closing_layer": { "$ref": "#/$defs/optimization_layer" },
+        "lower_layer_closes_higher_layer_blocker": { "const": false }
       }
     }
   }

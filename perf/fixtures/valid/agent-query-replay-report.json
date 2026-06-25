@@ -187,5 +187,40 @@
     "contains_tokens": false,
     "contains_diagnostics_package": false,
     "trace_summary_redacted": true
+  },
+  "optimization": {
+    "optimization_layer": "L1",
+    "affected_layers": [
+      "L2"
+    ],
+    "baseline_artifact": "redacted://baseline/d10k",
+    "profiler_summary": "redacted://profile/symbol-summary",
+    "stage_histogram": "redacted://histogram/stages",
+    "bottleneck_statement": "first-searchable architecture dominates import-to-query readiness",
+    "hypothesis": "resident daemon first-searchable indexing reduces first-result latency",
+    "expected_delta": "first-searchable p95 improves by at least 40%",
+    "rollback_condition": "recovery failure rate increases or peak RSS exceeds gate",
+    "negative_controls": [
+      "query parser microbenchmark unchanged"
+    ],
+    "acceptance_gate": "D10K_private_calibration",
+    "lower_layer_closes_higher_layer_blocker": false
+  },
+  "workload_manifest": {
+    "query_set_source": "$RESUME_IR_QUERY_ARTIFACT_ROOT source_search static set",
+    "corpus_scale": "D10K_private_calibration",
+    "hardware_class": "macos_m4_discovery",
+    "warm_or_cold_definition": "warm daemon after 30s warmup",
+    "cache_state": "documented per run"
+  },
+  "platform_evidence": {
+    "platform_lane": "macos_m4_discovery",
+    "hardware_class": "apple_silicon_m4_class",
+    "os_build_class": "macos_current",
+    "power_mode": "plugged",
+    "runner_version": "resume-ir-runner-contract-v1",
+    "benchmark_runner_version": "resume-ir-benchmark-contract-v1",
+    "redacted_resource_aggregate_ref": "redacted://resources/aggregate",
+    "redacted_stage_histogram_ref": "redacted://histogram/stages"
   }
 }

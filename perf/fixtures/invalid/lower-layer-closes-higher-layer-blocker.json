@@ -4,6 +4,7 @@
   "report_kind": "schema_fixture",
   "claim": "slice_complete",
   "evidence_lane": "w1_private",
+  "benchmark_lane": "agent_query_replay",
   "contract_pins": {
     "active_goal_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
     "acceptance_matrix_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
@@ -21,10 +22,10 @@
   },
   "dataset": {
     "dataset_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "scale_gate": "D1M_scale",
-    "document_count": 1000000,
-    "searchable_document_count": 900000,
-    "vector_indexed_document_count": 900000,
+    "scale_gate": "D10K_private_calibration",
+    "document_count": 10000,
+    "searchable_document_count": 8000,
+    "vector_indexed_document_count": 8000,
     "corpus_split_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
   "query_set": {
@@ -32,7 +33,7 @@
     "tune_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "holdout_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
     "query_count": 500,
-    "request_sample_count": 25000,
+    "request_sample_count": 5000,
     "bucket_counts": {
       "single_term": 50,
       "and_2": 75,
@@ -44,14 +45,14 @@
       "extreme": 25
     },
     "samples_per_bucket": {
-      "single_term": 3000,
-      "and_2": 3000,
-      "and_3_5": 5000,
-      "and_6_16": 3000,
-      "field_filter": 3000,
-      "hybrid": 3000,
-      "semantic": 2500,
-      "extreme": 2500
+      "single_term": 500,
+      "and_2": 500,
+      "and_3_5": 1000,
+      "and_6_16": 500,
+      "field_filter": 500,
+      "hybrid": 500,
+      "semantic": 500,
+      "extreme": 500
     },
     "hmac_split": true
   },
@@ -86,7 +87,7 @@
       "and_3_5": 130,
       "and_6_16": 170,
       "field_filter": 150,
-      "hybrid": 190,
+      "hybrid": 220,
       "semantic": 380,
       "extreme": 480
     },
@@ -96,7 +97,7 @@
       "and_3_5": 250,
       "and_6_16": 330,
       "field_filter": 300,
-      "hybrid": 380,
+      "hybrid": 440,
       "semantic": 760,
       "extreme": 900
     },
@@ -124,15 +125,32 @@
     "heavy_model_inference": false,
     "spawn_per_query": false
   },
+  "agent_query_replay": {
+    "query_set_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "query_extraction_version": "trace_source_search_v1",
+    "query_set_size": 500,
+    "zero_result_rate": 0.08,
+    "intersection_clause_count": 120,
+    "query_parse_error_rate": 0.01,
+    "allowed_claims": [
+      "real_agent_workload_latency",
+      "real_agent_query_parser_compatibility",
+      "intersection_query_behavior",
+      "zero_result_regression",
+      "duplicate_result_regression",
+      "top_k_stability_under_agent_queries"
+    ],
+    "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555"
+  },
   "profiling": {
     "release_build": true,
     "repetitions": 5,
-    "request_sample_count": 25000,
+    "request_sample_count": 5000,
     "coordinated_omission_corrected": true,
     "tracing_spans_present": true,
     "histogram_bins_present": true,
     "profiler_capture_refs": [
-      "fixture-public-safe-profiler-summary-ref"
+      "fixture-profiler-capture-ref"
     ],
     "observability_overhead_pct": 2.5
   },
@@ -155,30 +173,6 @@
     "mib_per_second": 80,
     "scan_complete_ms": 600000
   },
-  "soak_fault": {
-    "duration_minutes": 120,
-    "fault_cases": [
-      "daemon_restart",
-      "cancel",
-      "overload",
-      "journal_gap"
-    ],
-    "recovery_results": {
-      "daemon_restart": "pass",
-      "cancel": "pass",
-      "overload": "pass",
-      "journal_gap": "pass"
-    }
-  },
-  "gui_manual": {
-    "logical_rows": 100000,
-    "visible_rows": 40,
-    "overscan_rows": 80,
-    "input_to_paint_p95_ms": 80,
-    "frame_time_p95_ms": 15,
-    "scroll_dropped_frame_pct": 0.5,
-    "journey_checklist_passed": true
-  },
   "thresholds": {
     "matrix": "perf/acceptance-matrix.toml",
     "matrix_schema_version": "resume-ir.perf.acceptance-matrix.v2",
@@ -199,7 +193,7 @@
     "affected_layers": [
       "L2"
     ],
-    "baseline_artifact": "redacted://baseline/d1m",
+    "baseline_artifact": "redacted://baseline/d10k",
     "profiler_summary": "redacted://profile/symbol-summary",
     "stage_histogram": "redacted://histogram/stages",
     "bottleneck_statement": "first-searchable architecture dominates import-to-query readiness",
@@ -209,12 +203,12 @@
     "negative_controls": [
       "query parser microbenchmark unchanged"
     ],
-    "acceptance_gate": "D1M_scale",
-    "lower_layer_closes_higher_layer_blocker": false
+    "acceptance_gate": "D10K_private_calibration",
+    "lower_layer_closes_higher_layer_blocker": true
   },
   "workload_manifest": {
     "query_set_source": "$RESUME_IR_QUERY_ARTIFACT_ROOT source_search static set",
-    "corpus_scale": "D1M_scale",
+    "corpus_scale": "D10K_private_calibration",
     "hardware_class": "macos_m4_discovery",
     "warm_or_cold_definition": "warm daemon after 30s warmup",
     "cache_state": "documented per run"
@@ -228,13 +222,5 @@
     "benchmark_runner_version": "resume-ir-benchmark-contract-v1",
     "redacted_resource_aggregate_ref": "redacted://resources/aggregate",
     "redacted_stage_histogram_ref": "redacted://histogram/stages"
-  },
-  "gui_visual": {
-    "visual_reference_role": "visual_baseline_not_functional_clone",
-    "default_stack": "tauri_react_vite_tailwind_typescript",
-    "production_next_server_allowed": false,
-    "token_inventory_ref": "redacted://gui/token-inventory",
-    "screenshot_inventory_ref": "redacted://gui/screenshots",
-    "pixel_level_similarity_reviewed": true
   }
 }

@@ -62,5 +62,13 @@
     "contains_local_paths": false,
     "contains_tokens": false,
     "contains_diagnostics_package": false
+  },
+  "platform_lane": "cross_os_ci_smoke",
+  "visual_reference": {
+    "reference_role": "visual_baseline_not_functional_clone",
+    "default_stack": "tauri_react_vite_tailwind_typescript",
+    "visual_reference_path": "UI-reference/",
+    "production_next_server_allowed": false,
+    "pixel_level_visual_similarity_required": true
   }
 }

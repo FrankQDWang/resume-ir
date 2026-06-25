@@ -49,6 +49,17 @@ PRIVACY_FALSE_FIELDS = [
     "contains_tokens",
     "contains_diagnostics_package",
 ]
+OPTIMIZATION_LAYERS = {"L1", "L2", "L3", "L4"}
+PLATFORM_LANES = {
+    "macos_m4_discovery",
+    "windows_weak_host_validation",
+    "cross_os_ci_smoke",
+}
+SCALE_GATES = {
+    "D10K_private_calibration",
+    "D100K_weak_host",
+    "D1M_scale",
+}
 
 
 def load_json(path: pathlib.Path) -> object:
@@ -99,6 +110,16 @@ def require_number_at_least(value: object, minimum: float, path: str) -> None:
 def require_hex64(value: object, path: str) -> None:
     if not isinstance(value, str) or len(value) != 64 or any(ch not in HEX64 for ch in value):
         fail(f"{path}: expected lowercase sha256 hex")
+
+
+def require_non_empty_string(value: object, path: str) -> None:
+    if not isinstance(value, str) or not value:
+        fail(f"{path}: expected non-empty string")
+
+
+def require_enum(value: object, allowed: set[str], path: str) -> None:
+    if value not in allowed:
+        fail(f"{path}: invalid value {value!r}")
 
 
 def require_main_reachable_commit(value: object, path: str) -> None:
@@ -215,7 +236,73 @@ def validate_w0_report(report: Mapping[str, object], matrix: Mapping[str, object
     validate_thresholds(report, path)
 
 
+def validate_optimization(value: object, path: str) -> None:
+    optimization = require_mapping(value, path)
+    require_enum(optimization.get("optimization_layer"), OPTIMIZATION_LAYERS, f"{path}.optimization_layer")
+    affected_layers = optimization.get("affected_layers")
+    if affected_layers is not None:
+        layers = require_list(affected_layers, f"{path}.affected_layers")
+        if len(layers) != len(set(layers)):
+            fail(f"{path}.affected_layers: duplicate layers")
+        for index, layer in enumerate(layers):
+            require_enum(layer, OPTIMIZATION_LAYERS, f"{path}.affected_layers[{index}]")
+    for key in [
+        "baseline_artifact",
+        "profiler_summary",
+        "stage_histogram",
+        "bottleneck_statement",
+        "hypothesis",
+        "expected_delta",
+        "rollback_condition",
+    ]:
+        require_non_empty_string(optimization.get(key), f"{path}.{key}")
+    negative_controls = require_list(optimization.get("negative_controls"), f"{path}.negative_controls")
+    if not negative_controls:
+        fail(f"{path}.negative_controls: must not be empty")
+    for index, control in enumerate(negative_controls):
+        require_non_empty_string(control, f"{path}.negative_controls[{index}]")
+    require_enum(optimization.get("acceptance_gate"), SCALE_GATES, f"{path}.acceptance_gate")
+    if "lower_layer_closes_higher_layer_blocker" in optimization:
+        require_bool(
+            optimization.get("lower_layer_closes_higher_layer_blocker"),
+            False,
+            f"{path}.lower_layer_closes_higher_layer_blocker",
+        )
+
+
+def validate_workload_manifest(value: object, path: str) -> None:
+    workload = require_mapping(value, path)
+    require_non_empty_string(workload.get("query_set_source"), f"{path}.query_set_source")
+    require_enum(workload.get("corpus_scale"), SCALE_GATES, f"{path}.corpus_scale")
+    for key in ["hardware_class", "warm_or_cold_definition", "cache_state"]:
+        require_non_empty_string(workload.get(key), f"{path}.{key}")
+
+
+def validate_platform_evidence(value: object, path: str) -> None:
+    platform = require_mapping(value, path)
+    require_enum(platform.get("platform_lane"), PLATFORM_LANES, f"{path}.platform_lane")
+    for key in ["hardware_class", "os_build_class", "power_mode", "runner_version"]:
+        require_non_empty_string(platform.get(key), f"{path}.{key}")
+
+
+def validate_gui_visual(value: object, path: str) -> None:
+    visual = require_mapping(value, path)
+    if visual.get("visual_reference_role") != "visual_baseline_not_functional_clone":
+        fail(f"{path}.visual_reference_role mismatch")
+    if visual.get("default_stack") != "tauri_react_vite_tailwind_typescript":
+        fail(f"{path}.default_stack mismatch")
+    require_bool(
+        visual.get("production_next_server_allowed"),
+        False,
+        f"{path}.production_next_server_allowed",
+    )
+
+
 def validate_w1_report(report: Mapping[str, object], matrix: Mapping[str, object], path: str) -> None:
+    validate_optimization(report.get("optimization"), f"{path}.optimization")
+    validate_workload_manifest(report.get("workload_manifest"), f"{path}.workload_manifest")
+    validate_platform_evidence(report.get("platform_evidence"), f"{path}.platform_evidence")
+
     dataset = require_mapping(report.get("dataset"), f"{path}.dataset")
     query_set = require_mapping(report.get("query_set"), f"{path}.query_set")
     scale_gate = dataset.get("scale_gate")
@@ -325,6 +412,8 @@ def validate_soak_fault(report: Mapping[str, object], matrix: Mapping[str, objec
 
 
 def validate_gui_manual(report: Mapping[str, object], matrix: Mapping[str, object], path: str) -> None:
+    validate_gui_visual(report.get("gui_visual"), f"{path}.gui_visual")
+
     gui = require_mapping(report.get("gui_manual"), f"{path}.gui_manual")
     require_number_at_least(gui.get("logical_rows"), matrix["gui_redlines"]["representative_rows"], f"{path}.gui_manual.logical_rows")
     require_number_at_least(gui.get("visible_rows"), matrix["gui_redlines"]["visible_rows_min"], f"{path}.gui_manual.visible_rows")

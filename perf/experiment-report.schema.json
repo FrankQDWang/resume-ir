@@ -49,6 +49,10 @@
     "import_incremental": { "$ref": "#/$defs/import_incremental" },
     "soak_fault": { "$ref": "#/$defs/soak_fault" },
     "gui_manual": { "$ref": "#/$defs/gui_manual" },
+    "optimization": { "$ref": "#/$defs/optimization" },
+    "workload_manifest": { "$ref": "#/$defs/workload_manifest" },
+    "platform_evidence": { "$ref": "#/$defs/platform_evidence" },
+    "gui_visual": { "$ref": "#/$defs/gui_visual" },
     "thresholds": { "$ref": "#/$defs/thresholds" },
     "privacy": { "$ref": "#/$defs/privacy" }
   },
@@ -76,6 +80,9 @@
           "hot_path",
           "profiling",
           "import_incremental",
+          "optimization",
+          "workload_manifest",
+          "platform_evidence",
           "thresholds"
         ]
       }
@@ -86,7 +93,7 @@
     },
     {
       "if": { "properties": { "evidence_lane": { "const": "gui_manual" } }, "required": ["evidence_lane"] },
-      "then": { "required": ["gui_manual", "thresholds"] }
+      "then": { "required": ["gui_manual", "gui_visual", "thresholds"] }
     },
     {
       "if": { "properties": { "benchmark_lane": { "const": "first_searchable" } }, "required": ["benchmark_lane"] },
@@ -640,6 +647,90 @@
         "frame_time_p95_ms": { "type": "number", "minimum": 0 },
         "scroll_dropped_frame_pct": { "type": "number", "minimum": 0 },
         "journey_checklist_passed": { "const": true }
+      }
+    },
+    "optimization_layer": { "enum": ["L1", "L2", "L3", "L4"] },
+    "platform_lane": { "enum": ["macos_m4_discovery", "windows_weak_host_validation", "cross_os_ci_smoke"] },
+    "optimization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "optimization_layer",
+        "baseline_artifact",
+        "profiler_summary",
+        "stage_histogram",
+        "bottleneck_statement",
+        "hypothesis",
+        "expected_delta",
+        "rollback_condition",
+        "negative_controls",
+        "acceptance_gate"
+      ],
+      "properties": {
+        "optimization_layer": { "$ref": "#/$defs/optimization_layer" },
+        "affected_layers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/optimization_layer" },
+          "uniqueItems": true
+        },
+        "baseline_artifact": { "type": "string", "minLength": 1 },
+        "profiler_summary": { "type": "string", "minLength": 1 },
+        "stage_histogram": { "type": "string", "minLength": 1 },
+        "bottleneck_statement": { "type": "string", "minLength": 1 },
+        "hypothesis": { "type": "string", "minLength": 1 },
+        "expected_delta": { "type": "string", "minLength": 1 },
+        "rollback_condition": { "type": "string", "minLength": 1 },
+        "negative_controls": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "acceptance_gate": {
+          "enum": ["D10K_private_calibration", "D100K_weak_host", "D1M_scale"]
+        },
+        "lower_layer_closes_higher_layer_blocker": { "const": false }
+      }
+    },
+    "workload_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query_set_source", "corpus_scale", "hardware_class", "warm_or_cold_definition", "cache_state"],
+      "properties": {
+        "query_set_source": { "type": "string", "minLength": 1 },
+        "corpus_scale": {
+          "enum": ["D10K_private_calibration", "D100K_weak_host", "D1M_scale"]
+        },
+        "hardware_class": { "type": "string", "minLength": 1 },
+        "warm_or_cold_definition": { "type": "string", "minLength": 1 },
+        "cache_state": { "type": "string", "minLength": 1 }
+      }
+    },
+    "platform_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform_lane", "hardware_class", "os_build_class", "power_mode", "runner_version"],
+      "properties": {
+        "platform_lane": { "$ref": "#/$defs/platform_lane" },
+        "hardware_class": { "type": "string", "minLength": 1 },
+        "os_build_class": { "type": "string", "minLength": 1 },
+        "power_mode": { "type": "string", "minLength": 1 },
+        "runner_version": { "type": "string", "minLength": 1 },
+        "benchmark_runner_version": { "type": "string", "minLength": 1 },
+        "redacted_resource_aggregate_ref": { "type": "string", "minLength": 1 },
+        "redacted_stage_histogram_ref": { "type": "string", "minLength": 1 }
+      }
+    },
+    "gui_visual": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["visual_reference_role", "default_stack", "production_next_server_allowed"],
+      "properties": {
+        "visual_reference_role": { "const": "visual_baseline_not_functional_clone" },
+        "default_stack": { "const": "tauri_react_vite_tailwind_typescript" },
+        "production_next_server_allowed": { "const": false },
+        "token_inventory_ref": { "type": "string", "minLength": 1 },
+        "screenshot_inventory_ref": { "type": "string", "minLength": 1 },
+        "pixel_level_similarity_reviewed": { "const": true }
       }
     },
     "thresholds": {
