@@ -71,7 +71,7 @@ active_goal_id: resume-ir.performance-gui-loop.2026-06
 spec_path: docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md
 plan_path: docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md
 goal_docs_root: 03_next_goal_高性能本地检索GUI闭环
-allowed_paths_for_current_pr: GOAL.md, MANIFEST.md, ACTIVE_GOAL.toml, .github/workflows/pr.yml, .github/PULL_REQUEST_TEMPLATE.md, .github/ISSUE_TEMPLATE, 03_next_goal_高性能本地检索GUI闭环, docs/superpowers, perf, scripts/ci/check-performance-contracts.py, scripts/ci/check-autonomous-goal.py, scripts/ci/check-loop-state.py, scripts/ci/check-experiment-report.py, scripts/ci/check-pr-budget.py, scripts/ci/check-benchmark-lanes.py, scripts/ci/check-private-evidence-redaction.py, scripts/ci/check-gate-integrity.py, scripts/ci/check-goal-complete.py
+allowed_paths_for_current_pr: AGENTS.md, GOAL.md, MANIFEST.md, ACTIVE_GOAL.toml, .github/workflows/pr.yml, .github/PULL_REQUEST_TEMPLATE.md, .github/ISSUE_TEMPLATE, 03_next_goal_高性能本地检索GUI闭环, docs/superpowers, perf, scripts/ci/check-performance-contracts.py, scripts/ci/check-autonomous-goal.py, scripts/ci/check-loop-state.py, scripts/ci/check-experiment-report.py, scripts/ci/check-pr-budget.py, scripts/ci/check-benchmark-lanes.py, scripts/ci/check-private-evidence-redaction.py, scripts/ci/check-gate-integrity.py, scripts/ci/check-goal-complete.py
 privacy_boundary: no raw resume text, raw query, candidate result, path, token, trace, diagnostics package, or model cache in git
 ```
 

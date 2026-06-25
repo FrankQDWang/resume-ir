@@ -12,6 +12,7 @@
     "git_head_sha": "working-tree"
   },
   "allowed_paths": [
+    "AGENTS.md",
     "GOAL.md",
     "MANIFEST.md",
     "ACTIVE_GOAL.toml",

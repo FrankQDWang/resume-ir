@@ -17,6 +17,7 @@ docs_only = false
 production_code_allowed = false
 private_benchmark_allowed = false
 allowed_paths = [
+  "AGENTS.md",
   "GOAL.md",
   "MANIFEST.md",
   "ACTIVE_GOAL.toml",

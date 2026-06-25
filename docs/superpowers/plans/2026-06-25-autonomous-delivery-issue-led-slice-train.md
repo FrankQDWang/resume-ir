@@ -46,7 +46,7 @@ Modify:
 - `.github/PULL_REQUEST_TEMPLATE.md` - add contract anchors, performance evidence, privacy boundary, merge readiness, and gate-change section.
 - `.github/workflows/pr.yml` - add focused contract guard steps with stable names for branch protection.
 - `03_next_goal_高性能本地检索GUI闭环/00_阅读顺序.md` - make document 18 the autonomous entrypoint.
-- `03_next_goal_高性能本地检索GUI闭环/05_Query_Benchmark与真实Query种子.md` - lock agent replay to static `source_search` query extraction from `~/Agents/SeekTalent-0.2.4/artifacts/runs/**/runtime/trace.log`.
+- `03_next_goal_高性能本地检索GUI闭环/05_Query_Benchmark与真实Query种子.md` - lock agent replay to static `source_search` query extraction from `$RESUME_IR_QUERY_ARTIFACT_ROOT/**/runtime/trace.log`.
 - `03_next_goal_高性能本地检索GUI闭环/09_安全隐私与本地证据边界.md` - add read/summarize/hash/commit/GitHub boundaries for private resumes and SeekTalent artifacts.
 - `03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md` - require baseline plus hypothesis before performance implementation slices.
 - `03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md` - replace human-gated delivery with autonomous states, reconciliation, authority/integrity validation, and retry policy.
@@ -183,7 +183,7 @@ Run:
 rg -n "/Users/|raw query|trace.log" 03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md
 ```
 
-Expected: no `/Users/` matches. `trace.log` may appear only as home-relative `~/Agents/SeekTalent-0.2.4/artifacts/runs/**/runtime/trace.log`.
+Expected: no `/Users/` matches. `trace.log` may appear only as `$RESUME_IR_QUERY_ARTIFACT_ROOT/**/runtime/trace.log`.
 
 - [ ] **Step 4: Commit**
 
@@ -217,13 +217,15 @@ In `05_Query_Benchmark与真实Query种子.md`, add an `Agent Query Replay` sect
 Allowed source:
 
 ```text
-source_root = ~/Agents/SeekTalent-0.2.4/artifacts/runs
+source_root = $RESUME_IR_QUERY_ARTIFACT_ROOT
 source_glob = **/runtime/trace.log
 event_filter = tool_called
 tool_filter = source_search
 query_source = source_search invocation argument only
 query_extraction_version = trace_source_search_v1
 ```
+
+`$RESUME_IR_QUERY_ARTIFACT_ROOT` is a private local environment variable that resolves to the SeekTalent run artifact root. Public contracts and evidence must keep the symbolic variable name and must not write the resolved local path.
 
 Forbidden sources:
 
@@ -242,7 +244,7 @@ debug blob
 screenshot OCR
 ```
 
-Query set 必须先从真实 `source_search` 调用中抽取候选，再筛选一组在 D10K 私有库上可用于稳定比较的固定集合。少量 zero-result query 可以保留为单独 bucket；benchmark 不能被大量搜不到人的 query 主导。冻结后以 `query_set_hash` 锁定。修改 extraction/redaction 规则必须生成新的 `query_set_hash`，旧结果不得直接做 before/after 对比。
+Query set 必须先从真实 `source_search` 调用中抽取候选，再筛选一组在 D10K 私有库上可用于稳定比较的固定集合。少量 zero-result query 可以保留为单独 bucket；benchmark 不能被大量搜不到人的 query 主导。冻结后以 `query_set_sha256` 锁定。修改 extraction/redaction 规则必须生成新的 `query_set_sha256`，旧结果不得直接做 before/after 对比。
 ````
 
 - [ ] **Step 2: Update privacy boundary**
@@ -252,9 +254,9 @@ In `09_安全隐私与本地证据边界.md`, add this table:
 ```markdown
 | Material | Local read | Summarize | Hash | Commit | GitHub issue/PR |
 |---|---:|---:|---:|---:|---:|
-| `~/MLE/简历` raw files | yes | redacted aggregate only | yes | no | no |
+| `$RESUME_IR_PRIVATE_RESUME_ROOT` raw files | yes | redacted aggregate only | yes | no | no |
 | OCR raw text | local only | counts/errors only | yes | no | no |
-| `~/Agents/SeekTalent-0.2.4/artifacts/runs/**/runtime/trace.log` | yes, query extraction only | query-set aggregate only | yes | no | no |
+| `$RESUME_IR_QUERY_ARTIFACT_ROOT/**/runtime/trace.log` | yes, query extraction only | query-set aggregate only | yes | no | no |
 | frozen raw query set | local only | hash and bucket counts only | yes | no | no |
 | synthetic fixtures | yes | yes | yes | yes | yes |
 | percentiles/stage latency/counts | yes | yes | yes | yes | yes |
@@ -367,9 +369,11 @@ require_no_admin_bypass = true
 require_no_direct_main_push = true
 
 [autonomous_delivery.private_sources]
-private_resume_root = "~/MLE/简历"
-seektalent_runs_root = "~/Agents/SeekTalent-0.2.4/artifacts/runs"
+private_resume_root = "$RESUME_IR_PRIVATE_RESUME_ROOT"
+seektalent_runs_root = "$RESUME_IR_QUERY_ARTIFACT_ROOT"
 seektalent_trace_glob = "**/runtime/trace.log"
+private_resume_root_env_var = "RESUME_IR_PRIVATE_RESUME_ROOT"
+seektalent_runs_root_env_var = "RESUME_IR_QUERY_ARTIFACT_ROOT"
 allowed_trace_event = "tool_called"
 allowed_trace_tool = "source_search"
 
@@ -598,7 +602,7 @@ Add these definitions:
     "acceptance_matrix_hash": { "$ref": "#/$defs/hex64" },
     "runner_version": { "type": "string", "minLength": 1 },
     "benchmark_runner_version": { "type": "string", "minLength": 1 },
-    "query_set_hash": { "$ref": "#/$defs/hex64" },
+    "query_set_sha256": { "$ref": "#/$defs/hex64" },
     "corpus_profile_hash": { "$ref": "#/$defs/hex64" },
     "main_reachable_commit": { "$ref": "#/$defs/git_head" }
   }
@@ -623,7 +627,7 @@ Define `agent_query_replay` with required fields:
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "query_set_hash",
+    "query_set_sha256",
     "query_extraction_version",
     "query_set_size",
     "zero_result_rate",
@@ -632,7 +636,7 @@ Define `agent_query_replay` with required fields:
     "allowed_claims"
   ],
   "properties": {
-    "query_set_hash": { "$ref": "#/$defs/hex64" },
+    "query_set_sha256": { "$ref": "#/$defs/hex64" },
     "query_extraction_version": { "const": "trace_source_search_v1" },
     "query_set_size": { "type": "integer", "minimum": 1 },
     "zero_result_rate": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -740,8 +744,8 @@ assignees: FrankQDWang
 <!-- contract:corpus_profile_hash -->
 ## Corpus Profile Hash
 
-<!-- contract:query_set_hash -->
-## Query Set Hash
+<!-- contract:query_set_sha256 -->
+## Query Set SHA-256
 
 <!-- contract:baseline_command -->
 ## Baseline Command

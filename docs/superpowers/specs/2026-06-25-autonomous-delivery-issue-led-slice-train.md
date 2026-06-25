@@ -292,13 +292,15 @@ This lane uses a fixed frozen query set. It is not infinite dynamic sampling and
 Allowed source:
 
 ```text
-source_root = ~/Agents/SeekTalent-0.2.4/artifacts/runs
+source_root = $RESUME_IR_QUERY_ARTIFACT_ROOT
 source_glob = **/runtime/trace.log
 event_filter = tool_called
 tool_filter = source_search
 query_source = source_search invocation argument only
 query_extraction_version = trace_source_search_v1
 ```
+
+$RESUME_IR_QUERY_ARTIFACT_ROOT is a private local environment variable that resolves to the SeekTalent run artifact root. Public contracts and evidence must keep the symbolic variable name and must not write the resolved local path.
 
 Forbidden sources:
 
@@ -317,12 +319,12 @@ debug blob
 screenshot OCR
 ```
 
-The extractor collects real `source_search` queries, filters a fixed set that is useful on the D10K private corpus, and freezes it by `query_set_hash`. Some zero-result queries may remain as a measured bucket, but the benchmark cannot be dominated by queries that do not find candidates.
+The extractor collects real `source_search` queries, filters a fixed set that is useful on the D10K private corpus, and freezes it by `query_set_sha256`. Some zero-result queries may remain as a measured bucket, but the benchmark cannot be dominated by queries that do not find candidates.
 
 Required metrics:
 
 ```text
-query_set_hash
+query_set_sha256
 query_set_size
 query_type_buckets
 P50/P95/P99
@@ -368,7 +370,7 @@ D1M_real_distribution_quality
 OCR_completion_performance
 ```
 
-If query extraction or redaction rules change, a new `query_set_hash` is required and old results cannot be compared directly as before/after evidence.
+If query extraction or redaction rules change, a new `query_set_sha256` is required and old results cannot be compared directly as before/after evidence.
 
 ### Repeat Amplification Control
 
@@ -406,7 +408,7 @@ allowed_paths match slice
 primary issue present
 primary hypothesis present
 baseline hash present
-query_set_hash unchanged
+query_set_sha256 unchanged
 corpus profile compatible
 benchmark runner version compatible
 benchmark lane not mixed
@@ -535,13 +537,15 @@ threshold_relaxation_allowed = false
 Private local input boundaries:
 
 ```text
-~/MLE/简历
+$RESUME_IR_PRIVATE_RESUME_ROOT
 ```
+
+$RESUME_IR_PRIVATE_RESUME_ROOT is a private local environment variable that resolves to the private resume corpus root. Public contracts and evidence must keep the symbolic variable name and must not write the resolved local path.
 
 This source is allowed only for D10K private real corpus import, OCR backlog, first-searchable, and quality calibration. Raw files, paths, extracted text, OCR output, and candidate information cannot be committed or written into GitHub issue or PR text.
 
 ```text
-~/Agents/SeekTalent-0.2.4/artifacts/runs/**/runtime/trace.log
+$RESUME_IR_QUERY_ARTIFACT_ROOT/**/runtime/trace.log
 ```
 
 This source is allowed only for extracting static real `source_search` query sets. Raw trace files and non-query trace content cannot be committed or summarized as evidence.
@@ -556,7 +560,7 @@ hashes
 percentiles
 stage latency
 redacted corpus profile
-query_set_hash
+query_set_sha256
 issue and PR references
 ```
 
@@ -625,7 +629,7 @@ goal_contract_hash
 acceptance_matrix_hash
 runner_version
 benchmark_runner_version
-query_set_hash
+query_set_sha256
 corpus_profile_hash
 main_reachable_commit
 ```
@@ -727,7 +731,7 @@ Schema and CI must reject:
 - Empty redaction statement.
 - Benchmark lane claim outside allowed claims.
 - D10K or D100K claiming `goal_complete`.
-- Agent query replay without frozen `query_set_hash`.
+- Agent query replay without frozen `query_set_sha256`.
 - Evidence that is not main-reachable.
 - PR budget exceeded without Scope Exception.
 - Scope Exception auto-merge when not explicitly allowed.
