@@ -125,6 +125,12 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 
 若用户输入、代码 diff、环境状态或证据路径发生变化，blocked 连续计数重置。不得因为任务困难、预算紧、验证慢、实现范围大或结果暂时不确定而进入 `blocked`。
 
+Hard retry contract:
+
+1. 每一次同条件 effective retry 都必须记录新的 `evidence_path`，且该路径必须指向新的命令输出、证据源、环境变化、代码变化或配置变化证据。
+2. 没有新的 `evidence_path` 时，不得重复执行同一 retry；runner 必须直接进入 `blocked`，或在 `base_drift` 情况下先执行 reconciliation action，或回到 contract review 修正合同。
+3. 只有同一 blocker 已经过 3 次各自带 distinct `evidence_path` 的 effective retry 后仍复现时，才可进入 `blocked`。
+
 `base_drift` 是 reconciliation action，不消耗普通 retry。runner 先同步或 rebase 最新 `main` 并重跑 affected gates；只有相同失败仍复现时才开始计入 retry。
 
 ## 6. Completion Rule
