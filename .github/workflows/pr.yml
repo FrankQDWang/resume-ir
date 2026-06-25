@@ -79,6 +79,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Run contract check
         run: python3 scripts/ci/check-performance-contracts.py
@@ -99,6 +101,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Run PR budget check
         run: python3 scripts/ci/check-pr-budget.py
@@ -119,6 +123,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Run gate integrity check
         run: python3 scripts/ci/check-gate-integrity.py
