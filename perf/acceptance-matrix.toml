@@ -251,6 +251,24 @@ observability_overhead_pct_max = 3
 profiler_capture_required_for_w1 = true
 reprofile_after_optimization_required = true
 
+[optimization_layers]
+allowed = ["L1", "L2", "L3", "L4"]
+require_single_primary_layer = true
+allow_affected_layers = true
+l0_is_precondition_not_layer = true
+algorithm_index_choice_layer = "L1"
+data_quality_workload_representativeness_layer = "L0"
+
+[optimization_layer_redlines]
+missing_baseline_blocks_optimization = true
+missing_profile_blocks_optimization = true
+missing_hypothesis_blocks_optimization = true
+missing_expected_delta_blocks_optimization = true
+missing_rollback_condition_blocks_optimization = true
+missing_negative_controls_blocks_optimization = true
+lower_layer_cannot_close_higher_layer_blocker = true
+hand_written_simd_requires_scope_exception = true
+
 [governor_profiles.H0_Eco]
 content_read_concurrency = 1
 parser_concurrency = 1

@@ -19,6 +19,25 @@ assignees: ""
 - [ ] Reconciliation status:
 - [ ] Linked PRs:
 
+<!-- contract:optimization_taxonomy -->
+## Optimization Taxonomy
+
+- [ ] `optimization_layer`: <!-- L1 | L2 | L3 | L4 -->
+- [ ] `affected_layers`: <!-- optional: [] | [L1] | [L2] | [L3] | [L4] -->
+- [ ] Bottleneck statement:
+- [ ] Expected delta:
+- [ ] Rollback condition:
+- [ ] Negative controls:
+- [ ] Acceptance gate:
+- [ ] Workload manifest:
+- [ ] Query set source:
+- [ ] Corpus scale:
+- [ ] Hardware class:
+- [ ] Warm/cold definition:
+- [ ] Cache state:
+- [ ] Platform lane: <!-- macos_m4_discovery | windows_weak_host_validation | cross_os_ci_smoke -->
+- [ ] Lower-layer closure rule checked:
+
 <!-- contract:baseline -->
 ## Baseline
 

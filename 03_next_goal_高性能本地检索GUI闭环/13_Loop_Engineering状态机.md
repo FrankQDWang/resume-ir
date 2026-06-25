@@ -114,6 +114,9 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 7. 当前 Loop state report 是否能通过 `perf/loop-state.schema.json`。
 8. 当前实验报告是否能通过 `perf/experiment-report.schema.json`，除非该切片不是实验切片。
 9. `perf/current-loop-state.json` 是否仍反映当前 PR 的 evidence lane、允许路径和 claim 状态。
+10. 性能 PR 是否声明唯一 `optimization_layer`，且可选 `affected_layers` 没有被当成验收目标。
+11. `optimization_layer` 是否遵守 lower-layer closure rule：L4 不关闭 L1 blocker，L3 不关闭 L2 blocker，L2 不关闭 L1 blocker。
+12. profile issue 是否包含 expected_delta、rollback_condition、negative_controls、workload_manifest、query_set_source、corpus_scale、hardware_class、warm_or_cold_definition、cache_state 和 platform_lane。
 
 ## 5. Blocked Stop Rule
 

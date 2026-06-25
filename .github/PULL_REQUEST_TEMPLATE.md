@@ -94,6 +94,16 @@ Explicit non-goals:
 - [ ] Hot path remains read-only:
 - [ ] Private witness evidence stays local:
 
+<!-- contract:optimization_taxonomy -->
+## Performance Optimization Taxonomy
+
+- [ ] Primary `optimization_layer`: <!-- L1 | L2 | L3 | L4 | n/a -->
+- [ ] Optional `affected_layers`:
+- [ ] L0 evidence linked: baseline, profiler summary, stage histogram, workload manifest.
+- [ ] Hypothesis, expected delta, rollback condition, and negative controls are linked.
+- [ ] This PR does not use a lower-layer optimization to close a higher-layer blocker.
+- [ ] Hand-written SIMD/cache/prefetch work is absent, or a Scope Exception issue is linked.
+
 <!-- contract:privacy_boundary -->
 ## Privacy Boundary
 

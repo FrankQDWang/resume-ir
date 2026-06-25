@@ -49,6 +49,95 @@ Closing Evidence
 
 Closure must include before/after metric, percentage change, `query_set_sha256`, `corpus_profile_hash`, `git_base_sha`, `git_head_sha`, `base_drift/reconciliation_status`, public-safe `benchmark_report_hash` or `benchmark_artifact_id`, command id or script name, and privacy redaction confirmation. `query_set_sha256`, `corpus_profile_hash`, and benchmark report/artifact identifiers must follow the public-safe hash boundary in `09_安全隐私与本地证据边界.md`.
 
+## 1.1 Performance Optimization Taxonomy
+
+每个 profile issue 和 performance PR 必须声明唯一主层 `optimization_layer`。可选 `affected_layers` 只说明影响，不拥有验收目标。
+
+Required fields:
+
+```text
+optimization_layer
+affected_layers
+baseline_artifact
+profiler_summary
+stage_histogram
+bottleneck_statement
+hypothesis
+expected_delta
+rollback_condition
+negative_controls
+acceptance_gate
+workload_manifest
+query_set_source
+corpus_scale
+hardware_class
+warm_or_cold_definition
+cache_state
+platform_lane
+```
+
+### L0 Observation Precondition
+
+L0 不是优化层。没有 baseline、profiler summary、stage histogram、workload manifest、可证伪 hypothesis、expected_delta、rollback_condition 和 negative_controls，不允许进入任何优化实现。
+
+workload representativeness 属于 L0。profile 必须记录 query set source、corpus scale、hardware class、warm/cold definition 和 cache state。
+
+### L1 Architecture-Level Optimization
+
+预期收益：系统不崩、可恢复、10x 规模扩展。
+
+L1 包含 daemon lifecycle、IPC、storage/index topology、BM25/Tantivy schema and parameter choices、ANN index choice、first-searchable、crash recovery、search while importing、OCR/semantic backgrounding 和 product latency contract。
+
+L1 必须报告 first-searchable latency、time to first result、time to full index ready、resume after crash、search while importing 和 incremental searchable lag。
+
+Algorithm / index choice 归入 L1，不新增 L5。
+
+### L2 Parallelism-Level Optimization
+
+预期收益：语料规模 x10、吞吐提升，同时不牺牲交互延迟。
+
+L2 包含 pipeline concurrency、queueing、backpressure、OCR/vector scheduling、content-read concurrency、parser concurrency、writer behavior、batch hydrate/snippet、fairness、cancel、overload 和 admission control。
+
+L2 必须同时报告 open-loop throughput、closed-loop user latency、queue wait histogram、scheduler fairness、cancel latency、peak RSS、IO saturation 和 GUI main-thread blocked time。
+
+### L3 Compile-Level Optimization
+
+预期收益：0-15% runtime improvement，或按真实瓶颈取得 binary/startup/resource improvement。
+
+L3 包含 release profile、LTO、codegen units、dependency feature pruning、build metadata、binary size、startup/cold-path behavior、symbol/debug split 和 reproducible build settings。
+
+L3 必须用同一代码、不同 build config 做 A/B。L3 不能关闭 L1 或 L2 blocker。
+
+### L4 Microarchitecture-Level Optimization
+
+预期收益：0.5-3% 单函数或局部 hotspot 改善。
+
+L4 包含 allocation reduction、clone removal、hot-loop simplification、local data-structure changes 和 symbol/function-level optimization。
+
+L4 必须绑定真实 symbol/function-level hotspot，并说明该函数占所属 stage 的比例。Criterion microbenchmark 只能补充，不能替代真实 profile 证据。
+
+L4 默认不得改变 external behavior、ranking semantics、error semantics、data contract、IPC shape、diagnostics shape 或 persistence format。
+
+### Lower-Layer Closure Rule
+
+低层优化不能关闭高层 blocker：
+
+1. L4 不能关闭 L1 blocker。
+2. L3 不能关闭 L2 starvation、fairness 或 queue-pressure blocker。
+3. L2 不能关闭 L1 crash recovery、first-searchable、daemon lifecycle、IPC 或 index topology blocker。
+
+### Not Planned By Default
+
+默认不手写 SIMD、branch prediction、cache-line alignment 或 prefetching。这些由 Tantivy、FAISS、ONNX Runtime、Rust 标准库或平台 runtime 处理。
+
+Scope Exception 必须同时满足：
+
+1. profile 证明热点在项目自有代码，不在库内部；
+2. 现有库参数、index type 和 build feature 已调优；
+3. 有 A/B benchmark 和 correctness oracle；
+4. 有 cross-platform fallback；
+5. 有 maintenance-cost assessment。
+
 ## 2. Instrumentation Contract
 
 Rust 实现必须在热路径保留结构化 span 和 stage metrics：
