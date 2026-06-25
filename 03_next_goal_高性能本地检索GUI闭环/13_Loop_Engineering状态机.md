@@ -2,6 +2,35 @@
 
 本状态机用于长程 Codex 目标任务。它的目标是防止目标漂移、证据混用和重复 blocked loop。
 
+无人值守执行阶段的事实优先级：
+
+1. Policy truth lives in `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, schemas, and the autonomous entrypoint document.
+2. Execution truth lives in GitHub PR/issue state, git branch/base sha, benchmark artifact hashes, and only then `perf/current-loop-state.json`.
+3. 当前对话上下文只能解释执行意图，不能覆盖 policy truth 或 execution truth。
+
+Autonomous delivery 主路径：
+
+```text
+goal_authorized
+-> baseline_captured
+-> discovery_profile_issue_opened
+-> hypothesis_recorded
+-> slice_selected
+-> branch_active
+-> implementation_active
+-> verification_active
+-> pr_opened
+-> base_synced
+-> pr_review_ready
+-> ci_green
+-> local_gate_green
+-> privacy_gate_green
+-> merge_method_selected
+-> pr_merged
+-> issue_closed_with_evidence
+-> next_issue_or_goal_complete
+```
+
 ## 1. Workflow State
 
 | State | 进入条件 | 允许转移 | 必需证据 | 禁止事项 |
@@ -82,6 +111,8 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 5. 继续前需要的人类输入或外部状态变化。
 
 若用户输入、代码 diff、环境状态或证据路径发生变化，blocked 连续计数重置。不得因为任务困难、预算紧、验证慢、实现范围大或结果暂时不确定而进入 `blocked`。
+
+`base_drift` 是 reconciliation action，不消耗普通 retry。runner 先同步或 rebase 最新 `main` 并重跑 affected gates；只有相同失败仍复现时才开始计入 retry。
 
 ## 6. Completion Rule
 

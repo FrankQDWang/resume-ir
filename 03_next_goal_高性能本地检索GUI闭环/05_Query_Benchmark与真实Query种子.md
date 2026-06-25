@@ -21,6 +21,40 @@ SeekTalent artifacts 只作为 query 和 query 组合形态的原始材料来源
 4. 原始 artifact 文件路径。
 5. 原始 query 文本进入 git。
 
+## Agent Query Replay 静态基准
+
+`agent_query_replay` 只使用 SeekTalent 真实运行中已经产生的 source search 查询，不从 JD、prompt、候选人资料或 trace 上下文构造 query。
+
+Allowed source:
+
+```text
+source_root = ~/Agents/SeekTalent-0.2.4/artifacts/runs
+source_glob = **/runtime/trace.log
+event_filter = tool_called
+tool_filter = source_search
+query_source = source_search invocation argument only
+query_extraction_version = trace_source_search_v1
+```
+
+Forbidden sources:
+
+```text
+artifacts/benchmarks/*.jsonl job_description or hiring_notes
+raw transcript
+full prompt
+candidate profile
+resume text
+file path
+URL
+provider payload
+token
+raw log line outside the source_search invocation
+debug blob
+screenshot OCR
+```
+
+Query set 必须先从真实 `source_search` 调用中抽取候选，再筛选一组在 D10K 私有库上可用于稳定比较的固定集合。少量 zero-result query 可以保留为单独 bucket；benchmark 不能被大量搜不到人的 query 主导。冻结后以 `query_set_hash` 锁定。修改 extraction/redaction 规则必须生成新的 `query_set_hash`，旧结果不得直接做 before/after 对比。
+
 ## 2. 本地私有输入
 
 运行时通过环境变量提供私有输入，不把本机路径写入 repo 文档或证据：

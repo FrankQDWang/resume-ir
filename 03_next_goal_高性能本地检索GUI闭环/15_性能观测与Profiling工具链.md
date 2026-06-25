@@ -11,6 +11,13 @@
 5. profiler 结果只能提交符号化摘要和本地文件 hash，不提交本机路径。
 6. 性能报告必须说明 release build、warmup、重复次数、open-loop/closed-loop 方法、容量点和 coordinated omission 处理方式。
 
+Profiling ledger rules:
+
+1. profile issue is the profiling ledger
+2. negative experiment is valid evidence
+3. benchmark regression is experiment_negative unless it also violates a release gate
+4. no profile, no optimization
+
 ## 2. Instrumentation Contract
 
 Rust 实现必须在热路径保留结构化 span 和 stage metrics：

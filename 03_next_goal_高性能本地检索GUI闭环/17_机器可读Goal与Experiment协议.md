@@ -17,6 +17,8 @@
 
 这些文件可以提交，因为只含 schema、阈值、状态、synthetic fixtures 和布尔隐私标记，不含真实 query、简历、路径或诊断包。
 
+Policy truth lives in `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, schemas, and the autonomous entrypoint document. Execution truth lives in GitHub PR/issue state, git branch/base sha, benchmark artifact hashes, and only then `perf/current-loop-state.json`.
+
 ## 2. Goal Lock Rules
 
 1. 每次长程 Codex 执行开始时读取 `ACTIVE_GOAL.toml`。
