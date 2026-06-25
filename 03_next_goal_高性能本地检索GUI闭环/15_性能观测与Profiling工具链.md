@@ -76,6 +76,14 @@ cache_state
 platform_lane
 ```
 
+## Platform Profiling Lanes
+
+`macos_m4_discovery` 使用 Samply、Instruments、`tracing` span、hdrhistogram、release benchmark 和 synthetic pressure。它能指导 hotspot 排序，不能代表 Windows weak-host 结论。
+
+`windows_weak_host_validation` 使用 WPR/WPA/ETW 或等价 Windows performance consumer、PowerShell runner、USN Journal / filesystem watcher verification、WebView2/Tauri packaging smoke 和 resource aggregate。
+
+`cross_os_ci_smoke` 只证明 CI 层面的构建和测试 smoke。
+
 ### L0 Observation Precondition
 
 L0 不是优化层。没有 baseline、profiler summary、stage histogram、workload manifest、可证伪 hypothesis、expected_delta、rollback_condition 和 negative_controls，不允许进入任何优化实现。

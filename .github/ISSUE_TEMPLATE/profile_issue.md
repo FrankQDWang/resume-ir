@@ -86,7 +86,7 @@ assignees: ""
 - [ ] No raw trace content.
 - [ ] No local filesystem paths.
 - [ ] No tokens, credentials, diagnostic packages, OCR text, model caches, or installer secrets.
-- [ ] Use only symbolic env/source names such as `$RESUME_IR_QUERY_ARTIFACT_ROOT`.
+- [ ] Use only symbolic env/source names such as `$RESUME_IR_PRIVATE_RESUME_ROOT` and `$RESUME_IR_QUERY_ARTIFACT_ROOT`.
 - [ ] Commit only redacted aggregate summaries or schemas.
 
 <!-- contract:closure -->

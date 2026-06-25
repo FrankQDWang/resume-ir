@@ -42,6 +42,22 @@ visual_reference_role = "visual_baseline_not_functional_clone"
 pixel_level_visual_similarity_required = true
 toolkit_bakeoff_requires_blocker_issue = true
 
+[platform_lanes]
+allowed = ["macos_m4_discovery", "windows_weak_host_validation", "cross_os_ci_smoke"]
+primary_discovery = "macos_m4_discovery"
+weak_host_validation = "windows_weak_host_validation"
+ci_smoke = "cross_os_ci_smoke"
+macos_m4_can_close_windows_gate = false
+cross_os_ci_smoke_can_replace_weak_host_perf = false
+
+[platform_gate_requirements]
+l1_platform_lifecycle_requires_windows_weak_host = true
+l2_parallelism_requires_windows_weak_host = true
+gui_packaging_requires_windows_weak_host = true
+d100k_requires_windows_weak_host = true
+cross_os_passed_requires_windows_weak_host = true
+goal_complete_requires_windows_weak_host = true
+
 [gui_visual_redlines]
 left_rail_required = true
 top_command_bar_required = true

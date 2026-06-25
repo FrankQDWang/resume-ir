@@ -56,6 +56,21 @@ contains_tokens = false
 contains_diagnostics_package = false
 contains_model_cache = false
 
+[platform_lanes]
+primary_discovery = "macos_m4_discovery"
+weak_host_validation = "windows_weak_host_validation"
+ci_smoke = "cross_os_ci_smoke"
+macos_m4_can_rank_hotspots = true
+macos_m4_can_close_windows_gate = false
+cross_os_ci_smoke_can_replace_weak_host_perf = false
+
+[platform_lanes.private_corpus_transfer]
+runner_may_choose_transfer_to_windows = true
+transfer_public_evidence_allowed = false
+raw_private_paths_public_allowed = false
+public_source_name = "$RESUME_IR_PRIVATE_RESUME_ROOT"
+windows_unavailable_starts_reconciliation = true
+
 [loop]
 workflow_state = "evidence_review"
 experiment_state = "contract_locked"
