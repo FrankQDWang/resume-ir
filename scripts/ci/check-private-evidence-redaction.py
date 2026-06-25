@@ -28,7 +28,23 @@ def load_toml(path: pathlib.Path) -> dict:
         return tomllib.load(fh)
 
 
-FORBIDDEN_PATH_SNIPPETS = ["/Users/frankqdwang", "~/Agents", "~/MLE"]
+ACTUAL_PRIVATE_SNIPPETS = ["/Users/frankqdwang", "~/Agents", "~/MLE"]
+ALLOWED_SYMBOLIC_SOURCES = {
+    "$RESUME_IR_PRIVATE_RESUME_ROOT",
+    "$RESUME_IR_QUERY_ARTIFACT_ROOT",
+    "$RESUME_IR_LOCAL_EVIDENCE_DIR",
+}
+PROHIBITED_PUBLIC_PATH_PATTERNS = [
+    (re.compile(r"/" + r"Users/[^\s`\"'|)]+"), "macOS user home path"),
+    (re.compile(r"~" + r"/[^\s`\"'|)]+"), "tilde home path"),
+    (re.compile(r"C:" + r"(?:\\\\|/)Users(?:\\\\|/)[^\s`\"'|)]+"), "Windows user home path"),
+]
+PATTERN_DEFINITION_TOKENS = [
+    "ACTUAL_PRIVATE_SNIPPETS",
+    "ALLOWED_SYMBOLIC_SOURCES",
+    "PROHIBITED_PUBLIC_PATH_PATTERNS",
+    "PATTERN_DEFINITION_TOKENS",
+]
 QUERY_SET_HASH_ALLOWED_GUARDS = [
     "不得使用 `query_set_hash`",
     "forbidden query_set_hash field name",
@@ -87,9 +103,16 @@ def check_file(path: pathlib.Path) -> None:
             guard in line for guard in QUERY_SET_HASH_ALLOWED_GUARDS
         ):
             fail(f"{rel}:{line_number}: forbidden query_set_hash field name")
-    for snippet in FORBIDDEN_PATH_SNIPPETS:
-        if snippet in text:
-            fail(f"{rel}: forbidden private path snippet {snippet}")
+        if any(token in line for token in ALLOWED_SYMBOLIC_SOURCES):
+            continue
+        if any(token in line for token in PATTERN_DEFINITION_TOKENS):
+            continue
+        for snippet in ACTUAL_PRIVATE_SNIPPETS:
+            if snippet in line:
+                fail(f"{rel}:{line_number}: forbidden private path snippet {snippet}")
+        for pattern, description in PROHIBITED_PUBLIC_PATH_PATTERNS:
+            if pattern.search(line):
+                fail(f"{rel}:{line_number}: forbidden public {description}")
     for pattern in RAW_PRIVATE_TRUE_PATTERNS:
         if pattern.search(text):
             fail(f"{rel}: raw private data marker must not be true")

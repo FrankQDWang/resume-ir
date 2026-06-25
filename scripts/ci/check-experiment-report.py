@@ -46,6 +46,15 @@ def validate_no_goal_complete_claim(value: object, path: pathlib.Path) -> None:
         fail(f"{path.relative_to(ROOT)}: experiment report must not claim goal_complete")
 
 
+def validate_w1_contract_fields(value: object, contracts: object, path: pathlib.Path) -> None:
+    if not isinstance(value, dict) or value.get("evidence_lane") != "w1_private":
+        return
+    rel = str(path.relative_to(ROOT))
+    contracts.validate_optimization(value.get("optimization"), f"{rel}.optimization")
+    contracts.validate_workload_manifest(value.get("workload_manifest"), f"{rel}.workload_manifest")
+    contracts.validate_platform_evidence(value.get("platform_evidence"), f"{rel}.platform_evidence")
+
+
 def main() -> int:
     matrix = load_toml(ROOT / "perf" / "acceptance-matrix.toml")
     contracts = load_contracts_module()
@@ -58,6 +67,7 @@ def main() -> int:
             continue
         valid_count += 1
         validate_no_goal_complete_claim(value, path)
+        validate_w1_contract_fields(value, contracts, path)
         contracts.validate_experiment_report(value, matrix, str(path.relative_to(ROOT)))
 
     for path in sorted((ROOT / "perf" / "fixtures" / "invalid").glob("*.json")):
@@ -67,6 +77,7 @@ def main() -> int:
         invalid_count += 1
         try:
             validate_no_goal_complete_claim(value, path)
+            validate_w1_contract_fields(value, contracts, path)
             contracts.validate_experiment_report(value, matrix, str(path.relative_to(ROOT)))
         except ValueError:
             continue

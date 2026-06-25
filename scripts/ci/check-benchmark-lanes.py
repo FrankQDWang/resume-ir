@@ -44,6 +44,31 @@ REQUIRED_COMPLETION_CELLS = REQUIRED_LANES | {
 }
 
 
+def lower_layer_closure_paths(value: object, path: str = "") -> list[str]:
+    matches: list[str] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            nested_path = f"{path}.{key}" if path else key
+            if key == "lower_layer_closes_higher_layer_blocker" and nested is True:
+                matches.append(nested_path)
+            matches.extend(lower_layer_closure_paths(nested, nested_path))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            matches.extend(lower_layer_closure_paths(nested, f"{path}[{index}]"))
+    return matches
+
+
+def check_no_lower_layer_closure_misuse() -> None:
+    paths = sorted((ROOT / "perf").glob("*.json"))
+    paths.extend(sorted((ROOT / "perf" / "fixtures" / "valid").glob("*.json")))
+    for path in paths:
+        value = load_json(path)
+        matches = lower_layer_closure_paths(value)
+        if matches:
+            rel = path.relative_to(ROOT)
+            fail(f"{rel}: lower-layer closure misuse is forbidden at {', '.join(matches)}")
+
+
 def main() -> int:
     matrix = load_toml(ROOT / "perf" / "acceptance-matrix.toml")
     lanes = matrix.get("autonomous_delivery_lanes")
@@ -77,6 +102,8 @@ def main() -> int:
             fail(f"agent_query_replay.cannot_claim missing {token}")
     if "D1M_real_distribution_quality" in cannot_claim:
         fail("agent_query_replay.cannot_claim uses non-canonical D1M_real_distribution_quality")
+
+    check_no_lower_layer_closure_misuse()
 
     print("check-benchmark-lanes.py passed")
     return 0

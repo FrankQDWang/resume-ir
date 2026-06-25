@@ -67,11 +67,35 @@ def main() -> int:
     if verification.get("claim") not in {"pass", "fail", "blocked", "partial"}:
         fail("verification.claim invalid")
 
+    platform_lane = state.get("platform_lane")
+    if platform_lane is not None and platform_lane not in contracts.PLATFORM_LANES:
+        fail("platform_lane invalid")
+
+    visual_reference = state.get("visual_reference")
+    if visual_reference is not None:
+        if not isinstance(visual_reference, dict):
+            fail("visual_reference: expected object")
+        if visual_reference.get("reference_role") != contracts.GUI_REFERENCE_ROLE:
+            fail("visual_reference.reference_role mismatch")
+        if visual_reference.get("default_stack") != contracts.GUI_DEFAULT_STACK:
+            fail("visual_reference.default_stack mismatch")
+        if visual_reference.get("production_next_server_allowed") is not False:
+            fail("visual_reference.production_next_server_allowed: expected false")
+
     experiment_state = state.get("experiment_state")
     if experiment_state in {"hypothesis_registered", "accepted", "reverted", "complete"}:
         hypothesis = state.get("hypothesis")
         if not isinstance(hypothesis, dict):
             fail("hypothesis: expected object")
+        optimization_layer = hypothesis.get("optimization_layer")
+        if optimization_layer is not None and optimization_layer not in contracts.OPTIMIZATION_LAYERS:
+            fail("hypothesis.optimization_layer invalid")
+        lower_layer_closure = hypothesis.get("lower_layer_closure")
+        if lower_layer_closure is not None:
+            if not isinstance(lower_layer_closure, dict):
+                fail("hypothesis.lower_layer_closure: expected object")
+            if lower_layer_closure.get("lower_layer_closes_higher_layer_blocker") is not False:
+                fail("hypothesis.lower_layer_closure.lower_layer_closes_higher_layer_blocker: expected false")
         for key in ["id", "acceptance_cell", "expected_effect", "before_measurement_ref"]:
             if not hypothesis.get(key):
                 fail(f"hypothesis.{key}: required")

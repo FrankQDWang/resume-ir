@@ -49,12 +49,14 @@ PRIVACY_FALSE_FIELDS = [
     "contains_tokens",
     "contains_diagnostics_package",
 ]
-OPTIMIZATION_LAYERS = {"L1", "L2", "L3", "L4"}
-PLATFORM_LANES = {
+OPTIMIZATION_LAYERS = ["L1", "L2", "L3", "L4"]
+PLATFORM_LANES = [
     "macos_m4_discovery",
     "windows_weak_host_validation",
     "cross_os_ci_smoke",
-}
+]
+GUI_DEFAULT_STACK = "tauri_react_vite_tailwind_typescript"
+GUI_REFERENCE_ROLE = "visual_baseline_not_functional_clone"
 SCALE_GATES = {
     "D10K_private_calibration",
     "D100K_weak_host",
@@ -117,9 +119,14 @@ def require_non_empty_string(value: object, path: str) -> None:
         fail(f"{path}: expected non-empty string")
 
 
-def require_enum(value: object, allowed: set[str], path: str) -> None:
+def require_enum(value: object, allowed: list[str] | set[str], path: str) -> None:
     if value not in allowed:
         fail(f"{path}: invalid value {value!r}")
+
+
+def require_bool_fields(value: Mapping[str, object], fields: list[str], expected: bool, path: str) -> None:
+    for field in fields:
+        require_bool(value.get(field), expected, f"{path}.{field}")
 
 
 def require_main_reachable_commit(value: object, path: str) -> None:
@@ -192,6 +199,83 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
     if matrix.get("gui_redlines", {}).get("visible_rows_max") != 60:
         fail("matrix.gui_redlines.visible_rows_max must be 60")
 
+    optimization_layers = require_mapping(matrix.get("optimization_layers"), "matrix.optimization_layers")
+    if optimization_layers.get("allowed") != OPTIMIZATION_LAYERS:
+        fail("matrix.optimization_layers.allowed mismatch")
+    require_bool_fields(
+        optimization_layers,
+        ["require_single_primary_layer", "allow_affected_layers", "l0_is_precondition_not_layer"],
+        True,
+        "matrix.optimization_layers",
+    )
+    if optimization_layers.get("algorithm_index_choice_layer") != "L1":
+        fail("matrix.optimization_layers.algorithm_index_choice_layer mismatch")
+    if optimization_layers.get("data_quality_workload_representativeness_layer") != "L0":
+        fail("matrix.optimization_layers.data_quality_workload_representativeness_layer mismatch")
+
+    optimization_redlines = require_mapping(matrix.get("optimization_layer_redlines"), "matrix.optimization_layer_redlines")
+    require_bool_fields(
+        optimization_redlines,
+        [
+            "missing_baseline_blocks_optimization",
+            "missing_profile_blocks_optimization",
+            "missing_hypothesis_blocks_optimization",
+            "missing_expected_delta_blocks_optimization",
+            "missing_rollback_condition_blocks_optimization",
+            "missing_negative_controls_blocks_optimization",
+            "lower_layer_cannot_close_higher_layer_blocker",
+            "hand_written_simd_requires_scope_exception",
+        ],
+        True,
+        "matrix.optimization_layer_redlines",
+    )
+
+    platform_lanes = require_mapping(matrix.get("platform_lanes"), "matrix.platform_lanes")
+    if platform_lanes.get("allowed") != PLATFORM_LANES:
+        fail("matrix.platform_lanes.allowed mismatch")
+    require_bool(platform_lanes.get("macos_m4_can_close_windows_gate"), False, "matrix.platform_lanes.macos_m4_can_close_windows_gate")
+    require_bool(
+        platform_lanes.get("cross_os_ci_smoke_can_replace_weak_host_perf"),
+        False,
+        "matrix.platform_lanes.cross_os_ci_smoke_can_replace_weak_host_perf",
+    )
+
+    gui_stack = require_mapping(matrix.get("gui_stack"), "matrix.gui_stack")
+    if gui_stack.get("default_stack") != GUI_DEFAULT_STACK:
+        fail("matrix.gui_stack.default_stack mismatch")
+    require_bool(gui_stack.get("production_next_server_allowed"), False, "matrix.gui_stack.production_next_server_allowed")
+    if gui_stack.get("visual_reference_role") != GUI_REFERENCE_ROLE:
+        fail("matrix.gui_stack.visual_reference_role mismatch")
+    require_bool(
+        gui_stack.get("pixel_level_visual_similarity_required"),
+        True,
+        "matrix.gui_stack.pixel_level_visual_similarity_required",
+    )
+    require_bool(
+        gui_stack.get("toolkit_bakeoff_requires_blocker_issue"),
+        True,
+        "matrix.gui_stack.toolkit_bakeoff_requires_blocker_issue",
+    )
+
+    gui_visual_redlines = require_mapping(matrix.get("gui_visual_redlines"), "matrix.gui_visual_redlines")
+    require_bool_fields(
+        gui_visual_redlines,
+        [
+            "left_rail_required",
+            "top_command_bar_required",
+            "center_workspace_required",
+            "detail_panel_or_side_sheet_required",
+            "dense_result_list_required",
+            "stable_row_or_card_dimensions_required",
+            "lucide_style_icon_vocabulary_required",
+            "tailwind_token_inventory_required",
+            "reference_screenshot_inventory_required",
+        ],
+        True,
+        "matrix.gui_visual_redlines",
+    )
+    require_bool(gui_visual_redlines.get("functional_clone_required"), False, "matrix.gui_visual_redlines.functional_clone_required")
+
 
 def required_completion_cells(matrix: Mapping[str, object]) -> set[str]:
     completion = require_mapping(matrix.get("completion"), "matrix.completion")
@@ -262,12 +346,11 @@ def validate_optimization(value: object, path: str) -> None:
     for index, control in enumerate(negative_controls):
         require_non_empty_string(control, f"{path}.negative_controls[{index}]")
     require_enum(optimization.get("acceptance_gate"), SCALE_GATES, f"{path}.acceptance_gate")
-    if "lower_layer_closes_higher_layer_blocker" in optimization:
-        require_bool(
-            optimization.get("lower_layer_closes_higher_layer_blocker"),
-            False,
-            f"{path}.lower_layer_closes_higher_layer_blocker",
-        )
+    require_bool(
+        optimization.get("lower_layer_closes_higher_layer_blocker"),
+        False,
+        f"{path}.lower_layer_closes_higher_layer_blocker",
+    )
 
 
 def validate_workload_manifest(value: object, path: str) -> None:
@@ -287,9 +370,9 @@ def validate_platform_evidence(value: object, path: str) -> None:
 
 def validate_gui_visual(value: object, path: str) -> None:
     visual = require_mapping(value, path)
-    if visual.get("visual_reference_role") != "visual_baseline_not_functional_clone":
+    if visual.get("visual_reference_role") != GUI_REFERENCE_ROLE:
         fail(f"{path}.visual_reference_role mismatch")
-    if visual.get("default_stack") != "tauri_react_vite_tailwind_typescript":
+    if visual.get("default_stack") != GUI_DEFAULT_STACK:
         fail(f"{path}.default_stack mismatch")
     require_bool(
         visual.get("production_next_server_allowed"),
