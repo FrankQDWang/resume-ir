@@ -1,0 +1,43 @@
+{
+  "schema_version": "resume-ir.experiment-report.v2",
+  "goal_id": "resume-ir.performance-gui-loop.2026-06",
+  "report_kind": "schema_fixture",
+  "claim": "slice_complete",
+  "evidence_lane": "gui_manual",
+  "contract_pins": {
+    "active_goal_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "acceptance_matrix_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "loop_state_schema_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "experiment_report_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "git_head_sha": "working-tree"
+  },
+  "gui_manual": {
+    "logical_rows": 100000,
+    "visible_rows": 40,
+    "overscan_rows": 80,
+    "input_to_paint_p95_ms": 80,
+    "frame_time_p95_ms": 15,
+    "scroll_dropped_frame_pct": 0.5,
+    "journey_checklist_passed": true
+  },
+  "gui_visual": {
+    "visual_reference_role": "visual_baseline_not_functional_clone",
+    "default_stack": "tauri_react_vite_tailwind_typescript",
+    "production_next_server_allowed": false
+  },
+  "thresholds": {
+    "matrix": "perf/acceptance-matrix.toml",
+    "matrix_schema_version": "resume-ir.perf.acceptance-matrix.v2",
+    "passed": true,
+    "failed_redlines": []
+  },
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false,
+    "trace_summary_redacted": true
+  }
+}

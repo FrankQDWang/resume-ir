@@ -296,6 +296,13 @@ def validate_gui_visual(value: object, path: str) -> None:
         False,
         f"{path}.production_next_server_allowed",
     )
+    require_non_empty_string(visual.get("token_inventory_ref"), f"{path}.token_inventory_ref")
+    require_non_empty_string(visual.get("screenshot_inventory_ref"), f"{path}.screenshot_inventory_ref")
+    require_bool(
+        visual.get("pixel_level_similarity_reviewed"),
+        True,
+        f"{path}.pixel_level_similarity_reviewed",
+    )
 
 
 def validate_w1_report(report: Mapping[str, object], matrix: Mapping[str, object], path: str) -> None:

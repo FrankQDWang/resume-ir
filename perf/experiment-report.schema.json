@@ -723,7 +723,14 @@
     "gui_visual": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["visual_reference_role", "default_stack", "production_next_server_allowed"],
+      "required": [
+        "visual_reference_role",
+        "default_stack",
+        "production_next_server_allowed",
+        "token_inventory_ref",
+        "screenshot_inventory_ref",
+        "pixel_level_similarity_reviewed"
+      ],
       "properties": {
         "visual_reference_role": { "const": "visual_baseline_not_functional_clone" },
         "default_stack": { "const": "tauri_react_vite_tailwind_typescript" },
