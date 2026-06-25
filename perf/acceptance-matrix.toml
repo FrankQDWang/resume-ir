@@ -331,6 +331,14 @@ requires_soak_fault = true
 requires_gui_manual = true
 requires_no_open_review_blockers = true
 requires_all_negative_contract_fixtures_fail = true
+requires_all_autonomous_delivery_lanes = true
+required_autonomous_delivery_lanes = [
+  "first_searchable",
+  "full_import_ocr_backlog",
+  "query_hot_path",
+  "agent_query_replay",
+  "repeat_amplification_control",
+]
 
 [autonomous_delivery_lanes.first_searchable]
 may_claim = ["first_searchable_latency", "initial_searchable_count"]
@@ -357,7 +365,7 @@ cannot_claim = [
   "human_search_quality",
   "full_resume_relevance_quality",
   "D1M_real_distribution_quality",
-  "OCR_completion_performance",
+  "ocr_completion_performance",
 ]
 
 [autonomous_delivery_lanes.repeat_amplification_control]

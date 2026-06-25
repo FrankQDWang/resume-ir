@@ -59,6 +59,13 @@ state = "open"
 draft = true
 review_status = "request_changes"
 
+[autonomous_delivery.activation]
+current_pr_contract_only = true
+applies_after_current_pr_merge = true
+scope_current_pr_permissions_win_until_merge = true
+production_implementation_in_current_pr_allowed = false
+private_benchmark_in_current_pr_allowed = false
+
 [autonomous_delivery.permissions]
 production_code_allowed = true
 private_benchmark_allowed = true
@@ -92,9 +99,13 @@ require_no_admin_bypass = true
 require_no_direct_main_push = true
 
 [autonomous_delivery.private_sources]
+source_kind = "env_var"
 private_resume_root = "$RESUME_IR_PRIVATE_RESUME_ROOT"
 seektalent_runs_root = "$RESUME_IR_QUERY_ARTIFACT_ROOT"
 local_evidence_dir = "$RESUME_IR_LOCAL_EVIDENCE_DIR"
+private_resume_root_env_var = "RESUME_IR_PRIVATE_RESUME_ROOT"
+seektalent_runs_root_env_var = "RESUME_IR_QUERY_ARTIFACT_ROOT"
+local_evidence_dir_env_var = "RESUME_IR_LOCAL_EVIDENCE_DIR"
 seektalent_trace_glob = "**/runtime/trace.log"
 allowed_trace_event = "tool_called"
 allowed_trace_tool = "source_search"
@@ -104,6 +115,8 @@ allowed_query_source = "source_search_invocation_argument_only"
 profile_issue_template = ".github/ISSUE_TEMPLATE/profile_issue.md"
 pr_template = ".github/PULL_REQUEST_TEMPLATE.md"
 template_paths_are_targets = true
+templates_materialized = false
+template_materialization_task = 5
 require_issue_closure_comment = true
 require_machine_anchors = true
 
