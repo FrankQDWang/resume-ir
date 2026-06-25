@@ -70,11 +70,23 @@ jobs:
       - name: Workflow check
         run: ./scripts/ci/check-workflows.sh
 
-      - name: Performance contract check
+      - name: contract-check
         run: python3 scripts/ci/check-performance-contracts.py
+
+      - name: privacy-guard
+        run: python3 scripts/ci/check-private-evidence-redaction.py
+
+      - name: pr-budget
+        run: python3 scripts/ci/check-pr-budget.py
+
+      - name: benchmark-lane-claims
+        run: python3 scripts/ci/check-benchmark-lanes.py
+
+      - name: gate-integrity
+        run: python3 scripts/ci/check-gate-integrity.py
 
       - name: Benchmark smoke
         run: ./scripts/ci/check-benchmark-smoke.sh
 
-      - name: Public repository guard
+      - name: public-repo-guard
         run: ./scripts/ci/guard-public-repo.sh
