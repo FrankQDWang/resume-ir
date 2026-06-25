@@ -99,9 +99,28 @@ Explicit non-goals:
 
 - [ ] Primary `optimization_layer`: <!-- L1 | L2 | L3 | L4 | n/a -->
 - [ ] Optional `affected_layers`:
-- [ ] L0 evidence linked: baseline, profiler summary, stage histogram, workload manifest.
-- [ ] Hypothesis, expected delta, rollback condition, and negative controls are linked.
-- [ ] This PR does not use a lower-layer optimization to close a higher-layer blocker.
+- [ ] `baseline_artifact`:
+- [ ] `profiler_summary`:
+- [ ] `stage_histogram`:
+- [ ] `bottleneck_statement`:
+- [ ] `hypothesis`:
+- [ ] `expected_delta`:
+- [ ] `rollback_condition`:
+- [ ] `negative_controls`:
+- [ ] `acceptance_gate`:
+- [ ] `workload_manifest`:
+- [ ] `query_set_source`:
+- [ ] `corpus_scale`:
+- [ ] `hardware_class`:
+- [ ] `warm_or_cold_definition`:
+- [ ] `cache_state`:
+- [ ] `platform_lane`: <!-- macos_m4_discovery | windows_weak_host_validation | cross_os_ci_smoke | n/a -->
+- [ ] `primary_blocker_layer`:
+- [ ] `closing_layer`:
+- [ ] `linked_blocker`:
+- [ ] `closure_evidence`:
+- [ ] `lower_layer_closes_higher_layer_blocker`: false
+- [ ] Lower-layer closure check reviewed; this PR does not use a lower-layer optimization to close a higher-layer blocker.
 - [ ] Hand-written SIMD/cache/prefetch work is absent, or a Scope Exception issue is linked.
 
 <!-- contract:privacy_boundary -->

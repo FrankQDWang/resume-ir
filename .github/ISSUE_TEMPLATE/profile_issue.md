@@ -24,19 +24,27 @@ assignees: ""
 
 - [ ] `optimization_layer`: <!-- L1 | L2 | L3 | L4 -->
 - [ ] `affected_layers`: <!-- optional: [] | [L1] | [L2] | [L3] | [L4] -->
-- [ ] Bottleneck statement:
-- [ ] Expected delta:
-- [ ] Rollback condition:
-- [ ] Negative controls:
-- [ ] Acceptance gate:
-- [ ] Workload manifest:
-- [ ] Query set source:
-- [ ] Corpus scale:
-- [ ] Hardware class:
-- [ ] Warm/cold definition:
-- [ ] Cache state:
-- [ ] Platform lane: <!-- macos_m4_discovery | windows_weak_host_validation | cross_os_ci_smoke -->
-- [ ] Lower-layer closure rule checked:
+- [ ] `baseline_artifact`:
+- [ ] `profiler_summary`:
+- [ ] `stage_histogram`:
+- [ ] `bottleneck_statement`:
+- [ ] `hypothesis`:
+- [ ] `expected_delta`:
+- [ ] `rollback_condition`:
+- [ ] `negative_controls`:
+- [ ] `acceptance_gate`:
+- [ ] `workload_manifest`:
+- [ ] `query_set_source`:
+- [ ] `corpus_scale`:
+- [ ] `hardware_class`:
+- [ ] `warm_or_cold_definition`:
+- [ ] `cache_state`:
+- [ ] `platform_lane`: <!-- macos_m4_discovery | windows_weak_host_validation | cross_os_ci_smoke -->
+- [ ] `primary_blocker_layer`:
+- [ ] `closing_layer`:
+- [ ] `linked_blocker`:
+- [ ] `closure_evidence`:
+- [ ] `lower_layer_closes_higher_layer_blocker`: false
 
 <!-- contract:baseline -->
 ## Baseline
