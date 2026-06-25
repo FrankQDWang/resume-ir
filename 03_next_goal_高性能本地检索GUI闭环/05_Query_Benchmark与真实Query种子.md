@@ -111,10 +111,10 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
     "semantic": 25,
     "extreme": 25
   },
-  "contains_queries": false,
-  "contains_resume_text": false,
+  "contains_raw_query_text": false,
+  "contains_raw_resume_text": false,
   "contains_candidate_results": false,
-  "contains_paths": false
+  "contains_local_paths": false
 }
 ```
 

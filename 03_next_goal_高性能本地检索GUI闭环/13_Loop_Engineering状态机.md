@@ -48,7 +48,7 @@ Terminology map:
 | State | 进入条件 | 允许转移 | 必需证据 | 禁止事项 |
 |---|---|---|---|---|
 | `intake` | 用户提出目标或 reviewer 反馈 | `ceo_reviewed` | 原始需求、范围限制、隐私边界 | 直接开始代码实现 |
-| `ceo_reviewed` | 完成方向、范围、风险判断 | `plan_ready` | CEO review 结论、推荐路线、用户确认 | 未确认路线就写执行计划 |
+| `ceo_reviewed` | 完成方向、范围、风险判断 | `plan_ready` | CEO review 结论、推荐路线、pre-authorized machine contract 或人工 escalation 确认 | 未确认路线就写执行计划 |
 | `plan_ready` | spec 和 linked plan 已保存 | `plan_reviewed` | `docs/superpowers/specs/*` 与 `docs/superpowers/plans/*` | 跳过 plan review |
 | `plan_reviewed` | 工程计划审查通过 | `slice_active` | review 结论、批准范围 | 扩大到未批准代码范围 |
 | `slice_active` | 单个切片被选中 | `red_check_written` 或 `implementation_active` | 切片目标、验收命令、允许文件 | 同时执行多个互相影响的切片 |
@@ -59,6 +59,8 @@ Terminology map:
 | `slice_complete` | 当前切片所有验收通过 | `slice_active` 或 `goal_complete` | 切片 diff、命令、证据 lane、隐私检查 | 把单切片完成说成整个目标完成 |
 | `blocked` | 同一阻塞条件经过 3 次 distinct `evidence_path` 的 effective retry 后仍复现 | `intake` 或 `ceo_reviewed` | 阻塞条件、连续次数、下一步所需外部输入 | 因任务困难、预算紧或验证慢而提前标 blocked |
 | `goal_complete` | W0、W1、soak/fault、GUI/manual evidence cells 和五个 benchmark lanes 均通过且无开放 blocker | none | 完整验收矩阵、benchmark lane coverage、review closure、隐私检查 | 留下未说明的失败检查 |
+
+Autonomous mode 下，`goal_authorized`、machine-readable permissions、GitHub issue/PR state 才是确认 evidence。运行中 live human confirmation 只用于 scope、privacy 或 permission escalation，不能作为普通状态推进的必需中途门槛。
 
 ## 2. Active Goal Record
 

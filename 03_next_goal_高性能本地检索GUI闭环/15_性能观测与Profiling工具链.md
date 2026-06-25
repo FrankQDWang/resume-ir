@@ -41,7 +41,7 @@ Linked PRs
 Closing Evidence
 ```
 
-Closure must include before/after metric, percentage change, `query_set_sha256`, corpus profile hash, command id or script name, and privacy redaction confirmation.
+Closure must include before/after metric, percentage change, `query_set_sha256`, `corpus_profile_hash`, command id or script name, and privacy redaction confirmation. `corpus_profile_hash` must follow the public-safe hash boundary in `09_安全隐私与本地证据边界.md`.
 
 ## 2. Instrumentation Contract
 
@@ -64,7 +64,7 @@ Methodology hard rules:
 1. 使用 release build；debug/dev build 只能作为 smoke。
 2. warmup 至少 30 秒，正式测量至少 5 次重复，报告 median run 和 worst valid run。
 3. 同时记录 closed-loop latency 和 open-loop arrival latency；只用 closed-loop 不能证明 overload 行为。
-4. 必须覆盖 30%、70%、100%、120% 四个 capacity points；benchmark/codex/background lane 还要记录 admission/rejection。
+4. 必须覆盖 30%、70%、100%、120% 四个 capacity points；benchmark/codex/background queue class 还要记录 admission/rejection。
 5. 需要明确 coordinated omission 修正方式；没有修正时该报告不能用于完成声明。
 6. profiler overhead 必须 <= 3%，否则 profiler run 只能定位热点，不能作为最终 latency 证据。
 
