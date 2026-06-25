@@ -5,7 +5,7 @@
 无人值守执行阶段的事实优先级：
 
 1. Policy truth lives in `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, schemas, and the autonomous entrypoint document.
-2. Execution truth lives in GitHub PR/issue state, git branch/base sha, benchmark artifact hashes, and only then `perf/current-loop-state.json`.
+2. Execution truth lives in GitHub PR/issue state, git branch/base sha, public-safe benchmark_report_hash or benchmark_artifact_id from redacted report, approved opaque manifest, or HMAC-SHA256 opaque manifest only, and only then `perf/current-loop-state.json`.
 3. 当前对话上下文只能解释执行意图，不能覆盖 policy truth 或 execution truth。
 
 Autonomous delivery 主路径：
@@ -31,7 +31,7 @@ goal_authorized
 -> next_issue_or_goal_complete
 ```
 
-Schema caveat: until Task 4 updates `perf/loop-state.schema.json`, these autonomous names are target delivery stages only. They are not valid `workflow_state` values in `perf/current-loop-state.json`; runners must keep writing the current schema fields and use GitHub issue/PR state, git branch/base sha, and benchmark artifact hashes as execution truth.
+Schema caveat: until Task 4 updates `perf/loop-state.schema.json`, these autonomous names are target delivery stages only. They are not valid `workflow_state` values in `perf/current-loop-state.json`; runners must keep writing the current schema fields and use GitHub issue/PR state, git branch/base sha, and public-safe benchmark_report_hash or benchmark_artifact_id from redacted report, approved opaque manifest, or HMAC-SHA256 opaque manifest only as execution truth. Raw benchmark or profiler artifact hashes remain local-only and must not become git/GitHub evidence.
 
 Terminology map:
 
