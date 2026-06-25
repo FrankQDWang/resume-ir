@@ -24,6 +24,19 @@ assignees: ""
 - [ ] Evidence artifact id or hash:
 - [ ] Public summary:
 
+<!-- contract:gui_visual_reference -->
+## GUI Visual Reference
+
+- [ ] Visual reference version or local inventory id:
+- [ ] Default stack: `Tauri + React + Vite + Tailwind + TypeScript`
+- [ ] Production Next.js server is not used:
+- [ ] Token inventory evidence:
+- [ ] Reference screenshot inventory:
+- [ ] Representative page screenshots:
+- [ ] Pixel-level similarity reviewed:
+- [ ] Functional divergence is product-required:
+- [ ] Toolkit fallback blocker issue, if any:
+
 <!-- contract:verification -->
 ## Verification
 

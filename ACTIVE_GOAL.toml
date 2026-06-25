@@ -64,6 +64,20 @@ same_blocker_retries_without_new_evidence = "forbidden"
 smoke_as_w1_evidence = "forbidden"
 query_semantics_relaxation_for_latency = "forbidden"
 
+[gui]
+default_stack = "tauri_react_vite_tailwind_typescript"
+desktop_shell = "tauri"
+frontend_runtime = "react"
+frontend_build = "vite_static_assets"
+style_system = "tailwind"
+production_next_server_allowed = false
+visual_reference = "UI-reference/"
+visual_reference_role = "visual_baseline_not_functional_clone"
+pixel_level_visual_similarity_required = true
+toolkit_bakeoff_default_required = false
+toolkit_bakeoff_requires_blocker_issue = true
+raw_reference_assets_publication_allowed = false
+
 [pull_request]
 number = 10
 state = "open"

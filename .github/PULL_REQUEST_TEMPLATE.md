@@ -12,6 +12,15 @@ Contract surfaces touched:
 
 - <!-- e.g. CLI args, diagnostics JSON, release-readiness JSON, workflow gate, GitHub template, none -->
 
+## GUI Visual Contract
+
+- [ ] GUI PR declares `visual_reference_version` or marks this section not applicable.
+- [ ] Default stack remains `Tauri + React + Vite + Tailwind + TypeScript`.
+- [ ] `UI-reference/` is treated as visual baseline, not functional clone.
+- [ ] No production Next.js server is introduced.
+- [ ] Visual token inventory and representative screenshots are linked when GUI visuals change.
+- [ ] Toolkit bakeoff is not reopened without a linked blocker issue.
+
 <!-- contract:linked_issue -->
 ## Linked Issue
 

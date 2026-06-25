@@ -69,7 +69,7 @@ GUI 只能依赖 `06_Daemon_IPC与Diagnostics契约.md` 中的 versioned IPC/dia
 
 ## 5. GUI Information Architecture
 
-GUI 是 app UI，不是 landing page。第一屏必须按同一信息层级设计，后续 egui/eframe 与 Slint bakeoff 不得各自发明不同页面结构。
+GUI 是 app UI，不是 landing page。第一屏必须按同一信息层级设计，默认 `Tauri + React + Vite + Tailwind + TypeScript` lane 和任何合法 fallback 都必须复用同一 `UI-reference/` 视觉基准与页面结构。
 
 第一屏扫描顺序：
 
@@ -148,34 +148,29 @@ Temporary tokens:
 | focus style | keyboard focus 使用 outline 或 ring，不能只用 hover |
 | panel surfaces | app UI 使用平静工作台面，不使用 marketing hero、装饰 card grid、渐变背景或图标装饰 |
 
-## 10. GUI Toolkit Bakeoff
+## 10. GUI 技术栈与 UI-reference 视觉合同
 
-技术栈冻结前必须用同一个 representative page 比较 egui/eframe 与 Slint。该 bakeoff 不实现完整 GUI，只验证能否承载目标工作台。两个代表页面必须遵守 `## 5. GUI Information Architecture`、`## 6. GUI Interaction State Matrix`、`## 7. GUI User Journey Storyboard`、`## 8. Responsive and Accessibility Contract` 和 `## 9. GUI Design System Boundary`，否则比较无效。
+默认 GUI 技术栈冻结为 `Tauri + React + Vite + Tailwind + TypeScript`。
 
-代表页面必须包含：
+Tauri 负责桌面壳、系统权限、打包、native bridge 和 daemon IPC 边界。React 负责界面状态和组件组合。Vite 负责把前端构建成 Tauri 可内嵌的静态资产。Tailwind 负责承载 `UI-reference/` 已有视觉语言。生产 GUI 不运行 Next.js server；当前 `UI-reference/` 的 Next.js 原型只作为视觉参考，不作为发布架构。
 
-1. root 选择和 root 状态。
-2. Level1/2/3 计数。
-3. OCR/semantic/import 队列状态。
-4. 搜索框、mode segmented control、filter 摘要。
-5. 100000 logical rows 的虚拟结果列表，首屏 20-60 viewport-visible rows，overscan <= 2x visible rows，包含 partial/degraded/overload 状态。
-6. 选中结果 detail panel。
-7. diagnostics/export 入口。
+`UI-reference/` 是视觉基准，不是功能逐项复刻要求。功能、页面数量、字段和流程可以按 daemon IPC、diagnostics、benchmark/manual 验证和产品需求调整；视觉语言不得漂移。
 
-评分项：
+必须保留的视觉不变量：
 
-| 项 | 要求 |
-|---|---|
-| daemon contract fit | 只依赖 versioned IPC/diagnostics |
-| information architecture fit | 同一 top command bar、left rail、center workspace、right detail panel、bottom status strip |
-| state coverage | loading、empty、error、success、partial/degraded/overload/cancelled 均有可见表现 |
-| journey completeness | first run、first searchable、query、inspect、manual validation、evidence export 可闭环 |
-| dense data UI | 100000 logical rows、20-60 viewport-visible rows、overscan <= 2x visible rows 和队列状态不卡顿、不跳布局 |
-| cross-platform packaging | macOS/Windows 打包路径清晰 |
-| responsive/a11y | desktop/tablet/narrow viewport、keyboard order、focus visible、contrast >= 4.5:1、44px touch target、screen-reader status 可验收 |
-| design system fit | 同一 type scale、spacing density、row height、status colors、focus style、panel surfaces |
-| manual/Codex verification | 能用脚本或稳定状态输出复核 |
-| performance headroom | 100000 logical rows、10Hz scroll/update、10qps interactive search mock 下不持续占满 CPU/GPU |
-| maintenance | 依赖数量、license、构建复杂度可接受 |
+1. GUI 是安静、克制、高密度的本地工作台，不是 landing page。
+2. 使用浅色背景、薄边框、紧凑 spacing、低装饰密度和清晰信息层级。
+3. 保留 left rail、top command bar、center workspace、detail side sheet/panel、status/diagnostics affordance 的工作台结构。
+4. 保留稳定 row/card 尺寸，hover、loading、长文本和 partial marker 不得造成列表布局跳动。
+5. 使用 Lucide 风格图标、紧凑按钮、pill、tag、segmented control、redacted diagnostics/export affordance。
+6. 主强调色应接近 reference primary，黑/灰承担主要文本和操作层级。
+7. 圆角默认接近 8px，除非组件有明确本地理由。
 
-冻结条件：两个代表页面的截图、状态矩阵截图、journey checklist、responsive/a11y checklist、temporary token checklist、资源摘要、100000 logical rows + 10Hz update + 10qps interactive search 压力摘要、交互 checklist、打包 notes 和 tradeoff 结论进入 redacted docs 后，才允许选择 GUI toolkit。
+验收目标是 pixel-level visual similarity，不是 identical functional clone。视觉相似性由 design token inventory、reference screenshot inventory、representative page screenshots、manual/Codex review 和 GUI/manual issue 证据共同判断。
+
+Fallback bakeoff rule:
+
+1. `Tauri + React + Vite + Tailwind + TypeScript` 是默认 lane。
+2. 只有 GitHub issue 记录明确 blocker 后，才允许重新打开 egui/eframe、Slint 或其他 toolkit bakeoff。
+3. 合法 blocker 包括 WebView2/Windows packaging 失败、weak-host runtime footprint 无法接受、100000 logical rows 交互性能不可达、native integration 无法满足 daemon IPC 或 diagnostics 边界。
+4. fallback bakeoff 必须复用同一 `UI-reference/` inventory 和 representative pages，不能发明新的视觉风格。
