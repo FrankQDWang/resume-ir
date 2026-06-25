@@ -17,6 +17,8 @@ If it conflicts with older goal documents, `ACTIVE_GOAL.toml` and this document 
 6. 其他当前目标文档
 7. 历史文档
 
+Until later autonomous-contract tasks update schemas and guards, existing `perf/loop-state.schema.json`, `perf/experiment-report.schema.json`, and `scripts/ci/check-performance-contracts.py` remain the machine-enforced public contract. This document defines the target autonomous delivery contract.
+
 ## 3. Execution Truth
 
 1. GitHub PR/issue ledger
@@ -58,6 +60,8 @@ goal_authorized
 - No gate-changing diff in a performance optimization PR.
 - No raw private data, raw query, raw trace, local path, token, diagnostic package, OCR text, or resume text in git or GitHub prose.
 
+The local-path ban covers absolute or private local paths. It does not ban repo-relative public evidence paths or opaque hashes.
+
 ## 6. PR Budget
 
 Default budget:
@@ -84,7 +88,7 @@ Required lanes:
 
 ## 8. Blocked Policy
 
-The same blocker may receive at most three effective retries. Each effective retry must introduce a new `evidence_path`; re-running the same failed command is not an effective retry.
+The same blocker may receive at most three effective retries. Each effective retry must introduce a new `evidence_path`; re-running the same failed command is not an effective retry. Ineffective repeats are forbidden. After the same no-new-evidence blocker recurs three times, enter `blocked`.
 
 ## 9. Completion
 
