@@ -31,6 +31,18 @@ goal_authorized
 -> next_issue_or_goal_complete
 ```
 
+Schema caveat: until Task 4 updates `perf/loop-state.schema.json`, these autonomous names are target delivery stages only. They are not valid `workflow_state` values in `perf/current-loop-state.json`; runners must keep writing the current schema fields and use GitHub issue/PR state, git branch/base sha, and benchmark artifact hashes as execution truth.
+
+Terminology map:
+
+| Concept | Current machine field | Current allowed values | Autonomous target meaning |
+|---|---|---|---|
+| review-gated workflow state | `workflow_state` | `intake`, `ceo_reviewed`, `plan_ready`, `plan_reviewed`, `slice_active`, `red_check_written`, `implementation_active`, `verification_active`, `evidence_review`, `slice_complete`, `blocked`, `goal_complete` | current loop report state machine |
+| performance experiment state | `experiment_state` | `not_started`, `contract_locked`, `baseline_validated`, `profile_captured`, `bottleneck_selected`, `hypothesis_registered`, `optimization_slice_active`, `correctness_passed`, `perf_measured`, `reprofiled`, `cross_os_passed`, `accepted`, `reverted`, `blocked`, `complete` | profiling and hypothesis lifecycle |
+| evidence lane | `evidence_lane` | `smoke`, `w0_docs`, `w1_private`, `soak_fault`, `gui_manual` | evidence cell class; display aliases may be W0, W1, soak/fault, GUI/manual |
+| benchmark lane | not a current schema field until Task 4 | `first_searchable`, `full_import_ocr_backlog`, `query_hot_path`, `agent_query_replay`, `repeat_amplification_control` | workload and measurement category |
+| autonomous delivery stage | no current JSON field | n/a | target issue-led slice-train stage, not a competing state machine |
+
 ## 1. Workflow State
 
 | State | 进入条件 | 允许转移 | 必需证据 | 禁止事项 |
@@ -46,7 +58,7 @@ goal_authorized
 | `evidence_review` | 验证输出已收集 | `slice_complete`, `goal_complete`, `blocked`, 或 `slice_active` | 证据分类、风险说明 | 把 smoke 当 W1 benchmark |
 | `slice_complete` | 当前切片所有验收通过 | `slice_active` 或 `goal_complete` | 切片 diff、命令、证据 lane、隐私检查 | 把单切片完成说成整个目标完成 |
 | `blocked` | 同一阻塞条件连续出现至少 3 次且无新证据路径 | `intake` 或 `ceo_reviewed` | 阻塞条件、连续次数、下一步所需外部输入 | 因任务困难、预算紧或验证慢而提前标 blocked |
-| `goal_complete` | W0、W1、soak/fault、GUI/manual 均通过且无开放 blocker | none | 完整验收矩阵、review closure、隐私检查 | 留下未说明的失败检查 |
+| `goal_complete` | W0、W1、soak/fault、GUI/manual evidence cells 和五个 benchmark lanes 均通过且无开放 blocker | none | 完整验收矩阵、benchmark lane coverage、review closure、隐私检查 | 留下未说明的失败检查 |
 
 ## 2. Active Goal Record
 
@@ -85,7 +97,7 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 | `blocked` | 同一 blocker 连续 3 次且无新证据路径 | `contract_locked` 或 `bottleneck_selected` | blocked report |
 | `complete` | 所有 evidence lanes 通过 | none | final redacted aggregate |
 
-性能实现不得从 `contract_locked` 直接跳到 `optimization_slice_active`。没有 baseline、profiler evidence 和可证伪 hypothesis，只能做合同修复或观测面实现，不能声明优化成功。任何 `goal_complete` 状态必须在 `perf/loop-state.schema.json` 中包含 W0、D10K、D100K、D1M、soak/fault、GUI/manual accepted cells。
+性能实现不得从 `contract_locked` 直接跳到 `optimization_slice_active`。没有 baseline、profiler evidence 和可证伪 hypothesis，只能做合同修复或观测面实现，不能声明优化成功。任何 `goal_complete` 状态必须在 `perf/loop-state.schema.json` 中包含 W0、D10K、D100K、D1M、soak/fault、GUI/manual accepted cells。完整 autonomous completion 还必须有五个 benchmark lanes 的 redacted evidence：`first_searchable`、`full_import_ocr_backlog`、`query_hot_path`、`agent_query_replay`、`repeat_amplification_control`。
 
 ## 4. Drift Checks
 
@@ -93,12 +105,13 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 
 1. 当前 diff 是否只包含该切片允许路径。
 2. 当前验收命令是否对应该切片。
-3. 当前 benchmark lane 是否为 smoke、W0、W1、soak/fault 或 GUI/manual 中的一个。
-4. 当前 query 语义是否仍遵守 simple text AND 合同。
-5. 当前 daemon contract 是否仍通过版本化 IPC/diagnostics 暴露。
-6. 当前 Loop state report 是否能通过 `perf/loop-state.schema.json`。
-7. 当前实验报告是否能通过 `perf/experiment-report.schema.json`，除非该切片不是实验切片。
-8. `perf/current-loop-state.json` 是否仍反映当前 PR 的 evidence lane、允许路径和 claim 状态。
+3. 当前 `evidence_lane` 是否为 `smoke`、`w0_docs`、`w1_private`、`soak_fault` 或 `gui_manual` 中的一个。
+4. 当前 `benchmark_lane` 是否为 `first_searchable`、`full_import_ocr_backlog`、`query_hot_path`、`agent_query_replay` 或 `repeat_amplification_control` 中的一个；Task 4 前该值只能出现在 issue/report evidence 中，不能写成 `perf/current-loop-state.json` 的机器字段。
+5. 当前 query 语义是否仍遵守 simple text AND 合同。
+6. 当前 daemon contract 是否仍通过版本化 IPC/diagnostics 暴露。
+7. 当前 Loop state report 是否能通过 `perf/loop-state.schema.json`。
+8. 当前实验报告是否能通过 `perf/experiment-report.schema.json`，除非该切片不是实验切片。
+9. `perf/current-loop-state.json` 是否仍反映当前 PR 的 evidence lane、允许路径和 claim 状态。
 
 ## 5. Blocked Stop Rule
 
@@ -118,4 +131,4 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 
 只有当目标文档、验收矩阵、隐私边界、query 语义、IPC contract 和 reviewer ledger 均有对应证据时，docs-hardening 切片才可进入 `slice_complete`。
 
-完整 performance + GUI 目标只有在 W0、D10K、D100K、D1M、soak/fault、GUI/manual 均有 redacted evidence，且 review ledger 无 `open` blocker 后，才可进入 `goal_complete`。
+完整 performance + GUI 目标只有在 W0、D10K、D100K、D1M、soak/fault、GUI/manual 均有 redacted evidence，且 `first_searchable`、`full_import_ocr_backlog`、`query_hot_path`、`agent_query_replay`、`repeat_amplification_control` 五个 benchmark lanes 均有 redacted evidence，且 review ledger 无 `open` blocker 后，才可进入 `goal_complete`。

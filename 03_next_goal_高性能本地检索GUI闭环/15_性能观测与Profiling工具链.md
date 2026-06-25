@@ -11,12 +11,33 @@
 5. profiler 结果只能提交符号化摘要和本地文件 hash，不提交本机路径。
 6. 性能报告必须说明 release build、warmup、重复次数、open-loop/closed-loop 方法、容量点和 coordinated omission 处理方式。
 
-Profiling ledger rules:
+Profile issue ledger rules:
 
-1. profile issue is the profiling ledger
+1. profile issue is the profiling ledger; `.github/ISSUE_TEMPLATE/profile_issue.md` is the target template path for that ledger, and until the template exists the linked GitHub issue text must carry the same anchors.
 2. negative experiment is valid evidence
 3. benchmark regression is experiment_negative unless it also violates a release gate
 4. no profile, no optimization
+
+Required profile issue anchors/fields:
+
+```text
+Profile Lane
+Dataset
+Corpus Profile Hash
+Query Set Hash or query_set_sha256
+Baseline Command
+Baseline Evidence
+Profiler Evidence
+Hypothesis
+Target Metric
+Success Threshold
+Failure/Regression Guard
+Privacy Boundary
+Linked PRs
+Closing Evidence
+```
+
+Closure must include before/after metric, percentage change, `query_set_sha256`, corpus profile hash, command id or script name, and privacy redaction confirmation.
 
 ## 2. Instrumentation Contract
 
