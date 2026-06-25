@@ -332,6 +332,21 @@ requires_gui_manual = true
 requires_no_open_review_blockers = true
 requires_all_negative_contract_fixtures_fail = true
 requires_all_autonomous_delivery_lanes = true
+goal_complete_requires = [
+  "w0_docs",
+  "d10k_private_calibration",
+  "d100k_weak_host",
+  "d1m_scale",
+  "soak_fault",
+  "gui_manual",
+  "first_searchable",
+  "full_import_ocr_backlog",
+  "query_hot_path",
+  "agent_query_replay",
+  "repeat_amplification_control",
+]
+d1m_scale_alone_claims_goal_complete = false
+task6_guard_must_use_goal_complete_requires = true
 required_autonomous_delivery_lanes = [
   "first_searchable",
   "full_import_ocr_backlog",
@@ -339,6 +354,10 @@ required_autonomous_delivery_lanes = [
   "agent_query_replay",
   "repeat_amplification_control",
 ]
+
+[claim_tokens]
+canonical_case = "lower_snake_case"
+reject_non_canonical_case = true
 
 [autonomous_delivery_lanes.first_searchable]
 may_claim = ["first_searchable_latency", "initial_searchable_count"]
@@ -364,7 +383,7 @@ may_claim = [
 cannot_claim = [
   "human_search_quality",
   "full_resume_relevance_quality",
-  "D1M_real_distribution_quality",
+  "d1m_real_distribution_quality",
   "ocr_completion_performance",
 ]
 
