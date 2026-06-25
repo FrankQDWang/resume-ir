@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import subprocess
 import sys
 import tomllib
 from collections.abc import Mapping
@@ -18,6 +19,16 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 PERF = ROOT / "perf"
 VALID_FIXTURES = PERF / "fixtures" / "valid"
 INVALID_FIXTURES = PERF / "fixtures" / "invalid"
+FOCUSED_CHECKS = [
+    "scripts/ci/check-autonomous-goal.py",
+    "scripts/ci/check-loop-state.py",
+    "scripts/ci/check-experiment-report.py",
+    "scripts/ci/check-pr-budget.py",
+    "scripts/ci/check-benchmark-lanes.py",
+    "scripts/ci/check-private-evidence-redaction.py",
+    "scripts/ci/check-gate-integrity.py",
+    "scripts/ci/check-goal-complete.py",
+]
 
 HEX64 = set("0123456789abcdef")
 REQUIRED_BUCKETS = [
@@ -441,6 +452,9 @@ def main() -> int:
         fail(f"{path.relative_to(ROOT)}: invalid fixture unexpectedly passed")
     if invalid_count == 0:
         fail("no invalid fixtures found")
+
+    for rel in FOCUSED_CHECKS:
+        subprocess.run([sys.executable, str(ROOT / rel)], check=True)
 
     print("performance contract check passed")
     return 0

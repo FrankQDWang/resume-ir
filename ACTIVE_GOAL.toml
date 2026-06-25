@@ -27,6 +27,14 @@ allowed_paths = [
   "docs/superpowers/",
   "perf/",
   "scripts/ci/check-performance-contracts.py",
+  "scripts/ci/check-autonomous-goal.py",
+  "scripts/ci/check-loop-state.py",
+  "scripts/ci/check-experiment-report.py",
+  "scripts/ci/check-pr-budget.py",
+  "scripts/ci/check-benchmark-lanes.py",
+  "scripts/ci/check-private-evidence-redaction.py",
+  "scripts/ci/check-gate-integrity.py",
+  "scripts/ci/check-goal-complete.py",
 ]
 
 [contracts]
