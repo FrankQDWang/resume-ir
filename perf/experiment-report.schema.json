@@ -21,6 +21,15 @@
     "evidence_lane": {
       "enum": ["smoke", "w0_docs", "w1_private", "soak_fault", "gui_manual"]
     },
+    "benchmark_lane": {
+      "enum": [
+        "first_searchable",
+        "full_import_ocr_backlog",
+        "query_hot_path",
+        "agent_query_replay",
+        "repeat_amplification_control"
+      ]
+    },
     "contract_pins": { "$ref": "#/$defs/contract_pins" },
     "docs_gate": { "$ref": "#/$defs/docs_gate" },
     "machine_profile": { "$ref": "#/$defs/machine_profile" },
@@ -31,6 +40,11 @@
     "latency": { "$ref": "#/$defs/latency" },
     "resources": { "$ref": "#/$defs/resources" },
     "hot_path": { "$ref": "#/$defs/hot_path" },
+    "first_searchable": { "$ref": "#/$defs/first_searchable" },
+    "full_import_ocr_backlog": { "$ref": "#/$defs/full_import_ocr_backlog" },
+    "query_hot_path": { "$ref": "#/$defs/query_hot_path" },
+    "agent_query_replay": { "$ref": "#/$defs/agent_query_replay" },
+    "repeat_amplification_control": { "$ref": "#/$defs/repeat_amplification_control" },
     "profiling": { "$ref": "#/$defs/profiling" },
     "import_incremental": { "$ref": "#/$defs/import_incremental" },
     "soak_fault": { "$ref": "#/$defs/soak_fault" },
@@ -139,6 +153,26 @@
     {
       "if": { "properties": { "evidence_lane": { "const": "gui_manual" } }, "required": ["evidence_lane"] },
       "then": { "required": ["gui_manual", "thresholds"] }
+    },
+    {
+      "if": { "properties": { "benchmark_lane": { "const": "first_searchable" } }, "required": ["benchmark_lane"] },
+      "then": { "required": ["first_searchable"] }
+    },
+    {
+      "if": { "properties": { "benchmark_lane": { "const": "full_import_ocr_backlog" } }, "required": ["benchmark_lane"] },
+      "then": { "required": ["full_import_ocr_backlog"] }
+    },
+    {
+      "if": { "properties": { "benchmark_lane": { "const": "query_hot_path" } }, "required": ["benchmark_lane"] },
+      "then": { "required": ["query_hot_path"] }
+    },
+    {
+      "if": { "properties": { "benchmark_lane": { "const": "agent_query_replay" } }, "required": ["benchmark_lane"] },
+      "then": { "required": ["agent_query_replay"] }
+    },
+    {
+      "if": { "properties": { "benchmark_lane": { "const": "repeat_amplification_control" } }, "required": ["benchmark_lane"] },
+      "then": { "required": ["repeat_amplification_control"] }
     }
   ],
   "$defs": {
@@ -391,6 +425,175 @@
         "heavy_model_inference": { "const": false },
         "spawn_per_query": { "const": false }
       }
+    },
+    "first_searchable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_count",
+        "initial_searchable_count",
+        "first_file_searchable_p50_ms",
+        "first_file_searchable_p95_ms",
+        "first_file_searchable_p99_ms",
+        "thresholds_passed"
+      ],
+      "properties": {
+        "document_count": { "type": "integer", "minimum": 0 },
+        "initial_searchable_count": { "type": "integer", "minimum": 0 },
+        "first_file_searchable_p50_ms": { "type": "number", "minimum": 0 },
+        "first_file_searchable_p95_ms": { "type": "number", "minimum": 0 },
+        "first_file_searchable_p99_ms": { "type": "number", "minimum": 0 },
+        "thresholds_passed": { "type": "boolean" },
+        "benchmark_report_hash": { "$ref": "#/$defs/hex64" },
+        "benchmark_artifact_id": { "type": "string", "minLength": 1 }
+      },
+      "anyOf": [
+        { "required": ["benchmark_report_hash"] },
+        { "required": ["benchmark_artifact_id"] }
+      ]
+    },
+    "full_import_ocr_backlog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_count",
+        "ocr_backlog_document_count",
+        "ocr_completed_document_count",
+        "ocr_failed_document_count",
+        "queue_drain_p95_ms",
+        "scheduler_recovery_count",
+        "thresholds_passed"
+      ],
+      "properties": {
+        "document_count": { "type": "integer", "minimum": 0 },
+        "ocr_backlog_document_count": { "type": "integer", "minimum": 0 },
+        "ocr_completed_document_count": { "type": "integer", "minimum": 0 },
+        "ocr_failed_document_count": { "type": "integer", "minimum": 0 },
+        "queue_drain_p95_ms": { "type": "number", "minimum": 0 },
+        "scheduler_recovery_count": { "type": "integer", "minimum": 0 },
+        "thresholds_passed": { "type": "boolean" },
+        "benchmark_report_hash": { "$ref": "#/$defs/hex64" },
+        "benchmark_artifact_id": { "type": "string", "minLength": 1 }
+      },
+      "anyOf": [
+        { "required": ["benchmark_report_hash"] },
+        { "required": ["benchmark_artifact_id"] }
+      ]
+    },
+    "query_hot_path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query_set_sha256",
+        "corpus_profile_hash",
+        "request_sample_count",
+        "p95_ms",
+        "p99_ms",
+        "stage_p95_ms",
+        "hot_path_ocr",
+        "hot_path_parsing",
+        "hot_path_heavy_model_inference",
+        "spawn_per_query"
+      ],
+      "properties": {
+        "query_set_sha256": { "$ref": "#/$defs/hex64" },
+        "corpus_profile_hash": { "$ref": "#/$defs/hex64" },
+        "request_sample_count": { "type": "integer", "minimum": 1 },
+        "p95_ms": { "type": "number", "minimum": 0 },
+        "p99_ms": { "type": "number", "minimum": 0 },
+        "stage_p95_ms": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["query_parse", "prefilter", "bm25", "ann", "fusion", "bulk_hydrate", "snippet"],
+          "properties": {
+            "query_parse": { "type": "number", "minimum": 0 },
+            "prefilter": { "type": "number", "minimum": 0 },
+            "bm25": { "type": "number", "minimum": 0 },
+            "ann": { "type": "number", "minimum": 0 },
+            "fusion": { "type": "number", "minimum": 0 },
+            "bulk_hydrate": { "type": "number", "minimum": 0 },
+            "snippet": { "type": "number", "minimum": 0 }
+          }
+        },
+        "hot_path_ocr": { "const": false },
+        "hot_path_parsing": { "const": false },
+        "hot_path_heavy_model_inference": { "const": false },
+        "spawn_per_query": { "const": false },
+        "benchmark_report_hash": { "$ref": "#/$defs/hex64" },
+        "benchmark_artifact_id": { "type": "string", "minLength": 1 }
+      },
+      "anyOf": [
+        { "required": ["benchmark_report_hash"] },
+        { "required": ["benchmark_artifact_id"] }
+      ]
+    },
+    "agent_query_replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query_set_sha256",
+        "query_extraction_version",
+        "query_set_size",
+        "zero_result_rate",
+        "intersection_clause_count",
+        "query_parse_error_rate",
+        "allowed_claims"
+      ],
+      "properties": {
+        "query_set_sha256": { "$ref": "#/$defs/hex64" },
+        "query_extraction_version": { "const": "trace_source_search_v1" },
+        "query_set_size": { "type": "integer", "minimum": 1 },
+        "zero_result_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "intersection_clause_count": { "type": "integer", "minimum": 0 },
+        "query_parse_error_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "allowed_claims": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "real_agent_workload_latency",
+              "real_agent_query_parser_compatibility",
+              "intersection_query_behavior",
+              "zero_result_regression",
+              "duplicate_result_regression",
+              "top_k_stability_under_agent_queries"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "benchmark_report_hash": { "$ref": "#/$defs/hex64" },
+        "benchmark_artifact_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "repeat_amplification_control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query_set_sha256",
+        "corpus_profile_hash",
+        "repeat_factor",
+        "request_sample_count",
+        "duplicate_result_rate",
+        "top_k_stability_rate",
+        "cache_hit_rate",
+        "thresholds_passed"
+      ],
+      "properties": {
+        "query_set_sha256": { "$ref": "#/$defs/hex64" },
+        "corpus_profile_hash": { "$ref": "#/$defs/hex64" },
+        "repeat_factor": { "type": "integer", "minimum": 1 },
+        "request_sample_count": { "type": "integer", "minimum": 1 },
+        "duplicate_result_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "top_k_stability_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "cache_hit_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "thresholds_passed": { "type": "boolean" },
+        "benchmark_report_hash": { "$ref": "#/$defs/hex64" },
+        "benchmark_artifact_id": { "type": "string", "minLength": 1 }
+      },
+      "anyOf": [
+        { "required": ["benchmark_report_hash"] },
+        { "required": ["benchmark_artifact_id"] }
+      ]
     },
     "profiling": {
       "type": "object",

@@ -31,7 +31,23 @@
         "evidence_review",
         "slice_complete",
         "blocked",
-        "goal_complete"
+        "goal_complete",
+        "goal_authorized",
+        "baseline_captured",
+        "discovery_profile_issue_opened",
+        "hypothesis_recorded",
+        "branch_active",
+        "pr_opened",
+        "base_synced",
+        "pr_review_ready",
+        "ci_green",
+        "local_gate_green",
+        "privacy_gate_green",
+        "merge_method_selected",
+        "pr_merged",
+        "issue_closed_with_evidence",
+        "next_issue_or_goal_complete",
+        "blocked_needs_external_input"
       ]
     },
     "experiment_state": {
@@ -57,6 +73,9 @@
       "enum": ["smoke", "w0_docs", "w1_private", "soak_fault", "gui_manual"]
     },
     "contract_pins": { "$ref": "#/$defs/contract_pins" },
+    "contract_integrity": { "$ref": "#/$defs/contract_integrity" },
+    "github_ledger": { "$ref": "#/$defs/github_ledger" },
+    "retry_policy": { "$ref": "#/$defs/retry_policy" },
     "allowed_paths": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
@@ -85,6 +104,11 @@
       },
       "uniqueItems": true
     },
+    "evidence_cells": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidence_cell" },
+      "uniqueItems": true
+    },
     "verification": { "$ref": "#/$defs/verification" },
     "privacy": { "$ref": "#/$defs/privacy" }
   },
@@ -92,7 +116,7 @@
     {
       "if": { "properties": { "workflow_state": { "const": "goal_complete" } }, "required": ["workflow_state"] },
       "then": {
-        "required": ["accepted_cells", "transition_history"],
+        "required": ["accepted_cells", "evidence_cells", "transition_history"],
         "properties": {
           "experiment_state": { "const": "complete" },
           "verification": {
@@ -113,12 +137,43 @@
               { "contains": { "const": "soak_fault" } },
               { "contains": { "const": "gui_manual" } }
             ]
+          },
+          "evidence_cells": {
+            "allOf": [
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "w0_docs" } } } },
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "d10k_private_calibration" } } } },
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "d100k_weak_host" } } } },
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "d1m_scale" } } } },
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "soak_fault" } } } },
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "gui_manual" } } } },
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "first_searchable" } } } },
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "full_import_ocr_backlog" } } } },
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "query_hot_path" } } } },
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "agent_query_replay" } } } },
+              { "contains": { "type": "object", "required": ["cell"], "properties": { "cell": { "const": "repeat_amplification_control" } } } }
+            ]
           }
         }
       }
     },
     {
       "if": { "properties": { "experiment_state": { "const": "hypothesis_registered" } }, "required": ["experiment_state"] },
+      "then": { "required": ["hypothesis"] }
+    },
+    {
+      "if": {
+        "properties": {
+          "experiment_state": {
+            "enum": [
+              "optimization_slice_active",
+              "correctness_passed",
+              "perf_measured",
+              "reprofiled"
+            ]
+          }
+        },
+        "required": ["experiment_state"]
+      },
       "then": { "required": ["hypothesis"] }
     },
     {
@@ -165,6 +220,106 @@
         "experiment_report_schema_sha256": { "$ref": "#/$defs/hex64" },
         "git_head_sha": { "$ref": "#/$defs/git_head" }
       }
+    },
+    "contract_integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goal_contract_hash",
+        "acceptance_matrix_hash",
+        "runner_version",
+        "benchmark_runner_version"
+      ],
+      "properties": {
+        "goal_contract_hash": { "$ref": "#/$defs/hex64" },
+        "acceptance_matrix_hash": { "$ref": "#/$defs/hex64" },
+        "runner_version": { "type": "string", "minLength": 1 },
+        "benchmark_runner_version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "github_ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary_issue", "active_prs", "open_blockers"],
+      "properties": {
+        "primary_issue": { "type": "string", "pattern": "^#[0-9]+$" },
+        "active_prs": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^#[0-9]+$" },
+          "uniqueItems": true
+        },
+        "open_blockers": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^#[0-9]+$" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "retry_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocker_key", "same_condition_count", "attempts"],
+      "properties": {
+        "blocker_key": { "type": "string", "minLength": 1 },
+        "same_condition_count": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "attempts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/retry_attempt" }
+        }
+      }
+    },
+    "retry_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt_id", "evidence_path", "action", "result"],
+      "properties": {
+        "attempt_id": { "type": "string", "minLength": 1 },
+        "evidence_path": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "minLength": 1 },
+        "result": { "enum": ["passed", "failed", "blocked"] }
+      }
+    },
+    "evidence_cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cell",
+        "goal_contract_hash",
+        "acceptance_matrix_hash",
+        "runner_version",
+        "benchmark_runner_version",
+        "main_reachable_commit"
+      ],
+      "properties": {
+        "cell": {
+          "enum": [
+            "w0_docs",
+            "d10k_private_calibration",
+            "d100k_weak_host",
+            "d1m_scale",
+            "soak_fault",
+            "gui_manual",
+            "first_searchable",
+            "full_import_ocr_backlog",
+            "query_hot_path",
+            "agent_query_replay",
+            "repeat_amplification_control"
+          ]
+        },
+        "goal_contract_hash": { "$ref": "#/$defs/hex64" },
+        "acceptance_matrix_hash": { "$ref": "#/$defs/hex64" },
+        "runner_version": { "type": "string", "minLength": 1 },
+        "benchmark_runner_version": { "type": "string", "minLength": 1 },
+        "query_set_sha256": { "$ref": "#/$defs/hex64" },
+        "corpus_profile_hash": { "$ref": "#/$defs/hex64" },
+        "benchmark_report_hash": { "$ref": "#/$defs/hex64" },
+        "benchmark_artifact_id": { "type": "string", "minLength": 1 },
+        "main_reachable_commit": { "$ref": "#/$defs/git_head" }
+      },
+      "anyOf": [
+        { "required": ["benchmark_report_hash"] },
+        { "required": ["benchmark_artifact_id"] }
+      ]
     },
     "transition": {
       "type": "object",

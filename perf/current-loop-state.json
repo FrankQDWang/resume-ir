@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
+  "workflow_state": "plan_ready",
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
@@ -21,13 +21,13 @@
     "scripts/ci/check-performance-contracts.py",
     ".github/workflows/pr.yml"
   ],
-  "current_slice": "P0 request-changes production contract repair",
+  "current_slice": "autonomous delivery contract planning",
   "blocked_count": 0,
   "transition_history": [
     {
-      "from": "slice_active",
-      "to": "evidence_review",
-      "evidence_ref": "current PR #10 docs/contract repair"
+      "from": "evidence_review",
+      "to": "plan_ready",
+      "evidence_ref": "Task 4 autonomous delivery contract planning"
     }
   ],
   "accepted_cells": [
