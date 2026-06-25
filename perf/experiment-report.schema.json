@@ -17,7 +17,7 @@
     "schema_version": { "const": "resume-ir.experiment-report.v2" },
     "goal_id": { "const": "resume-ir.performance-gui-loop.2026-06" },
     "report_kind": { "enum": ["schema_fixture", "redacted_evidence"] },
-    "claim": { "enum": ["no_claim", "blocked", "slice_complete", "goal_complete"] },
+    "claim": { "enum": ["no_claim", "blocked", "slice_complete"] },
     "evidence_lane": {
       "enum": ["smoke", "w0_docs", "w1_private", "soak_fault", "gui_manual"]
     },
@@ -78,72 +78,6 @@
           "import_incremental",
           "thresholds"
         ]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "evidence_lane": { "const": "w1_private" },
-          "dataset": {
-            "type": "object",
-            "properties": { "scale_gate": { "const": "D10K_private_calibration" } },
-            "required": ["scale_gate"]
-          }
-        },
-        "required": ["evidence_lane", "dataset"]
-      },
-      "then": {
-        "properties": { "claim": { "not": { "const": "goal_complete" } } }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "evidence_lane": { "const": "w1_private" },
-          "dataset": {
-            "type": "object",
-            "properties": { "scale_gate": { "const": "D100K_weak_host" } },
-            "required": ["scale_gate"]
-          }
-        },
-        "required": ["evidence_lane", "dataset"]
-      },
-      "then": {
-        "properties": { "claim": { "not": { "const": "goal_complete" } } }
-      }
-    },
-    {
-      "if": { "properties": { "claim": { "const": "goal_complete" } }, "required": ["claim"] },
-      "then": {
-        "required": ["dataset", "query_set", "thresholds", "soak_fault", "gui_manual"],
-        "properties": {
-          "evidence_lane": { "const": "w1_private" },
-          "dataset": {
-            "type": "object",
-            "required": ["scale_gate", "document_count", "searchable_document_count"],
-            "properties": {
-              "scale_gate": { "const": "D1M_scale" },
-              "document_count": { "type": "integer", "minimum": 1000000 },
-              "searchable_document_count": { "type": "integer", "minimum": 900000 }
-            }
-          },
-          "query_set": {
-            "type": "object",
-            "required": ["query_count", "request_sample_count"],
-            "properties": {
-              "query_count": { "type": "integer", "minimum": 500 },
-              "request_sample_count": { "type": "integer", "minimum": 25000 }
-            }
-          },
-          "thresholds": {
-            "type": "object",
-            "required": ["passed", "failed_redlines"],
-            "properties": {
-              "passed": { "const": true },
-              "failed_redlines": { "maxItems": 0 }
-            }
-          }
-        }
       }
     },
     {

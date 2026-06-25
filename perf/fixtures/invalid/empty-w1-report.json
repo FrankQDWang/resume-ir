@@ -2,7 +2,7 @@
   "schema_version": "resume-ir.experiment-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
   "report_kind": "schema_fixture",
-  "claim": "goal_complete",
+  "claim": "slice_complete",
   "evidence_lane": "w1_private",
   "contract_pins": {
     "active_goal_sha256": "1111111111111111111111111111111111111111111111111111111111111111",

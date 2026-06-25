@@ -202,8 +202,6 @@ def validate_w0_report(report: Mapping[str, object], matrix: Mapping[str, object
             fail(f"{path}.docs_gate.commands[{index}].exit_code must be 0")
     require_bool(docs_gate.get("private_data_in_git"), False, f"{path}.docs_gate.private_data_in_git")
     validate_thresholds(report, path)
-    if report.get("claim") == "goal_complete":
-        fail(f"{path}: w0_docs cannot claim goal_complete")
 
 
 def validate_w1_report(report: Mapping[str, object], matrix: Mapping[str, object], path: str) -> None:
@@ -304,15 +302,6 @@ def validate_w1_report(report: Mapping[str, object], matrix: Mapping[str, object
         require_number_at_most(incremental.get(key), 0, f"{path}.import_incremental.{key}")
 
     validate_thresholds(report, path)
-    thresholds = require_mapping(report.get("thresholds"), f"{path}.thresholds")
-    if report.get("claim") == "goal_complete":
-        if scale_gate != "D1M_scale":
-            fail(f"{path}: only D1M_scale may claim goal_complete")
-        require_bool(thresholds.get("passed"), True, f"{path}.thresholds.passed")
-        if require_list(thresholds.get("failed_redlines"), f"{path}.thresholds.failed_redlines"):
-            fail(f"{path}.thresholds.failed_redlines: goal_complete requires none")
-        validate_soak_fault(report, matrix, path)
-        validate_gui_manual(report, matrix, path)
 
 
 def validate_soak_fault(report: Mapping[str, object], matrix: Mapping[str, object], path: str) -> None:
@@ -343,7 +332,7 @@ def validate_experiment_report(value: object, matrix: Mapping[str, object], path
         fail(f"{path}.goal_id mismatch")
     if report.get("report_kind") not in {"schema_fixture", "redacted_evidence"}:
         fail(f"{path}.report_kind invalid")
-    if report.get("claim") not in {"no_claim", "blocked", "slice_complete", "goal_complete"}:
+    if report.get("claim") not in {"no_claim", "blocked", "slice_complete"}:
         fail(f"{path}.claim invalid")
     validate_contract_pins(report.get("contract_pins"), f"{path}.contract_pins")
     validate_privacy(report, trace_required=True, path=path)
@@ -360,8 +349,6 @@ def validate_experiment_report(value: object, matrix: Mapping[str, object], path
         validate_thresholds(report, path)
     elif lane == "smoke":
         validate_thresholds(report, path)
-        if report.get("claim") == "goal_complete":
-            fail(f"{path}: smoke cannot claim goal_complete")
     else:
         fail(f"{path}.evidence_lane invalid")
 

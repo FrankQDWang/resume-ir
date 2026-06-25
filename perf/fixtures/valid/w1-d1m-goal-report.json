@@ -132,7 +132,7 @@
     "tracing_spans_present": true,
     "histogram_bins_present": true,
     "profiler_capture_refs": [
-      "fixture-profiler-capture-hash"
+      "fixture-public-safe-profiler-summary-ref"
     ],
     "observability_overhead_pct": 2.5
   },
