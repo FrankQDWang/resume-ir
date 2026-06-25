@@ -70,23 +70,65 @@ jobs:
       - name: Workflow check
         run: ./scripts/ci/check-workflows.sh
 
-      - name: contract-check
-        run: python3 scripts/ci/check-performance-contracts.py
-
-      - name: privacy-guard
-        run: python3 scripts/ci/check-private-evidence-redaction.py
-
-      - name: pr-budget
-        run: python3 scripts/ci/check-pr-budget.py
-
-      - name: benchmark-lane-claims
-        run: python3 scripts/ci/check-benchmark-lanes.py
-
-      - name: gate-integrity
-        run: python3 scripts/ci/check-gate-integrity.py
-
       - name: Benchmark smoke
         run: ./scripts/ci/check-benchmark-smoke.sh
 
-      - name: public-repo-guard
+  contract_check:
+    name: contract-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run contract check
+        run: python3 scripts/ci/check-performance-contracts.py
+
+  privacy_guard:
+    name: privacy-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run privacy guard
+        run: python3 scripts/ci/check-private-evidence-redaction.py
+
+  pr_budget:
+    name: pr-budget
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run PR budget check
+        run: python3 scripts/ci/check-pr-budget.py
+
+  benchmark_lane_claims:
+    name: benchmark-lane-claims
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run benchmark lane claims check
+        run: python3 scripts/ci/check-benchmark-lanes.py
+
+  gate_integrity:
+    name: gate-integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run gate integrity check
+        run: python3 scripts/ci/check-gate-integrity.py
+
+  public_repo_guard:
+    name: public-repo-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run public repository guard
         run: ./scripts/ci/guard-public-repo.sh
