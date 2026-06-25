@@ -2,7 +2,11 @@
 
 ## 1. 来源边界
 
-SeekTalent artifacts 只作为 query 和 query 组合形态的原始材料来源。
+本节的广义 query seed / local field / synthetic edge 规则只适用于非 `agent_query_replay` 的本地 query 种子构造。它不得用于解释、扩展或覆盖 `agent_query_replay` 静态基准。
+
+`agent_query_replay` has exactly one allowed source: `$RESUME_IR_QUERY_ARTIFACT_ROOT/**/runtime/trace.log` 中的 `tool_called` / `source_search` invocation argument only。
+
+除 `agent_query_replay` 外，SeekTalent artifacts 只作为 query 和 query 组合形态的原始材料来源。
 
 允许读取：
 
@@ -24,6 +28,8 @@ SeekTalent artifacts 只作为 query 和 query 组合形态的原始材料来源
 ## Agent Query Replay 静态基准
 
 `agent_query_replay` 只使用 SeekTalent 真实运行中已经产生的 source search 查询，不从 JD、prompt、候选人资料或 trace 上下文构造 query。
+
+`agent_query_replay` has exactly one allowed source: `$RESUME_IR_QUERY_ARTIFACT_ROOT/**/runtime/trace.log` + `tool_called` + `source_search` invocation argument only。
 
 Allowed source:
 
@@ -91,6 +97,8 @@ export RESUME_IR_LOCAL_EVIDENCE_DIR="<local private evidence output>"
   }
 }
 ```
+
+This private query-set schema covers broad local seed sets. `local_field` and `synthetic_edge` are not valid for `agent_query_replay`; `agent_query_replay` samples must come only from `trace_source_search_v1` extraction of `source_search` invocation arguments. Generic artifact sources such as query history, search attempts, term pools, roles, fingerprints, or buckets are not valid `agent_query_replay` sources.
 
 公开或提交的证据只允许包含：
 
@@ -162,6 +170,8 @@ Stopword、synonym、stemming、typo expansion 和 semantic expansion 都不是 
 
 ## 6. 生成策略
 
+This generic generation strategy is for broad local query seed sets only. It does not apply to `agent_query_replay`.
+
 1. 从 artifacts 读取允许字段。
 2. 提取 query 形态和 term 组合。
 3. 删除包含邮箱、手机号、路径、URL、身份证、长数字串的样本。
@@ -169,6 +179,14 @@ Stopword、synonym、stemming、typo expansion 和 semantic expansion 都不是 
 5. 去重、分桶、采样。
 6. 与本地字段派生 query 合并。
 7. 输出本地私有 query-set 和可提交 redacted summary。
+
+`agent_query_replay` generation strategy:
+
+1. Read exactly `$RESUME_IR_QUERY_ARTIFACT_ROOT/**/runtime/trace.log`.
+2. Filter exactly `event_filter = tool_called` and `tool_filter = source_search`.
+3. Extract exactly the `source_search` invocation argument.
+4. Do not read generic query fields, terms arrays, query history, search attempts, term pools, roles, fingerprints, buckets, local fields, or synthetic edge queries.
+5. Output local-only frozen query set plus redacted summary locked by `query_set_sha256`.
 
 ## 7. Benchmark 输出
 
