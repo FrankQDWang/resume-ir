@@ -331,3 +331,35 @@ requires_soak_fault = true
 requires_gui_manual = true
 requires_no_open_review_blockers = true
 requires_all_negative_contract_fixtures_fail = true
+
+[autonomous_delivery_lanes.first_searchable]
+may_claim = ["first_searchable_latency", "initial_searchable_count"]
+cannot_claim = ["ocr_completion_performance", "goal_complete"]
+
+[autonomous_delivery_lanes.full_import_ocr_backlog]
+may_claim = ["ocr_queue_throughput", "ocr_failure_recovery", "background_scheduling"]
+cannot_claim = ["query_p95_success", "goal_complete"]
+
+[autonomous_delivery_lanes.query_hot_path]
+may_claim = ["hot_index_latency", "stage_latency", "resident_daemon_performance"]
+cannot_claim = ["ocr_completion_performance", "human_search_quality"]
+
+[autonomous_delivery_lanes.agent_query_replay]
+may_claim = [
+  "real_agent_workload_latency",
+  "real_agent_query_parser_compatibility",
+  "intersection_query_behavior",
+  "zero_result_regression",
+  "duplicate_result_regression",
+  "top_k_stability_under_agent_queries",
+]
+cannot_claim = [
+  "human_search_quality",
+  "full_resume_relevance_quality",
+  "D1M_real_distribution_quality",
+  "OCR_completion_performance",
+]
+
+[autonomous_delivery_lanes.repeat_amplification_control]
+may_claim = ["pathology_only"]
+cannot_claim = ["real_distribution_quality", "goal_complete"]

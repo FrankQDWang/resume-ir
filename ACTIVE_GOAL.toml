@@ -58,3 +58,74 @@ number = 10
 state = "open"
 draft = true
 review_status = "request_changes"
+
+[autonomous_delivery.permissions]
+production_code_allowed = true
+private_benchmark_allowed = true
+private_resume_root_read_allowed = true
+seektalent_artifacts_query_read_allowed = true
+github_issue_write_allowed = true
+github_pr_write_allowed = true
+commit_push_allowed = true
+auto_merge_allowed = true
+direct_main_push_allowed = false
+admin_bypass_allowed = false
+raw_private_data_commit_allowed = false
+raw_query_commit_allowed = false
+gate_bypass_allowed = false
+threshold_relaxation_allowed = false
+
+[autonomous_delivery.pr_budget]
+max_commits = 5
+max_changed_files = 15
+max_net_lines = 800
+max_issue_count = 2
+require_single_primary_lane = true
+require_single_primary_hypothesis = true
+allow_scope_exception_auto_merge = false
+
+[autonomous_delivery.merge_policy]
+default_merge_method = "squash"
+require_base_synced = true
+require_merge_method_selected = true
+require_no_admin_bypass = true
+require_no_direct_main_push = true
+
+[autonomous_delivery.private_sources]
+private_resume_root = "$RESUME_IR_PRIVATE_RESUME_ROOT"
+seektalent_runs_root = "$RESUME_IR_QUERY_ARTIFACT_ROOT"
+local_evidence_dir = "$RESUME_IR_LOCAL_EVIDENCE_DIR"
+seektalent_trace_glob = "**/runtime/trace.log"
+allowed_trace_event = "tool_called"
+allowed_trace_tool = "source_search"
+allowed_query_source = "source_search_invocation_argument_only"
+
+[autonomous_delivery.github_ledger]
+profile_issue_template = ".github/ISSUE_TEMPLATE/profile_issue.md"
+pr_template = ".github/PULL_REQUEST_TEMPLATE.md"
+template_paths_are_targets = true
+require_issue_closure_comment = true
+require_machine_anchors = true
+
+[autonomous_delivery.contract_integrity]
+goal_version = "2026-06-25-autonomous-c"
+contract_schema_version = "v1"
+require_goal_contract_hash = true
+require_acceptance_matrix_hash = true
+require_runner_version = true
+require_benchmark_runner_version = true
+require_main_reachable_evidence = true
+
+[autonomous_delivery.benchmark_lanes]
+required = [
+  "first_searchable",
+  "full_import_ocr_backlog",
+  "query_hot_path",
+  "agent_query_replay",
+  "repeat_amplification_control",
+]
+forbid_lane_claim_mixing = true
+
+[autonomous_delivery.blocked_policy]
+max_same_condition_effective_retries = 3
+require_new_evidence_path_per_retry = true
