@@ -37,7 +37,9 @@ ALLOWED_SYMBOLIC_SOURCES = {
 PROHIBITED_PUBLIC_PATH_PATTERNS = [
     (re.compile(r"/" + r"Users/[^\s`\"'|)]+"), "macOS user home path"),
     (re.compile(r"~" + r"/[^\s`\"'|)]+"), "tilde home path"),
+    (re.compile(r"\$" + r"HOME/[^\s`\"'|)]+"), "HOME env user path"),
     (re.compile(r"C:" + r"(?:\\\\|/)Users(?:\\\\|/)[^\s`\"'|)]+"), "Windows user home path"),
+    (re.compile(r"\\" + r"Users\\[^\s`\"'|)]+"), "bare Windows user home path"),
 ]
 PATTERN_DEFINITION_TOKENS = [
     "ACTUAL_PRIVATE_SNIPPETS",
@@ -103,8 +105,6 @@ def check_file(path: pathlib.Path) -> None:
             guard in line for guard in QUERY_SET_HASH_ALLOWED_GUARDS
         ):
             fail(f"{rel}:{line_number}: forbidden query_set_hash field name")
-        if any(token in line for token in ALLOWED_SYMBOLIC_SOURCES):
-            continue
         if any(token in line for token in PATTERN_DEFINITION_TOKENS):
             continue
         for snippet in ACTUAL_PRIVATE_SNIPPETS:
