@@ -30,8 +30,7 @@ query_set_sha256
 git_base_sha
 git_head_sha
 base_drift/reconciliation_status
-benchmark_report_hash
-benchmark_artifact_id
+benchmark_report_hash or benchmark_artifact_id
 Baseline Command
 Baseline Evidence
 Profiler Evidence

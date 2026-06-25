@@ -220,4 +220,4 @@ This generic generation strategy is for broad local query seed sets only. It doe
 4. smoke profile 可以小样本，但必须标明 `percentile_confidence=smoke`。
 5. W1 私有 query set 必须分为 tune 与 holdout，公开证据只提交 public-safe tune/holdout identifiers、count 和 bucket count。
 6. 调参只能读取 tune aggregate；最终完成声明必须包含 holdout aggregate，并通过同一语义版本。
-7. 任一 query extractor version、artifact input hash、query semantics version 或 dataset hash 变化，都必须生成新的 baseline，不得和旧 baseline 混报。
+7. 任一 query extractor version、public-safe artifact_input_id/manifest_id、query semantics version 或 public-safe dataset_sha256 变化，都必须生成新的 baseline；raw local artifact/dataset digest/hash 只能留本机，不得作为公开 drift evidence；新旧 baseline 不得混报。
