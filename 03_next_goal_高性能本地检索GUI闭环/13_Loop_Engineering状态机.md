@@ -71,7 +71,7 @@ active_goal_id: resume-ir.performance-gui-loop.2026-06
 spec_path: docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md
 plan_path: docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md
 goal_docs_root: 03_next_goal_高性能本地检索GUI闭环
-allowed_paths_for_current_pr: GOAL.md, MANIFEST.md, ACTIVE_GOAL.toml, .github/workflows/pr.yml, 03_next_goal_高性能本地检索GUI闭环, docs/superpowers, perf, scripts/ci/check-performance-contracts.py
+allowed_paths_for_current_pr: GOAL.md, MANIFEST.md, ACTIVE_GOAL.toml, .github/workflows/pr.yml, .github/PULL_REQUEST_TEMPLATE.md, .github/ISSUE_TEMPLATE, 03_next_goal_高性能本地检索GUI闭环, docs/superpowers, perf, scripts/ci/check-performance-contracts.py
 privacy_boundary: no raw resume text, raw query, candidate result, path, token, trace, diagnostics package, or model cache in git
 ```
 
