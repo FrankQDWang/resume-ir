@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import subprocess
 import sys
 import tomllib
 
@@ -31,6 +33,75 @@ def require_bool(value: object, expected: bool, path: str) -> None:
         fail(f"{path}: expected {expected}")
 
 
+def git(args: list[str]) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        fail(f"git {' '.join(args)} failed: {completed.stderr.strip()}")
+    return completed.stdout.strip()
+
+
+def ref_exists(ref: str) -> bool:
+    completed = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", ref],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def fetch_base_ref(base: str) -> None:
+    subprocess.run(
+        ["git", "fetch", "--no-tags", "--depth=1", "origin", f"{base}:refs/remotes/origin/{base}"],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+def select_base_ref() -> str:
+    base = os.environ.get("GITHUB_BASE_REF") or "main"
+    for candidate in [f"origin/{base}", base, "origin/main", "main"]:
+        if ref_exists(candidate):
+            return candidate
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        fetch_base_ref(base)
+        for candidate in [f"origin/{base}", base, "origin/main", "main"]:
+            if ref_exists(candidate):
+                return candidate
+    fail("unable to find base ref for gate integrity check")
+
+
+def changed_paths() -> list[str]:
+    base_ref = select_base_ref()
+    merge_base = git(["merge-base", base_ref, "HEAD"])
+    output = git(["diff", "--name-only", f"{merge_base}...HEAD"])
+    return [] if not output else output.splitlines()
+
+
+def is_gate_path(path: str) -> bool:
+    if path.startswith(".github/workflows/"):
+        return True
+    if path.startswith("scripts/ci/check-"):
+        return True
+    if path in {".github/PULL_REQUEST_TEMPLATE.md", "perf/acceptance-matrix.toml"}:
+        return True
+    if path.startswith(".github/ISSUE_TEMPLATE/"):
+        return True
+    if path.startswith("perf/") and path.endswith(".schema.json"):
+        return True
+    return False
+
+
 def main() -> int:
     active_goal = load_toml(ROOT / "ACTIVE_GOAL.toml")
     autonomous = active_goal.get("autonomous_delivery", {})
@@ -49,6 +120,13 @@ def main() -> int:
         fail("ACTIVE_GOAL.toml: missing [autonomous_delivery.merge_policy]")
     require_bool(merge_policy.get("require_no_admin_bypass"), True, "autonomous_delivery.merge_policy.require_no_admin_bypass")
     require_bool(merge_policy.get("require_no_direct_main_push"), True, "autonomous_delivery.merge_policy.require_no_direct_main_push")
+
+    scope_current_pr = active_goal.get("scope", {}).get("current_pr", {})
+    gate_changes = [path for path in changed_paths() if is_gate_path(path)]
+    if gate_changes and scope_current_pr.get("contract_change_allowed") is not True:
+        fail("gate-changing diff requires scope.current_pr.contract_change_allowed=true: " + ", ".join(gate_changes))
+    if gate_changes and not scope_current_pr.get("scope_exception_reason"):
+        fail("gate-changing diff requires scope.current_pr.scope_exception_reason")
 
     template = (ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8").lower()
     for phrase in [

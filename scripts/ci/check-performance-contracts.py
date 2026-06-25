@@ -8,6 +8,7 @@ contract files, not a replacement for a full JSON Schema implementation.
 from __future__ import annotations
 
 import json
+import hashlib
 import pathlib
 import subprocess
 import sys
@@ -62,6 +63,13 @@ SCALE_GATES = {
     "D100K_weak_host",
     "D1M_scale",
 }
+ZERO_SHA256 = "0" * 64
+CURRENT_LOOP_CONTRACT_FILES = {
+    "active_goal_sha256": "ACTIVE_GOAL.toml",
+    "acceptance_matrix_sha256": "perf/acceptance-matrix.toml",
+    "loop_state_schema_sha256": "perf/loop-state.schema.json",
+    "experiment_report_schema_sha256": "perf/experiment-report.schema.json",
+}
 
 
 def load_json(path: pathlib.Path) -> object:
@@ -114,6 +122,12 @@ def require_hex64(value: object, path: str) -> None:
         fail(f"{path}: expected lowercase sha256 hex")
 
 
+def require_nonzero_hex64(value: object, path: str) -> None:
+    require_hex64(value, path)
+    if value == ZERO_SHA256:
+        fail(f"{path}: zero sha256 placeholder is not allowed")
+
+
 def require_non_empty_string(value: object, path: str) -> None:
     if not isinstance(value, str) or not value:
         fail(f"{path}: expected non-empty string")
@@ -134,6 +148,45 @@ def require_main_reachable_commit(value: object, path: str) -> None:
         fail(f"{path}: expected main-reachable git commit")
     if value == "working-tree":
         fail(f"{path}: expected main-reachable git commit, got working-tree")
+
+
+def sha256_file(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def require_git_commit_exists(value: object, path: str) -> None:
+    if not isinstance(value, str) or len(value) < 7 or len(value) > 40 or any(ch not in HEX64 for ch in value):
+        fail(f"{path}: expected git commit hex")
+    completed = subprocess.run(
+        ["git", "cat-file", "-e", f"{value}^{{commit}}"],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if completed.returncode != 0:
+        fail(f"{path}: commit does not exist in local git object database")
+
+
+def validate_current_loop_contract_pins(state: Mapping[str, object]) -> None:
+    pins = require_mapping(state.get("contract_pins"), "perf/current-loop-state.json.contract_pins")
+    for key, rel_path in CURRENT_LOOP_CONTRACT_FILES.items():
+        observed = pins.get(key)
+        require_nonzero_hex64(observed, f"perf/current-loop-state.json.contract_pins.{key}")
+        expected = sha256_file(ROOT / rel_path)
+        if observed != expected:
+            fail(
+                "perf/current-loop-state.json.contract_pins."
+                f"{key}: expected {expected} from {rel_path}, got {observed}"
+            )
+    head = pins.get("git_head_sha")
+    if head == "working-tree":
+        fail("perf/current-loop-state.json.contract_pins.git_head_sha: working-tree placeholder is not allowed")
+    require_git_commit_exists(head, "perf/current-loop-state.json.contract_pins.git_head_sha")
 
 
 def validate_privacy(report: Mapping[str, object], *, trace_required: bool, path: str) -> None:
@@ -169,7 +222,18 @@ def validate_schema_file(schema: Mapping[str, object], path: str, expected_versi
     if not all_of:
         fail(f"{path}: must use conditional schema rules")
     defs = require_mapping(schema.get("$defs"), f"{path}.$defs")
-    for required_def in ["contract_pins", "privacy"]:
+    required_defs = ["contract_pins", "privacy"]
+    if expected_version == "resume-ir.loop-state-report.v2":
+        required_defs.extend(
+            [
+                "goal_prompt",
+                "event_log",
+                "runtime_capability_attestation",
+                "runner_recovery",
+                "transition_rule",
+            ]
+        )
+    for required_def in required_defs:
         if required_def not in defs:
             fail(f"{path}: missing $defs.{required_def}")
 
@@ -623,7 +687,9 @@ def main() -> int:
         "perf/loop-state.schema.json",
         "resume-ir.loop-state-report.v2",
     )
-    validate_loop_state(load_json(PERF / "current-loop-state.json"), matrix, "perf/current-loop-state.json")
+    current_loop_state = require_mapping(load_json(PERF / "current-loop-state.json"), "perf/current-loop-state.json")
+    validate_loop_state(current_loop_state, matrix, "perf/current-loop-state.json")
+    validate_current_loop_contract_pins(current_loop_state)
 
     for path in sorted(VALID_FIXTURES.glob("*.json")):
         validate_fixture(path, matrix)

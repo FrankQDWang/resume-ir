@@ -37,11 +37,61 @@ def load_contracts_module():
     return module
 
 
+def require_mapping(value: object, path: str) -> dict:
+    if not isinstance(value, dict):
+        fail(f"{path}: expected object")
+    return value
+
+
+def require_bool(value: object, expected: bool, path: str) -> None:
+    if value is not expected:
+        fail(f"{path}: expected {expected}")
+
+
+def require_string(value: object, expected: str, path: str) -> None:
+    if value != expected:
+        fail(f"{path}: expected {expected!r}")
+
+
+def validate_runner_contracts(state: dict, active_goal: dict) -> None:
+    autonomous = require_mapping(active_goal.get("autonomous_delivery"), "ACTIVE_GOAL.toml.autonomous_delivery")
+
+    for key in ["goal_prompt", "event_log", "runtime_capability_attestation"]:
+        expected = require_mapping(autonomous.get(key), f"ACTIVE_GOAL.toml.autonomous_delivery.{key}")
+        observed = require_mapping(state.get(key), f"perf/current-loop-state.json.{key}")
+        if observed != expected:
+            fail(f"perf/current-loop-state.json.{key}: must match ACTIVE_GOAL.toml autonomous_delivery.{key}")
+
+    recovery = require_mapping(state.get("runner_recovery"), "perf/current-loop-state.json.runner_recovery")
+    for key in [
+        "lease_required",
+        "heartbeat_required",
+        "cas_required",
+        "idempotency_key_required",
+        "intent_before_side_effect_required",
+        "verify_after_side_effect_required",
+        "one_transition_per_wake",
+        "capability_attestation_required",
+    ]:
+        require_bool(recovery.get(key), True, f"perf/current-loop-state.json.runner_recovery.{key}")
+
+    github_ledger = require_mapping(state.get("github_ledger"), "perf/current-loop-state.json.github_ledger")
+    require_string(github_ledger.get("primary_issue"), "#10", "perf/current-loop-state.json.github_ledger.primary_issue")
+    active_prs = github_ledger.get("active_prs")
+    if active_prs != ["#10"]:
+        fail("perf/current-loop-state.json.github_ledger.active_prs: expected ['#10']")
+    open_blockers = github_ledger.get("open_blockers")
+    if open_blockers != []:
+        fail("perf/current-loop-state.json.github_ledger.open_blockers: expected empty list")
+
+
 def main() -> int:
     state = load_json(ROOT / "perf" / "current-loop-state.json")
     matrix = load_toml(ROOT / "perf" / "acceptance-matrix.toml")
+    active_goal = load_toml(ROOT / "ACTIVE_GOAL.toml")
     contracts = load_contracts_module()
     contracts.validate_loop_state(state, matrix, "perf/current-loop-state.json")
+    contracts.validate_current_loop_contract_pins(state)
 
     if not isinstance(state, dict):
         fail("perf/current-loop-state.json: expected object")
@@ -81,6 +131,8 @@ def main() -> int:
             fail("visual_reference.default_stack mismatch")
         if visual_reference.get("production_next_server_allowed") is not False:
             fail("visual_reference.production_next_server_allowed: expected false")
+
+    validate_runner_contracts(state, active_goal)
 
     experiment_state = state.get("experiment_state")
     if experiment_state in {"hypothesis_registered", "accepted", "reverted", "complete"}:

@@ -1,7 +1,7 @@
 schema_version = "resume-ir.active-goal.v1"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-status = "request_changes_contract_repair_pending_review"
-date = "2026-06-22"
+status = "contract_foundation_review_required"
+date = "2026-06-25"
 
 [authority]
 root_goal = "GOAL.md"
@@ -14,8 +14,12 @@ acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩�
 
 [scope.current_pr]
 docs_only = false
+contract_change_allowed = true
 production_code_allowed = false
 private_benchmark_allowed = false
+scope_exception = true
+scope_exception_reason = "PR #10 is the contract-foundation repair bundle that predates the autonomous PR budget; it must not be used as a production implementation precedent."
+scope_exception_auto_merge_allowed = false
 allowed_paths = [
   "AGENTS.md",
   "GOAL.md",
@@ -96,8 +100,9 @@ raw_reference_assets_publication_allowed = false
 [pull_request]
 number = 10
 state = "open"
-draft = true
-review_status = "request_changes"
+draft = false
+review_status = "review_required"
+semantic_role = "autonomous_delivery_contract_foundation"
 
 [autonomous_delivery.activation]
 current_pr_contract_only = true
@@ -105,6 +110,9 @@ applies_after_current_pr_merge = true
 scope_current_pr_permissions_win_until_merge = true
 production_implementation_in_current_pr_allowed = false
 private_benchmark_in_current_pr_allowed = false
+future_autonomous_run_pre_authorized = true
+runtime_capability_attestation_required = true
+normal_path_human_confirmation_required = false
 
 [autonomous_delivery.permissions]
 production_code_allowed = true
@@ -122,6 +130,24 @@ raw_query_commit_allowed = false
 gate_bypass_allowed = false
 threshold_relaxation_allowed = false
 
+[autonomous_delivery.human_intervention_policy]
+normal_path_human_confirmation_required = false
+routine_commit_push_pr_issue_confirmation_required = false
+routine_auto_merge_confirmation_required = false
+ask_human_instead_of_terminal_state_allowed = false
+terminal_state_instead_of_human_prompt = true
+allowed_mid_run_human_prompts = []
+terminal_states = [
+  "goal_complete",
+  "blocked_external_retryable",
+  "blocked_permission",
+  "contract_conflict",
+  "goal_unsatisfiable",
+  "budget_exhausted",
+  "aborted_by_policy",
+  "contract_invalid",
+]
+
 [autonomous_delivery.pr_budget]
 max_commits = 5
 max_changed_files = 15
@@ -137,6 +163,142 @@ require_base_synced = true
 require_merge_method_selected = true
 require_no_admin_bypass = true
 require_no_direct_main_push = true
+
+[autonomous_delivery.runtime_capability_attestation]
+required = true
+permissions_are_policy_not_capability = true
+observe_before_act = true
+record_unavailable_capability = true
+missing_capability_terminal_states = [
+  "blocked_external_retryable",
+  "blocked_permission",
+  "aborted_by_policy",
+]
+required_capabilities = [
+  "workspace_write",
+  "network",
+  "github_read",
+  "github_write",
+  "git_push",
+  "git_merge_or_auto_merge",
+  "branch_protection_compatible",
+  "private_resume_root_read",
+  "seektalent_artifacts_query_read",
+  "automation_scheduler",
+]
+
+[autonomous_delivery.goal_prompt]
+format_version = 1
+max_chars = 4000
+compiler = "scripts/loop/compile-goal-prompt.py"
+compiler_implemented_in_current_pr = false
+deterministic_serialization_required = true
+field_priority_required = true
+character_budget_required = true
+state_version_required = true
+state_hash_required = true
+policy_hash_required = true
+prompt_hash_required = true
+fail_on_over_budget = true
+silent_truncation_allowed = false
+untrusted_external_text_is_data = true
+one_transition_per_wake = true
+historical_details_in_prompt_allowed = false
+minimal_next_transition_only = true
+
+[autonomous_delivery.event_log]
+required_for_runner_implementation = true
+append_only = true
+events_path_template = "perf/runs/<run_id>/events/<state_version>.json"
+derived_current_state_only = true
+direct_current_state_edit_allowed = false
+previous_event_hash_required = true
+idempotency_key_required = true
+intent_before_side_effect_required = true
+verify_after_side_effect_required = true
+compare_and_swap_state_update_required = true
+lease_required = true
+heartbeat_required = true
+
+[[autonomous_delivery.transitions]]
+name = "capture_baseline"
+from = ["goal_authorized"]
+to = "baseline_captured"
+required_permissions = ["private_benchmark_allowed"]
+required_evidence = ["baseline_command", "redacted_baseline_artifact"]
+allowed_actions = ["run_benchmark", "write_redacted_evidence"]
+
+[[autonomous_delivery.transitions]]
+name = "open_profile_issue"
+from = ["baseline_captured"]
+to = "discovery_profile_issue_opened"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["baseline_artifact", "privacy_boundary"]
+allowed_actions = ["create_issue", "comment_issue"]
+
+[[autonomous_delivery.transitions]]
+name = "record_hypothesis"
+from = ["discovery_profile_issue_opened"]
+to = "hypothesis_recorded"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["profiler_summary", "hypothesis", "expected_delta", "rollback_condition"]
+allowed_actions = ["comment_issue", "update_issue"]
+
+[[autonomous_delivery.transitions]]
+name = "activate_branch"
+from = ["slice_selected"]
+to = "branch_active"
+required_permissions = ["commit_push_allowed"]
+required_evidence = ["git_base_sha", "linked_issue"]
+allowed_actions = ["create_branch"]
+
+[[autonomous_delivery.transitions]]
+name = "implement_slice"
+from = ["branch_active"]
+to = "implementation_active"
+required_permissions = ["production_code_allowed"]
+required_evidence = ["linked_issue", "hypothesis"]
+allowed_actions = ["edit", "test", "commit"]
+
+[[autonomous_delivery.transitions]]
+name = "verify_slice"
+from = ["implementation_active"]
+to = "verification_active"
+required_permissions = ["private_benchmark_allowed"]
+required_evidence = ["verification_commands", "privacy_boundary"]
+allowed_actions = ["run_tests", "run_benchmark", "write_redacted_evidence"]
+
+[[autonomous_delivery.transitions]]
+name = "open_pr"
+from = ["verification_active"]
+to = "pr_opened"
+required_permissions = ["commit_push_allowed", "github_pr_write_allowed"]
+required_evidence = ["local_tests", "privacy_gate", "pr_budget"]
+allowed_actions = ["push_branch", "create_pr"]
+
+[[autonomous_delivery.transitions]]
+name = "mark_review_ready"
+from = ["base_synced"]
+to = "pr_review_ready"
+required_permissions = ["github_pr_write_allowed"]
+required_evidence = ["base_sha", "pr_template_complete"]
+allowed_actions = ["update_pr_body", "mark_ready_for_review"]
+
+[[autonomous_delivery.transitions]]
+name = "merge_pr"
+from = ["merge_method_selected"]
+to = "pr_merged"
+required_permissions = ["auto_merge_allowed"]
+required_evidence = ["ci_green", "local_gate_green", "privacy_gate_green", "branch_protection_satisfied"]
+allowed_actions = ["enable_auto_merge", "squash_merge"]
+
+[[autonomous_delivery.transitions]]
+name = "close_issue_with_evidence"
+from = ["pr_merged"]
+to = "issue_closed_with_evidence"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["main_reachable_commit", "before_after_metrics", "privacy_boundary"]
+allowed_actions = ["comment_issue", "close_issue"]
 
 [autonomous_delivery.private_sources]
 source_kind = "env_var"

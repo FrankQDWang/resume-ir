@@ -19,6 +19,17 @@
   - Readiness: use `ship-readiness-lite` for readiness reports only.
     Push, PR, merge, deploy, release, canary, and branch cleanup require
     separate explicit approval.
+- Conditional autonomous delivery exception: when the active goal's
+  `ACTIVE_GOAL.toml` explicitly enables autonomous delivery for a future
+  implementation run, the run has passed runtime capability attestation, and
+  the requested operation is allowed by `[autonomous_delivery.permissions]`,
+  routine commit, push, PR, issue, private benchmark, and allowed auto-merge
+  operations are pre-authorized for that goal and must not ask for mid-run
+  human confirmation. This exception does not allow admin bypass, direct pushes
+  to `main`, branch-protection bypass, gate weakening, raw private-data
+  publication, or sandbox/credential escalation beyond observed runtime
+  capability. If a required capability is unavailable, record the configured
+  machine terminal/blocking state instead of asking for routine approval.
 - One task has one execution owner.
 - For current-state, release-readiness, blocker, or gap questions, start with a
   read-only pass and report fresh evidence before proposing remediation.

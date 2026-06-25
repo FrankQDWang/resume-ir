@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import subprocess
 import sys
 import tomllib
 
@@ -24,6 +25,36 @@ def load_json(path: pathlib.Path) -> object:
 def load_toml(path: pathlib.Path) -> dict:
     with path.open("rb") as fh:
         return tomllib.load(fh)
+
+
+def ref_exists(ref: str) -> bool:
+    completed = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", ref],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def main_ref() -> str:
+    for candidate in ["origin/main", "main"]:
+        if ref_exists(candidate):
+            return candidate
+    fail("goal_complete requires origin/main or main ref for reachability check")
+
+
+def require_commit_reachable_from_main(commit: str, path: str, main: str) -> None:
+    completed = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, main],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if completed.returncode != 0:
+        fail(f"{path}: commit is not reachable from {main}")
 
 
 def main() -> int:
@@ -48,6 +79,14 @@ def main() -> int:
     if not isinstance(commands, list) or not commands:
         fail("goal_complete requires non-empty verification.commands")
 
+    github_ledger = state.get("github_ledger")
+    if not isinstance(github_ledger, dict):
+        fail("goal_complete requires github_ledger")
+    if github_ledger.get("active_prs") != []:
+        fail("goal_complete requires github_ledger.active_prs=[]")
+    if github_ledger.get("open_blockers") != []:
+        fail("goal_complete requires github_ledger.open_blockers=[]")
+
     completion = matrix.get("completion")
     if not isinstance(completion, dict):
         fail("completion: expected object")
@@ -70,10 +109,16 @@ def main() -> int:
     missing = sorted(set(required_cells) - set(cells_by_name))
     if missing:
         fail(f"evidence_cells missing {missing}")
+    main = main_ref()
     for cell_name in required_cells:
         commit = cells_by_name[cell_name].get("main_reachable_commit")
         if not isinstance(commit, str) or not commit or commit == "working-tree":
             fail(f"evidence_cells[{cell_name}].main_reachable_commit: expected main-reachable commit")
+        require_commit_reachable_from_main(
+            commit,
+            f"evidence_cells[{cell_name}].main_reachable_commit",
+            main,
+        )
 
     print("check-goal-complete.py passed")
     return 0
