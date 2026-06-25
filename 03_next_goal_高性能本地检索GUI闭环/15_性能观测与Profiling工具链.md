@@ -9,7 +9,7 @@
 3. 所有性能声明必须绑定当前机器 schema 的 evidence lane：`smoke`、`w0_docs`、`w1_private`、`soak_fault` 或 `gui_manual`。
 4. W0/W1/soak/fault/GUI/manual 只是 display alias；机器字段和 issue/PR evidence anchors 必须使用 schema 值。
 5. 私有 `w1_private` 只提交 redacted aggregate，不提交 raw query、真实简历、路径、trace 原文或 diagnostics package。
-6. profiler 结果只能提交符号化摘要和本地文件 hash，不提交本机路径。
+6. profiler 结果只能提交 public-safe redacted symbol-summary/report hash、approved opaque manifest ref 或 HMAC-SHA256 opaque manifest ref，不提交本机路径。
 7. 性能报告必须说明 release build、warmup、重复次数、open-loop/closed-loop 方法、容量点和 coordinated omission 处理方式。
 
 Profile issue ledger rules:
@@ -27,6 +27,11 @@ Benchmark Lane
 Dataset
 Corpus Profile Hash
 query_set_sha256
+git_base_sha
+git_head_sha
+base_drift/reconciliation_status
+benchmark_report_hash
+benchmark_artifact_id
 Baseline Command
 Baseline Evidence
 Profiler Evidence
@@ -41,7 +46,9 @@ Linked PRs
 Closing Evidence
 ```
 
-Closure must include before/after metric, percentage change, `query_set_sha256`, `corpus_profile_hash`, command id or script name, and privacy redaction confirmation. `corpus_profile_hash` must follow the public-safe hash boundary in `09_安全隐私与本地证据边界.md`.
+`benchmark_report_hash` or `benchmark_artifact_id` must identify a public-safe redacted report, approved opaque manifest, or HMAC-SHA256 opaque manifest. Raw profiler capture/file hash is local-only private evidence and must not enter git, GitHub issue text, PR prose, or public summaries.
+
+Closure must include before/after metric, percentage change, `query_set_sha256`, `corpus_profile_hash`, `git_base_sha`, `git_head_sha`, `base_drift/reconciliation_status`, public-safe `benchmark_report_hash` or `benchmark_artifact_id`, command id or script name, and privacy redaction confirmation. `query_set_sha256`, `corpus_profile_hash`, and benchmark report/artifact identifiers must follow the public-safe hash boundary in `09_安全隐私与本地证据边界.md`.
 
 ## 2. Instrumentation Contract
 
@@ -75,8 +82,8 @@ Methodology hard rules:
 | micro benchmark | Criterion 或等价 Rust benchmark | parser、prefilter、fusion、hydrate 的小范围回归 | public/synthetic summary |
 | latency histogram | hdrhistogram 或等价结构 | resident daemon batch 的 percentile | redacted bucket histogram |
 | structured tracing | `tracing` spans | stage latency、queue delay、partial reason | redacted span summary |
-| macOS sampling | Samply 或 Instruments | CPU 火焰图、allocator、IO hotspot | symbol summary + local capture hash |
-| Windows sampling | WPR/WPA 或 ETW consumer | CPU、disk、queue hotspot | symbol summary + local capture hash |
+| macOS sampling | Samply 或 Instruments | CPU 火焰图、allocator、IO hotspot | public-safe symbol-summary/report hash or opaque/HMAC manifest ref |
+| Windows sampling | WPR/WPA 或 ETW consumer | CPU、disk、queue hotspot | public-safe symbol-summary/report hash or opaque/HMAC manifest ref |
 | long run | resident daemon soak harness | restart、cancel、overload、journal gap | `soak_fault` aggregate |
 
 工具选择可以在实现期替换，但输出字段不能弱化。替换工具必须继续满足 `perf/experiment-report.schema.json`。
