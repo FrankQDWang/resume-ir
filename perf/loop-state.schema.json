@@ -91,13 +91,14 @@
     },
     "hypothesis": { "$ref": "#/$defs/hypothesis" },
     "accepted_cells": {
+      "description": "Legacy derived snapshot for older loop reports. Completion authority is evidence_cells.",
       "type": "array",
       "items": {
         "enum": [
           "w0_docs",
-          "D10K_private_calibration",
-          "D100K_weak_host",
-          "D1M_scale",
+          "d10k_private_calibration",
+          "d100k_weak_host",
+          "d1m_scale",
           "soak_fault",
           "gui_manual"
         ]
@@ -116,7 +117,7 @@
     {
       "if": { "properties": { "workflow_state": { "const": "goal_complete" } }, "required": ["workflow_state"] },
       "then": {
-        "required": ["accepted_cells", "evidence_cells", "transition_history"],
+        "required": ["evidence_cells", "transition_history"],
         "properties": {
           "experiment_state": { "const": "complete" },
           "verification": {
@@ -127,16 +128,6 @@
               "all_required_commands_ran": { "const": true },
               "claim": { "const": "pass" }
             }
-          },
-          "accepted_cells": {
-            "allOf": [
-              { "contains": { "const": "w0_docs" } },
-              { "contains": { "const": "D10K_private_calibration" } },
-              { "contains": { "const": "D100K_weak_host" } },
-              { "contains": { "const": "D1M_scale" } },
-              { "contains": { "const": "soak_fault" } },
-              { "contains": { "const": "gui_manual" } }
-            ]
           },
           "evidence_cells": {
             "allOf": [

@@ -214,6 +214,9 @@ def validate_w1_report(report: Mapping[str, object], matrix: Mapping[str, object
         scale["min_request_sample_count"],
         f"{path}.query_set.request_sample_count",
     )
+    require_hex64(query_set.get("query_set_sha256"), f"{path}.query_set.query_set_sha256")
+    require_hex64(query_set.get("tune_sha256"), f"{path}.query_set.tune_sha256")
+    require_hex64(query_set.get("holdout_sha256"), f"{path}.query_set.holdout_sha256")
     validate_query_buckets(query_set.get("bucket_counts"), matrix, f"{path}.query_set.bucket_counts", samples=False)
     validate_query_buckets(query_set.get("samples_per_bucket"), matrix, f"{path}.query_set.samples_per_bucket", samples=True)
     for bucket, count in require_mapping(query_set.get("samples_per_bucket"), f"{path}.query_set.samples_per_bucket").items():

@@ -29,7 +29,7 @@
   "query_set": {
     "tune_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "holdout_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    "query_count": 499,
+    "query_count": 500,
     "request_sample_count": 5000,
     "bucket_counts": {
       "single_term": 50,

@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "goal_complete",
-  "experiment_state": "complete",
+  "workflow_state": "implementation_active",
+  "experiment_state": "hypothesis_registered",
   "evidence_lane": "w1_private",
   "contract_pins": {
     "active_goal_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
@@ -14,33 +14,7 @@
   "allowed_paths": [
     "perf/"
   ],
-  "current_slice": "invalid unmerged completion fixture",
-  "transition_history": [
-    {
-      "from": "pr_opened",
-      "to": "goal_complete",
-      "evidence_ref": "schema fixture"
-    }
-  ],
-  "accepted_cells": [
-    "w0_docs",
-    "D10K_private_calibration",
-    "D100K_weak_host",
-    "D1M_scale",
-    "soak_fault",
-    "gui_manual"
-  ],
-  "evidence_cells": [
-    {
-      "cell": "w0_docs",
-      "goal_contract_hash": "1111111111111111111111111111111111111111111111111111111111111111",
-      "acceptance_matrix_hash": "2222222222222222222222222222222222222222222222222222222222222222",
-      "runner_version": "fixture-runner-v1",
-      "benchmark_runner_version": "fixture-benchmark-v1",
-      "benchmark_report_hash": "5555555555555555555555555555555555555555555555555555555555555555",
-      "main_reachable_commit": "feature-branch"
-    }
-  ],
+  "current_slice": "invalid performance implementation fixture",
   "verification": {
     "commands": [
       {
@@ -50,7 +24,7 @@
       }
     ],
     "all_required_commands_ran": true,
-    "claim": "pass"
+    "claim": "partial"
   },
   "privacy": {
     "contains_raw_resume_text": false,

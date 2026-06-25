@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "plan_ready",
+  "workflow_state": "evidence_review",
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
@@ -25,8 +25,8 @@
   "blocked_count": 0,
   "transition_history": [
     {
-      "from": "evidence_review",
-      "to": "plan_ready",
+      "from": "plan_ready",
+      "to": "evidence_review",
       "evidence_ref": "Task 4 autonomous delivery contract planning"
     }
   ],
