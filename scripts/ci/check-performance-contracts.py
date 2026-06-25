@@ -424,6 +424,13 @@ def validate_fixture(path: pathlib.Path, matrix: Mapping[str, object]) -> None:
         validate_experiment_report(value, matrix, str(path.relative_to(ROOT)))
 
 
+def run_focused_checks() -> None:
+    for rel in FOCUSED_CHECKS:
+        completed = subprocess.run([sys.executable, str(ROOT / rel)], check=False)
+        if completed.returncode != 0:
+            fail(f"{rel}: focused check failed with exit code {completed.returncode}")
+
+
 def main() -> int:
     matrix = load_toml(PERF / "acceptance-matrix.toml")
     validate_matrix(matrix)
@@ -453,8 +460,7 @@ def main() -> int:
     if invalid_count == 0:
         fail("no invalid fixtures found")
 
-    for rel in FOCUSED_CHECKS:
-        subprocess.run([sys.executable, str(ROOT / rel)], check=True)
+    run_focused_checks()
 
     print("performance contract check passed")
     return 0
