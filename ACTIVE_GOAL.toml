@@ -246,6 +246,14 @@ required_evidence = ["profiler_summary", "hypothesis", "expected_delta", "rollba
 allowed_actions = ["comment_issue", "update_issue"]
 
 [[autonomous_delivery.transitions]]
+name = "select_slice"
+from = ["hypothesis_recorded"]
+to = "slice_selected"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["linked_issue", "primary_lane", "slice_scope", "acceptance_gate"]
+allowed_actions = ["comment_issue", "update_issue"]
+
+[[autonomous_delivery.transitions]]
 name = "activate_branch"
 from = ["slice_selected"]
 to = "branch_active"
@@ -278,12 +286,52 @@ required_evidence = ["local_tests", "privacy_gate", "pr_budget"]
 allowed_actions = ["push_branch", "create_pr"]
 
 [[autonomous_delivery.transitions]]
+name = "sync_base"
+from = ["pr_opened"]
+to = "base_synced"
+required_permissions = ["commit_push_allowed"]
+required_evidence = ["base_sha", "head_sha", "reconciliation_status"]
+allowed_actions = ["fetch_base", "rebase_branch", "push_branch"]
+
+[[autonomous_delivery.transitions]]
 name = "mark_review_ready"
 from = ["base_synced"]
 to = "pr_review_ready"
 required_permissions = ["github_pr_write_allowed"]
 required_evidence = ["base_sha", "pr_template_complete"]
 allowed_actions = ["update_pr_body", "mark_ready_for_review"]
+
+[[autonomous_delivery.transitions]]
+name = "mark_ci_green"
+from = ["pr_review_ready"]
+to = "ci_green"
+required_permissions = []
+required_evidence = ["ci_head_sha", "ci_check_run", "ci_conclusion"]
+allowed_actions = ["observe_ci"]
+
+[[autonomous_delivery.transitions]]
+name = "mark_local_gate_green"
+from = ["ci_green"]
+to = "local_gate_green"
+required_permissions = []
+required_evidence = ["local_gate_commands", "local_gate_result"]
+allowed_actions = ["run_local_gates"]
+
+[[autonomous_delivery.transitions]]
+name = "mark_privacy_gate_green"
+from = ["local_gate_green"]
+to = "privacy_gate_green"
+required_permissions = []
+required_evidence = ["privacy_gate_command", "privacy_gate_result"]
+allowed_actions = ["run_privacy_gates"]
+
+[[autonomous_delivery.transitions]]
+name = "select_merge_method"
+from = ["privacy_gate_green"]
+to = "merge_method_selected"
+required_permissions = ["github_pr_write_allowed"]
+required_evidence = ["merge_method", "branch_protection_satisfied", "admin_bypass_absent"]
+allowed_actions = ["update_pr_body", "record_merge_method"]
 
 [[autonomous_delivery.transitions]]
 name = "merge_pr"

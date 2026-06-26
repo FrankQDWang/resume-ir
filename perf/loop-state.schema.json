@@ -36,6 +36,7 @@
         "baseline_captured",
         "discovery_profile_issue_opened",
         "hypothesis_recorded",
+        "slice_selected",
         "branch_active",
         "pr_opened",
         "base_synced",
