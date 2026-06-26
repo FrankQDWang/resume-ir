@@ -50,11 +50,12 @@ Codex 验证不依赖截图内容作为唯一证据。每个 GUI/manual flow 都
 
 ```bash
 ./scripts/ci/verify-local.sh
-scripts/local/run-performance-goal-validation.sh --plan --out <local-evidence-dir>
-scripts/local/run-performance-goal-validation.sh --execute --resume-root "$RESUME_IR_PRIVATE_RESUME_ROOT" --query-artifacts "$RESUME_IR_QUERY_ARTIFACT_ROOT" --out <local-evidence-dir>
+resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --trace-root "$RESUME_IR_QUERY_ARTIFACT_ROOT" --max-queries 500 --min-queries 500
+scripts/local/run-current-stage-validation.sh --dry-run ... [--query-set <local-evidence-dir>/private-query-set.local.jsonl]
+scripts/local/run-current-stage-validation.sh --execute ... [--query-set <local-evidence-dir>/private-query-set.local.jsonl]
 ```
 
-`--plan` 可以提交，`--execute` 只在本机跑，输出 local-only evidence。
+query-set draft 和 `--execute` 都只在本机跑；提交物只能是 redacted aggregate evidence。
 
 ## 4. GUI 验收
 
