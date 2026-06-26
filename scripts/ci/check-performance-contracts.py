@@ -172,6 +172,29 @@ def require_git_commit_exists(value: object, path: str) -> None:
         fail(f"{path}: commit does not exist in local git object database")
 
 
+def require_git_commit_reachable_from_origin_main(value: object, path: str) -> None:
+    require_git_commit_exists(value, path)
+    origin_main = "refs/remotes/origin/main"
+    has_origin_main = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", origin_main],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if has_origin_main.returncode != 0:
+        fail(f"{path}: {origin_main} is required for current snapshot validation")
+    reachable = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", str(value), origin_main],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if reachable.returncode != 0:
+        fail(f"{path}: commit is not reachable from origin/main")
+
+
 def validate_current_loop_contract_pins(state: Mapping[str, object]) -> None:
     pins = require_mapping(state.get("contract_pins"), "perf/current-loop-state.json.contract_pins")
     for key, rel_path in CURRENT_LOOP_CONTRACT_FILES.items():
@@ -186,7 +209,7 @@ def validate_current_loop_contract_pins(state: Mapping[str, object]) -> None:
     head = pins.get("git_head_sha")
     if head == "working-tree":
         fail("perf/current-loop-state.json.contract_pins.git_head_sha: working-tree placeholder is not allowed")
-    require_git_commit_exists(head, "perf/current-loop-state.json.contract_pins.git_head_sha")
+    require_git_commit_reachable_from_origin_main(head, "perf/current-loop-state.json.contract_pins.git_head_sha")
 
 
 def validate_privacy(report: Mapping[str, object], *, trace_required: bool, path: str) -> None:

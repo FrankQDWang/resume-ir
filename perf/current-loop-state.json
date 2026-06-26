@@ -5,11 +5,11 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "fd016f8f9164a113e3289a357326b18e13d71e2817e827a1d34b728d4981f8d6",
+    "active_goal_sha256": "176842bb476cc0db4ecc4ce9ce517734b53685cab3ce72dffc6a13d538578204",
     "acceptance_matrix_sha256": "d88b77243fa8ead7852c27d5232fb07e2986d67d119860189e356525c6dbff49",
     "loop_state_schema_sha256": "e1e1e683f594727dc2bf93b9472ccdedf7bfb31987f4f92f01f56f014b64c355",
     "experiment_report_schema_sha256": "13c35f207fe1b5a6a0da23c0e11c5857210ee03b2cfbb243e694238a38f8f446",
-    "git_head_sha": "eeeb6c8e9ca0a1ee4da1e85228b4281929f10f82"
+    "git_head_sha": "59787d5513dbd5db03e894cc39d6ea99f1fbcf35"
   },
   "allowed_paths": [
     "AGENTS.md",
