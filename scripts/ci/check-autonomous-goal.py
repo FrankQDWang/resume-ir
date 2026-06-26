@@ -325,6 +325,10 @@ def main() -> int:
         "open_pr",
         "sync_base",
         "mark_review_ready",
+        "mark_ci_green",
+        "mark_local_gate_green",
+        "mark_privacy_gate_green",
+        "select_merge_method",
         "merge_pr",
         "close_issue_with_evidence",
     ]:

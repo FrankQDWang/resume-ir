@@ -5,7 +5,7 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "aebad64c81a6f2e1401395254ff508be3099f2294c080348d964da378d32b365",
+    "active_goal_sha256": "a1a51a5ce6008d45a3330691aa459d61ee956236c18a84e03641d936caa9b05a",
     "acceptance_matrix_sha256": "d88b77243fa8ead7852c27d5232fb07e2986d67d119860189e356525c6dbff49",
     "loop_state_schema_sha256": "8c61fff9d29d57a74eb048a27ca8478bf0cf3a8fae948cbe51645bab2fc795aa",
     "experiment_report_schema_sha256": "13c35f207fe1b5a6a0da23c0e11c5857210ee03b2cfbb243e694238a38f8f446",
