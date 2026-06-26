@@ -331,6 +331,7 @@ def main() -> int:
         "select_merge_method",
         "merge_pr",
         "close_issue_with_evidence",
+        "advance_to_next_issue_or_goal_complete",
     ]:
         if expected not in transition_names:
             fail(f"autonomous_delivery.transitions: missing {expected}")
