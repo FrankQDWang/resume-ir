@@ -1,11 +1,13 @@
-use lopdf::Document as LoPdfDocument;
+use lopdf::{
+    content::{Content, Operation},
+    Document as LoPdfDocument, Object, ObjectId,
+};
 use parser_common::{
     FileProbe, ParseBudget, ParseInput, ParseOutput, ParseStatus, Parser, ParserError,
     ResourceBudget, Result, SupportLevel,
 };
 
 const MAX_EXTRACTED_TEXT_CHARS: usize = 1_000_000;
-const MAX_PDF_TEXT_RUN_BYTES: usize = 128 * 1024;
 const DEADLINE_CHECK_STRIDE: usize = 4096;
 
 pub fn crate_name() -> &'static str {
@@ -45,86 +47,18 @@ impl Parser for PdfParser {
         }
 
         parse_budget.check_deadline()?;
-        let raw_text = extract_text_layer(bytes, &parse_budget)?;
-        let mut page_count = count_pdf_pages(bytes, &parse_budget)?.unwrap_or(1);
-        if has_text_signal(&raw_text) {
-            return Ok(ParseOutput::new(ParseStatus::TextLayer, raw_text.clone())
-                .with_page_count(page_count)
-                .with_page_text(1, raw_text));
+        let extraction = extract_text_layer(bytes, &parse_budget)?;
+        if has_text_signal(&extraction.text) {
+            let mut output = ParseOutput::new(ParseStatus::TextLayer, extraction.text)
+                .with_page_count(extraction.page_count);
+            for page_text in extraction.pages {
+                output = output.with_page_text(page_text.page_no, page_text.text);
+            }
+            return Ok(output);
         }
 
-        parse_budget.check_deadline()?;
-        if let Some(extraction) = extract_text_layer_with_lopdf(bytes, &parse_budget)? {
-            page_count = extraction.page_count;
-            if has_text_signal(&extraction.text) {
-                let mut output = ParseOutput::new(ParseStatus::TextLayer, extraction.text)
-                    .with_page_count(page_count);
-                for page_text in extraction.pages {
-                    output = output.with_page_text(page_text.page_no, page_text.text);
-                }
-                return Ok(output);
-            }
-        }
-
-        Ok(ParseOutput::new(ParseStatus::OcrRequired, "").with_page_count(page_count))
+        Ok(ParseOutput::new(ParseStatus::OcrRequired, "").with_page_count(extraction.page_count))
     }
-}
-
-fn extract_text_layer(bytes: &[u8], budget: &ParseBudget) -> Result<String> {
-    let mut accumulator = TextAccumulator::default();
-    let mut search_from = 0;
-
-    while let Some(start) = find_operator(bytes, b"BT", search_from, budget)? {
-        budget.check_deadline()?;
-
-        let block_start = start + 2;
-        let Some(end) = find_operator(bytes, b"ET", block_start, budget)? else {
-            break;
-        };
-
-        parse_text_block(&bytes[block_start..end], &mut accumulator, budget)?;
-        search_from = end + 2;
-    }
-
-    Ok(accumulator.into_string())
-}
-
-fn parse_text_block(
-    block: &[u8],
-    accumulator: &mut TextAccumulator,
-    budget: &ParseBudget,
-) -> Result<()> {
-    let mut index = 0;
-
-    while index < block.len() {
-        budget.check_deadline()?;
-
-        match block[index] {
-            b'(' => {
-                if let Some((text, next_index)) = parse_literal_string(block, index, budget)? {
-                    if has_visible_text(&text) {
-                        accumulator.push(&text)?;
-                    }
-                    index = next_index;
-                } else {
-                    index += 1;
-                }
-            }
-            b'<' if block.get(index + 1) != Some(&b'<') => {
-                if let Some((text, next_index)) = parse_hex_string(block, index, budget)? {
-                    if has_visible_text(&text) {
-                        accumulator.push(&text)?;
-                    }
-                    index = next_index;
-                } else {
-                    index += 1;
-                }
-            }
-            _ => index += 1,
-        }
-    }
-
-    Ok(())
 }
 
 #[derive(Default)]
@@ -173,28 +107,20 @@ struct LopdfPageText {
     text: String,
 }
 
-fn extract_text_layer_with_lopdf(
-    bytes: &[u8],
-    budget: &ParseBudget,
-) -> Result<Option<LopdfTextExtraction>> {
+fn extract_text_layer(bytes: &[u8], budget: &ParseBudget) -> Result<LopdfTextExtraction> {
     budget.check_deadline()?;
-    let document = match LoPdfDocument::load_mem(bytes) {
-        Ok(document) => document,
-        Err(_) => return Ok(None),
-    };
+    let document = LoPdfDocument::load_mem(bytes)
+        .map_err(|_| ParserError::corrupted("pdf structure is invalid"))?;
     budget.check_deadline()?;
 
-    let page_numbers = document.get_pages().into_keys().collect::<Vec<_>>();
-    let page_count = page_numbers.len().max(1);
+    let pages_by_number = document.get_pages();
+    let page_count = pages_by_number.len().max(1);
     let mut accumulator = TextAccumulator::default();
     let mut pages = Vec::new();
 
-    for page_no in page_numbers {
+    for (page_no, page_id) in pages_by_number {
         budget.check_deadline()?;
-        let page_text = match document.extract_text(&[page_no]) {
-            Ok(page_text) => normalize_lopdf_page_text(page_text),
-            Err(_) => continue,
-        };
+        let page_text = extract_page_text(&document, page_no, page_id, budget)?;
         if page_text.is_empty() {
             continue;
         }
@@ -207,203 +133,114 @@ fn extract_text_layer_with_lopdf(
     }
 
     budget.check_deadline()?;
-    Ok(Some(LopdfTextExtraction {
+    Ok(LopdfTextExtraction {
         text: accumulator.into_string(),
         page_count,
         pages,
-    }))
+    })
 }
 
 fn normalize_lopdf_page_text(page_text: String) -> String {
     page_text.replace('\u{0c}', "\n").trim().to_owned()
 }
 
-fn parse_literal_string(
-    block: &[u8],
-    start: usize,
+fn extract_page_text(
+    document: &LoPdfDocument,
+    page_no: u32,
+    page_id: ObjectId,
     budget: &ParseBudget,
-) -> Result<Option<(String, usize)>> {
-    let mut output = Vec::new();
-    let mut index = start + 1;
-    let mut depth = 1_usize;
-
-    while index < block.len() {
-        if (index - start).is_multiple_of(DEADLINE_CHECK_STRIDE) {
-            budget.check_deadline()?;
-        }
-
-        match block[index] {
-            b'\\' => {
-                index += 1;
-                if index >= block.len() {
-                    return Err(ParserError::corrupted("pdf text literal is unterminated"));
-                }
-
-                match block[index] {
-                    b'n' => push_text_run_byte(&mut output, b'\n')?,
-                    b'r' => push_text_run_byte(&mut output, b'\r')?,
-                    b't' => push_text_run_byte(&mut output, b'\t')?,
-                    b'b' => push_text_run_byte(&mut output, 0x08)?,
-                    b'f' => push_text_run_byte(&mut output, 0x0c)?,
-                    b'(' | b')' | b'\\' => push_text_run_byte(&mut output, block[index])?,
-                    b'\n' => {}
-                    b'\r' => {
-                        if block.get(index + 1) == Some(&b'\n') {
-                            index += 1;
-                        }
-                    }
-                    b'0'..=b'7' => {
-                        let (value, next_index) = parse_octal_escape(block, index);
-                        push_text_run_byte(&mut output, value)?;
-                        index = next_index;
-                        continue;
-                    }
-                    other => push_text_run_byte(&mut output, other)?,
-                }
-            }
-            b'(' => {
-                depth += 1;
-                push_text_run_byte(&mut output, b'(')?;
-            }
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return decode_text_run_bytes(
-                        &output,
-                        TextRunEncodingFallback::StrictUtf8,
-                        "pdf text literal is not utf-8",
-                    )
-                    .map(|text| Some((text, index + 1)));
-                }
-                push_text_run_byte(&mut output, b')')?;
-            }
-            byte => push_text_run_byte(&mut output, byte)?,
-        }
-
-        index += 1;
-    }
-
-    Err(ParserError::corrupted("pdf text literal is unterminated"))
-}
-
-fn push_text_run_byte(output: &mut Vec<u8>, byte: u8) -> Result<()> {
-    if output.len() >= MAX_PDF_TEXT_RUN_BYTES {
-        return Err(ParserError::resource_exhausted(
-            "pdf text run exceeds parser budget",
-        ));
-    }
-
-    output.push(byte);
-    Ok(())
-}
-
-fn parse_octal_escape(block: &[u8], start: usize) -> (u8, usize) {
-    let mut value = 0_u16;
-    let mut index = start;
-    let mut digits = 0;
-
-    while index < block.len() && digits < 3 {
-        match block[index] {
-            digit @ b'0'..=b'7' => {
-                value = (value * 8) + u16::from(digit - b'0');
-                index += 1;
-                digits += 1;
-            }
-            _ => break,
-        }
-    }
-
-    (value.min(u16::from(u8::MAX)) as u8, index)
-}
-
-fn parse_hex_string(
-    block: &[u8],
-    start: usize,
-    budget: &ParseBudget,
-) -> Result<Option<(String, usize)>> {
-    let mut nibbles = Vec::new();
-    let mut index = start + 1;
-
-    while index < block.len() {
-        if (index - start).is_multiple_of(DEADLINE_CHECK_STRIDE) {
-            budget.check_deadline()?;
-        }
-
-        match block[index] {
-            b'>' => {
-                if nibbles.len() % 2 == 1 {
-                    if nibbles.len() >= MAX_PDF_TEXT_RUN_BYTES * 2 {
-                        return Err(ParserError::resource_exhausted(
-                            "pdf text run exceeds parser budget",
-                        ));
-                    }
-                    nibbles.push(0);
-                }
-
-                let bytes = nibbles
-                    .chunks(2)
-                    .map(|pair| (pair[0] << 4) | pair[1])
-                    .collect::<Vec<_>>();
-                return decode_text_run_bytes(
-                    &bytes,
-                    TextRunEncodingFallback::LossyUtf8,
-                    "pdf text run is not utf-8",
-                )
-                .map(|text| Some((text, index + 1)));
-            }
-            byte if byte.is_ascii_whitespace() => {}
-            byte => {
-                let Some(value) = hex_nibble(byte) else {
-                    return Ok(None);
-                };
-                if nibbles.len() >= MAX_PDF_TEXT_RUN_BYTES * 2 {
-                    return Err(ParserError::resource_exhausted(
-                        "pdf text run exceeds parser budget",
-                    ));
-                }
-                nibbles.push(value);
-            }
-        }
-
-        index += 1;
-    }
-
-    Ok(None)
-}
-
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-#[derive(Clone, Copy)]
-enum TextRunEncodingFallback {
-    StrictUtf8,
-    LossyUtf8,
-}
-
-fn decode_text_run_bytes(
-    bytes: &[u8],
-    fallback: TextRunEncodingFallback,
-    invalid_utf8_message: &'static str,
 ) -> Result<String> {
-    if let Some(text) = decode_utf16_with_bom(bytes)? {
-        return Ok(text);
+    let direct_text = extract_direct_page_text(document, page_id, budget)?;
+    budget.check_deadline()?;
+    let lopdf_text = match document.extract_text(&[page_no]) {
+        Ok(page_text) => normalize_lopdf_page_text(page_text),
+        Err(_) => String::new(),
+    };
+
+    if direct_text.is_empty() {
+        return Ok(lopdf_text);
+    }
+    if lopdf_text.is_empty() {
+        return Ok(direct_text);
+    }
+    if lopdf_text.contains(&direct_text) {
+        return Ok(lopdf_text);
+    }
+    if !direct_text.chars().any(|character| !character.is_ascii()) {
+        return Ok(lopdf_text);
     }
 
-    match std::str::from_utf8(bytes) {
-        Ok(text) => Ok(text.to_owned()),
-        Err(_) => match fallback {
-            TextRunEncodingFallback::StrictUtf8 => {
-                Err(ParserError::corrupted(invalid_utf8_message))
-            }
-            TextRunEncodingFallback::LossyUtf8 => Ok(String::from_utf8_lossy(bytes).into_owned()),
-        },
+    Ok(direct_text)
+}
+
+fn extract_direct_page_text(
+    document: &LoPdfDocument,
+    page_id: ObjectId,
+    budget: &ParseBudget,
+) -> Result<String> {
+    budget.check_deadline()?;
+    let content_data = document
+        .get_page_content(page_id)
+        .map_err(|_| ParserError::corrupted("pdf structure is invalid"))?;
+    budget.check_deadline()?;
+    let content = Content::decode(&content_data)
+        .map_err(|_| ParserError::corrupted("pdf structure is invalid"))?;
+    let mut accumulator = TextAccumulator::default();
+
+    for operation in content.operations {
+        budget.check_deadline()?;
+        if let Some(text_run) = extract_direct_text_run(&operation)? {
+            accumulator.push(&text_run)?;
+        }
     }
+
+    Ok(accumulator.into_string())
+}
+
+fn extract_direct_text_run(operation: &Operation) -> Result<Option<String>> {
+    match operation.operator.as_str() {
+        "Tj" | "'" => decode_direct_text_operand(operation.operands.first()),
+        "\"" => decode_direct_text_operand(operation.operands.get(2)),
+        "TJ" => decode_direct_text_array(operation.operands.first()),
+        _ => Ok(None),
+    }
+}
+
+fn decode_direct_text_array(operand: Option<&Object>) -> Result<Option<String>> {
+    let Some(Object::Array(items)) = operand else {
+        return Ok(None);
+    };
+
+    let mut output = String::new();
+    for item in items {
+        if let Some(text) = decode_direct_text_object(item)? {
+            output.push_str(&text);
+        }
+    }
+
+    Ok((!output.trim().is_empty()).then_some(output))
+}
+
+fn decode_direct_text_operand(operand: Option<&Object>) -> Result<Option<String>> {
+    operand.map_or(Ok(None), decode_direct_text_object)
+}
+
+fn decode_direct_text_object(object: &Object) -> Result<Option<String>> {
+    let Object::String(bytes, _) = object else {
+        return Ok(None);
+    };
+    decode_direct_text_bytes(bytes)
+}
+
+fn decode_direct_text_bytes(bytes: &[u8]) -> Result<Option<String>> {
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    if let Some(text) = decode_utf16_with_bom(bytes)? {
+        return Ok(Some(text));
+    }
+
+    Ok(std::str::from_utf8(bytes).ok().map(str::to_owned))
 }
 
 fn decode_utf16_with_bom(bytes: &[u8]) -> Result<Option<String>> {
@@ -450,85 +287,8 @@ fn has_text_signal(text: &str) -> bool {
         >= 3
 }
 
-fn has_visible_text(text: &str) -> bool {
-    text.chars().any(|character| {
-        !character.is_whitespace()
-            && (character.is_alphanumeric() || character.is_ascii_punctuation())
-    })
-}
-
-fn count_pdf_pages(bytes: &[u8], budget: &ParseBudget) -> Result<Option<usize>> {
-    let marker = b"/Type /Page";
-    let mut count = 0_usize;
-    let mut index = 0;
-
-    while let Some(marker_start) = find_bytes(bytes, marker, index, budget)? {
-        let after_marker = marker_start + marker.len();
-        if bytes.get(after_marker) != Some(&b's') {
-            count += 1;
-        }
-        index = after_marker;
-    }
-
-    Ok((count > 0).then_some(count))
-}
-
 fn contains_bytes(bytes: &[u8], needle: &[u8], budget: &ParseBudget) -> Result<bool> {
     Ok(find_bytes(bytes, needle, 0, budget)?.is_some())
-}
-
-fn find_operator(
-    bytes: &[u8],
-    operator: &[u8],
-    start: usize,
-    budget: &ParseBudget,
-) -> Result<Option<usize>> {
-    budget.check_deadline()?;
-    if operator.is_empty() || start >= bytes.len() {
-        return Ok(None);
-    }
-
-    let Some(max_start) = bytes.len().checked_sub(operator.len()) else {
-        return Ok(None);
-    };
-    if start > max_start {
-        return Ok(None);
-    }
-
-    for index in start..=max_start {
-        if (index - start).is_multiple_of(DEADLINE_CHECK_STRIDE) {
-            budget.check_deadline()?;
-        }
-
-        if bytes[index..].starts_with(operator)
-            && is_operator_start_boundary(bytes, index)
-            && is_operator_end_boundary(bytes, index + operator.len())
-        {
-            return Ok(Some(index));
-        }
-    }
-
-    budget.check_deadline()?;
-    Ok(None)
-}
-
-fn is_operator_start_boundary(bytes: &[u8], index: usize) -> bool {
-    if index == 0 {
-        return true;
-    }
-
-    is_delimiter(bytes[index - 1])
-}
-
-fn is_operator_end_boundary(bytes: &[u8], index: usize) -> bool {
-    match bytes.get(index) {
-        None => true,
-        Some(byte) => is_delimiter(*byte),
-    }
-}
-
-fn is_delimiter(byte: u8) -> bool {
-    byte.is_ascii_whitespace() || b"[]()<>{}/%".contains(&byte)
 }
 
 fn find_bytes(

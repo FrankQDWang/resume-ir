@@ -1739,21 +1739,22 @@ mod tests {
     }
 
     fn utf16be_literal_text_layer_pdf_bytes() -> Vec<u8> {
-        let mut bytes = b"%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
-4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
-5 0 obj << /Length 47 >> stream
-BT /F1 12 Tf 72 720 Td ("
-            .to_vec();
-        bytes.extend_from_slice(b"\xFE\xFF\x4E\x2D\x65\x87\x7B\x80\x53\x86");
-        bytes.extend_from_slice(
-            b") Tj ET
-endstream endobj
-%%EOF",
-        );
-        bytes
+        let mut content = b"BT /F1 12 Tf 72 720 Td (".to_vec();
+        content.extend_from_slice(b"\xFE\xFF\x4E\x2D\x65\x87\x7B\x80\x53\x86");
+        content.extend_from_slice(b") Tj ET\n");
+
+        build_valid_pdf(vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_vec(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+            [
+                format!("<< /Length {} >>\nstream\n", content.len()).into_bytes(),
+                content,
+                b"endstream".to_vec(),
+            ]
+            .concat(),
+        ])
     }
 
     fn tounicode_cmap_pdf_bytes() -> Vec<u8> {

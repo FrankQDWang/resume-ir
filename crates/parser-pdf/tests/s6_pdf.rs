@@ -16,7 +16,7 @@ fn exposes_parser_pdf_crate_identity() {
 fn text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
     let parser = PdfParser;
     let bytes = text_layer_pdf_bytes();
-    let input = ParseInput::from_bytes(Some("pdf"), bytes);
+    let input = ParseInput::from_bytes(Some("pdf"), &bytes);
 
     assert_eq!(parser.supports(input.probe()), SupportLevel::Supported);
 
@@ -32,7 +32,8 @@ fn text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
 #[test]
 fn utf16be_hex_text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
     let parser = PdfParser;
-    let input = ParseInput::from_bytes(Some("pdf"), utf16be_hex_text_layer_pdf_bytes());
+    let bytes = utf16be_hex_text_layer_pdf_bytes();
+    let input = ParseInput::from_bytes(Some("pdf"), &bytes);
 
     let output = parser.parse(input, ResourceBudget::default()).unwrap();
 
@@ -47,12 +48,10 @@ fn utf16be_hex_text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
 #[test]
 fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_returns_corrupted_error() {
     let parser = PdfParser;
+    let bytes = utf16be_hex_text_layer_pdf_with_odd_utf16_length_bytes();
     let error = parser
         .parse(
-            ParseInput::from_bytes(
-                Some("pdf"),
-                utf16be_hex_text_layer_pdf_with_odd_utf16_length_bytes(),
-            ),
+            ParseInput::from_bytes(Some("pdf"), &bytes),
             ResourceBudget::default(),
         )
         .unwrap_err();
@@ -67,12 +66,10 @@ fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_returns_corrupted_error() {
 #[test]
 fn utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_returns_corrupted_error() {
     let parser = PdfParser;
+    let bytes = utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_bytes();
     let error = parser
         .parse(
-            ParseInput::from_bytes(
-                Some("pdf"),
-                utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_bytes(),
-            ),
+            ParseInput::from_bytes(Some("pdf"), &bytes),
             ResourceBudget::default(),
         )
         .unwrap_err();
@@ -84,9 +81,10 @@ fn utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_returns_corrupted_err
 #[test]
 fn scanned_image_pdf_returns_ocr_required_without_running_ocr() {
     let parser = PdfParser;
+    let bytes = scanned_pdf_bytes();
     let output = parser
         .parse(
-            ParseInput::from_bytes(Some("pdf"), scanned_pdf_bytes()),
+            ParseInput::from_bytes(Some("pdf"), &bytes),
             ResourceBudget::default(),
         )
         .unwrap();
@@ -96,6 +94,20 @@ fn scanned_image_pdf_returns_ocr_required_without_running_ocr() {
     assert_eq!(output.text(), "");
     assert_eq!(output.page_count(), Some(1));
     assert!(!format!("{output:?}").contains("image bytes"));
+}
+
+#[test]
+fn unreferenced_bt_et_bytes_do_not_count_as_page_text_layer() {
+    let parser = PdfParser;
+    let bytes = scanned_pdf_with_unreferenced_text_object_bytes();
+    let input = ParseInput::from_bytes(Some("pdf"), &bytes);
+
+    let output = parser.parse(input, ResourceBudget::default()).unwrap();
+
+    assert_eq!(output.status(), ParseStatus::OcrRequired);
+    assert_eq!(output.document_status(), DocumentStatus::OcrRequired);
+    assert_eq!(output.text(), "");
+    assert_eq!(output.page_count(), Some(1));
 }
 
 #[test]
@@ -145,7 +157,7 @@ fn pdf_parser_enforces_input_byte_budget() {
     let bytes = text_layer_pdf_bytes();
     let error = parser
         .parse(
-            ParseInput::from_bytes(Some("pdf"), bytes),
+            ParseInput::from_bytes(Some("pdf"), &bytes),
             ResourceBudget::default().with_max_bytes(bytes.len() - 1),
         )
         .unwrap_err();
@@ -181,66 +193,30 @@ fn pdf_parser_enforces_runtime_timeout_without_text_layer_operator() {
     assert_eq!(error.kind(), ParserErrorKind::Timeout);
 }
 
-fn text_layer_pdf_bytes() -> &'static [u8] {
-    b"%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
-4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
-5 0 obj << /Length 58 >> stream
-BT /F1 12 Tf 72 720 Td (Synthetic PDF Text Layer) Tj ET
-endstream endobj
-%%EOF"
+fn text_layer_pdf_bytes() -> Vec<u8> {
+    simple_font_text_pdf_bytes(b"BT /F1 12 Tf 72 720 Td (Synthetic PDF Text Layer) Tj ET\n")
 }
 
-fn utf16be_hex_text_layer_pdf_bytes() -> &'static [u8] {
-    b"%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
-4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
-5 0 obj << /Length 47 >> stream
-BT /F1 12 Tf 72 720 Td <FEFF4E2D65877B805386> Tj ET
-endstream endobj
-%%EOF"
+fn utf16be_hex_text_layer_pdf_bytes() -> Vec<u8> {
+    simple_font_text_pdf_bytes(b"BT /F1 12 Tf 72 720 Td <FEFF4E2D65877B805386> Tj ET\n")
 }
 
-fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_bytes() -> &'static [u8] {
-    b"%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
-4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
-5 0 obj << /Length 38 >> stream
-BT /F1 12 Tf 72 720 Td <FEFF4E2D6> Tj ET
-endstream endobj
-%%EOF"
+fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_bytes() -> Vec<u8> {
+    simple_font_text_pdf_bytes(b"BT /F1 12 Tf 72 720 Td <FEFF4E2D6> Tj ET\n")
 }
 
-fn utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_bytes() -> &'static [u8] {
-    b"%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
-4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
-5 0 obj << /Length 43 >> stream
-BT /F1 12 Tf 72 720 Td <FEFFD8000061> Tj ET
-endstream endobj
-%%EOF"
+fn utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_bytes() -> Vec<u8> {
+    simple_font_text_pdf_bytes(b"BT /F1 12 Tf 72 720 Td <FEFFD8000061> Tj ET\n")
 }
 
-fn scanned_pdf_bytes() -> &'static [u8] {
-    b"%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >> endobj
-4 0 obj << /Type /XObject /Subtype /Image /Width 100 /Height 100 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 11 >> stream
-image bytes
-endstream endobj
-5 0 obj << /Length 24 >> stream
-q 100 0 0 100 0 0 cm /Im1 Do Q
-endstream endobj
-%%EOF"
+fn scanned_pdf_bytes() -> Vec<u8> {
+    build_valid_pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_vec(),
+        b"<< /Type /XObject /Subtype /Image /Width 100 /Height 100 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 11 >>\nstream\nimage bytes\nendstream".to_vec(),
+        b"<< /Length 24 >>\nstream\nq 100 0 0 100 0 0 cm /Im1 Do Q\nendstream".to_vec(),
+    ])
 }
 
 fn many_text_runs_pdf_bytes(run_count: usize) -> Vec<u8> {
@@ -305,6 +281,32 @@ fn compressed_text_stream_pdf_bytes() -> Vec<u8> {
             b"\nendstream".to_vec(),
         ]
         .concat(),
+    ])
+}
+
+fn simple_font_text_pdf_bytes(content: &[u8]) -> Vec<u8> {
+    build_valid_pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_vec(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        [
+            format!("<< /Length {} >>\nstream\n", content.len()).into_bytes(),
+            content.to_vec(),
+            b"endstream".to_vec(),
+        ]
+        .concat(),
+    ])
+}
+
+fn scanned_pdf_with_unreferenced_text_object_bytes() -> Vec<u8> {
+    build_valid_pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_vec(),
+        b"<< /Type /XObject /Subtype /Image /Width 100 /Height 100 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 11 >>\nstream\nimage bytes\nendstream".to_vec(),
+        b"<< /Length 24 >>\nstream\nq 100 0 0 100 0 0 cm /Im1 Do Q\nendstream".to_vec(),
+        b"<< /Length 20 >>\nstream\nBT (Ghost Text) Tj ET\nendstream".to_vec(),
     ])
 }
 
