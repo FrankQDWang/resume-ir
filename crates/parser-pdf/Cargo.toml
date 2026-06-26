@@ -9,10 +9,12 @@ publish.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+lopdf = "0.42.0"
 parser-common = { path = "../parser-common" }
 
 [dev-dependencies]
 core-domain = { path = "../core-domain" }
+flate2 = "1.1"
 
 [lints]
 workspace = true

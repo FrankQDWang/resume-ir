@@ -1,3 +1,4 @@
+use lopdf::Document as LoPdfDocument;
 use parser_common::{
     FileProbe, ParseBudget, ParseInput, ParseOutput, ParseStatus, Parser, ParserError,
     ResourceBudget, Result, SupportLevel,
@@ -44,15 +45,28 @@ impl Parser for PdfParser {
         }
 
         parse_budget.check_deadline()?;
-        let text = extract_text_layer(bytes, &parse_budget)?;
-        let page_count = count_pdf_pages(bytes, &parse_budget)?.unwrap_or(1);
-        if !has_text_signal(&text) {
-            return Ok(ParseOutput::new(ParseStatus::OcrRequired, "").with_page_count(page_count));
+        let raw_text = extract_text_layer(bytes, &parse_budget)?;
+        let mut page_count = count_pdf_pages(bytes, &parse_budget)?.unwrap_or(1);
+        if has_text_signal(&raw_text) {
+            return Ok(ParseOutput::new(ParseStatus::TextLayer, raw_text.clone())
+                .with_page_count(page_count)
+                .with_page_text(1, raw_text));
         }
 
-        Ok(ParseOutput::new(ParseStatus::TextLayer, text.clone())
-            .with_page_count(page_count)
-            .with_page_text(1, text))
+        parse_budget.check_deadline()?;
+        if let Some(extraction) = extract_text_layer_with_lopdf(bytes, &parse_budget)? {
+            page_count = extraction.page_count;
+            if has_text_signal(&extraction.text) {
+                let mut output = ParseOutput::new(ParseStatus::TextLayer, extraction.text)
+                    .with_page_count(page_count);
+                for page_text in extraction.pages {
+                    output = output.with_page_text(page_text.page_no, page_text.text);
+                }
+                return Ok(output);
+            }
+        }
+
+        Ok(ParseOutput::new(ParseStatus::OcrRequired, "").with_page_count(page_count))
     }
 }
 
@@ -146,6 +160,62 @@ impl TextAccumulator {
     fn into_string(self) -> String {
         self.output
     }
+}
+
+struct LopdfTextExtraction {
+    text: String,
+    page_count: usize,
+    pages: Vec<LopdfPageText>,
+}
+
+struct LopdfPageText {
+    page_no: usize,
+    text: String,
+}
+
+fn extract_text_layer_with_lopdf(
+    bytes: &[u8],
+    budget: &ParseBudget,
+) -> Result<Option<LopdfTextExtraction>> {
+    budget.check_deadline()?;
+    let document = match LoPdfDocument::load_mem(bytes) {
+        Ok(document) => document,
+        Err(_) => return Ok(None),
+    };
+    budget.check_deadline()?;
+
+    let page_numbers = document.get_pages().into_keys().collect::<Vec<_>>();
+    let page_count = page_numbers.len().max(1);
+    let mut accumulator = TextAccumulator::default();
+    let mut pages = Vec::new();
+
+    for page_no in page_numbers {
+        budget.check_deadline()?;
+        let page_text = match document.extract_text(&[page_no]) {
+            Ok(page_text) => normalize_lopdf_page_text(page_text),
+            Err(_) => continue,
+        };
+        if page_text.is_empty() {
+            continue;
+        }
+
+        accumulator.push(&page_text)?;
+        pages.push(LopdfPageText {
+            page_no: page_no as usize,
+            text: page_text,
+        });
+    }
+
+    budget.check_deadline()?;
+    Ok(Some(LopdfTextExtraction {
+        text: accumulator.into_string(),
+        page_count,
+        pages,
+    }))
+}
+
+fn normalize_lopdf_page_text(page_text: String) -> String {
+    page_text.replace('\u{0c}', "\n").trim().to_owned()
 }
 
 fn parse_literal_string(

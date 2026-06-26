@@ -1628,6 +1628,50 @@ mod tests {
         assert!(!format!("{summary:?}").contains(root.to_str().unwrap()));
     }
 
+    #[test]
+    fn import_root_keeps_tounicode_cmap_pdf_text_layer_searchable_without_ocr() {
+        let temp = TestDir::new("import-pipeline-tounicode-cmap-pdf");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("tounicode-cmap-resume.pdf"),
+            tounicode_cmap_pdf_bytes(),
+        )
+        .unwrap();
+
+        let store = MetaStore::open_in_memory().unwrap();
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_175);
+        let task = import_task("tounicode-cmap-pdf-import", root.to_str().unwrap(), now);
+        store.insert_import_task(&task).unwrap();
+
+        let summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(summary.files_discovered, 1);
+        assert_eq!(summary.searchable_documents, 1);
+        assert_eq!(summary.ocr_required_documents, 0);
+        assert_eq!(summary.failed_documents, 0);
+        let document = store.visible_documents().unwrap().remove(0);
+        let versions = store.resume_versions_for_document(&document.id).unwrap();
+        assert_eq!(versions.len(), 1);
+        assert!(versions[0]
+            .clean_text
+            .as_deref()
+            .unwrap()
+            .contains("中文简历"));
+        assert!(!format!("{summary:?}").contains(root.to_str().unwrap()));
+    }
+
     #[cfg(unix)]
     #[test]
     fn import_root_parses_legacy_doc_with_local_converter_without_path_leak() {
@@ -1710,6 +1754,83 @@ endstream endobj
 %%EOF",
         );
         bytes
+    }
+
+    fn tounicode_cmap_pdf_bytes() -> Vec<u8> {
+        let cmap = br"/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<0001> <0004>
+endcodespacerange
+4 beginbfchar
+<0001> <4E2D>
+<0002> <6587>
+<0003> <7B80>
+<0004> <5386>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+";
+        let content = b"BT /F1 12 Tf 72 720 Td <0001000200030004> Tj ET\n";
+
+        build_valid_pdf(vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 7 0 R >>".to_vec(),
+            b"<< /Type /Font /Subtype /Type0 /BaseFont /TestFont /Encoding /Identity-H /DescendantFonts [5 0 R] /ToUnicode 6 0 R >>".to_vec(),
+            b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /TestFont /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 8 0 R /DW 1000 /W [1 [1000 1000]] >>".to_vec(),
+            [
+                format!("<< /Length {} >>\nstream\n", cmap.len()).into_bytes(),
+                cmap.to_vec(),
+                b"endstream".to_vec(),
+            ]
+            .concat(),
+            [
+                format!("<< /Length {} >>\nstream\n", content.len()).into_bytes(),
+                content.to_vec(),
+                b"endstream".to_vec(),
+            ]
+            .concat(),
+            b"<< /Type /FontDescriptor /FontName /TestFont /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>".to_vec(),
+        ])
+    }
+
+    fn build_valid_pdf(objects: Vec<Vec<u8>>) -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::with_capacity(objects.len());
+
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+            pdf.extend_from_slice(object);
+            if !object.ends_with(b"\n") {
+                pdf.push(b'\n');
+            }
+            pdf.extend_from_slice(b"endobj\n");
+        }
+
+        let xref_offset = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+        pdf.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Root 1 0 R /Size {} >>\nstartxref\n{}\n%%EOF",
+                objects.len() + 1,
+                xref_offset
+            )
+            .as_bytes(),
+        );
+
+        pdf
     }
 
     #[cfg(unix)]
