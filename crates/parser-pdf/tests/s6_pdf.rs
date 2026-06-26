@@ -27,6 +27,58 @@ fn text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
 }
 
 #[test]
+fn utf16be_hex_text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
+    let parser = PdfParser;
+    let input = ParseInput::from_bytes(Some("pdf"), utf16be_hex_text_layer_pdf_bytes());
+
+    let output = parser.parse(input, ResourceBudget::default()).unwrap();
+
+    let expected = "\u{4E2D}\u{6587}\u{7B80}\u{5386}";
+    assert_eq!(output.status(), ParseStatus::TextLayer);
+    assert_eq!(output.document_status(), DocumentStatus::TextExtracted);
+    assert!(output.text().contains(expected));
+    assert_eq!(output.page_count(), Some(1));
+    assert!(!format!("{output:?}").contains(expected));
+}
+
+#[test]
+fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_returns_corrupted_error() {
+    let parser = PdfParser;
+    let error = parser
+        .parse(
+            ParseInput::from_bytes(
+                Some("pdf"),
+                utf16be_hex_text_layer_pdf_with_odd_utf16_length_bytes(),
+            ),
+            ResourceBudget::default(),
+        )
+        .unwrap_err();
+
+    assert_eq!(error.kind(), ParserErrorKind::Corrupted);
+    assert_eq!(
+        error.diagnostic_message(),
+        "pdf utf-16 text run has odd byte length"
+    );
+}
+
+#[test]
+fn utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_returns_corrupted_error() {
+    let parser = PdfParser;
+    let error = parser
+        .parse(
+            ParseInput::from_bytes(
+                Some("pdf"),
+                utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_bytes(),
+            ),
+            ResourceBudget::default(),
+        )
+        .unwrap_err();
+
+    assert_eq!(error.kind(), ParserErrorKind::Corrupted);
+    assert_eq!(error.diagnostic_message(), "pdf utf-16 text run is invalid");
+}
+
+#[test]
 fn scanned_image_pdf_returns_ocr_required_without_running_ocr() {
     let parser = PdfParser;
     let output = parser
@@ -106,6 +158,42 @@ fn text_layer_pdf_bytes() -> &'static [u8] {
 4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
 5 0 obj << /Length 58 >> stream
 BT /F1 12 Tf 72 720 Td (Synthetic PDF Text Layer) Tj ET
+endstream endobj
+%%EOF"
+}
+
+fn utf16be_hex_text_layer_pdf_bytes() -> &'static [u8] {
+    b"%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+5 0 obj << /Length 47 >> stream
+BT /F1 12 Tf 72 720 Td <FEFF4E2D65877B805386> Tj ET
+endstream endobj
+%%EOF"
+}
+
+fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_bytes() -> &'static [u8] {
+    b"%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+5 0 obj << /Length 38 >> stream
+BT /F1 12 Tf 72 720 Td <FEFF4E2D6> Tj ET
+endstream endobj
+%%EOF"
+}
+
+fn utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_bytes() -> &'static [u8] {
+    b"%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+5 0 obj << /Length 43 >> stream
+BT /F1 12 Tf 72 720 Td <FEFFD8000061> Tj ET
 endstream endobj
 %%EOF"
 }

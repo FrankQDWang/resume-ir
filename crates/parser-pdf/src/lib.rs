@@ -198,9 +198,12 @@ fn parse_literal_string(
             b')' => {
                 depth -= 1;
                 if depth == 0 {
-                    return String::from_utf8(output)
-                        .map(|text| Some((text, index + 1)))
-                        .map_err(|_| ParserError::corrupted("pdf text literal is not utf-8"));
+                    return decode_text_run_bytes(
+                        &output,
+                        TextRunEncodingFallback::StrictUtf8,
+                        "pdf text literal is not utf-8",
+                    )
+                    .map(|text| Some((text, index + 1)));
                 }
                 push_text_run_byte(&mut output, b')')?;
             }
@@ -271,10 +274,12 @@ fn parse_hex_string(
                     .chunks(2)
                     .map(|pair| (pair[0] << 4) | pair[1])
                     .collect::<Vec<_>>();
-                return Ok(Some((
-                    String::from_utf8_lossy(&bytes).into_owned(),
-                    index + 1,
-                )));
+                return decode_text_run_bytes(
+                    &bytes,
+                    TextRunEncodingFallback::LossyUtf8,
+                    "pdf text run is not utf-8",
+                )
+                .map(|text| Some((text, index + 1)));
             }
             byte if byte.is_ascii_whitespace() => {}
             byte => {
@@ -303,6 +308,69 @@ fn hex_nibble(byte: u8) -> Option<u8> {
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
+}
+
+#[derive(Clone, Copy)]
+enum TextRunEncodingFallback {
+    StrictUtf8,
+    LossyUtf8,
+}
+
+fn decode_text_run_bytes(
+    bytes: &[u8],
+    fallback: TextRunEncodingFallback,
+    invalid_utf8_message: &'static str,
+) -> Result<String> {
+    if let Some(text) = decode_utf16_with_bom(bytes)? {
+        return Ok(text);
+    }
+
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok(text.to_owned()),
+        Err(_) => match fallback {
+            TextRunEncodingFallback::StrictUtf8 => {
+                Err(ParserError::corrupted(invalid_utf8_message))
+            }
+            TextRunEncodingFallback::LossyUtf8 => Ok(String::from_utf8_lossy(bytes).into_owned()),
+        },
+    }
+}
+
+fn decode_utf16_with_bom(bytes: &[u8]) -> Result<Option<String>> {
+    let Some((&first, rest)) = bytes.split_first() else {
+        return Ok(None);
+    };
+    let Some((&second, payload)) = rest.split_first() else {
+        return Ok(None);
+    };
+    let endianness = match (first, second) {
+        (0xFE, 0xFF) => Utf16Endianness::Big,
+        (0xFF, 0xFE) => Utf16Endianness::Little,
+        _ => return Ok(None),
+    };
+
+    if payload.len() % 2 != 0 {
+        return Err(ParserError::corrupted(
+            "pdf utf-16 text run has odd byte length",
+        ));
+    }
+
+    let code_units = payload
+        .chunks_exact(2)
+        .map(|chunk| match endianness {
+            Utf16Endianness::Big => u16::from_be_bytes([chunk[0], chunk[1]]),
+            Utf16Endianness::Little => u16::from_le_bytes([chunk[0], chunk[1]]),
+        })
+        .collect::<Vec<_>>();
+    String::from_utf16(&code_units)
+        .map(Some)
+        .map_err(|_| ParserError::corrupted("pdf utf-16 text run is invalid"))
+}
+
+#[derive(Clone, Copy)]
+enum Utf16Endianness {
+    Big,
+    Little,
 }
 
 fn has_text_signal(text: &str) -> bool {
