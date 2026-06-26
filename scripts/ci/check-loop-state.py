@@ -53,6 +53,12 @@ def require_string(value: object, expected: str, path: str) -> None:
         fail(f"{path}: expected {expected!r}")
 
 
+def require_issue_ref(value: object, path: str) -> str:
+    if not isinstance(value, str) or not value.startswith("#") or not value[1:].isdigit():
+        fail(f"{path}: expected issue ref like '#123'")
+    return value
+
+
 def validate_runner_contracts(state: dict, active_goal: dict) -> None:
     autonomous = require_mapping(active_goal.get("autonomous_delivery"), "ACTIVE_GOAL.toml.autonomous_delivery")
 
@@ -76,13 +82,28 @@ def validate_runner_contracts(state: dict, active_goal: dict) -> None:
         require_bool(recovery.get(key), True, f"perf/current-loop-state.json.runner_recovery.{key}")
 
     github_ledger = require_mapping(state.get("github_ledger"), "perf/current-loop-state.json.github_ledger")
-    require_string(github_ledger.get("primary_issue"), "#10", "perf/current-loop-state.json.github_ledger.primary_issue")
+    primary_issue = require_issue_ref(
+        github_ledger.get("primary_issue"),
+        "perf/current-loop-state.json.github_ledger.primary_issue",
+    )
     active_prs = github_ledger.get("active_prs")
-    if active_prs != ["#10"]:
-        fail("perf/current-loop-state.json.github_ledger.active_prs: expected ['#10']")
+    if not isinstance(active_prs, list):
+        fail("perf/current-loop-state.json.github_ledger.active_prs: expected list")
+    for index, ref in enumerate(active_prs):
+        require_issue_ref(ref, f"perf/current-loop-state.json.github_ledger.active_prs[{index}]")
     open_blockers = github_ledger.get("open_blockers")
-    if open_blockers != []:
-        fail("perf/current-loop-state.json.github_ledger.open_blockers: expected empty list")
+    if not isinstance(open_blockers, list):
+        fail("perf/current-loop-state.json.github_ledger.open_blockers: expected list")
+    for index, ref in enumerate(open_blockers):
+        require_issue_ref(ref, f"perf/current-loop-state.json.github_ledger.open_blockers[{index}]")
+
+    if state.get("workflow_state") == "blocked_permission":
+        if active_prs != []:
+            fail("perf/current-loop-state.json.github_ledger.active_prs: expected [] while workflow_state=blocked_permission")
+        if not open_blockers:
+            fail("perf/current-loop-state.json.github_ledger.open_blockers: expected non-empty list while workflow_state=blocked_permission")
+        if primary_issue not in open_blockers:
+            fail("perf/current-loop-state.json.github_ledger.primary_issue: expected to appear in open_blockers while workflow_state=blocked_permission")
 
 
 def main() -> int:
