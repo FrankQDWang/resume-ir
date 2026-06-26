@@ -123,6 +123,7 @@ github_issue_write_allowed = true
 github_pr_write_allowed = true
 commit_push_allowed = true
 auto_merge_allowed = true
+branch_cleanup_allowed = true
 direct_main_push_allowed = false
 admin_bypass_allowed = false
 raw_private_data_commit_allowed = false

@@ -78,6 +78,7 @@ def main() -> int:
         "github_pr_write_allowed",
         "commit_push_allowed",
         "auto_merge_allowed",
+        "branch_cleanup_allowed",
     ]:
         require_bool(permissions.get(key), True, f"autonomous_delivery.permissions.{key}")
 
