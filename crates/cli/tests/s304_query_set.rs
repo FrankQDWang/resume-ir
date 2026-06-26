@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use index_fulltext::{FullTextIndex, IndexDocument, IndexSection};
 use meta_store::{
     Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
     FileExtension, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
@@ -277,6 +278,175 @@ fn benchmark_query_set_draft_can_use_explicit_keyword_fallback_for_smoke() {
     remove_dir(&out_dir);
 }
 
+#[test]
+fn benchmark_query_set_draft_from_trace_root_keeps_only_corpus_valid_source_search_queries() {
+    let data_dir = temp_dir("query-set-trace-root-data");
+    let out_dir = temp_dir("query-set-trace-root-out");
+    let trace_root = temp_dir("query-set-trace-root-artifacts");
+    let query_set = out_dir.join("private-query-set.local.jsonl");
+
+    seed_searchable_document_with_mentions_and_text(
+        &data_dir,
+        "alpha-private-resume.pdf",
+        &[],
+        "rust backend shanghai retrieval ranking",
+    );
+    seed_searchable_document_with_mentions_and_text(
+        &data_dir,
+        "beta-private-resume.pdf",
+        &[],
+        "java architect beijing platform search",
+    );
+    seed_fulltext_index(
+        &data_dir,
+        vec![
+            index_document(
+                "alpha-private-resume.pdf",
+                "rust backend shanghai retrieval ranking",
+            ),
+            index_document(
+                "beta-private-resume.pdf",
+                "java architect beijing platform search",
+            ),
+        ],
+    );
+    write_trace_log(
+        &trace_root,
+        "run-trace-valid",
+        &[
+            "[2026-06-05T12:09:20+08:00] | tool_called | round=1 | tool=source_search | rust backend",
+            "[2026-06-05T12:09:21+08:00] | tool_called | round=1 | tool=browser_open | ignore me",
+            "[2026-06-05T12:09:22+08:00] | tool_called | round=1 | tool=source_search | java architect",
+            "[2026-06-05T12:09:23+08:00] | tool_called | round=1 | tool=source_search | unicorn nohit",
+            "[2026-06-05T12:09:24+08:00] | source_plan_created | Runtime source plan created.",
+        ],
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "benchmark-query-set",
+            "draft",
+            "--out",
+            path_str(&query_set),
+            "--trace-root",
+            path_str(&trace_root),
+            "--max-queries",
+            "2",
+            "--min-queries",
+            "2",
+        ])
+        .output()
+        .expect("draft trace-backed private query set");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("query set: written"));
+    assert!(stdout.contains("query source: trace_source_search_v1"));
+    assert!(stdout.contains("candidate queries sampled: "));
+    assert!(stdout.contains("zero-hit queries dropped: "));
+    assert!(stdout.contains("queries: <redacted>"));
+    for forbidden in [
+        path_str(&data_dir),
+        path_str(&out_dir),
+        path_str(&trace_root),
+        "rust backend",
+        "java architect",
+        "unicorn nohit",
+    ] {
+        assert!(!stdout.contains(forbidden), "stdout leaked {forbidden}");
+    }
+
+    let query_set_text = fs::read_to_string(&query_set).unwrap();
+    let lines = query_set_text.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2);
+    let queries = lines
+        .iter()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).unwrap()["query"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(queries, vec!["rust backend", "java architect"]);
+    assert!(!query_set_text.contains("unicorn nohit"));
+
+    remove_dir(&data_dir);
+    remove_dir(&out_dir);
+    remove_dir(&trace_root);
+}
+
+#[test]
+fn benchmark_query_set_draft_from_trace_root_rejects_insufficient_corpus_valid_queries() {
+    let data_dir = temp_dir("query-set-trace-root-insufficient-data");
+    let out_dir = temp_dir("query-set-trace-root-insufficient-out");
+    let trace_root = temp_dir("query-set-trace-root-insufficient-artifacts");
+    let query_set = out_dir.join("private-query-set.local.jsonl");
+
+    seed_searchable_document_with_mentions_and_text(
+        &data_dir,
+        "alpha-private-resume.pdf",
+        &[],
+        "rust backend shanghai retrieval ranking",
+    );
+    seed_fulltext_index(
+        &data_dir,
+        vec![index_document(
+            "alpha-private-resume.pdf",
+            "rust backend shanghai retrieval ranking",
+        )],
+    );
+    write_trace_log(
+        &trace_root,
+        "run-trace-insufficient",
+        &["[2026-06-05T12:09:23+08:00] | tool_called | round=1 | tool=source_search | unicorn nohit"],
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "benchmark-query-set",
+            "draft",
+            "--out",
+            path_str(&query_set),
+            "--trace-root",
+            path_str(&trace_root),
+            "--max-queries",
+            "1",
+            "--min-queries",
+            "1",
+        ])
+        .output()
+        .expect("reject insufficient trace-backed query set");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("query set blocked: not enough corpus-valid trace queries"));
+    for forbidden in [
+        path_str(&data_dir),
+        path_str(&out_dir),
+        path_str(&trace_root),
+        "unicorn nohit",
+    ] {
+        assert!(!stderr.contains(forbidden), "stderr leaked {forbidden}");
+    }
+    assert!(!query_set.exists());
+
+    remove_dir(&data_dir);
+    remove_dir(&out_dir);
+    remove_dir(&trace_root);
+}
+
 fn seed_searchable_document_with_mentions(
     data_dir: &Path,
     file_name: &str,
@@ -373,6 +543,38 @@ struct SeedMention {
     raw_value: &'static str,
     normalized_value: &'static str,
     confidence: f32,
+}
+
+fn seed_fulltext_index(data_dir: &Path, documents: Vec<IndexDocument>) {
+    let index = FullTextIndex::open_or_create(&data_dir.join("search-index")).unwrap();
+    index.replace_documents(documents).unwrap();
+    index.commit().unwrap();
+}
+
+fn index_document(file_name: &str, text: &str) -> IndexDocument {
+    IndexDocument {
+        doc_id: DocumentId::from_non_secret_parts(&["s304", file_name]).to_string(),
+        version_id: ResumeVersionId::from_non_secret_parts(&["s304", file_name, "version"])
+            .to_string(),
+        file_name: file_name.to_string(),
+        clean_text: text.to_string(),
+        sections: vec![IndexSection {
+            section_type: "summary".to_string(),
+            text: text.to_string(),
+        }],
+        is_deleted: false,
+    }
+}
+
+fn write_trace_log(trace_root: &Path, run_id: &str, lines: &[&str]) {
+    let runtime_dir = trace_root.join(run_id).join("runtime");
+    fs::create_dir_all(&runtime_dir).unwrap();
+    let content = if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    };
+    fs::write(runtime_dir.join("trace.log"), content).unwrap();
 }
 
 fn temp_dir(label: &str) -> PathBuf {

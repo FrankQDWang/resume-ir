@@ -190,6 +190,23 @@ This generic generation strategy is for broad local query seed sets only. It doe
 4. Do not read generic query fields, terms arrays, query history, search attempts, term pools, roles, fingerprints, buckets, local fields, or synthetic edge queries.
 5. Output local-only frozen query set plus redacted summary locked by `query_set_sha256`.
 
+Current local drafting path:
+
+```bash
+resume-cli --data-dir <local-data-dir> benchmark-query-set draft \
+  --out <local-evidence-dir>/private-query-set.local.jsonl \
+  --trace-root "$RESUME_IR_QUERY_ARTIFACT_ROOT" \
+  --max-queries 500 \
+  --min-queries 500
+```
+
+This local draft path must:
+
+1. keep only queries extracted from `tool_called` + `tool=source_search` trace lines,
+2. drop zero-hit queries after validating them against the current local searchable corpus,
+3. replace dropped samples only with other valid trace-derived queries,
+4. keep raw query text inside the local JSONL only, never in stdout/stderr, git, or GitHub.
+
 ## 7. Benchmark 输出
 
 每个 bucket 必须输出：

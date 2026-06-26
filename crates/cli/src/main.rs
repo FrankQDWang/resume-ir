@@ -12467,12 +12467,17 @@ struct BenchmarkQuerySetDraftArgs {
     max_queries: usize,
     min_queries: usize,
     allow_keyword_fallback: bool,
+    trace_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct DraftedLocalPrivateQueries {
+struct DraftedPrivateQueries {
     queries: Vec<String>,
     used_keyword_fallback: bool,
+    query_source: &'static str,
+    candidate_queries_sampled: usize,
+    zero_hit_queries_dropped: usize,
+    insufficient_query_message: &'static str,
 }
 
 fn benchmark_query_set_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -12489,13 +12494,15 @@ fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result
     let args = parse_benchmark_query_set_draft_args(args)?;
     let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
     store.run_migrations().map_err(CliError::store)?;
-    let drafted =
-        draft_local_private_queries(&store, args.max_queries, args.allow_keyword_fallback)?;
+    let drafted = match args.trace_root.as_deref() {
+        Some(trace_root) => {
+            draft_trace_backed_private_queries(data_dir, &store, trace_root, args.max_queries)?
+        }
+        None => draft_local_private_queries(&store, args.max_queries, args.allow_keyword_fallback)?,
+    };
     let queries = drafted.queries;
     if queries.len() < args.min_queries {
-        return Err(CliError::user(
-            "query set blocked: not enough local field queries",
-        ));
+        return Err(CliError::user(drafted.insufficient_query_message));
     }
 
     if let Some(parent) = args.out.parent() {
@@ -12523,6 +12530,7 @@ fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result
     println!("query set: written");
     println!("schema: {QUERY_SET_SCHEMA_VERSION}");
     println!("privacy boundary: local_only_private_query_set");
+    println!("query source: {}", drafted.query_source);
     println!("queries: {}", queries.len());
     println!(
         "query fallback: {}",
@@ -12532,6 +12540,16 @@ fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result
             "none"
         }
     );
+    if drafted.query_source == "trace_source_search_v1" {
+        println!(
+            "candidate queries sampled: {}",
+            drafted.candidate_queries_sampled
+        );
+        println!(
+            "zero-hit queries dropped: {}",
+            drafted.zero_hit_queries_dropped
+        );
+    }
     println!("query set sha256: {query_set_sha256}");
     println!("queries: <redacted>");
     println!("sample ids: <redacted>");
@@ -12546,6 +12564,7 @@ fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuer
     let mut min_queries = 1_usize;
     let mut min_queries_seen = false;
     let mut allow_keyword_fallback = false;
+    let mut trace_root = None;
     let mut index = 0_usize;
     while index < args.len() {
         match args[index].as_str() {
@@ -12576,10 +12595,19 @@ fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuer
                 allow_keyword_fallback = true;
                 index += 1;
             }
+            "--trace-root" => {
+                if trace_root.is_some() {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                trace_root = Some(take_benchmark_query_set_path(args, &mut index)?);
+            }
             _ => return Err(CliError::usage(benchmark_query_set_usage())),
         }
     }
     if min_queries > max_queries {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    }
+    if trace_root.is_some() && allow_keyword_fallback {
         return Err(CliError::usage(benchmark_query_set_usage()));
     }
     Ok(BenchmarkQuerySetDraftArgs {
@@ -12587,6 +12615,7 @@ fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuer
         max_queries,
         min_queries,
         allow_keyword_fallback,
+        trace_root,
     })
 }
 
@@ -12615,14 +12644,14 @@ fn take_benchmark_query_set_positive_usize(args: &[String], index: &mut usize) -
 }
 
 fn benchmark_query_set_usage() -> &'static str {
-    "usage: resume-cli benchmark-query-set draft --out <path> [--max-queries <count>] [--min-queries <count>] [--allow-keyword-fallback]"
+    "usage: resume-cli benchmark-query-set draft --out <path> [--max-queries <count>] [--min-queries <count>] [--allow-keyword-fallback] [--trace-root <path>]"
 }
 
 fn draft_local_private_queries(
     store: &MetaStore,
     max_queries: usize,
     allow_keyword_fallback: bool,
-) -> Result<DraftedLocalPrivateQueries> {
+) -> Result<DraftedPrivateQueries> {
     let mut field_queries = BTreeSet::<String>::new();
     let candidate_budget = max_queries.saturating_mul(10).max(max_queries);
     let document_ids = store.searchable_document_ids().map_err(CliError::store)?;
@@ -12676,10 +12705,214 @@ fn draft_local_private_queries(
             }
         }
     }
-    Ok(DraftedLocalPrivateQueries {
+    Ok(DraftedPrivateQueries {
         queries,
         used_keyword_fallback,
+        query_source: "local_field",
+        candidate_queries_sampled: candidate_budget,
+        zero_hit_queries_dropped: 0,
+        insufficient_query_message: "query set blocked: not enough local field queries",
     })
+}
+
+fn draft_trace_backed_private_queries(
+    data_dir: &Path,
+    store: &MetaStore,
+    trace_root: &Path,
+    max_queries: usize,
+) -> Result<DraftedPrivateQueries> {
+    if !trace_root.is_dir() {
+        return Err(CliError::user(
+            "query set blocked: trace root is unavailable",
+        ));
+    }
+    let Some(index) =
+        FullTextIndex::open_active(&data_dir.join("search-index")).map_err(CliError::fulltext)?
+    else {
+        return Err(CliError::user(
+            "query set blocked: local search index is unavailable",
+        ));
+    };
+
+    let mut trace_paths = Vec::new();
+    collect_runtime_trace_logs(trace_root, &mut trace_paths)?;
+    if trace_paths.is_empty() {
+        return Ok(DraftedPrivateQueries {
+            queries: Vec::new(),
+            used_keyword_fallback: false,
+            query_source: "trace_source_search_v1",
+            candidate_queries_sampled: 0,
+            zero_hit_queries_dropped: 0,
+            insufficient_query_message: "query set blocked: not enough corpus-valid trace queries",
+        });
+    }
+
+    let mut queries = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut candidate_queries_sampled = 0_usize;
+    let mut zero_hit_queries_dropped = 0_usize;
+
+    for trace_path in trace_paths {
+        let trace_file = fs::File::open(&trace_path)
+            .map_err(|_| CliError::user("query set blocked: trace log is unavailable"))?;
+        let reader = BufReader::new(trace_file);
+        for line in reader.lines() {
+            let line =
+                line.map_err(|_| CliError::user("query set blocked: trace log is unreadable"))?;
+            let Some(query) = extract_source_search_trace_query(&line) else {
+                continue;
+            };
+            let Some(query) = normalize_trace_query_value(&query) else {
+                continue;
+            };
+            if !seen.insert(query.clone()) {
+                continue;
+            }
+            candidate_queries_sampled += 1;
+            if trace_query_has_local_hit(store, &index, &query)? {
+                queries.push(query);
+                if queries.len() >= max_queries {
+                    return Ok(DraftedPrivateQueries {
+                        queries,
+                        used_keyword_fallback: false,
+                        query_source: "trace_source_search_v1",
+                        candidate_queries_sampled,
+                        zero_hit_queries_dropped,
+                        insufficient_query_message:
+                            "query set blocked: not enough corpus-valid trace queries",
+                    });
+                }
+            } else {
+                zero_hit_queries_dropped += 1;
+            }
+        }
+    }
+
+    Ok(DraftedPrivateQueries {
+        queries,
+        used_keyword_fallback: false,
+        query_source: "trace_source_search_v1",
+        candidate_queries_sampled,
+        zero_hit_queries_dropped,
+        insufficient_query_message: "query set blocked: not enough corpus-valid trace queries",
+    })
+}
+
+fn collect_runtime_trace_logs(root: &Path, trace_paths: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = fs::read_dir(root)
+        .map_err(|_| CliError::user("query set blocked: trace root is unavailable"))?;
+    let mut child_dirs = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|_| CliError::user("query set blocked: trace root is unavailable"))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|_| CliError::user("query set blocked: trace root is unavailable"))?;
+        if file_type.is_dir() {
+            child_dirs.push(path);
+            continue;
+        }
+        if file_type.is_file()
+            && path.file_name().and_then(|name| name.to_str()) == Some("trace.log")
+            && path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str())
+                == Some("runtime")
+        {
+            trace_paths.push(path);
+        }
+    }
+    child_dirs.sort();
+    for child_dir in child_dirs {
+        collect_runtime_trace_logs(&child_dir, trace_paths)?;
+    }
+    trace_paths.sort();
+    Ok(())
+}
+
+fn extract_source_search_trace_query(line: &str) -> Option<String> {
+    let mut segments = line.split(" | ");
+    let timestamp = segments.next()?;
+    if !timestamp.starts_with('[') {
+        return None;
+    }
+    if segments.next()? != "tool_called" {
+        return None;
+    }
+    let remaining = segments.collect::<Vec<_>>();
+    let tool_index = remaining
+        .iter()
+        .position(|segment| *segment == "tool=source_search")?;
+    let mut summary_index = tool_index + 1;
+    while summary_index < remaining.len()
+        && is_source_search_trace_metadata_segment(remaining[summary_index])
+    {
+        summary_index += 1;
+    }
+    if summary_index >= remaining.len() {
+        return None;
+    }
+    Some(remaining[summary_index..].join(" | "))
+}
+
+fn is_source_search_trace_metadata_segment(segment: &str) -> bool {
+    matches!(
+        segment.split_once('='),
+        Some(("call", _))
+            | Some(("status", _))
+            | Some(("model", _))
+            | Some(("latency", _))
+            | Some(("stop_reason", _))
+    )
+}
+
+fn normalize_trace_query_value(value: &str) -> Option<String> {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = normalized.trim();
+    if normalized.is_empty()
+        || normalized.len() > 4096
+        || normalized.split_whitespace().count() > 16
+        || normalized.contains('@')
+        || normalized.contains('\\')
+        || normalized.contains('/')
+        || normalized.contains("://")
+        || contains_sensitive_digit_run(normalized)
+    {
+        return None;
+    }
+    Some(normalized.to_string())
+}
+
+fn contains_sensitive_digit_run(value: &str) -> bool {
+    let mut digit_run = 0_usize;
+    for ch in value.chars() {
+        if ch.is_ascii_digit() {
+            digit_run += 1;
+            if digit_run >= 6 {
+                return true;
+            }
+        } else {
+            digit_run = 0;
+        }
+    }
+    false
+}
+
+fn trace_query_has_local_hit(
+    store: &MetaStore,
+    index: &FullTextIndex,
+    query: &str,
+) -> Result<bool> {
+    let plan = match plan_search(query, 1) {
+        Ok(plan) => plan,
+        Err(_) => return Ok(false),
+    };
+    let hits = index
+        .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
+        .map_err(CliError::fulltext)?;
+    Ok(!visible_hits(store, hits, 1)?.is_empty())
 }
 
 fn add_query_candidates_for_mentions(
