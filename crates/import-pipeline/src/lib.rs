@@ -1583,6 +1583,51 @@ mod tests {
         assert!(!format!("{scope:?}").contains(root.to_str().unwrap()));
     }
 
+    #[test]
+    fn import_root_keeps_utf16be_literal_pdf_text_layer_searchable_without_ocr() {
+        let temp = TestDir::new("import-pipeline-utf16be-literal-pdf");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("utf16-literal-resume.pdf"),
+            utf16be_literal_text_layer_pdf_bytes(),
+        )
+        .unwrap();
+
+        let store = MetaStore::open_in_memory().unwrap();
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_150);
+        let task = import_task("utf16be-literal-pdf-import", root.to_str().unwrap(), now);
+        store.insert_import_task(&task).unwrap();
+
+        let summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+
+        let expected = "\u{4E2D}\u{6587}\u{7B80}\u{5386}";
+        assert_eq!(summary.files_discovered, 1);
+        assert_eq!(summary.searchable_documents, 1);
+        assert_eq!(summary.ocr_required_documents, 0);
+        assert_eq!(summary.failed_documents, 0);
+        let document = store.visible_documents().unwrap().remove(0);
+        let versions = store.resume_versions_for_document(&document.id).unwrap();
+        assert_eq!(versions.len(), 1);
+        assert!(versions[0]
+            .clean_text
+            .as_deref()
+            .unwrap()
+            .contains(expected));
+        assert!(!format!("{summary:?}").contains(root.to_str().unwrap()));
+    }
+
     #[cfg(unix)]
     #[test]
     fn import_root_parses_legacy_doc_with_local_converter_without_path_leak() {
@@ -1646,6 +1691,24 @@ mod tests {
     fn synthetic_ole_doc() -> Vec<u8> {
         let mut bytes = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1".to_vec();
         bytes.extend_from_slice(b"SYNTHETIC PRIVATE LEGACY DOC BODY");
+        bytes
+    }
+
+    fn utf16be_literal_text_layer_pdf_bytes() -> Vec<u8> {
+        let mut bytes = b"%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+5 0 obj << /Length 47 >> stream
+BT /F1 12 Tf 72 720 Td ("
+            .to_vec();
+        bytes.extend_from_slice(b"\xFE\xFF\x4E\x2D\x65\x87\x7B\x80\x53\x86");
+        bytes.extend_from_slice(
+            b") Tj ET
+endstream endobj
+%%EOF",
+        );
         bytes
     }
 
