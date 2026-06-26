@@ -73,5 +73,68 @@ jobs:
       - name: Benchmark smoke
         run: ./scripts/ci/check-benchmark-smoke.sh
 
-      - name: Public repository guard
+  contract_check:
+    name: contract-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run contract check
+        run: python3 scripts/ci/check-performance-contracts.py
+
+  privacy_guard:
+    name: privacy-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run privacy guard
+        run: python3 scripts/ci/check-private-evidence-redaction.py
+
+  pr_budget:
+    name: pr-budget
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run PR budget check
+        run: python3 scripts/ci/check-pr-budget.py
+
+  benchmark_lane_claims:
+    name: benchmark-lane-claims
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run benchmark lane claims check
+        run: python3 scripts/ci/check-benchmark-lanes.py
+
+  gate_integrity:
+    name: gate-integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run gate integrity check
+        run: python3 scripts/ci/check-gate-integrity.py
+
+  public_repo_guard:
+    name: public-repo-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run public repository guard
         run: ./scripts/ci/guard-public-repo.sh

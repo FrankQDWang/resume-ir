@@ -1,0 +1,445 @@
+schema_version = "resume-ir.perf.acceptance-matrix.v2"
+goal_id = "resume-ir.performance-gui-loop.2026-06"
+date = "2026-06-22"
+
+[evidence_lanes.smoke]
+data = "synthetic_or_public_tiny"
+may_be_committed = true
+purpose = "fast_regression_signal"
+cannot_claim = ["w1_private_baseline", "million_scale_readiness", "gui_manual_complete", "goal_complete"]
+
+[evidence_lanes.w0_docs]
+data = "public_docs_and_machine_contracts"
+may_be_committed = true
+purpose = "docs_pr_review_gate"
+required_for_current_pr = true
+required_commands = [
+  "python3 scripts/ci/check-performance-contracts.py",
+  "git diff --check -- GOAL.md MANIFEST.md ACTIVE_GOAL.toml docs/superpowers 03_next_goal_高性能本地检索GUI闭环 perf scripts/ci/check-performance-contracts.py .github/workflows/pr.yml",
+  "./scripts/ci/guard-public-repo.sh",
+]
+
+[evidence_lanes.w1_private]
+data = "local_private_resumes_and_local_private_query_set"
+may_be_committed = false
+committed_summary = "hashes_counts_percentiles_resource_aggregates_and_redacted_contract_results_only"
+purpose = "local_real_workload_performance_gate"
+
+[evidence_lanes.soak_fault]
+data = "local_controlled_fault_runs"
+may_be_committed = "redacted_aggregate_only"
+purpose = "resident_daemon_recovery_queue_pressure_and_fault_gate"
+
+[evidence_lanes.gui_manual]
+data = "local_gui_and_versioned_daemon_contract"
+may_be_committed = "redacted_checklist_only"
+purpose = "manual_and_codex_closed_loop_gate"
+
+[gui_stack]
+default_stack = "tauri_react_vite_tailwind_typescript"
+production_next_server_allowed = false
+visual_reference_role = "visual_baseline_not_functional_clone"
+pixel_level_visual_similarity_required = true
+toolkit_bakeoff_requires_blocker_issue = true
+
+[platform_lanes]
+allowed = ["macos_m4_discovery", "windows_weak_host_validation", "cross_os_ci_smoke"]
+primary_discovery = "macos_m4_discovery"
+weak_host_validation = "windows_weak_host_validation"
+ci_smoke = "cross_os_ci_smoke"
+macos_m4_can_close_windows_gate = false
+cross_os_ci_smoke_can_replace_weak_host_perf = false
+
+[platform_gate_requirements]
+l1_platform_lifecycle_requires_windows_weak_host = true
+l2_parallelism_requires_windows_weak_host = true
+gui_packaging_requires_windows_weak_host = true
+d100k_requires_windows_weak_host = true
+cross_os_passed_requires_windows_weak_host = true
+goal_complete_requires_windows_weak_host = true
+
+[gui_visual_redlines]
+left_rail_required = true
+top_command_bar_required = true
+center_workspace_required = true
+detail_panel_or_side_sheet_required = true
+dense_result_list_required = true
+stable_row_or_card_dimensions_required = true
+lucide_style_icon_vocabulary_required = true
+tailwind_token_inventory_required = true
+reference_screenshot_inventory_required = true
+functional_clone_required = false
+
+[w0_docs_redlines]
+docs_only_or_contract_validator_only = true
+machine_contracts_parse = true
+performance_contract_validator_passes = true
+positive_fixtures_pass = true
+negative_fixtures_fail = true
+review_ledger_has_status_fields = true
+active_goal_toml_exists = true
+private_data_in_git = false
+
+[query_semantics]
+version = "simple_text_required_all_terms_v1"
+max_query_bytes = 4096
+max_terms = 16
+max_term_bytes = 256
+unicode_normalization = "NFKC"
+whitespace = "unicode_whitespace"
+duplicate_terms = "dedupe_after_normalization"
+unknown_or_invalid_term = "fail_or_explain_never_silently_drop"
+default_stopword_synonym_stemming_typo_semantic_expansion = false
+field_boolean_range_boost_negative_grammar_default = false
+analyzer_version_required = true
+
+required_query_buckets = [
+  "single_term",
+  "and_2",
+  "and_3_5",
+  "and_6_16",
+  "field_filter",
+  "hybrid",
+  "semantic",
+  "extreme",
+]
+
+[query_bucket_min_counts]
+single_term = 50
+and_2 = 75
+and_3_5 = 125
+and_6_16 = 50
+field_filter = 75
+hybrid = 75
+semantic = 25
+extreme = 25
+
+[scale_gates.D10K_private_calibration]
+purpose = "first real private calibration and correctness baseline"
+min_document_count = 10000
+min_searchable_document_count = 8000
+min_query_count = 500
+min_request_sample_count = 5000
+min_samples_per_bucket = 500
+may_claim_goal_complete = false
+hybrid_p95_ms = 250
+
+[scale_gates.D100K_weak_host]
+purpose = "weak-machine throughput memory and degradation gate"
+min_document_count = 100000
+min_searchable_document_count = 90000
+min_query_count = 500
+min_request_sample_count = 10000
+min_samples_per_bucket = 1000
+may_claim_goal_complete = false
+hybrid_p95_ms = 225
+
+[scale_gates.D1M_scale]
+purpose = "final million-scale product goal"
+min_document_count = 1000000
+min_searchable_document_count = 900000
+min_query_count = 500
+min_request_sample_count = 25000
+min_samples_per_bucket = 2000
+may_claim_goal_complete = true
+hybrid_p95_ms = 200
+
+[runner_redlines]
+resident_daemon_required = true
+spawn_per_query = false
+persistent_connection_required = true
+raw_query_stream_local_only = true
+
+[latency_p95_ms.D10K_private_calibration]
+single_term = 120
+and_2 = 140
+and_3_5 = 150
+and_6_16 = 200
+field_filter = 180
+hybrid = 250
+semantic = 500
+extreme = 500
+
+[latency_p99_ms.D10K_private_calibration]
+single_term = 240
+and_2 = 280
+and_3_5 = 300
+and_6_16 = 400
+field_filter = 350
+hybrid = 500
+semantic = 1000
+extreme = 1000
+
+[latency_p95_ms.D100K_weak_host]
+single_term = 120
+and_2 = 140
+and_3_5 = 150
+and_6_16 = 190
+field_filter = 170
+hybrid = 225
+semantic = 450
+extreme = 500
+
+[latency_p99_ms.D100K_weak_host]
+single_term = 240
+and_2 = 280
+and_3_5 = 300
+and_6_16 = 380
+field_filter = 340
+hybrid = 450
+semantic = 900
+extreme = 1000
+
+[latency_p95_ms.D1M_scale]
+single_term = 100
+and_2 = 120
+and_3_5 = 140
+and_6_16 = 180
+field_filter = 160
+hybrid = 200
+semantic = 400
+extreme = 500
+
+[latency_p99_ms.D1M_scale]
+single_term = 220
+and_2 = 250
+and_3_5 = 280
+and_6_16 = 360
+field_filter = 320
+hybrid = 400
+semantic = 800
+extreme = 1000
+
+[stage_p95_ms]
+query_parse = 5
+prefilter = 20
+bm25 = 80
+ann = 180
+fusion = 15
+bulk_hydrate = 60
+snippet = 60
+
+[import_redlines]
+first_file_searchable_p95_ms = 2000
+first_file_searchable_p99_ms = 5000
+directory_ttf100_ms = 10000
+all_volume_ttf100_ms = 20000
+ttf1000_ms = 60000
+single_file_modify_visible_p95_ms = 2000
+single_file_modify_visible_p99_ms = 5000
+rename_parse_count = 0
+rename_body_rewrite_count = 0
+delete_invisible_p95_ms = 2000
+burst_100_files_converged_ms = 10000
+zero_change_content_open_count = 0
+zero_change_parse_count = 0
+zero_change_index_mutation_count = 0
+daemon_private_or_anonymous_peak_mb = 256
+first_import_private_or_anonymous_peak_mb = 768
+content_bytes_read_must_report = true
+docs_per_second_must_report = true
+mib_per_second_must_report = true
+scan_complete_ms_must_report = true
+
+[incremental_redlines.zero_change]
+max_reparse_count = 0
+max_full_rebuilds = 0
+max_changed_manifest_rows = 0
+max_content_open_count = 0
+max_parse_count = 0
+max_index_mutation_count = 0
+must_report_elapsed_ms = true
+
+[incremental_redlines.small_churn]
+churn_percentages = [1, 5, 10]
+max_rebuild_scope = "changed_files_plus_dirty_subtree_only"
+full_rebuild_allowed = false
+
+[profiling_redlines]
+release_build_required = true
+warmup_seconds_min = 30
+repetitions_min = 5
+open_loop_arrival_rate_required = true
+closed_loop_service_time_lane_required = true
+capacity_points_required = [30, 70, 100, 120]
+coordinated_omission_correction_required = true
+observability_overhead_pct_max = 3
+profiler_capture_required_for_w1 = true
+reprofile_after_optimization_required = true
+
+[optimization_layers]
+allowed = ["L1", "L2", "L3", "L4"]
+require_single_primary_layer = true
+allow_affected_layers = true
+l0_is_precondition_not_layer = true
+algorithm_index_choice_layer = "L1"
+data_quality_workload_representativeness_layer = "L0"
+
+[optimization_layer_redlines]
+missing_baseline_blocks_optimization = true
+missing_profile_blocks_optimization = true
+missing_hypothesis_blocks_optimization = true
+missing_expected_delta_blocks_optimization = true
+missing_rollback_condition_blocks_optimization = true
+missing_negative_controls_blocks_optimization = true
+lower_layer_cannot_close_higher_layer_blocker = true
+hand_written_simd_requires_scope_exception = true
+
+[governor_profiles.H0_Eco]
+content_read_concurrency = 1
+parser_concurrency = 1
+ocr_vector_concurrency = 0
+writer_heap_mb = 64
+agent_concurrency = 2
+max_private_or_anonymous_mb = 256
+
+[governor_profiles.H1_Balanced]
+content_read_concurrency = 2
+parser_concurrency = 4
+ocr_vector_concurrency = 1
+writer_heap_mb = 128
+agent_concurrency = 8
+max_private_or_anonymous_mb = 512
+
+[governor_profiles.H2_Aggressive]
+content_read_concurrency = 4
+parser_concurrency = 12
+ocr_vector_concurrency = 4
+writer_heap_mb = 256
+agent_concurrency = 16
+max_private_or_anonymous_mb = 1024
+
+[governor_redlines]
+sample_window_seconds = 10
+sustained_windows_to_degrade = 3
+sustained_windows_to_recover = 6
+min_dwell_seconds = 60
+interactive_p95_ms_degrade = 200
+interactive_p95_ms_pause_background = 400
+queue_delay_ms_overload = 200
+major_faults_per_second_degrade = 100
+fsync_p95_ms_degrade = 100
+battery_percent_energy_saver = 20
+fast_path_deadline_risk_pause_ms = 50
+rss_budget_uses_private_or_anonymous_bytes = true
+file_backed_mmap_tracked_separately = true
+
+[ipc_redlines]
+max_request_bytes = 65536
+max_batch_queries = 64
+max_in_flight_per_connection = 8
+max_in_flight_per_client = 16
+interactive_queue_capacity = 128
+codex_validation_queue_capacity = 64
+benchmark_queue_capacity = 1
+background_queue_capacity = 32
+interactive_execution_permits = 4
+codex_validation_execution_permits = 2
+benchmark_execution_permits = 1
+background_execution_permits = 1
+cancel_ack_deadline_ms = 200
+deadline_includes_queue_execute_serialize = true
+persistent_connection_required = true
+framing_version = "resume-ir.ipc-framing.v1"
+agent_capacity_points_required = [70, 100, 120]
+gui_starvation_allowed = false
+queue_bounded_required = true
+agent_default_include_snippet = false
+
+[gui_redlines]
+representative_rows = 100000
+visible_rows_min = 20
+visible_rows_max = 60
+overscan_max_visible_multiplier = 2
+scroll_update_hz_min = 10
+interactive_search_qps_min = 10
+idle_cpu_pct_max = 5
+rss_mb_max = 512
+cold_start_ms_max = 3000
+input_to_paint_p95_ms = 100
+frame_time_p95_ms = 16.7
+frame_time_p99_ms = 33.4
+scroll_dropped_frame_pct_max = 1
+keyboard_access_required = true
+contrast_ratio_min = 4.5
+touch_target_px_min = 44
+versioned_ipc_only = true
+
+[soak_fault_redlines]
+duration_minutes_min = 120
+cancel_recovery_required = true
+overload_recovery_required = true
+daemon_restart_recovery_required = true
+journal_gap_reconciliation_required = true
+disk_space_low_required = true
+file_lock_required = true
+snapshot_corrupt_required = true
+
+[completion]
+requires_w0_docs = true
+requires_d10k_private_calibration = true
+requires_d100k_weak_host = true
+requires_d1m_scale = true
+requires_soak_fault = true
+requires_gui_manual = true
+requires_no_open_review_blockers = true
+requires_all_negative_contract_fixtures_fail = true
+requires_all_autonomous_delivery_lanes = true
+goal_complete_requires = [
+  "w0_docs",
+  "d10k_private_calibration",
+  "d100k_weak_host",
+  "d1m_scale",
+  "soak_fault",
+  "gui_manual",
+  "first_searchable",
+  "full_import_ocr_backlog",
+  "query_hot_path",
+  "agent_query_replay",
+  "repeat_amplification_control",
+]
+d1m_scale_alone_claims_goal_complete = false
+task6_guard_must_use_goal_complete_requires = true
+required_autonomous_delivery_lanes = [
+  "first_searchable",
+  "full_import_ocr_backlog",
+  "query_hot_path",
+  "agent_query_replay",
+  "repeat_amplification_control",
+]
+
+[claim_tokens]
+canonical_case = "lower_snake_case"
+reject_non_canonical_case = true
+
+[autonomous_delivery_lanes.first_searchable]
+may_claim = ["first_searchable_latency", "initial_searchable_count"]
+cannot_claim = ["ocr_completion_performance", "goal_complete"]
+
+[autonomous_delivery_lanes.full_import_ocr_backlog]
+may_claim = ["ocr_queue_throughput", "ocr_failure_recovery", "background_scheduling"]
+cannot_claim = ["query_p95_success", "goal_complete"]
+
+[autonomous_delivery_lanes.query_hot_path]
+may_claim = ["hot_index_latency", "stage_latency", "resident_daemon_performance"]
+cannot_claim = ["ocr_completion_performance", "human_search_quality"]
+
+[autonomous_delivery_lanes.agent_query_replay]
+may_claim = [
+  "real_agent_workload_latency",
+  "real_agent_query_parser_compatibility",
+  "intersection_query_behavior",
+  "zero_result_regression",
+  "duplicate_result_regression",
+  "top_k_stability_under_agent_queries",
+]
+cannot_claim = [
+  "human_search_quality",
+  "full_resume_relevance_quality",
+  "d1m_real_distribution_quality",
+  "ocr_completion_performance",
+]
+
+[autonomous_delivery_lanes.repeat_amplification_control]
+may_claim = ["pathology_only"]
+cannot_claim = ["real_distribution_quality", "goal_complete"]

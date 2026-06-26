@@ -1,6 +1,6 @@
 # MANIFEST
 
-生成时间：2026-05-30
+生成时间：2026-06-22
 
 文件清单：
 
@@ -24,4 +24,38 @@
 - `02_execution_plan_执行方案/07_里程碑风险与取舍.md`
 - `02_execution_plan_执行方案/08_依赖许可与参考资料.md`
 - `02_execution_plan_执行方案/09_一页版执行清单.md`
+- `03_next_goal_高性能本地检索GUI闭环/00_阅读顺序.md`
+- `03_next_goal_高性能本地检索GUI闭环/01_目标边界与成功标准.md`
+- `03_next_goal_高性能本地检索GUI闭环/02_系统架构与模块边界.md`
+- `03_next_goal_高性能本地检索GUI闭环/03_数据模型与存储协议.md`
+- `03_next_goal_高性能本地检索GUI闭环/04_数据流与状态机.md`
+- `03_next_goal_高性能本地检索GUI闭环/05_Query_Benchmark与真实Query种子.md`
+- `03_next_goal_高性能本地检索GUI闭环/06_Daemon_IPC与Diagnostics契约.md`
+- `03_next_goal_高性能本地检索GUI闭环/07_GUI与手工Codex闭环.md`
+- `03_next_goal_高性能本地检索GUI闭环/08_失败模式与恢复策略.md`
+- `03_next_goal_高性能本地检索GUI闭环/09_安全隐私与本地证据边界.md`
+- `03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md`
+- `03_next_goal_高性能本地检索GUI闭环/11_一页版目标图.md`
+- `03_next_goal_高性能本地检索GUI闭环/12_Review问题映射与修复责任.md`
+- `03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md`
+- `03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md`
+- `03_next_goal_高性能本地检索GUI闭环/15_性能观测与Profiling工具链.md`
+- `03_next_goal_高性能本地检索GUI闭环/16_跨平台全盘发现与增量Journal契约.md`
+- `03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md`
+- `docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md`
+- `docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md`
+- `.github/workflows/pr.yml`
+- `ACTIVE_GOAL.toml`
+- `perf/README.md`
+- `perf/acceptance-matrix.toml`
+- `perf/loop-state.schema.json`
+- `perf/experiment-report.schema.json`
+- `perf/current-loop-state.json`
+- `perf/fixtures/valid/w0-docs-report.json`
+- `perf/fixtures/valid/w1-d1m-goal-report.json`
+- `perf/fixtures/valid/loop-evidence-review.json`
+- `perf/fixtures/invalid/empty-w1-report.json`
+- `perf/fixtures/invalid/d10k-claims-goal-complete.json`
+- `perf/fixtures/invalid/loop-goal-complete-without-pass.json`
+- `scripts/ci/check-performance-contracts.py`
 - `GOAL.md`

@@ -1,0 +1,346 @@
+schema_version = "resume-ir.active-goal.v1"
+goal_id = "resume-ir.performance-gui-loop.2026-06"
+status = "contract_foundation_review_required"
+date = "2026-06-25"
+
+[authority]
+root_goal = "GOAL.md"
+active_goal_docs_root = "03_next_goal_高性能本地检索GUI闭环"
+spec = "docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md"
+plan = "docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md"
+review_ledger = "03_next_goal_高性能本地检索GUI闭环/12_Review问题映射与修复责任.md"
+loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md"
+acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
+
+[scope.current_pr]
+docs_only = false
+contract_change_allowed = true
+production_code_allowed = false
+private_benchmark_allowed = false
+scope_exception = true
+scope_exception_reason = "PR #10 is the contract-foundation repair bundle that predates the autonomous PR budget; it must not be used as a production implementation precedent."
+scope_exception_auto_merge_allowed = false
+allowed_paths = [
+  "AGENTS.md",
+  "GOAL.md",
+  "MANIFEST.md",
+  "ACTIVE_GOAL.toml",
+  ".github/workflows/pr.yml",
+  ".github/PULL_REQUEST_TEMPLATE.md",
+  ".github/ISSUE_TEMPLATE/",
+  "03_next_goal_高性能本地检索GUI闭环/",
+  "docs/superpowers/",
+  "perf/",
+  "scripts/ci/check-performance-contracts.py",
+  "scripts/ci/check-autonomous-goal.py",
+  "scripts/ci/check-loop-state.py",
+  "scripts/ci/check-experiment-report.py",
+  "scripts/ci/check-pr-budget.py",
+  "scripts/ci/check-benchmark-lanes.py",
+  "scripts/ci/check-private-evidence-redaction.py",
+  "scripts/ci/check-gate-integrity.py",
+  "scripts/ci/check-goal-complete.py",
+]
+
+[contracts]
+query_semantics = "simple_text_required_all_terms_v1"
+ipc_contract = "resume-ir.ipc.v2"
+diagnostics_contract = "resume-ir.diagnostics.v2"
+evidence_matrix = "resume-ir.perf.acceptance-matrix.v2"
+loop_state_schema = "perf/loop-state.schema.json"
+experiment_report_schema = "perf/experiment-report.schema.json"
+
+[privacy]
+public_repo_boundary = "redacted_aggregate_only"
+contains_raw_resume_text = false
+contains_raw_query_text = false
+contains_candidate_results = false
+contains_local_paths = false
+contains_tokens = false
+contains_diagnostics_package = false
+contains_model_cache = false
+
+[platform_lanes]
+primary_discovery = "macos_m4_discovery"
+weak_host_validation = "windows_weak_host_validation"
+ci_smoke = "cross_os_ci_smoke"
+macos_m4_can_rank_hotspots = true
+macos_m4_can_close_windows_gate = false
+cross_os_ci_smoke_can_replace_weak_host_perf = false
+
+[platform_lanes.private_corpus_transfer]
+runner_may_choose_transfer_to_windows = true
+transfer_public_evidence_allowed = false
+raw_private_paths_public_allowed = false
+public_source_name = "$RESUME_IR_PRIVATE_RESUME_ROOT"
+windows_unavailable_starts_reconciliation = true
+
+[loop]
+workflow_state = "evidence_review"
+experiment_state = "contract_locked"
+blocked_threshold_count = 3
+same_blocker_retries_without_new_evidence = "forbidden"
+smoke_as_w1_evidence = "forbidden"
+query_semantics_relaxation_for_latency = "forbidden"
+
+[gui]
+default_stack = "tauri_react_vite_tailwind_typescript"
+desktop_shell = "tauri"
+frontend_runtime = "react"
+frontend_build = "vite_static_assets"
+style_system = "tailwind"
+production_next_server_allowed = false
+visual_reference = "UI-reference/"
+visual_reference_role = "visual_baseline_not_functional_clone"
+pixel_level_visual_similarity_required = true
+toolkit_bakeoff_default_required = false
+toolkit_bakeoff_requires_blocker_issue = true
+raw_reference_assets_publication_allowed = false
+
+[pull_request]
+number = 10
+state = "open"
+draft = false
+review_status = "review_required"
+semantic_role = "autonomous_delivery_contract_foundation"
+
+[autonomous_delivery.activation]
+current_pr_contract_only = true
+applies_after_current_pr_merge = true
+scope_current_pr_permissions_win_until_merge = true
+production_implementation_in_current_pr_allowed = false
+private_benchmark_in_current_pr_allowed = false
+future_autonomous_run_pre_authorized = true
+runtime_capability_attestation_required = true
+normal_path_human_confirmation_required = false
+
+[autonomous_delivery.permissions]
+production_code_allowed = true
+private_benchmark_allowed = true
+private_resume_root_read_allowed = true
+seektalent_artifacts_query_read_allowed = true
+github_issue_write_allowed = true
+github_pr_write_allowed = true
+commit_push_allowed = true
+auto_merge_allowed = true
+direct_main_push_allowed = false
+admin_bypass_allowed = false
+raw_private_data_commit_allowed = false
+raw_query_commit_allowed = false
+gate_bypass_allowed = false
+threshold_relaxation_allowed = false
+
+[autonomous_delivery.human_intervention_policy]
+normal_path_human_confirmation_required = false
+routine_commit_push_pr_issue_confirmation_required = false
+routine_auto_merge_confirmation_required = false
+ask_human_instead_of_terminal_state_allowed = false
+terminal_state_instead_of_human_prompt = true
+allowed_mid_run_human_prompts = []
+terminal_states = [
+  "goal_complete",
+  "blocked_external_retryable",
+  "blocked_permission",
+  "contract_conflict",
+  "goal_unsatisfiable",
+  "budget_exhausted",
+  "aborted_by_policy",
+  "contract_invalid",
+]
+
+[autonomous_delivery.pr_budget]
+max_commits = 5
+max_changed_files = 15
+max_net_lines = 800
+max_issue_count = 2
+require_single_primary_lane = true
+require_single_primary_hypothesis = true
+allow_scope_exception_auto_merge = false
+
+[autonomous_delivery.merge_policy]
+default_merge_method = "squash"
+require_base_synced = true
+require_merge_method_selected = true
+require_no_admin_bypass = true
+require_no_direct_main_push = true
+
+[autonomous_delivery.runtime_capability_attestation]
+required = true
+permissions_are_policy_not_capability = true
+observe_before_act = true
+record_unavailable_capability = true
+missing_capability_terminal_states = [
+  "blocked_external_retryable",
+  "blocked_permission",
+  "aborted_by_policy",
+]
+required_capabilities = [
+  "workspace_write",
+  "network",
+  "github_read",
+  "github_write",
+  "git_push",
+  "git_merge_or_auto_merge",
+  "branch_protection_compatible",
+  "private_resume_root_read",
+  "seektalent_artifacts_query_read",
+  "automation_scheduler",
+]
+
+[autonomous_delivery.goal_prompt]
+format_version = 1
+max_chars = 4000
+compiler = "scripts/loop/compile-goal-prompt.py"
+compiler_implemented_in_current_pr = false
+deterministic_serialization_required = true
+field_priority_required = true
+character_budget_required = true
+state_version_required = true
+state_hash_required = true
+policy_hash_required = true
+prompt_hash_required = true
+fail_on_over_budget = true
+silent_truncation_allowed = false
+untrusted_external_text_is_data = true
+one_transition_per_wake = true
+historical_details_in_prompt_allowed = false
+minimal_next_transition_only = true
+
+[autonomous_delivery.event_log]
+required_for_runner_implementation = true
+append_only = true
+events_path_template = "perf/runs/<run_id>/events/<state_version>.json"
+derived_current_state_only = true
+direct_current_state_edit_allowed = false
+previous_event_hash_required = true
+idempotency_key_required = true
+intent_before_side_effect_required = true
+verify_after_side_effect_required = true
+compare_and_swap_state_update_required = true
+lease_required = true
+heartbeat_required = true
+
+[[autonomous_delivery.transitions]]
+name = "capture_baseline"
+from = ["goal_authorized"]
+to = "baseline_captured"
+required_permissions = ["private_benchmark_allowed"]
+required_evidence = ["baseline_command", "redacted_baseline_artifact"]
+allowed_actions = ["run_benchmark", "write_redacted_evidence"]
+
+[[autonomous_delivery.transitions]]
+name = "open_profile_issue"
+from = ["baseline_captured"]
+to = "discovery_profile_issue_opened"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["baseline_artifact", "privacy_boundary"]
+allowed_actions = ["create_issue", "comment_issue"]
+
+[[autonomous_delivery.transitions]]
+name = "record_hypothesis"
+from = ["discovery_profile_issue_opened"]
+to = "hypothesis_recorded"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["profiler_summary", "hypothesis", "expected_delta", "rollback_condition"]
+allowed_actions = ["comment_issue", "update_issue"]
+
+[[autonomous_delivery.transitions]]
+name = "activate_branch"
+from = ["slice_selected"]
+to = "branch_active"
+required_permissions = ["commit_push_allowed"]
+required_evidence = ["git_base_sha", "linked_issue"]
+allowed_actions = ["create_branch"]
+
+[[autonomous_delivery.transitions]]
+name = "implement_slice"
+from = ["branch_active"]
+to = "implementation_active"
+required_permissions = ["production_code_allowed"]
+required_evidence = ["linked_issue", "hypothesis"]
+allowed_actions = ["edit", "test", "commit"]
+
+[[autonomous_delivery.transitions]]
+name = "verify_slice"
+from = ["implementation_active"]
+to = "verification_active"
+required_permissions = ["private_benchmark_allowed"]
+required_evidence = ["verification_commands", "privacy_boundary"]
+allowed_actions = ["run_tests", "run_benchmark", "write_redacted_evidence"]
+
+[[autonomous_delivery.transitions]]
+name = "open_pr"
+from = ["verification_active"]
+to = "pr_opened"
+required_permissions = ["commit_push_allowed", "github_pr_write_allowed"]
+required_evidence = ["local_tests", "privacy_gate", "pr_budget"]
+allowed_actions = ["push_branch", "create_pr"]
+
+[[autonomous_delivery.transitions]]
+name = "mark_review_ready"
+from = ["base_synced"]
+to = "pr_review_ready"
+required_permissions = ["github_pr_write_allowed"]
+required_evidence = ["base_sha", "pr_template_complete"]
+allowed_actions = ["update_pr_body", "mark_ready_for_review"]
+
+[[autonomous_delivery.transitions]]
+name = "merge_pr"
+from = ["merge_method_selected"]
+to = "pr_merged"
+required_permissions = ["auto_merge_allowed"]
+required_evidence = ["ci_green", "local_gate_green", "privacy_gate_green", "branch_protection_satisfied"]
+allowed_actions = ["enable_auto_merge", "squash_merge"]
+
+[[autonomous_delivery.transitions]]
+name = "close_issue_with_evidence"
+from = ["pr_merged"]
+to = "issue_closed_with_evidence"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["main_reachable_commit", "before_after_metrics", "privacy_boundary"]
+allowed_actions = ["comment_issue", "close_issue"]
+
+[autonomous_delivery.private_sources]
+source_kind = "env_var"
+private_resume_root = "$RESUME_IR_PRIVATE_RESUME_ROOT"
+seektalent_runs_root = "$RESUME_IR_QUERY_ARTIFACT_ROOT"
+local_evidence_dir = "$RESUME_IR_LOCAL_EVIDENCE_DIR"
+private_resume_root_env_var = "RESUME_IR_PRIVATE_RESUME_ROOT"
+seektalent_runs_root_env_var = "RESUME_IR_QUERY_ARTIFACT_ROOT"
+local_evidence_dir_env_var = "RESUME_IR_LOCAL_EVIDENCE_DIR"
+seektalent_trace_glob = "**/runtime/trace.log"
+allowed_trace_event = "tool_called"
+allowed_trace_tool = "source_search"
+allowed_query_source = "source_search_invocation_argument_only"
+
+[autonomous_delivery.github_ledger]
+profile_issue_template = ".github/ISSUE_TEMPLATE/profile_issue.md"
+pr_template = ".github/PULL_REQUEST_TEMPLATE.md"
+template_paths_are_targets = true
+templates_materialized = true
+template_materialization_task = 5
+require_issue_closure_comment = true
+require_machine_anchors = true
+
+[autonomous_delivery.contract_integrity]
+goal_version = "2026-06-25-autonomous-c"
+contract_schema_version = "v1"
+require_goal_contract_hash = true
+require_acceptance_matrix_hash = true
+require_runner_version = true
+require_benchmark_runner_version = true
+require_main_reachable_evidence = true
+
+[autonomous_delivery.benchmark_lanes]
+required = [
+  "first_searchable",
+  "full_import_ocr_backlog",
+  "query_hot_path",
+  "agent_query_replay",
+  "repeat_amplification_control",
+]
+forbid_lane_claim_mixing = true
+
+[autonomous_delivery.blocked_policy]
+max_same_condition_effective_retries = 3
+require_new_evidence_path_per_retry = true

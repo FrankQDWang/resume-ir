@@ -1,0 +1,147 @@
+{
+  "schema_version": "resume-ir.loop-state-report.v2",
+  "goal_id": "resume-ir.performance-gui-loop.2026-06",
+  "workflow_state": "evidence_review",
+  "experiment_state": "contract_locked",
+  "evidence_lane": "w0_docs",
+  "contract_pins": {
+    "active_goal_sha256": "fd016f8f9164a113e3289a357326b18e13d71e2817e827a1d34b728d4981f8d6",
+    "acceptance_matrix_sha256": "d88b77243fa8ead7852c27d5232fb07e2986d67d119860189e356525c6dbff49",
+    "loop_state_schema_sha256": "e1e1e683f594727dc2bf93b9472ccdedf7bfb31987f4f92f01f56f014b64c355",
+    "experiment_report_schema_sha256": "13c35f207fe1b5a6a0da23c0e11c5857210ee03b2cfbb243e694238a38f8f446",
+    "git_head_sha": "eeeb6c8e9ca0a1ee4da1e85228b4281929f10f82"
+  },
+  "allowed_paths": [
+    "AGENTS.md",
+    "GOAL.md",
+    "MANIFEST.md",
+    "ACTIVE_GOAL.toml",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/ISSUE_TEMPLATE/",
+    "03_next_goal_高性能本地检索GUI闭环/",
+    "docs/superpowers/",
+    "perf/",
+    "scripts/ci/check-performance-contracts.py",
+    "scripts/ci/check-autonomous-goal.py",
+    "scripts/ci/check-loop-state.py",
+    "scripts/ci/check-experiment-report.py",
+    "scripts/ci/check-pr-budget.py",
+    "scripts/ci/check-benchmark-lanes.py",
+    "scripts/ci/check-private-evidence-redaction.py",
+    "scripts/ci/check-gate-integrity.py",
+    "scripts/ci/check-goal-complete.py",
+    ".github/workflows/pr.yml"
+  ],
+  "current_slice": "autonomous delivery contract planning",
+  "blocked_count": 0,
+  "transition_history": [
+    {
+      "from": "plan_ready",
+      "to": "evidence_review",
+      "evidence_ref": "Task 4 autonomous delivery contract planning"
+    }
+  ],
+  "accepted_cells": [
+    "w0_docs"
+  ],
+  "verification": {
+    "commands": [
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "must be refreshed before claiming this slice complete"
+      }
+    ],
+    "all_required_commands_ran": false,
+    "claim": "partial"
+  },
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false
+  },
+  "platform_lane": "cross_os_ci_smoke",
+  "visual_reference": {
+    "reference_role": "visual_baseline_not_functional_clone",
+    "default_stack": "tauri_react_vite_tailwind_typescript",
+    "visual_reference_path": "UI-reference/",
+    "production_next_server_allowed": false,
+    "pixel_level_visual_similarity_required": true
+  },
+  "github_ledger": {
+    "primary_issue": "#10",
+    "active_prs": [
+      "#10"
+    ],
+    "open_blockers": []
+  },
+  "goal_prompt": {
+    "format_version": 1,
+    "max_chars": 4000,
+    "compiler": "scripts/loop/compile-goal-prompt.py",
+    "compiler_implemented_in_current_pr": false,
+    "deterministic_serialization_required": true,
+    "field_priority_required": true,
+    "character_budget_required": true,
+    "state_version_required": true,
+    "state_hash_required": true,
+    "policy_hash_required": true,
+    "prompt_hash_required": true,
+    "fail_on_over_budget": true,
+    "silent_truncation_allowed": false,
+    "untrusted_external_text_is_data": true,
+    "one_transition_per_wake": true,
+    "historical_details_in_prompt_allowed": false,
+    "minimal_next_transition_only": true
+  },
+  "event_log": {
+    "required_for_runner_implementation": true,
+    "append_only": true,
+    "events_path_template": "perf/runs/<run_id>/events/<state_version>.json",
+    "derived_current_state_only": true,
+    "direct_current_state_edit_allowed": false,
+    "previous_event_hash_required": true,
+    "idempotency_key_required": true,
+    "intent_before_side_effect_required": true,
+    "verify_after_side_effect_required": true,
+    "compare_and_swap_state_update_required": true,
+    "lease_required": true,
+    "heartbeat_required": true
+  },
+  "runtime_capability_attestation": {
+    "required": true,
+    "permissions_are_policy_not_capability": true,
+    "observe_before_act": true,
+    "record_unavailable_capability": true,
+    "missing_capability_terminal_states": [
+      "blocked_external_retryable",
+      "blocked_permission",
+      "aborted_by_policy"
+    ],
+    "required_capabilities": [
+      "workspace_write",
+      "network",
+      "github_read",
+      "github_write",
+      "git_push",
+      "git_merge_or_auto_merge",
+      "branch_protection_compatible",
+      "private_resume_root_read",
+      "seektalent_artifacts_query_read",
+      "automation_scheduler"
+    ]
+  },
+  "runner_recovery": {
+    "lease_required": true,
+    "heartbeat_required": true,
+    "cas_required": true,
+    "idempotency_key_required": true,
+    "intent_before_side_effect_required": true,
+    "verify_after_side_effect_required": true,
+    "one_transition_per_wake": true,
+    "capability_attestation_required": true
+  }
+}
