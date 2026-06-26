@@ -42,6 +42,43 @@ fn utf16be_hex_text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
 }
 
 #[test]
+fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_returns_corrupted_error() {
+    let parser = PdfParser;
+    let error = parser
+        .parse(
+            ParseInput::from_bytes(
+                Some("pdf"),
+                utf16be_hex_text_layer_pdf_with_odd_utf16_length_bytes(),
+            ),
+            ResourceBudget::default(),
+        )
+        .unwrap_err();
+
+    assert_eq!(error.kind(), ParserErrorKind::Corrupted);
+    assert_eq!(
+        error.diagnostic_message(),
+        "pdf utf-16 text run has odd byte length"
+    );
+}
+
+#[test]
+fn utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_returns_corrupted_error() {
+    let parser = PdfParser;
+    let error = parser
+        .parse(
+            ParseInput::from_bytes(
+                Some("pdf"),
+                utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_bytes(),
+            ),
+            ResourceBudget::default(),
+        )
+        .unwrap_err();
+
+    assert_eq!(error.kind(), ParserErrorKind::Corrupted);
+    assert_eq!(error.diagnostic_message(), "pdf utf-16 text run is invalid");
+}
+
+#[test]
 fn scanned_image_pdf_returns_ocr_required_without_running_ocr() {
     let parser = PdfParser;
     let output = parser
@@ -133,6 +170,30 @@ fn utf16be_hex_text_layer_pdf_bytes() -> &'static [u8] {
 4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
 5 0 obj << /Length 47 >> stream
 BT /F1 12 Tf 72 720 Td <FEFF4E2D65877B805386> Tj ET
+endstream endobj
+%%EOF"
+}
+
+fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_bytes() -> &'static [u8] {
+    b"%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+5 0 obj << /Length 38 >> stream
+BT /F1 12 Tf 72 720 Td <FEFF4E2D6> Tj ET
+endstream endobj
+%%EOF"
+}
+
+fn utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_bytes() -> &'static [u8] {
+    b"%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+5 0 obj << /Length 43 >> stream
+BT /F1 12 Tf 72 720 Td <FEFFD8000061> Tj ET
 endstream endobj
 %%EOF"
 }

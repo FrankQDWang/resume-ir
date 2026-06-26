@@ -325,8 +325,8 @@ fn decode_text_run_bytes(
         return Ok(text);
     }
 
-    match String::from_utf8(bytes.to_vec()) {
-        Ok(text) => Ok(text),
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok(text.to_owned()),
         Err(_) => match fallback {
             TextRunEncodingFallback::StrictUtf8 => {
                 Err(ParserError::corrupted(invalid_utf8_message))
