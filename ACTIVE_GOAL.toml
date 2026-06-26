@@ -246,6 +246,14 @@ required_evidence = ["profiler_summary", "hypothesis", "expected_delta", "rollba
 allowed_actions = ["comment_issue", "update_issue"]
 
 [[autonomous_delivery.transitions]]
+name = "select_slice"
+from = ["hypothesis_recorded"]
+to = "slice_selected"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["linked_issue", "primary_lane", "slice_scope", "acceptance_gate"]
+allowed_actions = ["comment_issue", "update_issue"]
+
+[[autonomous_delivery.transitions]]
 name = "activate_branch"
 from = ["slice_selected"]
 to = "branch_active"
@@ -276,6 +284,14 @@ to = "pr_opened"
 required_permissions = ["commit_push_allowed", "github_pr_write_allowed"]
 required_evidence = ["local_tests", "privacy_gate", "pr_budget"]
 allowed_actions = ["push_branch", "create_pr"]
+
+[[autonomous_delivery.transitions]]
+name = "sync_base"
+from = ["pr_opened"]
+to = "base_synced"
+required_permissions = ["commit_push_allowed"]
+required_evidence = ["base_sha", "head_sha", "reconciliation_status"]
+allowed_actions = ["fetch_base", "rebase_branch", "push_branch"]
 
 [[autonomous_delivery.transitions]]
 name = "mark_review_ready"
