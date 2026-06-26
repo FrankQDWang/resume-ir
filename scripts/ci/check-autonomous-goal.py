@@ -159,7 +159,17 @@ def main() -> int:
     activation = autonomous.get("activation")
     if not isinstance(activation, dict):
         fail("ACTIVE_GOAL.toml: missing [autonomous_delivery.activation]")
-    require_bool(activation.get("current_pr_contract_only"), True, "autonomous_delivery.activation.current_pr_contract_only")
+    require_bool(activation.get("current_pr_contract_only"), False, "autonomous_delivery.activation.current_pr_contract_only")
+    require_bool(
+        activation.get("applies_after_current_pr_merge"),
+        True,
+        "autonomous_delivery.activation.applies_after_current_pr_merge",
+    )
+    require_bool(
+        activation.get("scope_current_pr_permissions_win_until_merge"),
+        False,
+        "autonomous_delivery.activation.scope_current_pr_permissions_win_until_merge",
+    )
     require_bool(
         activation.get("production_implementation_in_current_pr_allowed"),
         False,
@@ -191,8 +201,9 @@ def main() -> int:
         fail("ACTIVE_GOAL.toml: missing [pull_request]")
     if pull_request.get("number") != 10:
         fail("pull_request.number: expected 10")
+    require_string(pull_request.get("state"), "merged", "pull_request.state")
     require_bool(pull_request.get("draft"), False, "pull_request.draft")
-    require_string(pull_request.get("review_status"), "review_required", "pull_request.review_status")
+    require_string(pull_request.get("review_status"), "merged", "pull_request.review_status")
     require_string(
         pull_request.get("semantic_role"),
         "autonomous_delivery_contract_foundation",
