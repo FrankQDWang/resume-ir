@@ -136,6 +136,15 @@ only counts, basenames, and SHA-256 digests. The draft command excludes names,
 emails, phones, local paths, filenames, raw resume text, document IDs, and
 sample IDs derived from source data.
 
+If `--query-set-trace-root <local-seektalent-artifacts-runs-root>` is also
+provided, the generated local query set is pinned to
+`trace_source_search_v1`: `resume-cli benchmark-query-set draft` reads only
+`$RESUME_IR_QUERY_ARTIFACT_ROOT/**/runtime/trace.log`, keeps only
+`tool_called` + `source_search` invocation arguments, and still writes the raw
+query text only to the local JSONL. Dry-run plans and redacted evidence refer
+to the source symbolically as `$RESUME_IR_QUERY_ARTIFACT_ROOT`; they never
+record the local trace-root path.
+
 The smoke profile passes `--allow-keyword-fallback` to the local query-set
 draft command. That fallback is only for proving the current-stage wiring when
 a tiny OCR-heavy sample has searchable text but too few high-confidence
@@ -233,6 +242,7 @@ scripts/local/run-current-stage-validation.sh --dry-run \
   --data-dir <local-data-dir> \
   --out-dir <local-evidence-dir> \
   [--query-set <local-query-set.jsonl>] \
+  [--query-set-trace-root <local-seektalent-artifacts-runs-root>] \
   [--reuse-imported-corpus --reuse-dataset-manifest <prior-redacted-dataset-manifest.json>] \
   --model-manifest <local-model-manifest.json> \
   --ocr-runtime-manifest <local-ocr-runtime-manifest.json> \
@@ -416,6 +426,7 @@ scripts/local/run-current-stage-validation.sh --execute \
   --data-dir <local-data-dir> \
   --out-dir <local-evidence-dir> \
   [--query-set <local-query-set.jsonl>] \
+  [--query-set-trace-root <local-seektalent-artifacts-runs-root>] \
   [--reuse-imported-corpus --reuse-dataset-manifest <prior-redacted-dataset-manifest.json>] \
   --model-manifest <local-model-manifest.json> \
   --ocr-runtime-manifest <local-ocr-runtime-manifest.json> \
@@ -457,6 +468,7 @@ scripts/local/run-current-stage-validation.sh --execute \
   --data-dir <local-data-dir> \
   --out-dir <local-evidence-dir> \
   [--query-set <local-query-set.jsonl>] \
+  [--query-set-trace-root <local-seektalent-artifacts-runs-root>] \
   --model-manifest <local-model-manifest.json> \
   --ocr-runtime-manifest <local-ocr-runtime-manifest.json> \
   --model-artifact <local-model-artifact> \

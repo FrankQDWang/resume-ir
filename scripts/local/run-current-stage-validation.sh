@@ -5,6 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   --resume-root DIR --data-dir DIR --out-dir DIR [--query-set FILE]
+  [--query-set-trace-root DIR]
   [--validation-profile full|smoke]
   --model-manifest FILE --ocr-runtime-manifest FILE
   --model-artifact FILE --embedding-command FILE
@@ -1795,6 +1796,7 @@ resume_root=""
 data_dir=""
 out_dir=""
 query_set=""
+query_set_trace_root=""
 validation_profile="full"
 model_manifest=""
 ocr_runtime_manifest=""
@@ -1878,6 +1880,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --query-set)
       need_value "$@"; query_set="$2"; shift 2
+      ;;
+    --query-set-trace-root)
+      need_value "$@"; query_set_trace_root="$2"; shift 2
       ;;
     --validation-profile)
       need_value "$@"; validation_profile="$2"; shift 2
@@ -2088,6 +2093,9 @@ require_positive_int "--ocr-throughput-max-run-ms" "$ocr_throughput_max_run_ms"
 require_positive_int "--ocr-throughput-min-pages" "$ocr_throughput_min_pages"
 [ -z "$dataset_manifest_sha256" ] || require_sha256 "--dataset-manifest-sha256" "$dataset_manifest_sha256"
 [ -z "$query_set_sha256" ] || require_sha256 "--query-set-sha256" "$query_set_sha256"
+if [ -n "$query_set" ] && [ -n "$query_set_trace_root" ]; then
+  fail "--query-set-trace-root cannot be combined with --query-set"
+fi
 if [ "$reuse_imported_corpus" = "true" ]; then
   require_arg "--reuse-dataset-manifest" "$reuse_dataset_manifest"
 elif [ -n "$reuse_dataset_manifest" ]; then
@@ -2099,6 +2107,10 @@ fi
 [ -z "$language_pack_manifest_sha256" ] || require_sha256 "--language-pack-manifest-sha256" "$language_pack_manifest_sha256"
 if [ -n "$embedding_runtime_bin_dir" ]; then
   embedding_runtime_bin_dir_configured="true"
+fi
+query_set_trace_root_plan=""
+if [ -n "$query_set_trace_root" ]; then
+  query_set_trace_root_plan=' --trace-root $RESUME_IR_QUERY_ARTIFACT_ROOT'
 fi
 
 case "$validation_profile" in
@@ -2279,7 +2291,7 @@ if [ "$mode" = "dry-run" ]; then
     },
     {
       "id": "query_set_draft",
-      "command": "resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries $max_queries --min-queries $query_set_min_queries$query_set_keyword_fallback_plan"
+      "command": "resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl$query_set_trace_root_plan --max-queries $max_queries --min-queries $query_set_min_queries$query_set_keyword_fallback_plan"
     },
     {
       "id": "private_query_baseline",
@@ -2319,6 +2331,7 @@ $terminal_plan_steps
     "Execute mode validates OCR and embedding runtime manifests/preflight before reading the private resume root.",
     "Optional --embedding-runtime-bin-dir prepends a local runtime bin directory to child-command PATH in execute mode; dry-run and redacted evidence record only whether it was configured, never the local path.",
     "Optional --reuse-imported-corpus with --reuse-dataset-manifest continues from an already imported local data-dir and a prior redacted dataset manifest; it skips dataset scanning and private import but still validates the manifest digest and writes status-backed aggregate import evidence.",
+    "Optional --query-set-trace-root pins generated local query sets to trace_source_search_v1 extraction from \$RESUME_IR_QUERY_ARTIFACT_ROOT without exposing the local path in dry-run or redacted evidence.",
     "After runtime preflight succeeds, execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
     "If --query-set is omitted, execute mode writes resume-ir.query-set.jsonl.v1 under <local-evidence-dir> with privacy boundary local_only_private_query_set, then uses its sha256 as the query-set digest.",
     "Execute mode writes resume-ir.current-stage-handoff.v1 under <local-evidence-dir> after writing a smoke summary, blocked summary, or full current-stage evidence manifest.",
@@ -2335,6 +2348,7 @@ fi
 
 [ "$mode" = "execute" ] || usage
 [ -d "$resume_root" ] || fail "resume root must exist and be a directory"
+[ -z "$query_set_trace_root" ] || [ -d "$query_set_trace_root" ] || fail "query set trace root must exist and be a directory"
 mkdir -p "$data_dir" "$out_dir"
 if [ -n "$embedding_runtime_bin_dir" ]; then
   if [ ! -d "$embedding_runtime_bin_dir" ]; then
@@ -2677,12 +2691,22 @@ fi
 printf '%s\n' "current-stage validation: query set"
 if [ "$query_set_generated" = "true" ]; then
   set +e
-  "$resume_cli" --data-dir "$data_dir" benchmark-query-set draft \
-    --out "$query_set" \
-    --max-queries "$max_queries" \
-    --min-queries "$query_set_min_queries" \
-    $query_set_keyword_fallback_arg \
-    > "$out_dir/query-set-draft.stdout.txt"
+  if [ -n "$query_set_trace_root" ]; then
+    "$resume_cli" --data-dir "$data_dir" benchmark-query-set draft \
+      --out "$query_set" \
+      --trace-root "$query_set_trace_root" \
+      --max-queries "$max_queries" \
+      --min-queries "$query_set_min_queries" \
+      $query_set_keyword_fallback_arg \
+      > "$out_dir/query-set-draft.stdout.txt"
+  else
+    "$resume_cli" --data-dir "$data_dir" benchmark-query-set draft \
+      --out "$query_set" \
+      --max-queries "$max_queries" \
+      --min-queries "$query_set_min_queries" \
+      $query_set_keyword_fallback_arg \
+      > "$out_dir/query-set-draft.stdout.txt"
+  fi
   query_set_draft_status=$?
   set -e
   if [ "$query_set_draft_status" -ne 0 ]; then
