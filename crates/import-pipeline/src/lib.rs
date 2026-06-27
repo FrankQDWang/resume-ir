@@ -144,10 +144,12 @@ fn run_import(
         .iter()
         .map(|file| file.document_id.as_str().to_string())
         .collect::<BTreeSet<_>>();
+    let mut pending_excluded_doc_ids = BTreeSet::new();
 
     let total_files = report.files.len();
     for (index, file) in report.files.into_iter().enumerate() {
         ensure_not_cancelled()?;
+        pending_excluded_doc_ids.insert(file.document_id.as_str().to_string());
         match process_file(
             data_dir,
             store,
@@ -173,12 +175,30 @@ fn run_import(
                 summary.failure_counts.increment(kind);
             }
         }
-        if should_publish_import_progress(index, total_files) {
+        let flushed_searchables = if should_flush_searchable_documents(
+            index,
+            total_files,
+            pending_index_documents.len(),
+            summary.searchable_documents,
+        ) {
+            flush_pending_searchable_documents(
+                data_dir,
+                store,
+                now,
+                &mut summary,
+                &mut pending_index_documents,
+                &mut pending_excluded_doc_ids,
+                &ensure_not_cancelled,
+            )?
+        } else {
+            false
+        };
+        if flushed_searchables || should_publish_import_progress(index, total_files) {
             publish_import_progress(store, &task.id, &summary, now)?;
         }
     }
 
-    let deleted_document_ids = if can_propagate_deletions {
+    if can_propagate_deletions {
         ensure_import_not_cancelled(store, &task.id)?;
         let deleted_document_ids = mark_missing_documents_deleted(
             store,
@@ -190,56 +210,44 @@ fn run_import(
             now,
         )?;
         summary.deleted_documents = deleted_document_ids.len();
+        pending_excluded_doc_ids.extend(deleted_document_ids);
         publish_import_progress(store, &task.id, &summary, now)?;
-        deleted_document_ids
     } else {
-        BTreeSet::new()
-    };
-
-    let mut excluded_doc_ids = discovered_doc_ids;
-    excluded_doc_ids.extend(deleted_document_ids);
-
-    let pending_searchable_total = pending_index_documents.len();
-    let pending_replacements = pending_index_documents
-        .iter()
-        .map(|(_, index_document)| index_document.clone())
-        .collect::<Vec<_>>();
-    ensure_import_not_cancelled(store, &task.id)?;
-    let (snapshot_token, _indexed_document_count) = write_incremental_full_text_index(
+        summary.deleted_documents = 0;
+    }
+    flush_pending_searchable_documents(
         data_dir,
         store,
         now,
-        pending_replacements,
-        &excluded_doc_ids,
-        summary.ocr_required_documents,
-        summary.deleted_documents,
+        &mut summary,
+        &mut pending_index_documents,
+        &mut pending_excluded_doc_ids,
+        &ensure_not_cancelled,
     )?;
-
-    for (index, (mut document, _)) in pending_index_documents.into_iter().enumerate() {
-        ensure_import_not_cancelled(store, &task.id)?;
-        document.status = DocumentStatus::Searchable;
-        document.updated_at = now;
-        store
-            .upsert_document(&document)
-            .map_err(ImportPipelineError::store)?;
-        summary.searchable_documents += 1;
-        if should_publish_import_progress(index, pending_searchable_total) {
-            publish_import_progress(store, &task.id, &summary, now)?;
-        }
-    }
-
-    ensure_import_not_cancelled(store, &task.id)?;
-    update_index_state(store, now, snapshot_token)?;
     publish_import_progress(store, &task.id, &summary, now)?;
 
     Ok(summary)
 }
 
 const IMPORT_PROGRESS_UPDATE_EVERY_FILES: usize = 32;
+const IMPORT_SEARCHABLE_FLUSH_BATCH: usize = 8;
 
 fn should_publish_import_progress(index: usize, total: usize) -> bool {
     let processed = index + 1;
     processed == total || processed.is_multiple_of(IMPORT_PROGRESS_UPDATE_EVERY_FILES)
+}
+
+fn should_flush_searchable_documents(
+    index: usize,
+    total: usize,
+    pending_searchable_documents: usize,
+    searchable_documents: usize,
+) -> bool {
+    let processed = index + 1;
+    processed == total
+        || (searchable_documents == 0 && pending_searchable_documents > 0)
+        || pending_searchable_documents >= IMPORT_SEARCHABLE_FLUSH_BATCH
+        || processed.is_multiple_of(IMPORT_PROGRESS_UPDATE_EVERY_FILES)
 }
 
 fn publish_import_progress(
@@ -273,6 +281,50 @@ fn publish_import_progress(
     store
         .upsert_import_scan_scope(&scope)
         .map_err(ImportPipelineError::store)
+}
+
+fn flush_pending_searchable_documents(
+    data_dir: &Path,
+    store: &MetaStore,
+    now: UnixTimestamp,
+    summary: &mut ImportSummary,
+    pending_index_documents: &mut Vec<(Document, IndexDocument)>,
+    pending_excluded_doc_ids: &mut BTreeSet<String>,
+    ensure_not_cancelled: &dyn Fn() -> Result<()>,
+) -> Result<bool> {
+    if pending_index_documents.is_empty() && pending_excluded_doc_ids.is_empty() {
+        return Ok(false);
+    }
+
+    ensure_not_cancelled()?;
+    let pending_replacements = pending_index_documents
+        .iter()
+        .map(|(_, index_document)| index_document.clone())
+        .collect::<Vec<_>>();
+    let (snapshot_token, _indexed_document_count) = write_incremental_full_text_index(
+        data_dir,
+        store,
+        now,
+        pending_replacements,
+        pending_excluded_doc_ids,
+        summary.ocr_required_documents,
+        summary.deleted_documents,
+    )?;
+
+    for (mut document, _) in pending_index_documents.drain(..) {
+        ensure_not_cancelled()?;
+        document.status = DocumentStatus::Searchable;
+        document.updated_at = now;
+        store
+            .upsert_document(&document)
+            .map_err(ImportPipelineError::store)?;
+        summary.searchable_documents += 1;
+    }
+
+    pending_excluded_doc_ids.clear();
+    ensure_not_cancelled()?;
+    update_index_state(store, now, snapshot_token)?;
+    Ok(true)
 }
 
 fn ensure_import_not_cancelled(store: &MetaStore, task_id: &ImportTaskId) -> Result<()> {
@@ -1390,7 +1442,9 @@ mod tests {
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::Mutex;
+    use std::thread;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use fs_crawler::{normalize_path, NormalizedPath, ScanProfile};
     use meta_store::{
@@ -1402,6 +1456,9 @@ mod tests {
         current_timestamp_or, document_path_is_deletion_candidate, import_root_with_options,
         ImportOptions, ImportPipelineErrorKind,
     };
+
+    #[cfg(unix)]
+    static DOC_CONVERTER_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn discovery_deletion_requires_direct_parent_directory_to_be_scanned() {
@@ -1675,6 +1732,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn import_root_parses_legacy_doc_with_local_converter_without_path_leak() {
+        let _env_lock = DOC_CONVERTER_ENV_LOCK.lock().unwrap();
         let temp = TestDir::new("import-pipeline-doc-converter");
         let data_dir = temp.path().join("data");
         let root = temp.path().join("resumes");
@@ -1718,6 +1776,219 @@ mod tests {
             .contains("Synthetic Legacy Candidate"));
         assert!(!format!("{summary:?}").contains(root.to_str().unwrap()));
         assert!(!format!("{summary:?}").contains(converter.to_str().unwrap()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn import_root_publishes_searchable_progress_before_full_import_completion() {
+        let _env_lock = DOC_CONVERTER_ENV_LOCK.lock().unwrap();
+        let temp = TestDir::new("import-pipeline-first-searchable-progress");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+
+        for index in 0..32 {
+            fs::write(
+                root.join(format!("{index:02}-fast.txt")),
+                format!(
+                    "Synthetic Candidate {index}\nEmail: candidate{index}@example.test\nSkills: Rust"
+                ),
+            )
+            .unwrap();
+        }
+        fs::write(root.join("zz-slow.doc"), synthetic_ole_doc()).unwrap();
+
+        let converter = write_blocking_doc_converter(temp.path());
+        let started_marker = converter.with_extension("started");
+        let release_marker = converter.with_extension("release");
+        let _env = EnvVarGuard::set(
+            "RESUME_IR_DOC_TEXT_COMMAND",
+            converter.to_str().unwrap().to_string(),
+        );
+
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_225);
+        let task = import_task(
+            "first-searchable-progress-import",
+            root.to_str().unwrap(),
+            now,
+        );
+        store.insert_import_task(&task).unwrap();
+        store
+            .upsert_import_scan_scope(&ImportScanScope {
+                import_task_id: task.id.clone(),
+                root_kind: ImportRootKind::Explicit,
+                root_preset: None,
+                scan_profile: ImportScanProfile::Explicit,
+                requested_root_path: root.to_str().unwrap().to_string(),
+                canonical_root_path: root.to_str().unwrap().to_string(),
+                files_discovered: 0,
+                ignored_entries: 0,
+                scan_errors: 0,
+                searchable_documents: 0,
+                ocr_required_documents: 0,
+                ocr_jobs_queued: 0,
+                failed_documents: 0,
+                deleted_documents: 0,
+                scan_budget_kind: None,
+                scan_budget_limit: None,
+                scan_budget_observed: None,
+                scan_budget_exhausted: false,
+                updated_at: now,
+            })
+            .unwrap();
+
+        let data_dir_for_worker = data_dir.clone();
+        let root_for_worker = root.clone();
+        let task_for_worker = task.clone();
+        let worker = thread::spawn(move || {
+            let store = MetaStore::open_data_dir(&data_dir_for_worker).unwrap();
+            store.run_migrations().unwrap();
+            import_root_with_options(
+                &data_dir_for_worker,
+                &store,
+                &task_for_worker,
+                &root_for_worker,
+                now,
+                ImportOptions::default(),
+            )
+            .unwrap()
+        });
+
+        wait_for_path(&started_marker);
+        let observed_store = MetaStore::open_data_dir(&data_dir).unwrap();
+        observed_store.run_migrations().unwrap();
+        let scope = observed_store
+            .import_scan_scope_by_task_id(&task.id)
+            .unwrap()
+            .unwrap();
+        let status = observed_store.status_summary().unwrap();
+        let active_snapshot_present =
+            index_fulltext::FullTextIndex::open_active(&data_dir.join("search-index"))
+                .unwrap()
+                .is_some();
+
+        fs::write(&release_marker, b"release").unwrap();
+        let summary = worker.join().unwrap();
+
+        assert_eq!(scope.files_discovered, 33);
+        assert!(
+            scope.searchable_documents > 0,
+            "expected mid-run searchable progress before full import completion, got scope: {scope:?}"
+        );
+        assert!(
+            status.searchable_documents > 0,
+            "expected searchable documents to be visible before the final file completed, got status: {status:?}"
+        );
+        assert!(
+            active_snapshot_present,
+            "expected an active search snapshot before the final file completed"
+        );
+        assert_eq!(summary.searchable_documents, 33);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn import_root_publishes_first_searchable_before_batch_threshold() {
+        let _env_lock = DOC_CONVERTER_ENV_LOCK.lock().unwrap();
+        let temp = TestDir::new("import-pipeline-first-searchable-early");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("00-fast.txt"),
+            b"Synthetic Candidate\nEmail: fast@example.test\nSkills: Rust",
+        )
+        .unwrap();
+        fs::write(root.join("zz-slow.doc"), synthetic_ole_doc()).unwrap();
+
+        let converter = write_blocking_doc_converter(temp.path());
+        let started_marker = converter.with_extension("started");
+        let release_marker = converter.with_extension("release");
+        let _env = EnvVarGuard::set(
+            "RESUME_IR_DOC_TEXT_COMMAND",
+            converter.to_str().unwrap().to_string(),
+        );
+
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_230);
+        let task = import_task("first-searchable-early-import", root.to_str().unwrap(), now);
+        store.insert_import_task(&task).unwrap();
+        store
+            .upsert_import_scan_scope(&ImportScanScope {
+                import_task_id: task.id.clone(),
+                root_kind: ImportRootKind::Explicit,
+                root_preset: None,
+                scan_profile: ImportScanProfile::Explicit,
+                requested_root_path: root.to_str().unwrap().to_string(),
+                canonical_root_path: root.to_str().unwrap().to_string(),
+                files_discovered: 0,
+                ignored_entries: 0,
+                scan_errors: 0,
+                searchable_documents: 0,
+                ocr_required_documents: 0,
+                ocr_jobs_queued: 0,
+                failed_documents: 0,
+                deleted_documents: 0,
+                scan_budget_kind: None,
+                scan_budget_limit: None,
+                scan_budget_observed: None,
+                scan_budget_exhausted: false,
+                updated_at: now,
+            })
+            .unwrap();
+
+        let data_dir_for_worker = data_dir.clone();
+        let root_for_worker = root.clone();
+        let task_for_worker = task.clone();
+        let worker = thread::spawn(move || {
+            let store = MetaStore::open_data_dir(&data_dir_for_worker).unwrap();
+            store.run_migrations().unwrap();
+            import_root_with_options(
+                &data_dir_for_worker,
+                &store,
+                &task_for_worker,
+                &root_for_worker,
+                now,
+                ImportOptions::default(),
+            )
+            .unwrap()
+        });
+
+        wait_for_path(&started_marker);
+        let observed_store = MetaStore::open_data_dir(&data_dir).unwrap();
+        observed_store.run_migrations().unwrap();
+        let scope = observed_store
+            .import_scan_scope_by_task_id(&task.id)
+            .unwrap()
+            .unwrap();
+        let status = observed_store.status_summary().unwrap();
+        let active_snapshot_present =
+            index_fulltext::FullTextIndex::open_active(&data_dir.join("search-index"))
+                .unwrap()
+                .is_some();
+
+        fs::write(&release_marker, b"release").unwrap();
+        let summary = worker.join().unwrap();
+
+        assert_eq!(scope.files_discovered, 2);
+        assert!(
+            scope.searchable_documents > 0,
+            "expected first searchable document to publish before batch threshold, got scope: {scope:?}"
+        );
+        assert!(
+            status.searchable_documents > 0,
+            "expected searchable status before the slow file completed, got status: {status:?}"
+        );
+        assert!(
+            active_snapshot_present,
+            "expected an active search snapshot before the slow file completed"
+        );
+        assert_eq!(summary.searchable_documents, 2);
     }
 
     fn import_task(label: &str, root_path: &str, now: UnixTimestamp) -> ImportTask {
@@ -1863,6 +2134,42 @@ printf 'Synthetic Legacy Candidate\nRust Search\n' > "$out"
         path
     }
 
+    #[cfg(unix)]
+    fn write_blocking_doc_converter(directory: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = directory.join("fixture-blocking-doc-converter");
+        fs::write(
+            &path,
+            r#"#!/bin/sh
+self="$0"
+started="${self%.*}.started"
+release="${self%.*}.release"
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-output" ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+if [ -z "$out" ]; then
+  exit 9
+fi
+: > "$started"
+while [ ! -f "$release" ]; do
+  sleep 0.01
+done
+printf 'Slow Synthetic Legacy Candidate\nRust Search\n' > "$out"
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
+
     struct EnvVarGuard {
         key: &'static str,
         previous: Option<String>,
@@ -1884,6 +2191,17 @@ printf 'Synthetic Legacy Candidate\nRust Search\n' > "$out"
                 env::remove_var(self.key);
             }
         }
+    }
+
+    fn wait_for_path(path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            if path.exists() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for {}", path.display());
     }
 
     struct TestDir {
