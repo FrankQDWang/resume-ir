@@ -8,6 +8,7 @@ use meta_store::{
     Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
     FileExtension, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
 };
+use sha2::{Digest, Sha256};
 
 #[test]
 fn benchmark_query_set_draft_writes_local_private_queries_without_stdout_leaks() {
@@ -284,6 +285,7 @@ fn benchmark_query_set_draft_from_trace_root_keeps_only_corpus_valid_source_sear
     let out_dir = temp_dir("query-set-trace-root-out");
     let trace_root = temp_dir("query-set-trace-root-artifacts");
     let query_set = out_dir.join("private-query-set.local.jsonl");
+    let summary = query_set_summary_path(&query_set);
 
     seed_searchable_document_with_mentions_and_text(
         &data_dir,
@@ -349,9 +351,11 @@ fn benchmark_query_set_draft_from_trace_root_keeps_only_corpus_valid_source_sear
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("query set: written"));
+    assert!(stdout.contains("query set summary: written"));
     assert!(stdout.contains("query source: trace_source_search_v1"));
     assert!(stdout.contains("candidate queries sampled: "));
     assert!(stdout.contains("zero-hit queries dropped: "));
+    assert!(stdout.contains("hmac split: true"));
     assert!(stdout.contains("queries: <redacted>"));
     for forbidden in [
         path_str(&data_dir),
@@ -365,6 +369,7 @@ fn benchmark_query_set_draft_from_trace_root_keeps_only_corpus_valid_source_sear
     }
 
     let query_set_text = fs::read_to_string(&query_set).unwrap();
+    let raw_query_set_sha256 = file_sha256_hex(&query_set);
     let lines = query_set_text.lines().collect::<Vec<_>>();
     assert_eq!(lines.len(), 2);
     let queries = lines
@@ -378,6 +383,54 @@ fn benchmark_query_set_draft_from_trace_root_keeps_only_corpus_valid_source_sear
         .collect::<Vec<_>>();
     assert_eq!(queries, vec!["rust backend", "java architect"]);
     assert!(!query_set_text.contains("unicorn nohit"));
+
+    let summary_text = fs::read_to_string(&summary).unwrap();
+    let summary_value: serde_json::Value = serde_json::from_str(&summary_text).unwrap();
+    assert_eq!(
+        summary_value["schema_version"].as_str(),
+        Some("resume-ir.query-set-summary.v1")
+    );
+    assert_eq!(
+        summary_value["privacy_boundary"].as_str(),
+        Some("redacted_local_aggregate")
+    );
+    assert_eq!(
+        summary_value["query_source"].as_str(),
+        Some("trace_source_search_v1")
+    );
+    assert_eq!(summary_value["query_count"].as_u64(), Some(2));
+    assert_eq!(summary_value["candidate_queries_sampled"].as_u64(), Some(2));
+    assert_eq!(summary_value["zero_hit_queries_dropped"].as_u64(), Some(0));
+    assert_eq!(summary_value["hmac_split"].as_bool(), Some(true));
+    let query_set_sha256 = summary_value["query_set_sha256"].as_str().unwrap();
+    let tune_sha256 = summary_value["tune_sha256"].as_str().unwrap();
+    let holdout_sha256 = summary_value["holdout_sha256"].as_str().unwrap();
+    assert_eq!(query_set_sha256.len(), 64);
+    assert_eq!(tune_sha256.len(), 64);
+    assert_eq!(holdout_sha256.len(), 64);
+    assert!(query_set_sha256
+        .chars()
+        .all(|character| character.is_ascii_hexdigit()));
+    assert!(tune_sha256
+        .chars()
+        .all(|character| character.is_ascii_hexdigit()));
+    assert!(holdout_sha256
+        .chars()
+        .all(|character| character.is_ascii_hexdigit()));
+    assert_ne!(query_set_sha256, raw_query_set_sha256);
+    for forbidden in [
+        path_str(&data_dir),
+        path_str(&out_dir),
+        path_str(&trace_root),
+        "rust backend",
+        "java architect",
+        "unicorn nohit",
+    ] {
+        assert!(
+            !summary_text.contains(forbidden),
+            "summary leaked {forbidden}"
+        );
+    }
 
     remove_dir(&data_dir);
     remove_dir(&out_dir);
@@ -575,6 +628,18 @@ fn write_trace_log(trace_root: &Path, run_id: &str, lines: &[&str]) {
         format!("{}\n", lines.join("\n"))
     };
     fs::write(runtime_dir.join("trace.log"), content).unwrap();
+}
+
+fn query_set_summary_path(query_set: &Path) -> PathBuf {
+    let file_name = query_set.file_name().unwrap().to_str().unwrap();
+    let base_name = file_name.strip_suffix(".local.jsonl").unwrap_or(file_name);
+    query_set.with_file_name(format!("{base_name}.summary.json"))
+}
+
+fn file_sha256_hex(path: &Path) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(fs::read(path).unwrap());
+    format!("{:x}", hasher.finalize())
 }
 
 fn temp_dir(label: &str) -> PathBuf {

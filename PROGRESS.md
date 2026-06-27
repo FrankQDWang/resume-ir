@@ -2292,6 +2292,83 @@ guards, local runtime discovery, and PR #9 CI state.
 
 ## Command Log
 
+### S364
+
+- Scope: move the `agent_query_replay` query-set draft output from a misleading
+  raw-file digest printout to a public-safe freeze/bootstrap handoff that can
+  feed later evidence without leaking raw query material.
+- TDD RED:
+
+```bash
+cargo test -p resume-cli --test s304_query_set benchmark_query_set_draft_from_trace_root_keeps_only_corpus_valid_source_search_queries --locked -- --exact
+```
+
+Output summary:
+
+- Exit 101 before implementation. The trace-root draft test failed because
+  stdout did not contain `query set summary: written`, proving the command
+  still emitted only the local JSONL and had no public-safe redacted summary
+  path.
+
+- Implementation:
+  - `resume-cli benchmark-query-set draft` still writes the local-only JSONL,
+    but now also writes a sibling `resume-ir.query-set-summary.v1` redacted
+    summary.
+  - The public-facing `query set sha256` stdout value now comes from an
+    HMAC-backed opaque identifier instead of `file_sha256_hex` over the raw
+    local JSONL.
+  - The summary carries `query_set_sha256`, `tune_sha256`,
+    `holdout_sha256`, `hmac_split=true`, trace-source counters, and privacy
+    booleans only.
+  - `ContactHasher` now exposes a scoped `hmac_hex(...)` helper so the CLI can
+    reuse the existing local privacy key instead of inventing a second secret
+    mechanism.
+  - The query benchmark contract doc now distinguishes the draft summary from
+    the later full benchmark evidence report and records the default sibling
+    `<basename>.summary.json` path.
+
+Verification:
+
+```bash
+cargo test -p privacy --locked
+cargo test -p resume-cli --test s304_query_set --locked
+cargo fmt --check
+git diff --check
+./scripts/ci/guard-public-repo.sh
+/opt/homebrew/bin/python3 scripts/ci/check-private-evidence-redaction.py
+/opt/homebrew/bin/python3 scripts/ci/check-pr-budget.py
+/opt/homebrew/bin/python3 scripts/ci/check-performance-contracts.py
+```
+
+Output summary:
+
+- `cargo test -p privacy --locked`: exit 0; 7 contact-hash/privacy tests
+  passed, covering stable redacted hashes, key lifecycle, and redacted backup
+  / restore behavior.
+- `cargo test -p resume-cli --test s304_query_set --locked`: exit 0; 5 query-set
+  draft tests passed, including the new trace-root regression proving the
+  summary exists, carries redacted HMAC identifiers, and does not reuse the raw
+  local JSONL digest as public `query_set_sha256`.
+- `cargo fmt --check`, `git diff --check`, and
+  `./scripts/ci/guard-public-repo.sh`: exit 0.
+- `/opt/homebrew/bin/python3 scripts/ci/check-private-evidence-redaction.py`,
+  `/opt/homebrew/bin/python3 scripts/ci/check-pr-budget.py`, and
+  `/opt/homebrew/bin/python3 scripts/ci/check-performance-contracts.py`:
+  exit 0. The contract check readback included
+  `check-goal-complete.py passed (workflow_state=blocked_permission, not goal_complete)`,
+  which is expected for this slice and does not claim overall completion.
+- Verification note: `/usr/bin/python3` is 3.9.6 and lacks `tomllib`, so the
+  repo's Python CI guards were rerun successfully with
+  `/opt/homebrew/bin/python3` 3.14.4 on the same working tree.
+
+Scope note:
+
+- S364 is the `agent_query_replay` public-safe freeze/bootstrap output slice
+  only. It does not prove that the authorized SeekTalent trace root already
+  yields 500 corpus-valid queries, does not claim resident-daemon replay
+  latency, does not clear D10K/D100K/D1M/GUI/soak gates, and does not make
+  `goal_complete` true.
+
 ### S363
 
 - Scope: make `release-readiness` reject contradictory current-stage inputs.

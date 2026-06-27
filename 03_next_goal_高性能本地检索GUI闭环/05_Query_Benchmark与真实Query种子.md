@@ -108,7 +108,10 @@ This private query-set schema covers broad local seed sets. `local_field` and `s
 {
   "schema_version": "resume-ir.query-set-summary.v1",
   "privacy_boundary": "redacted_local_aggregate",
+  "query_source": "trace_source_search_v1",
   "query_set_sha256": "<public-safe-sha256>",
+  "tune_sha256": "<public-safe-sha256>",
+  "holdout_sha256": "<public-safe-sha256>",
   "query_count": 500,
   "request_sample_count": 25000,
   "bucket_counts": {
@@ -121,12 +124,38 @@ This private query-set schema covers broad local seed sets. `local_field` and `s
     "semantic": 25,
     "extreme": 25
   },
+  "hmac_split": true,
   "contains_raw_query_text": false,
   "contains_raw_resume_text": false,
   "contains_candidate_results": false,
   "contains_local_paths": false
 }
 ```
+
+`benchmark-query-set draft` 的默认 redacted summary 是 freeze/bootstrap artifact，
+不是最终 benchmark evidence report。它默认写在 local-only JSONL 旁边，命名为
+`<basename>.summary.json`；例如
+`private-query-set.local.jsonl -> private-query-set.summary.json`。这个 summary
+至少包含：
+
+1. `schema_version`
+2. `privacy_boundary`
+3. `query_source`
+4. `query_count`
+5. `tune_query_count`
+6. `holdout_query_count`
+7. `candidate_queries_sampled`
+8. `zero_hit_queries_dropped`
+9. `query_fallback`
+10. `query_set_sha256`
+11. `tune_sha256`
+12. `holdout_sha256`
+13. `hmac_split=true`
+14. all `contains_* = false` privacy booleans
+
+后续真正的 benchmark evidence/report 仍必须补齐 `request_sample_count`、
+`bucket_counts`、latency/resource aggregates，以及同一语义版本下的 holdout
+aggregate；draft summary 不能替代完整 benchmark report。
 
 ## 4. Buckets
 
@@ -205,7 +234,8 @@ This local draft path must:
 1. keep only queries extracted from `tool_called` + `tool=source_search` trace lines,
 2. drop zero-hit queries after validating them against the current local searchable corpus,
 3. replace dropped samples only with other valid trace-derived queries,
-4. keep raw query text inside the local JSONL only, never in stdout/stderr, git, or GitHub.
+4. write a sibling redacted summary named `<basename>.summary.json` with public-safe HMAC identifiers only,
+5. keep raw query text inside the local JSONL only, never in stdout/stderr, git, or GitHub.
 
 ## 7. Benchmark 输出
 
