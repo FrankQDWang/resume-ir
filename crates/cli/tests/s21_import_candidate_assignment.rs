@@ -265,8 +265,12 @@ fn pdf_resume_body(
     for line in [
         heading.to_string(),
         java_line.to_string(),
-        email.map(|value| format!("Email: {value}")).unwrap_or_default(),
-        phone.map(|value| format!("Phone: {value}")).unwrap_or_default(),
+        email
+            .map(|value| format!("Email: {value}"))
+            .unwrap_or_default(),
+        phone
+            .map(|value| format!("Phone: {value}"))
+            .unwrap_or_default(),
     ] {
         if line.is_empty() {
             continue;
