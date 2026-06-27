@@ -11,7 +11,7 @@ path = "src/lib.rs"
 [dependencies]
 parser-common = { path = "../parser-common" }
 quick-xml = "0.31"
-zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true
