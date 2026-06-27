@@ -88,6 +88,7 @@ const METADATA_ENCRYPTION_REMEDIATION: &str =
     "enable SQLCipher metadata encryption before production release";
 const DATASET_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.dataset-manifest.v1";
 const QUERY_SET_SCHEMA_VERSION: &str = "resume-ir.query-set.jsonl.v1";
+const QUERY_SET_SUMMARY_SCHEMA_VERSION: &str = "resume-ir.query-set-summary.v1";
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const OCR_RUNTIME_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.ocr-runtime-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
@@ -12480,6 +12481,13 @@ struct DraftedPrivateQueries {
     insufficient_query_message: &'static str,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct QuerySetSummaryDigests {
+    query_set_sha256: String,
+    tune_sha256: String,
+    holdout_sha256: String,
+}
+
 fn benchmark_query_set_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let Some(action) = args.first().map(String::as_str) else {
         return Err(CliError::usage(benchmark_query_set_usage()));
@@ -12500,7 +12508,7 @@ fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result
         }
         None => draft_local_private_queries(&store, args.max_queries, args.allow_keyword_fallback)?,
     };
-    let queries = drafted.queries;
+    let queries = drafted.queries.clone();
     if queries.len() < args.min_queries {
         return Err(CliError::user(drafted.insufficient_query_message));
     }
@@ -12524,11 +12532,12 @@ fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result
     }
     fs::write(&args.out, output)
         .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
-    let query_set_sha256 = file_sha256_hex(&args.out)
-        .map_err(|_| CliError::user("query set blocked: checksum unavailable"))?;
+    let summary = write_query_set_redacted_summary(data_dir, &args.out, &queries, &drafted)?;
 
     println!("query set: written");
+    println!("query set summary: written");
     println!("schema: {QUERY_SET_SCHEMA_VERSION}");
+    println!("summary schema: {QUERY_SET_SUMMARY_SCHEMA_VERSION}");
     println!("privacy boundary: local_only_private_query_set");
     println!("query source: {}", drafted.query_source);
     println!("queries: {}", queries.len());
@@ -12550,7 +12559,10 @@ fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result
             drafted.zero_hit_queries_dropped
         );
     }
-    println!("query set sha256: {query_set_sha256}");
+    println!("query set sha256: {}", summary.query_set_sha256);
+    println!("tune sha256: {}", summary.tune_sha256);
+    println!("holdout sha256: {}", summary.holdout_sha256);
+    println!("hmac split: true");
     println!("queries: <redacted>");
     println!("sample ids: <redacted>");
     println!("paths: <redacted>");
@@ -12645,6 +12657,125 @@ fn take_benchmark_query_set_positive_usize(args: &[String], index: &mut usize) -
 
 fn benchmark_query_set_usage() -> &'static str {
     "usage: resume-cli benchmark-query-set draft --out <path> [--max-queries <count>] [--min-queries <count>] [--allow-keyword-fallback] [--trace-root <path>]"
+}
+
+fn write_query_set_redacted_summary(
+    data_dir: &Path,
+    query_set_path: &Path,
+    queries: &[String],
+    drafted: &DraftedPrivateQueries,
+) -> Result<QuerySetSummaryDigests> {
+    let hasher = ContactHasher::load_or_create(data_dir).map_err(CliError::privacy)?;
+    let (tune_queries, holdout_queries) = split_query_set_for_holdout(&hasher, queries)?;
+    let digests = QuerySetSummaryDigests {
+        query_set_sha256: hasher
+            .hmac_hex(
+                "resume-ir:query-set-summary:v1:all",
+                &build_query_set_hmac_payload(drafted.query_source, queries),
+            )
+            .map_err(CliError::privacy)?,
+        tune_sha256: hasher
+            .hmac_hex(
+                "resume-ir:query-set-summary:v1:tune",
+                &build_query_set_hmac_payload(drafted.query_source, &tune_queries),
+            )
+            .map_err(CliError::privacy)?,
+        holdout_sha256: hasher
+            .hmac_hex(
+                "resume-ir:query-set-summary:v1:holdout",
+                &build_query_set_hmac_payload(drafted.query_source, &holdout_queries),
+            )
+            .map_err(CliError::privacy)?,
+    };
+    let summary = serde_json::json!({
+        "schema_version": QUERY_SET_SUMMARY_SCHEMA_VERSION,
+        "privacy_boundary": "redacted_local_aggregate",
+        "query_source": drafted.query_source,
+        "query_count": queries.len(),
+        "tune_query_count": tune_queries.len(),
+        "holdout_query_count": holdout_queries.len(),
+        "candidate_queries_sampled": drafted.candidate_queries_sampled,
+        "zero_hit_queries_dropped": drafted.zero_hit_queries_dropped,
+        "query_fallback": if drafted.used_keyword_fallback {
+            "keyword"
+        } else {
+            "none"
+        },
+        "query_set_sha256": &digests.query_set_sha256,
+        "tune_sha256": &digests.tune_sha256,
+        "holdout_sha256": &digests.holdout_sha256,
+        "hmac_split": true,
+        "contains_raw_query_text": false,
+        "contains_raw_resume_text": false,
+        "contains_candidate_results": false,
+        "contains_local_paths": false,
+    });
+    let summary_text = serde_json::to_string_pretty(&summary)
+        .map_err(|_| CliError::user("query set blocked: summary is unavailable"))?;
+    fs::write(
+        query_set_summary_path(query_set_path),
+        format!("{summary_text}\n"),
+    )
+    .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+    Ok(digests)
+}
+
+fn split_query_set_for_holdout<'a>(
+    hasher: &ContactHasher,
+    queries: &'a [String],
+) -> Result<(Vec<&'a str>, Vec<&'a str>)> {
+    let mut tune_queries = Vec::new();
+    let mut holdout_queries = Vec::new();
+    for query in queries {
+        let assignment_digest = hasher
+            .hmac_hex("resume-ir:query-set-summary:v1:assign", query.as_bytes())
+            .map_err(CliError::privacy)?;
+        let bucket = u8::from_str_radix(&assignment_digest[..2], 16)
+            .map_err(|_| CliError::user("query set blocked: summary is unavailable"))?;
+        if bucket < 0x33 {
+            holdout_queries.push(query.as_str());
+        } else {
+            tune_queries.push(query.as_str());
+        }
+    }
+    if queries.len() > 1 && holdout_queries.is_empty() {
+        let query = tune_queries
+            .pop()
+            .ok_or_else(|| CliError::user("query set blocked: summary is unavailable"))?;
+        holdout_queries.push(query);
+    }
+    if !queries.is_empty() && tune_queries.is_empty() {
+        let query = holdout_queries
+            .pop()
+            .ok_or_else(|| CliError::user("query set blocked: summary is unavailable"))?;
+        tune_queries.push(query);
+    }
+    Ok((tune_queries, holdout_queries))
+}
+
+fn build_query_set_hmac_payload<T: AsRef<str>>(query_source: &str, queries: &[T]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    update_query_set_payload_string(&mut payload, QUERY_SET_SUMMARY_SCHEMA_VERSION);
+    update_query_set_payload_string(&mut payload, query_source);
+    payload.extend((queries.len() as u64).to_le_bytes());
+    for query in queries {
+        update_query_set_payload_string(&mut payload, query.as_ref());
+    }
+    payload
+}
+
+fn update_query_set_payload_string(payload: &mut Vec<u8>, value: &str) {
+    payload.extend((value.len() as u64).to_le_bytes());
+    payload.extend(value.as_bytes());
+}
+
+fn query_set_summary_path(query_set_path: &Path) -> PathBuf {
+    let file_name = query_set_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("query-set");
+    let base_name = file_name.strip_suffix(".local.jsonl").unwrap_or(file_name);
+    query_set_path.with_file_name(format!("{base_name}.summary.json"))
 }
 
 fn draft_local_private_queries(

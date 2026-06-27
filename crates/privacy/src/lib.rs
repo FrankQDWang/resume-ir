@@ -73,6 +73,15 @@ impl ContactHasher {
         ContactHash::from_keyed_digest(encode_hex(&digest))
             .map_err(|_| PrivacyError::invalid_key("contact hash digest"))
     }
+
+    pub fn hmac_hex(&self, domain_separator: &str, value: &[u8]) -> Result<String> {
+        let mut mac = <HmacSha256 as Mac>::new_from_slice(&self.key)
+            .map_err(|_| PrivacyError::invalid_key("hmac key"))?;
+        mac.update(domain_separator.as_bytes());
+        mac.update(&[0]);
+        mac.update(value);
+        Ok(encode_hex(&mac.finalize().into_bytes()))
+    }
 }
 
 impl fmt::Debug for ContactHasher {
