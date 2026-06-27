@@ -166,7 +166,7 @@ fn extract_page_text(
     if lopdf_text.contains(&direct_text) {
         return Ok(lopdf_text);
     }
-    if !direct_text.chars().any(|character| !character.is_ascii()) {
+    if direct_text.is_ascii() {
         return Ok(lopdf_text);
     }
 
