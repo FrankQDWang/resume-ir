@@ -1327,9 +1327,9 @@ fn build_valid_pdf(objects: Vec<Vec<u8>>) -> Vec<u8> {
     }
     let xref = output.len();
     output.extend_from_slice(format!("xref\n0 {}\n", offsets.len() + 1).as_bytes());
-    output.extend_from_slice(b"0000000000 65535 f\n");
+    output.extend_from_slice(b"0000000000 65535 f\r\n");
     for offset in offsets {
-        output.extend_from_slice(format!("{offset:010} 00000 n\n").as_bytes());
+        output.extend_from_slice(format!("{offset:010} 00000 n\r\n").as_bytes());
     }
     output.extend_from_slice(
         format!(

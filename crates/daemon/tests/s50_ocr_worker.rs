@@ -351,7 +351,7 @@ fn daemon_ocr_worker_once_uses_pdftoppm_renderer_for_valid_pdf_before_ocr() {
     };
     let data_dir = temp_dir("ocr-worker-pdftoppm-data");
     let private_document_path =
-        seed_scanned_document_with_bytes(&data_dir, &valid_blank_pdf_bytes());
+        seed_scanned_document_with_bytes(&data_dir, valid_blank_pdf_bytes());
     let command = write_fixture_executable(
         "fixture-daemon-ocr-worker-pdftoppm",
         r#"#!/bin/sh
@@ -467,7 +467,7 @@ fn daemon_ocr_worker_once_uses_tesseract_for_rendered_image_before_indexing() {
     };
     let data_dir = temp_dir("ocr-worker-tesseract-data");
     let private_document_path =
-        seed_scanned_document_with_bytes(&data_dir, &valid_blank_pdf_bytes());
+        seed_scanned_document_with_bytes(&data_dir, valid_blank_pdf_bytes());
     let render_command = write_text_png_render_executable(
         "fixture-daemon-ocr-worker-tesseract-render",
         &pango_view,
@@ -1021,9 +1021,9 @@ fn build_valid_pdf(objects: Vec<Vec<u8>>) -> Vec<u8> {
     }
     let xref = output.len();
     output.extend_from_slice(format!("xref\n0 {}\n", object_count + 1).as_bytes());
-    output.extend_from_slice(b"0000000000 65535 f\n");
+    output.extend_from_slice(b"0000000000 65535 f\r\n");
     for offset in offsets {
-        output.extend_from_slice(format!("{offset:010} 00000 n\n").as_bytes());
+        output.extend_from_slice(format!("{offset:010} 00000 n\r\n").as_bytes());
     }
     output.extend_from_slice(
         format!(

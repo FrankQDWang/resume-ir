@@ -18,18 +18,12 @@ BT
 /F1 12 Tf
 72 720 Td
 (Synthetic Java payment platform resume fixture) Tj
-T*
-(Education) Tj
-T*
-(School: Synthetic Institute) Tj
-T*
-(Degree: Bachelor of Engineering) Tj
-T*
-(Experience: Built Java services for search indexing and payment reconciliation.) Tj
-T*
-(Skills: Java, Spring Cloud, SQLite) Tj
-T*
-(Dates: 2020.01 - 2024.03) Tj
+T* (Education) Tj
+T* (School: Synthetic Institute) Tj
+T* (Degree: Bachelor of Engineering) Tj
+T* (Experience: Built Java services for search indexing and payment reconciliation.) Tj
+T* (Skills: Java, Spring Cloud, SQLite) Tj
+T* (Dates: 2020.01 - 2024.03) Tj
 ET
 endstream
 endobj
@@ -42,7 +36,7 @@ xref
 0000000241 00000 n
 0000000311 00000 n
 trailer
-<< /Size 6 /Root 1 0 R >>
+<< /Root 1 0 R /Size 6 >>
 startxref
 697
 %%EOF
