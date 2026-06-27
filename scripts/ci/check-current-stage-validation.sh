@@ -174,6 +174,7 @@ resume_root="$tmpdir/PRIVATE-current-stage-resumes"
 data_dir="$tmpdir/PRIVATE-current-stage-data"
 out_dir="$tmpdir/PRIVATE-current-stage-evidence"
 query_set="$tmpdir/PRIVATE-current-stage-query-set.jsonl"
+query_set_trace_root="$tmpdir/PRIVATE-current-stage-query-traces"
 embedding_runtime_bin_dir="$tmpdir/PRIVATE-current-stage-embedding-runtime-bin"
 model_manifest="$tmpdir/PRIVATE-current-stage-model-manifest.json"
 ocr_manifest="$tmpdir/PRIVATE-current-stage-ocr-manifest.json"
@@ -183,12 +184,13 @@ tesseract_command="$tmpdir/PRIVATE-current-stage-tesseract"
 pdftoppm_command="$tmpdir/PRIVATE-current-stage-pdftoppm"
 language_pack="$tmpdir/PRIVATE-current-stage-tessdata.traineddata"
 
-mkdir -p "$resume_root" "$data_dir" "$out_dir" "$embedding_runtime_bin_dir"
+mkdir -p "$resume_root" "$data_dir" "$out_dir" "$query_set_trace_root" "$embedding_runtime_bin_dir"
 
 "$script" --dry-run \
   --resume-root "$resume_root" \
   --data-dir "$data_dir" \
   --out-dir "$out_dir" \
+  --query-set-trace-root "$query_set_trace_root" \
   --model-manifest "$model_manifest" \
   --ocr-runtime-manifest "$ocr_manifest" \
   --model-artifact "$model_artifact" \
@@ -272,7 +274,7 @@ require_text "$plan" 'resume-cli --data-dir <local-data-dir> model draft-manifes
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> model preflight --json'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> model validate-manifest --manifest <local-model-manifest>'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> import --root <local-resume-root> --profile explicit --max-files 10000'
-require_text "$plan" 'resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries 500 --min-queries 500'
+require_text "$plan" 'resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --trace-root $RESUME_IR_QUERY_ARTIFACT_ROOT --max-queries 500 --min-queries 500'
 require_text "$plan" 'resume-daemon --data-dir <local-data-dir> run --foreground --once --work-ocr-once'
 require_text "$plan" '--ocr-jobs-per-tick <bounded-ocr-jobs-per-tick>'
 require_text "$plan" 'resume-daemon --data-dir <local-data-dir> run --foreground --once --work-embeddings-once'
@@ -332,6 +334,7 @@ PATH="$auto_ocr_bin_dir:$PATH" "$script" --dry-run \
   --resume-root "$resume_root" \
   --data-dir "$data_dir" \
   --out-dir "$out_dir" \
+  --query-set-trace-root "$query_set_trace_root" \
   --model-manifest "$model_manifest" \
   --ocr-runtime-manifest "$ocr_manifest" \
   --model-artifact "$model_artifact" \
@@ -367,6 +370,7 @@ smoke_plan="$tmpdir/current-stage-validation-smoke-plan.json"
   --resume-root "$resume_root" \
   --data-dir "$data_dir" \
   --out-dir "$out_dir" \
+  --query-set-trace-root "$query_set_trace_root" \
   --model-manifest "$model_manifest" \
   --ocr-runtime-manifest "$ocr_manifest" \
   --model-artifact "$model_artifact" \
@@ -398,7 +402,7 @@ require_text "$smoke_plan" '"current_stage_target": "local_real_corpus_smoke_cha
 require_text "$smoke_plan" '"full_baseline_satisfied": false'
 require_text "$smoke_plan" '"release_readiness_evidence": false'
 require_text "$smoke_plan" '"private_query_timeout_ms": 30000'
-require_text "$smoke_plan" 'benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --max-queries 3 --min-queries 1 --allow-keyword-fallback'
+require_text "$smoke_plan" 'benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl --trace-root $RESUME_IR_QUERY_ARTIFACT_ROOT --max-queries 3 --min-queries 1 --allow-keyword-fallback'
 require_text "$smoke_plan" '--corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json --allow-partial-hot-index-for-smoke --max-queries 3 --top-k 5 --timeout-ms 30000'
 require_text "$smoke_plan" 'resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus --allow-smoke-confidence --min-documents 1 --min-queries 1'
 require_text "$smoke_plan" 'resume-cli --data-dir <local-data-dir> fault-simulate --case disk-space-low --scratch-dir <local-evidence-dir>/fault-simulation-scratch --required-bytes 4096 --available-bytes 1024 --json > <local-evidence-dir>/fault-simulation-storage-low.json'
@@ -418,6 +422,7 @@ execute_resume_root="$tmpdir/PRIVATE-current-stage-execute-resumes"
 execute_data_dir="$tmpdir/PRIVATE-current-stage-execute-data"
 execute_out_dir="$tmpdir/PRIVATE-current-stage-execute-evidence"
 execute_query_set="$tmpdir/PRIVATE-current-stage-execute-query-set.jsonl"
+execute_query_set_trace_root="$tmpdir/PRIVATE-current-stage-execute-query-traces"
 execute_model_manifest="$tmpdir/PRIVATE-current-stage-execute-model-manifest.json"
 execute_ocr_manifest="$tmpdir/PRIVATE-current-stage-execute-ocr-manifest.json"
 execute_model_artifact="$tmpdir/PRIVATE-current-stage-execute-model.onnx"
@@ -426,7 +431,7 @@ execute_tesseract_command="$tmpdir/PRIVATE-current-stage-execute-tesseract"
 execute_pdftoppm_command="$tmpdir/PRIVATE-current-stage-execute-pdftoppm"
 execute_language_pack="$tmpdir/PRIVATE-current-stage-execute-tessdata.traineddata"
 
-mkdir -p "$execute_resume_root" "$execute_data_dir" "$execute_out_dir"
+mkdir -p "$execute_resume_root" "$execute_data_dir" "$execute_out_dir" "$execute_query_set_trace_root"
 printf '%s\n' '{"query":"private fake query"}' > "$execute_query_set"
 printf '%s\n' 'fake model bytes' > "$execute_model_artifact"
 printf '%s\n' 'fake language bytes' > "$execute_language_pack"
@@ -471,6 +476,15 @@ case "$cmd:$sub" in
     if [ "${FAKE_QUERY_SET_MODE:-ready}" = "draft-failed" ]; then
       printf 'query set blocked: insufficient field-backed queries\n'
       exit 1
+    fi
+    if [ -n "${FAKE_REQUIRED_QUERY_SET_TRACE_ROOT:-}" ]; then
+      case " $* " in
+        *" --trace-root $FAKE_REQUIRED_QUERY_SET_TRACE_ROOT "*) ;;
+        *)
+          printf 'query set trace root missing\n' >&2
+          exit 1
+          ;;
+      esac
     fi
     write_out_arg "$@"
     printf 'query set: written\n'
@@ -782,13 +796,14 @@ run_execute_smoke() {
   if [ "$mode" = "smoke-low-hot" ]; then
     corpus_summary_mode="smoke-low-hot"
   fi
-  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_CORPUS_SUMMARY_MODE="$corpus_summary_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_FAULT_SIMULATION_MODE="$fault_simulation_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR="$embedding_runtime_bin_dir" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
+  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_CORPUS_SUMMARY_MODE="$corpus_summary_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_FAULT_SIMULATION_MODE="$fault_simulation_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR="$embedding_runtime_bin_dir" FAKE_REQUIRED_QUERY_SET_TRACE_ROOT="$execute_query_set_trace_root" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
     --resume-daemon "$fake_resume_daemon" \
     --resume-benchmark "$fake_resume_benchmark" \
     --resume-root "$execute_resume_root" \
     --data-dir "$execute_data_dir" \
     --out-dir "$execute_out_dir" \
+    --query-set-trace-root "$execute_query_set_trace_root" \
     --model-manifest "$execute_model_manifest" \
     --ocr-runtime-manifest "$execute_ocr_manifest" \
     --model-artifact "$execute_model_artifact" \
@@ -1731,6 +1746,8 @@ require_text "$script" "current-stage-handoff.json"
 require_text "$script" "resume-ir.current-stage-handoff.v1"
 require_text "$script" "performance_optimization_deferred"
 require_text "$script" "--private-query-timeout-ms"
+require_text "$script" "--query-set-trace-root"
+require_text "$script" '$RESUME_IR_QUERY_ARTIFACT_ROOT'
 require_text "$script" "ocr_backlog_exceeds_current_stage_budget"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --dry-run"
 require_text "$runbook" "scripts/local/run-current-stage-validation.sh --execute"
@@ -1741,6 +1758,9 @@ require_text "$runbook" "resume-ir.current-stage-validation-evidence.v1"
 require_text "$runbook" "resume-ir.current-stage-blocked-summary.v1"
 require_text "$runbook" "resume-ir.dataset-manifest.v1"
 require_text "$runbook" "resume-ir.query-set.jsonl.v1"
+require_text "$runbook" "--query-set-trace-root <local-seektalent-artifacts-runs-root>"
+require_text "$runbook" '$RESUME_IR_QUERY_ARTIFACT_ROOT'
+require_text "$runbook" "trace_source_search_v1"
 require_text "$runbook" "local_only_redacted_plan"
 require_text "$runbook" "local_only_redacted_evidence_manifest"
 require_text "$runbook" "local_only_redacted_dataset_manifest"

@@ -205,6 +205,7 @@ scripts/local/run-current-stage-validation.sh --dry-run \
   --resume-root "$resume_root" \
   --data-dir "$data_dir" \
   --out-dir "$out_dir" \
+  [--query-set-trace-root "$RESUME_IR_QUERY_ARTIFACT_ROOT"] \
   --model-manifest "<local-model-manifest.json>" \
   --ocr-runtime-manifest "<local-ocr-runtime-manifest.json>" \
   --model-artifact "<local-model-artifact>" \
@@ -231,6 +232,7 @@ scripts/local/run-current-stage-validation.sh --execute \
   --resume-root "$resume_root" \
   --data-dir "$data_dir" \
   --out-dir "$out_dir" \
+  [--query-set-trace-root "$RESUME_IR_QUERY_ARTIFACT_ROOT"] \
   --model-manifest "<local-model-manifest.json>" \
   --ocr-runtime-manifest "<local-ocr-runtime-manifest.json>" \
   --model-artifact "<local-model-artifact>" \
