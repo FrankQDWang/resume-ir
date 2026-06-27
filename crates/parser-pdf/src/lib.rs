@@ -1,11 +1,9 @@
-use lopdf::{
-    content::{Content, Operation},
-    Document as LoPdfDocument, Object, ObjectId,
-};
+use lopdf::{content::Content, Document as LoPdfDocument, Encoding, Object, ObjectId};
 use parser_common::{
     FileProbe, ParseBudget, ParseInput, ParseOutput, ParseStatus, Parser, ParserError,
     ResourceBudget, Result, SupportLevel,
 };
+use std::collections::BTreeMap;
 
 const MAX_EXTRACTED_TEXT_CHARS: usize = 1_000_000;
 const DEADLINE_CHECK_STRIDE: usize = 4096;
@@ -120,7 +118,7 @@ fn extract_text_layer(bytes: &[u8], budget: &ParseBudget) -> Result<LopdfTextExt
 
     for (page_no, page_id) in pages_by_number {
         budget.check_deadline()?;
-        let page_text = extract_page_text(&document, page_no, page_id, budget)?;
+        let page_text = extract_page_text(&document, page_id, budget)?;
         if page_text.is_empty() {
             continue;
         }
@@ -140,44 +138,12 @@ fn extract_text_layer(bytes: &[u8], budget: &ParseBudget) -> Result<LopdfTextExt
     })
 }
 
-fn normalize_lopdf_page_text(page_text: String) -> String {
-    page_text.replace('\u{0c}', "\n").trim().to_owned()
-}
-
 fn extract_page_text(
     document: &LoPdfDocument,
-    page_no: u32,
     page_id: ObjectId,
     budget: &ParseBudget,
 ) -> Result<String> {
-    let direct_text = extract_direct_page_text(document, page_id, budget)?;
-    budget.check_deadline()?;
-    let lopdf_text = match document.extract_text(&[page_no]) {
-        Ok(page_text) => normalize_lopdf_page_text(page_text),
-        Err(_) => String::new(),
-    };
-
-    if direct_text.is_empty() {
-        return Ok(lopdf_text);
-    }
-    if lopdf_text.is_empty() {
-        return Ok(direct_text);
-    }
-    if lopdf_text.contains(&direct_text) {
-        return Ok(lopdf_text);
-    }
-    if direct_text.is_ascii() {
-        return Ok(lopdf_text);
-    }
-
-    Ok(direct_text)
-}
-
-fn extract_direct_page_text(
-    document: &LoPdfDocument,
-    page_id: ObjectId,
-    budget: &ParseBudget,
-) -> Result<String> {
+    let encodings = page_font_encodings(document, page_id)?;
     budget.check_deadline()?;
     let content_data = document
         .get_page_content(page_id)
@@ -186,61 +152,116 @@ fn extract_direct_page_text(
     let content = Content::decode(&content_data)
         .map_err(|_| ParserError::corrupted("pdf structure is invalid"))?;
     let mut accumulator = TextAccumulator::default();
+    let mut current_text = String::new();
+    let mut current_encoding = None;
 
-    for operation in content.operations {
+    for operation in &content.operations {
         budget.check_deadline()?;
-        if let Some(text_run) = extract_direct_text_run(&operation)? {
-            accumulator.push(&text_run)?;
+        match operation.operator.as_str() {
+            "Tf" => {
+                flush_page_text(&mut current_text, &mut accumulator)?;
+                current_encoding = operation
+                    .operands
+                    .first()
+                    .and_then(|operand| operand.as_name().ok())
+                    .and_then(|font_name| encodings.get(font_name));
+            }
+            "Tj" | "TJ" => {
+                if let Some(encoding) = current_encoding {
+                    collect_page_text(&mut current_text, encoding, &operation.operands)?;
+                }
+            }
+            "'" => {
+                if let Some(encoding) = current_encoding {
+                    if !current_text.ends_with('\n') {
+                        current_text.push('\n');
+                    }
+                    collect_page_text(&mut current_text, encoding, &operation.operands)?;
+                }
+            }
+            "\"" => {
+                if let Some(encoding) = current_encoding {
+                    if !current_text.ends_with('\n') {
+                        current_text.push('\n');
+                    }
+                    if let Some(string_operand) = operation.operands.get(2) {
+                        collect_page_text(
+                            &mut current_text,
+                            encoding,
+                            std::slice::from_ref(string_operand),
+                        )?;
+                    }
+                }
+            }
+            "T*" if !current_text.ends_with('\n') => current_text.push('\n'),
+            "T*" => {}
+            "ET" if !current_text.ends_with('\n') => current_text.push('\n'),
+            "ET" => {}
+            _ => {}
         }
     }
 
+    flush_page_text(&mut current_text, &mut accumulator)?;
     Ok(accumulator.into_string())
 }
 
-fn extract_direct_text_run(operation: &Operation) -> Result<Option<String>> {
-    match operation.operator.as_str() {
-        "Tj" | "'" => decode_direct_text_operand(operation.operands.first()),
-        "\"" => decode_direct_text_operand(operation.operands.get(2)),
-        "TJ" => decode_direct_text_array(operation.operands.first()),
-        _ => Ok(None),
+fn page_font_encodings<'a>(
+    document: &'a LoPdfDocument,
+    page_id: ObjectId,
+) -> Result<BTreeMap<Vec<u8>, Encoding<'a>>> {
+    let fonts = document
+        .get_page_fonts(page_id)
+        .map_err(|_| ParserError::corrupted("pdf structure is invalid"))?;
+    let mut encodings = BTreeMap::new();
+    for (name, font) in fonts {
+        let encoding = font
+            .get_font_encoding(document)
+            .map_err(|_| ParserError::corrupted("pdf structure is invalid"))?;
+        encodings.insert(name, encoding);
     }
+    Ok(encodings)
 }
 
-fn decode_direct_text_array(operand: Option<&Object>) -> Result<Option<String>> {
-    let Some(Object::Array(items)) = operand else {
-        return Ok(None);
-    };
+fn flush_page_text(buffer: &mut String, accumulator: &mut TextAccumulator) -> Result<()> {
+    let page_text = buffer.trim();
+    if !page_text.is_empty() {
+        accumulator.push(page_text)?;
+        buffer.clear();
+    } else if !buffer.is_empty() {
+        buffer.clear();
+    }
+    Ok(())
+}
 
-    let mut output = String::new();
-    for item in items {
-        if let Some(text) = decode_direct_text_object(item)? {
-            output.push_str(&text);
+fn collect_page_text(
+    text: &mut String,
+    encoding: &Encoding<'_>,
+    operands: &[Object],
+) -> Result<()> {
+    for operand in operands {
+        match operand {
+            Object::String(bytes, _) => text.push_str(&decode_text_bytes(encoding, bytes)?),
+            Object::Array(items) => {
+                collect_page_text(text, encoding, items)?;
+                text.push(' ');
+            }
+            Object::Integer(value) if *value < -100 => text.push(' '),
+            _ => {}
         }
     }
-
-    Ok((!output.trim().is_empty()).then_some(output))
+    Ok(())
 }
 
-fn decode_direct_text_operand(operand: Option<&Object>) -> Result<Option<String>> {
-    operand.map_or(Ok(None), decode_direct_text_object)
-}
-
-fn decode_direct_text_object(object: &Object) -> Result<Option<String>> {
-    let Object::String(bytes, _) = object else {
-        return Ok(None);
-    };
-    decode_direct_text_bytes(bytes)
-}
-
-fn decode_direct_text_bytes(bytes: &[u8]) -> Result<Option<String>> {
+fn decode_text_bytes(encoding: &Encoding<'_>, bytes: &[u8]) -> Result<String> {
     if bytes.is_empty() {
-        return Ok(None);
+        return Ok(String::new());
     }
     if let Some(text) = decode_utf16_with_bom(bytes)? {
-        return Ok(Some(text));
+        return Ok(text);
     }
 
-    Ok(std::str::from_utf8(bytes).ok().map(str::to_owned))
+    LoPdfDocument::decode_text(encoding, bytes)
+        .map_err(|_| ParserError::corrupted("pdf structure is invalid"))
 }
 
 fn decode_utf16_with_bom(bytes: &[u8]) -> Result<Option<String>> {
