@@ -260,16 +260,76 @@ fn pdf_resume_body(
     java_line: &str,
     email: Option<&str>,
     phone: Option<&str>,
-) -> String {
-    let email_line = email
-        .map(|value| format!("(Email: {value}) Tj\n"))
-        .unwrap_or_default();
-    let phone_line = phone
-        .map(|value| format!("(Phone: {value}) Tj\n"))
-        .unwrap_or_default();
-    format!(
-        "%PDF-1.4\n1 0 obj\n<< /Type /Page >>\nstream\nBT\n({heading}) Tj\n({java_line}) Tj\n{email_line}{phone_line}ET\nendstream\nendobj\n%%EOF\n"
-    )
+) -> Vec<u8> {
+    let mut content = String::from("BT\n/F1 12 Tf\n72 720 Td\n");
+    for line in [
+        heading.to_string(),
+        java_line.to_string(),
+        email
+            .map(|value| format!("Email: {value}"))
+            .unwrap_or_default(),
+        phone
+            .map(|value| format!("Phone: {value}"))
+            .unwrap_or_default(),
+    ] {
+        if line.is_empty() {
+            continue;
+        }
+        if content.ends_with("Td\n") {
+            content.push_str(&format!("({line}) Tj\n"));
+        } else {
+            content.push_str(&format!("T* ({line}) Tj\n"));
+        }
+    }
+    content.push_str("ET\n");
+    simple_font_text_pdf_bytes(content.as_bytes())
+}
+
+fn simple_font_text_pdf_bytes(content: &[u8]) -> Vec<u8> {
+    build_valid_pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_vec(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        [
+            format!("<< /Length {} >>\nstream\n", content.len()).into_bytes(),
+            content.to_vec(),
+            b"endstream".to_vec(),
+        ]
+        .concat(),
+    ])
+}
+
+fn build_valid_pdf(objects: Vec<Vec<u8>>) -> Vec<u8> {
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::with_capacity(objects.len());
+
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+        pdf.extend_from_slice(object);
+        if !object.ends_with(b"\n") {
+            pdf.push(b'\n');
+        }
+        pdf.extend_from_slice(b"endobj\n");
+    }
+
+    let xref_offset = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+    pdf.extend_from_slice(b"0000000000 65535 f\r\n");
+    for offset in offsets {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n\r\n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Root 1 0 R /Size {} >>\nstartxref\n{}\n%%EOF",
+            objects.len() + 1,
+            xref_offset
+        )
+        .as_bytes(),
+    );
+
+    pdf
 }
 
 fn temp_dir(label: &str) -> PathBuf {

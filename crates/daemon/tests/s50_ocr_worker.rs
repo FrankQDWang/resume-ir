@@ -351,7 +351,7 @@ fn daemon_ocr_worker_once_uses_pdftoppm_renderer_for_valid_pdf_before_ocr() {
     };
     let data_dir = temp_dir("ocr-worker-pdftoppm-data");
     let private_document_path =
-        seed_scanned_document_with_bytes(&data_dir, &valid_blank_pdf_bytes());
+        seed_scanned_document_with_bytes(&data_dir, valid_blank_pdf_bytes());
     let command = write_fixture_executable(
         "fixture-daemon-ocr-worker-pdftoppm",
         r#"#!/bin/sh
@@ -467,7 +467,7 @@ fn daemon_ocr_worker_once_uses_tesseract_for_rendered_image_before_indexing() {
     };
     let data_dir = temp_dir("ocr-worker-tesseract-data");
     let private_document_path =
-        seed_scanned_document_with_bytes(&data_dir, &valid_blank_pdf_bytes());
+        seed_scanned_document_with_bytes(&data_dir, valid_blank_pdf_bytes());
     let render_command = write_text_png_render_executable(
         "fixture-daemon-ocr-worker-tesseract-render",
         &pango_view,
@@ -900,13 +900,13 @@ fn seed_scanned_document(data_dir: &Path) -> PathBuf {
     seed_scanned_document_with_bytes(data_dir, single_page_scanned_pdf_bytes())
 }
 
-fn seed_scanned_document_with_bytes(data_dir: &Path, bytes: &[u8]) -> PathBuf {
+fn seed_scanned_document_with_bytes(data_dir: &Path, bytes: impl AsRef<[u8]>) -> PathBuf {
     seed_scanned_document_fixture(
         data_dir,
         "scanned-document",
         "synthetic-scanned-resume.pdf",
         "s50-synthetic-scanned-content-hash",
-        bytes,
+        bytes.as_ref(),
     )
 }
 
@@ -915,13 +915,13 @@ fn seed_scanned_document_fixture(
     id_suffix: &str,
     file_name: &str,
     content_hash: &str,
-    bytes: &[u8],
+    bytes: impl AsRef<[u8]>,
 ) -> PathBuf {
     let now = UnixTimestamp::from_unix_seconds(1_800_050_000);
     let private_root = data_dir.join("private-resumes");
     fs::create_dir_all(&private_root).unwrap();
     let document_path = private_root.join(file_name);
-    fs::write(&document_path, bytes).unwrap();
+    fs::write(&document_path, bytes.as_ref()).unwrap();
     let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let doc_id = DocumentId::from_non_secret_parts(&["s50", id_suffix]);
@@ -946,39 +946,45 @@ fn seed_scanned_document_fixture(
     document_path
 }
 
-fn single_page_scanned_pdf_bytes() -> &'static [u8] {
-    b"%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >> endobj
-4 0 obj << /Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >> stream
-1111
-endstream endobj
-5 0 obj << /Length 24 >> stream
-q 10 0 0 10 0 0 cm /Im1 Do Q
-endstream endobj
-%%EOF"
+fn single_page_scanned_pdf_bytes() -> Vec<u8> {
+    build_valid_pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> /MediaBox [0 0 72 72] /Contents 5 0 R >>".to_vec(),
+        pdf_stream_object(
+            b"1111".to_vec(),
+            Some(
+                b"/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8"
+                    .to_vec(),
+            ),
+        ),
+        pdf_stream_object(b"q 10 0 0 10 0 0 cm /Im1 Do Q\n".to_vec(), None),
+    ])
 }
 
-fn two_page_scanned_pdf_bytes() -> &'static [u8] {
-    b"%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 5 0 R >> >> /Contents 7 0 R >> endobj
-4 0 obj << /Type /Page /Parent 2 0 R /Resources << /XObject << /Im2 6 0 R >> >> /Contents 8 0 R >> endobj
-5 0 obj << /Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >> stream
-1111
-endstream endobj
-6 0 obj << /Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >> stream
-2222
-endstream endobj
-7 0 obj << /Length 24 >> stream
-q 10 0 0 10 0 0 cm /Im1 Do Q
-endstream endobj
-8 0 obj << /Length 24 >> stream
-q 10 0 0 10 0 0 cm /Im2 Do Q
-endstream endobj
-%%EOF"
+fn two_page_scanned_pdf_bytes() -> Vec<u8> {
+    build_valid_pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 5 0 R >> >> /MediaBox [0 0 72 72] /Contents 7 0 R >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im2 6 0 R >> >> /MediaBox [0 0 72 72] /Contents 8 0 R >>".to_vec(),
+        pdf_stream_object(
+            b"1111".to_vec(),
+            Some(
+                b"/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8"
+                    .to_vec(),
+            ),
+        ),
+        pdf_stream_object(
+            b"2222".to_vec(),
+            Some(
+                b"/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8"
+                    .to_vec(),
+            ),
+        ),
+        pdf_stream_object(b"q 10 0 0 10 0 0 cm /Im1 Do Q\n".to_vec(), None),
+        pdf_stream_object(b"q 10 0 0 10 0 0 cm /Im2 Do Q\n".to_vec(), None),
+    ])
 }
 
 #[cfg(unix)]
@@ -992,26 +998,60 @@ fn find_command(name: &str) -> Option<PathBuf> {
 
 #[cfg(unix)]
 fn valid_blank_pdf_bytes() -> Vec<u8> {
+    build_valid_pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources << >> >>".to_vec(),
+    ])
+}
+
+fn build_valid_pdf(objects: Vec<Vec<u8>>) -> Vec<u8> {
+    let object_count = objects.len();
     let mut output = Vec::new();
     output.extend_from_slice(b"%PDF-1.4\n");
-    let object_1 = output.len();
-    output.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
-    let object_2 = output.len();
-    output.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
-    let object_3 = output.len();
-    output.extend_from_slice(
-        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources << >> >>\nendobj\n",
-    );
+    let mut offsets = Vec::with_capacity(object_count);
+    for (index, object) in objects.into_iter().enumerate() {
+        offsets.push(output.len());
+        output.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+        output.extend_from_slice(&object);
+        if !object.ends_with(b"\n") {
+            output.push(b'\n');
+        }
+        output.extend_from_slice(b"endobj\n");
+    }
     let xref = output.len();
-    output.extend_from_slice(b"xref\n0 4\n");
-    output.extend_from_slice(b"0000000000 65535 f \n");
-    for offset in [object_1, object_2, object_3] {
-        output.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    output.extend_from_slice(format!("xref\n0 {}\n", object_count + 1).as_bytes());
+    output.extend_from_slice(b"0000000000 65535 f\r\n");
+    for offset in offsets {
+        output.extend_from_slice(format!("{offset:010} 00000 n\r\n").as_bytes());
     }
     output.extend_from_slice(
-        format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            object_count + 1
+        )
+        .as_bytes(),
     );
     output
+}
+
+fn pdf_stream_object(payload: Vec<u8>, extra_dict: Option<Vec<u8>>) -> Vec<u8> {
+    let mut object = Vec::new();
+    object.extend_from_slice(b"<< ");
+    if let Some(extra_dict) = extra_dict {
+        object.extend_from_slice(&extra_dict);
+        object.extend_from_slice(b" /Length ");
+    } else {
+        object.extend_from_slice(b"/Length ");
+    }
+    object.extend_from_slice(payload.len().to_string().as_bytes());
+    object.extend_from_slice(b" >>\nstream\n");
+    object.extend_from_slice(&payload);
+    if !payload.ends_with(b"\n") {
+        object.push(b'\n');
+    }
+    object.extend_from_slice(b"endstream");
+    object
 }
 
 fn scanned_document(store: &MetaStore) -> meta_store::Document {

@@ -1268,25 +1268,29 @@ fn fixture_root() -> PathBuf {
         .join("tests/fixtures/resumes")
 }
 
-fn two_page_scanned_pdf_bytes() -> &'static [u8] {
-    b"%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 5 0 R >> >> /Contents 7 0 R >> endobj
-4 0 obj << /Type /Page /Parent 2 0 R /Resources << /XObject << /Im2 6 0 R >> >> /Contents 8 0 R >> endobj
-5 0 obj << /Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >> stream
-1111
-endstream endobj
-6 0 obj << /Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >> stream
-2222
-endstream endobj
-7 0 obj << /Length 24 >> stream
-q 10 0 0 10 0 0 cm /Im1 Do Q
-endstream endobj
-8 0 obj << /Length 24 >> stream
-q 10 0 0 10 0 0 cm /Im2 Do Q
-endstream endobj
-%%EOF"
+fn two_page_scanned_pdf_bytes() -> Vec<u8> {
+    build_valid_pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 5 0 R >> >> /MediaBox [0 0 72 72] /Contents 7 0 R >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im2 6 0 R >> >> /MediaBox [0 0 72 72] /Contents 8 0 R >>".to_vec(),
+        pdf_stream_object(
+            b"1111".to_vec(),
+            Some(
+                b"/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8"
+                    .to_vec(),
+            ),
+        ),
+        pdf_stream_object(
+            b"2222".to_vec(),
+            Some(
+                b"/Type /XObject /Subtype /Image /Width 10 /Height 10 /ColorSpace /DeviceGray /BitsPerComponent 8"
+                    .to_vec(),
+            ),
+        ),
+        pdf_stream_object(b"q 10 0 0 10 0 0 cm /Im1 Do Q\n".to_vec(), None),
+        pdf_stream_object(b"q 10 0 0 10 0 0 cm /Im2 Do Q\n".to_vec(), None),
+    ])
 }
 
 #[cfg(unix)]
@@ -1300,26 +1304,60 @@ fn find_command(name: &str) -> Option<PathBuf> {
 
 #[cfg(unix)]
 fn valid_blank_pdf_bytes() -> Vec<u8> {
+    build_valid_pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources << >> >>".to_vec(),
+    ])
+}
+
+fn build_valid_pdf(objects: Vec<Vec<u8>>) -> Vec<u8> {
+    let object_count = objects.len();
     let mut output = Vec::new();
     output.extend_from_slice(b"%PDF-1.4\n");
-    let object_1 = output.len();
-    output.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
-    let object_2 = output.len();
-    output.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
-    let object_3 = output.len();
-    output.extend_from_slice(
-        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources << >> >>\nendobj\n",
-    );
+    let mut offsets = Vec::with_capacity(objects.len());
+    for (index, object) in objects.into_iter().enumerate() {
+        offsets.push(output.len());
+        output.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+        output.extend_from_slice(&object);
+        if !object.ends_with(b"\n") {
+            output.push(b'\n');
+        }
+        output.extend_from_slice(b"endobj\n");
+    }
     let xref = output.len();
-    output.extend_from_slice(b"xref\n0 4\n");
-    output.extend_from_slice(b"0000000000 65535 f \n");
-    for offset in [object_1, object_2, object_3] {
-        output.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    output.extend_from_slice(format!("xref\n0 {}\n", offsets.len() + 1).as_bytes());
+    output.extend_from_slice(b"0000000000 65535 f\r\n");
+    for offset in offsets {
+        output.extend_from_slice(format!("{offset:010} 00000 n\r\n").as_bytes());
     }
     output.extend_from_slice(
-        format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            object_count + 1
+        )
+        .as_bytes(),
     );
     output
+}
+
+fn pdf_stream_object(payload: Vec<u8>, extra_dict: Option<Vec<u8>>) -> Vec<u8> {
+    let mut object = Vec::new();
+    object.extend_from_slice(b"<< ");
+    if let Some(extra_dict) = extra_dict {
+        object.extend_from_slice(&extra_dict);
+        object.extend_from_slice(b" /Length ");
+    } else {
+        object.extend_from_slice(b"/Length ");
+    }
+    object.extend_from_slice(payload.len().to_string().as_bytes());
+    object.extend_from_slice(b" >>\nstream\n");
+    object.extend_from_slice(&payload);
+    if !payload.ends_with(b"\n") {
+        object.push(b'\n');
+    }
+    object.extend_from_slice(b"endstream");
+    object
 }
 
 fn seed_ocr_pdf_document_with_bytes(
