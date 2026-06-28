@@ -176,7 +176,10 @@ fn run_import(
                 summary.failed_documents += 1;
                 summary.failure_counts.increment(kind);
             }
-            ProcessedFile::Unchanged => {}
+            ProcessedFile::UnchangedSearchable => {
+                summary.searchable_documents += 1;
+            }
+            ProcessedFile::UnchangedOcrRequired => {}
         }
         let flushed_searchables = if should_flush_searchable_documents(
             index,
@@ -809,8 +812,11 @@ fn process_file(
     ensure_not_cancelled: &dyn Fn() -> Result<()>,
 ) -> Result<ProcessedFile> {
     ensure_not_cancelled()?;
-    if file_is_exact_rerun_noop(store, file)? {
-        return Ok(ProcessedFile::Unchanged);
+    if let Some(noop_kind) = exact_rerun_noop_kind(store, file)? {
+        return Ok(match noop_kind {
+            ExactRerunNoopKind::Searchable => ProcessedFile::UnchangedSearchable,
+            ExactRerunNoopKind::OcrRequired => ProcessedFile::UnchangedOcrRequired,
+        });
     }
 
     let mut document = document_from_discovered_file(file, now, DocumentStatus::Discovered);
@@ -1119,12 +1125,15 @@ fn entity_type_from_field_type(field_type: &FieldType) -> EntityType {
     }
 }
 
-fn file_is_exact_rerun_noop(store: &MetaStore, file: &DiscoveredFile) -> Result<bool> {
+fn exact_rerun_noop_kind(
+    store: &MetaStore,
+    file: &DiscoveredFile,
+) -> Result<Option<ExactRerunNoopKind>> {
     let Some(document) = store
         .document_by_id(&file.document_id)
         .map_err(ImportPipelineError::store)?
     else {
-        return Ok(false);
+        return Ok(None);
     };
 
     if document.is_deleted
@@ -1135,16 +1144,16 @@ fn file_is_exact_rerun_noop(store: &MetaStore, file: &DiscoveredFile) -> Result<
         || document.mtime != file.mtime
         || document.content_hash.as_deref() != Some(file.fingerprint.as_str())
     {
-        return Ok(false);
+        return Ok(None);
     }
 
     match document.status {
         DocumentStatus::Searchable | DocumentStatus::IndexedPartial => store
             .latest_visible_resume_version_for_document(&document.id)
             .map_err(ImportPipelineError::store)
-            .map(|version| version.is_some()),
-        DocumentStatus::OcrRequired => Ok(true),
-        _ => Ok(false),
+            .map(|version| version.map(|_| ExactRerunNoopKind::Searchable)),
+        DocumentStatus::OcrRequired => Ok(Some(ExactRerunNoopKind::OcrRequired)),
+        _ => Ok(None),
     }
 }
 
@@ -1230,13 +1239,19 @@ enum ProcessedFile {
         document: Box<Document>,
         index_document: Box<IndexDocument>,
     },
-    Unchanged,
+    UnchangedSearchable,
+    UnchangedOcrRequired,
     OcrRequired {
         ocr_job_queued: bool,
     },
     Failed {
         kind: ImportFailureKind,
     },
+}
+
+enum ExactRerunNoopKind {
+    Searchable,
+    OcrRequired,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1838,7 +1853,7 @@ mod tests {
         let documents = store.visible_documents().unwrap();
 
         assert_eq!(second_summary.files_discovered, 1);
-        assert_eq!(second_summary.searchable_documents, 0);
+        assert_eq!(second_summary.searchable_documents, 1);
         assert_eq!(second_summary.ocr_required_documents, 0);
         assert_eq!(second_summary.ocr_jobs_queued, 0);
         assert_eq!(second_summary.failed_documents, 0);
