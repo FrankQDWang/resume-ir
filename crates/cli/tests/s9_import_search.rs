@@ -1,13 +1,14 @@
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+use import_pipeline::ImportTaskOwnerLock;
 use meta_store::{
     EntityType, ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile,
     ImportTask, ImportTaskId, ImportTaskStatus, MetaStore, UnixTimestamp,
@@ -18,6 +19,7 @@ use meta_store::{ImportScanErrorKind, ImportScanErrorOperation};
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 const SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS: usize = 100;
 const SNAPSHOT_TEST_WRITE_RETRY_DELAY: Duration = Duration::from_millis(50);
+const CLI_IMPORT_KILL_RESTART_FIXTURE_FILE_COUNT: usize = 200;
 
 macro_rules! serialize_windows_s9_import_test {
     () => {
@@ -1780,11 +1782,118 @@ fn import_reuses_recoverable_task_after_restart() {
 }
 
 #[test]
+fn import_reuses_stale_running_task_after_cli_process_kill() {
+    serialize_windows_s9_import_test!();
+    let data_dir = temp_dir("import-cli-kill-restart-data");
+    let fixture_root = temp_dir("import-cli-kill-restart-root");
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    seed_large_import_fixture(
+        &fixture_root,
+        CLI_IMPORT_KILL_RESTART_FIXTURE_FILE_COUNT,
+        "CliKillRestartToken",
+    );
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    drop(store);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start resume-cli import before forced kill");
+
+    let task_id = wait_until_import_task_running(&mut child, &data_dir, &canonical_fixture_root);
+    child
+        .kill()
+        .expect("kill resume-cli import during active run");
+    let killed = child
+        .wait_with_output()
+        .expect("wait for killed resume-cli import");
+    assert!(!killed.status.success());
+    assert!(!String::from_utf8_lossy(&killed.stdout).contains(path_str(&data_dir)));
+    assert!(!String::from_utf8_lossy(&killed.stdout).contains(path_str(&fixture_root)));
+    assert!(!String::from_utf8_lossy(&killed.stdout).contains(path_str(&canonical_fixture_root)));
+    assert!(!String::from_utf8_lossy(&killed.stderr).contains(path_str(&data_dir)));
+    assert!(!String::from_utf8_lossy(&killed.stderr).contains(path_str(&fixture_root)));
+    assert!(!String::from_utf8_lossy(&killed.stderr).contains(path_str(&canonical_fixture_root)));
+
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let running_task = store.import_task_by_id(&task_id).unwrap().unwrap();
+    assert_eq!(running_task.status, ImportTaskStatus::Running);
+    assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 1);
+
+    let resumed = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+        ])
+        .output()
+        .expect("run resume-cli import after killed active run");
+
+    assert!(
+        resumed.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&resumed.stdout),
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    assert!(resumed.stderr.is_empty());
+    let resumed_stdout = String::from_utf8_lossy(&resumed.stdout);
+    assert!(resumed_stdout.contains("status: completed"));
+    assert!(resumed_stdout.contains(&task_id.to_string()));
+    assert!(!resumed_stdout.contains(path_str(&fixture_root)));
+    assert!(!resumed_stdout.contains(path_str(&canonical_fixture_root)));
+
+    let recovered_store = MetaStore::open_data_dir(&data_dir).unwrap();
+    recovered_store.run_migrations().unwrap();
+    let recovered_task = recovered_store
+        .import_task_by_id(&task_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered_task.status, ImportTaskStatus::Completed);
+    assert_eq!(
+        recovered_store
+            .status_summary()
+            .unwrap()
+            .import_tasks_recoverable,
+        0
+    );
+
+    let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "CliKillRestartToken",
+            "--top-k",
+            "20",
+        ])
+        .output()
+        .expect("run search after recovered cli import");
+    assert!(search.status.success());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(search_stdout.contains("results: 20"));
+
+    remove_dir(&data_dir);
+    remove_dir(&fixture_root);
+}
+
+#[test]
 fn import_does_not_take_over_live_running_task() {
     serialize_windows_s9_import_test!();
     let data_dir = temp_dir("import-live-running-data");
     let fixture_root = fixture_root();
-    let pending_task_id = seed_live_running_import_task(&data_dir, &fixture_root);
+    let (pending_task_id, _owner_lock) = seed_live_running_import_task(&data_dir, &fixture_root);
 
     let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -1816,7 +1925,7 @@ fn discovery_import_does_not_take_over_live_running_task_for_same_root() {
     serialize_windows_s9_import_test!();
     let data_dir = temp_dir("discovery-import-live-running-data");
     let fixture_root = fixture_root();
-    let pending_task_id = seed_live_running_import_task(&data_dir, &fixture_root);
+    let (pending_task_id, _owner_lock) = seed_live_running_import_task(&data_dir, &fixture_root);
 
     let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -1851,7 +1960,7 @@ fn multi_root_import_does_not_take_over_live_running_task_for_any_root() {
     let data_dir = temp_dir("multi-root-live-running-data");
     let fixture_root = fixture_root();
     let second_root = temp_dir("multi-root-live-second");
-    let pending_task_id = seed_live_running_import_task(&data_dir, &fixture_root);
+    let (pending_task_id, _owner_lock) = seed_live_running_import_task(&data_dir, &fixture_root);
 
     let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -1952,7 +2061,10 @@ fn seed_retryable_import_task(data_dir: &Path, fixture_root: &Path) -> ImportTas
     id
 }
 
-fn seed_live_running_import_task(data_dir: &Path, fixture_root: &Path) -> ImportTaskId {
+fn seed_live_running_import_task(
+    data_dir: &Path,
+    fixture_root: &Path,
+) -> (ImportTaskId, ImportTaskOwnerLock) {
     let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let canonical_root = fs::canonicalize(fixture_root).unwrap();
@@ -1982,7 +2094,57 @@ fn seed_live_running_import_task(data_dir: &Path, fixture_root: &Path) -> Import
             updated_at: started_at,
         })
         .unwrap();
-    id
+    let owner_lock = ImportTaskOwnerLock::acquire(data_dir, &id).unwrap();
+    (id, owner_lock)
+}
+
+fn seed_large_import_fixture(root: &Path, file_count: usize, token: &str) {
+    for index in 0..file_count {
+        fs::write(
+            root.join(format!("candidate-{index:04}.txt")),
+            format!(
+                "Synthetic Candidate {index}\nSkills: Rust Kubernetes Search {token}\nExperience: {}\n",
+                "local-first retrieval ".repeat(20)
+            ),
+        )
+        .unwrap();
+    }
+}
+
+fn wait_until_import_task_running(
+    child: &mut Child,
+    data_dir: &Path,
+    canonical_root: &Path,
+) -> ImportTaskId {
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let deadline = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 10;
+    loop {
+        if let Some(status) = child.try_wait().expect("poll import child") {
+            panic!("resume-cli import exited before active kill window: {status}");
+        }
+        if let Some(task) = store
+            .pending_import_task_by_root(path_str(canonical_root))
+            .unwrap()
+            .filter(|task| task.status == ImportTaskStatus::Running)
+        {
+            return task.id;
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        if now >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("resume-cli import task did not enter running before timeout");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn fixture_root() -> PathBuf {

@@ -20,7 +20,7 @@ use embedder::{
 use import_pipeline::{
     detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
     ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary,
-    ScanProfile,
+    ImportTaskOwnerLock, ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, redact_contact_values, FullTextIndex, SearchHit, SearchQuery,
@@ -851,6 +851,18 @@ fn run_import_worker_once_with_retry_due(
                 continue;
             }
         };
+        let owner_lock = match ImportTaskOwnerLock::acquire(data_dir, &task.id) {
+            Ok(owner_lock) => owner_lock,
+            Err(_) => {
+                let _ = store.update_import_task_status(
+                    &task.id,
+                    ImportTaskStatus::FailedRetryable,
+                    now,
+                );
+                worker_summary.failed += 1;
+                continue;
+            }
+        };
         let heartbeat = ImportTaskHeartbeat::start(data_dir, task.id.clone());
         let import_result = import_root_with_options(
             data_dir,
@@ -861,6 +873,7 @@ fn run_import_worker_once_with_retry_due(
             import_options,
         );
         drop(heartbeat);
+        drop(owner_lock);
         let import_summary = match import_result {
             Ok(import_summary) => import_summary,
             Err(_) => {
