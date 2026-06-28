@@ -1810,21 +1810,19 @@ fn import_reuses_stale_running_task_after_cli_process_kill() {
         .expect("start resume-cli import before forced kill");
 
     let task_id = wait_until_import_task_running(&mut child, &data_dir, &canonical_fixture_root);
-    child.kill().expect("kill resume-cli import during active run");
+    child
+        .kill()
+        .expect("kill resume-cli import during active run");
     let killed = child
         .wait_with_output()
         .expect("wait for killed resume-cli import");
     assert!(!killed.status.success());
     assert!(!String::from_utf8_lossy(&killed.stdout).contains(path_str(&data_dir)));
     assert!(!String::from_utf8_lossy(&killed.stdout).contains(path_str(&fixture_root)));
-    assert!(
-        !String::from_utf8_lossy(&killed.stdout).contains(path_str(&canonical_fixture_root))
-    );
+    assert!(!String::from_utf8_lossy(&killed.stdout).contains(path_str(&canonical_fixture_root)));
     assert!(!String::from_utf8_lossy(&killed.stderr).contains(path_str(&data_dir)));
     assert!(!String::from_utf8_lossy(&killed.stderr).contains(path_str(&fixture_root)));
-    assert!(
-        !String::from_utf8_lossy(&killed.stderr).contains(path_str(&canonical_fixture_root))
-    );
+    assert!(!String::from_utf8_lossy(&killed.stderr).contains(path_str(&canonical_fixture_root)));
 
     let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
@@ -1858,10 +1856,16 @@ fn import_reuses_stale_running_task_after_cli_process_kill() {
 
     let recovered_store = MetaStore::open_data_dir(&data_dir).unwrap();
     recovered_store.run_migrations().unwrap();
-    let recovered_task = recovered_store.import_task_by_id(&task_id).unwrap().unwrap();
+    let recovered_task = recovered_store
+        .import_task_by_id(&task_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(recovered_task.status, ImportTaskStatus::Completed);
     assert_eq!(
-        recovered_store.status_summary().unwrap().import_tasks_recoverable,
+        recovered_store
+            .status_summary()
+            .unwrap()
+            .import_tasks_recoverable,
         0
     );
 

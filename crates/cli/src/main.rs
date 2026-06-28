@@ -23,8 +23,8 @@ use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions
 use import_pipeline::{
     detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
     remove_documents_from_full_text_index, ImportFailureKind, ImportOptions,
-    ImportTaskOwnerLock,
-    ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
+    ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ImportTaskOwnerLock,
+    ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, publish_snapshot, purge_obsolete_snapshots, redact_contact_values,

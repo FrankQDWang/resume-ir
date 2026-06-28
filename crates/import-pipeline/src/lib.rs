@@ -55,7 +55,10 @@ impl ImportTaskOwnerLock {
     pub fn acquire(data_dir: &Path, task_id: &ImportTaskId) -> std::io::Result<Self> {
         let path = import_task_owner_lock_path(data_dir, task_id);
         let parent = path.parent().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid import task owner lock")
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid import task owner lock",
+            )
         })?;
         fs::create_dir_all(parent)?;
         let file = OpenOptions::new()
@@ -71,7 +74,10 @@ impl ImportTaskOwnerLock {
     pub fn try_acquire(data_dir: &Path, task_id: &ImportTaskId) -> std::io::Result<Option<Self>> {
         let path = import_task_owner_lock_path(data_dir, task_id);
         let parent = path.parent().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid import task owner lock")
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid import task owner lock",
+            )
         })?;
         fs::create_dir_all(parent)?;
         let file = OpenOptions::new()
