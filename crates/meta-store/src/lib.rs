@@ -40,6 +40,7 @@ const SCHEMA_VERSION_V17: u32 = 17;
 const SCHEMA_VERSION_V18: u32 = 18;
 const SCHEMA_VERSION_V19: u32 = 19;
 const SCHEMA_VERSION_V20: u32 = 20;
+const SCHEMA_VERSION_V21: u32 = 21;
 const QUERY_OBSERVATION_RETENTION_ROWS: i64 = 10_000;
 const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
@@ -781,6 +782,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V18, SCHEMA_V18),
             (SCHEMA_VERSION_V19, SCHEMA_V19),
             (SCHEMA_VERSION_V20, SCHEMA_V20),
+            (SCHEMA_VERSION_V21, SCHEMA_V21),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -2790,20 +2792,33 @@ impl MetaStore {
             .execute(
                 "\
                 INSERT INTO index_state (
-                    state_key, manifest_version, snapshot_token, status, updated_at_seconds
+                    state_key,
+                    manifest_version,
+                    snapshot_token,
+                    status,
+                    updated_at_seconds,
+                    visible_epoch,
+                    manifest_document_count
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 ON CONFLICT(state_key) DO UPDATE SET
                     manifest_version = excluded.manifest_version,
                     snapshot_token = excluded.snapshot_token,
                     status = excluded.status,
-                    updated_at_seconds = excluded.updated_at_seconds",
+                    updated_at_seconds = excluded.updated_at_seconds,
+                    visible_epoch = excluded.visible_epoch,
+                    manifest_document_count = excluded.manifest_document_count",
                 params![
                     INDEX_STATE_KEY,
                     state.manifest_version,
                     state.snapshot_token,
                     index_state_status_to_storage(state.status),
                     state.updated_at.as_unix_seconds(),
+                    u64_to_i64(state.visible_epoch, "index_state.visible_epoch")?,
+                    u64_to_i64(
+                        state.manifest_document_count,
+                        "index_state.manifest_document_count",
+                    )?,
                 ],
             )
             .map_err(MetaStoreError::storage)?;
@@ -2816,7 +2831,13 @@ impl MetaStore {
         let mut statement = connection
             .prepare(
                 "\
-                SELECT manifest_version, snapshot_token, status, updated_at_seconds
+                SELECT
+                    manifest_version,
+                    snapshot_token,
+                    status,
+                    updated_at_seconds,
+                    visible_epoch,
+                    manifest_document_count
                 FROM index_state
                 WHERE state_key = ?1",
             )
@@ -4642,6 +4663,8 @@ pub struct IndexState {
     pub snapshot_token: Option<String>,
     pub status: IndexStateStatus,
     pub updated_at: UnixTimestamp,
+    pub visible_epoch: u64,
+    pub manifest_document_count: u64,
 }
 
 impl fmt::Debug for IndexState {
@@ -4655,6 +4678,8 @@ impl fmt::Debug for IndexState {
             )
             .field("status", &self.status)
             .field("updated_at", &self.updated_at)
+            .field("visible_epoch", &self.visible_epoch)
+            .field("manifest_document_count", &self.manifest_document_count)
             .finish()
     }
 }
@@ -5399,6 +5424,14 @@ CREATE INDEX entity_mention_type_value_idx
     ON entity_mention(entity_type, normalized_value, confidence);
 "#;
 
+const SCHEMA_V21: &str = r#"
+ALTER TABLE index_state
+    ADD COLUMN visible_epoch INTEGER NOT NULL DEFAULT 0 CHECK (visible_epoch >= 0);
+
+ALTER TABLE index_state
+    ADD COLUMN manifest_document_count INTEGER NOT NULL DEFAULT 0 CHECK (manifest_document_count >= 0);
+"#;
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -5514,6 +5547,11 @@ fn read_index_state(row: &Row<'_>) -> Result<IndexState> {
         snapshot_token: read_optional_string(row, 1)?,
         status: index_state_status_from_storage(&read_string(row, 2)?)?,
         updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 3)?),
+        visible_epoch: i64_to_u64(read_i64(row, 4)?, "index_state.visible_epoch")?,
+        manifest_document_count: i64_to_u64(
+            read_i64(row, 5)?,
+            "index_state.manifest_document_count",
+        )?,
     })
 }
 
