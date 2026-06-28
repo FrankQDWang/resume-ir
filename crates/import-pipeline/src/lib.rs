@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,12 +33,66 @@ const PARSE_VERSION: &str = "parser-v1";
 const OCR_PARSE_VERSION: &str = "ocr-v1";
 const SCHEMA_VERSION: &str = "resume-ir-s9-v1";
 const INDEX_MANIFEST_VERSION: &str = "fulltext-s9-v1";
+const IMPORT_TASK_OWNER_LOCKS_DIR: &str = "import-task-locks";
 
 pub fn crate_name() -> &'static str {
     "import-pipeline"
 }
 
 pub type Result<T> = std::result::Result<T, ImportPipelineError>;
+
+pub fn import_task_owner_lock_path(data_dir: &Path, task_id: &ImportTaskId) -> PathBuf {
+    data_dir
+        .join(IMPORT_TASK_OWNER_LOCKS_DIR)
+        .join(format!("{}.lock", task_id))
+}
+
+pub struct ImportTaskOwnerLock {
+    file: File,
+}
+
+impl ImportTaskOwnerLock {
+    pub fn acquire(data_dir: &Path, task_id: &ImportTaskId) -> std::io::Result<Self> {
+        let path = import_task_owner_lock_path(data_dir, task_id);
+        let parent = path.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid import task owner lock")
+        })?;
+        fs::create_dir_all(parent)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)?;
+        file.lock()?;
+        Ok(Self { file })
+    }
+
+    pub fn try_acquire(data_dir: &Path, task_id: &ImportTaskId) -> std::io::Result<Option<Self>> {
+        let path = import_task_owner_lock_path(data_dir, task_id);
+        let parent = path.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid import task owner lock")
+        })?;
+        fs::create_dir_all(parent)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self { file })),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(error)) => Err(error),
+        }
+    }
+}
+
+impl Drop for ImportTaskOwnerLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
 
 pub fn import_root(
     data_dir: &Path,

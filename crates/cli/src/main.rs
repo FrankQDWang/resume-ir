@@ -23,6 +23,7 @@ use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions
 use import_pipeline::{
     detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
     remove_documents_from_full_text_index, ImportFailureKind, ImportOptions,
+    ImportTaskOwnerLock,
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ScanProfile,
 };
 use index_fulltext::{
@@ -10366,7 +10367,13 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     for root in &roots {
         let canonical_root_path = path_string(&root.canonical);
         let requested_root_path = path_string(&root.requested);
-        let task = match pending_import_task(&store, &canonical_root_path, &requested_root_path)? {
+        let task = match pending_import_task(
+            data_dir,
+            &store,
+            &canonical_root_path,
+            &requested_root_path,
+            now,
+        )? {
             Some(task) if task.status == ImportTaskStatus::Running => {
                 return Err(CliError::user("import task is already running"));
             }
@@ -10431,6 +10438,8 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     }
 
     for (task, root) in tasks.iter().zip(roots.iter()) {
+        let _task_owner_lock = ImportTaskOwnerLock::acquire(data_dir, &task.id)
+            .map_err(|_| CliError::user("unable to acquire import task owner lock"))?;
         let root_summary = import_root_with_options(
             data_dir,
             &store,
@@ -12352,15 +12361,17 @@ fn canonical_import_roots(requested_roots: &[PathBuf]) -> Result<Vec<CanonicalIm
 }
 
 fn pending_import_task(
+    data_dir: &Path,
     store: &MetaStore,
     canonical_root_path: &str,
     requested_root_path: &str,
+    now: UnixTimestamp,
 ) -> Result<Option<ImportTask>> {
     if let Some(task) = store
         .pending_import_task_by_root(canonical_root_path)
         .map_err(CliError::store)?
     {
-        return Ok(Some(task));
+        return recover_stale_running_import_task(data_dir, store, task, now).map(Some);
     }
 
     if requested_root_path == canonical_root_path {
@@ -12370,6 +12381,35 @@ fn pending_import_task(
     store
         .pending_import_task_by_root(requested_root_path)
         .map_err(CliError::store)
+        .and_then(|task| {
+            task.map(|task| recover_stale_running_import_task(data_dir, store, task, now))
+                .transpose()
+        })
+}
+
+fn recover_stale_running_import_task(
+    data_dir: &Path,
+    store: &MetaStore,
+    task: ImportTask,
+    now: UnixTimestamp,
+) -> Result<ImportTask> {
+    if task.status != ImportTaskStatus::Running {
+        return Ok(task);
+    }
+
+    let Some(_owner_lock) = ImportTaskOwnerLock::try_acquire(data_dir, &task.id)
+        .map_err(|_| CliError::user("unable to inspect import task owner lock"))?
+    else {
+        return Ok(task);
+    };
+
+    store
+        .update_import_task_status(&task.id, ImportTaskStatus::FailedRetryable, now)
+        .map_err(CliError::store)?;
+    store
+        .import_task_by_id(&task.id)
+        .map_err(CliError::store)?
+        .ok_or_else(|| CliError::user("recovered import task disappeared"))
 }
 
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {

@@ -22342,6 +22342,47 @@ Output summary:
 - `cargo test --workspace`: exit 0.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
 
+### S490
+
+TDD red checks:
+
+```bash
+cargo test -p resume-cli --test s9_import_search import_reuses_stale_running_task_after_cli_process_kill --locked -- --exact --nocapture
+```
+
+Output summary:
+
+- Before the fix, the direct CLI import recovery regression failed with `resume-cli: import task is already running` after killing the foreground importer during an active run.
+
+Implementation checks:
+
+```bash
+cargo test -p resume-cli --test s9_import_search --locked
+cargo test -p resume-daemon --test s4_daemon --locked
+cargo test -p resume-daemon --test s20_ipc --locked
+./scripts/ci/guard-public-repo.sh
+python3 scripts/ci/check-pr-budget.py
+git diff --check
+```
+
+Output summary:
+
+- `cargo test -p resume-cli --test s9_import_search --locked`: exit 0; 30 tests passed, including the stale `Running` CLI kill/restart regression, live-owner negative controls, recoverable restart controls, and the full witness/diagnostics/import surface.
+- `cargo test -p resume-daemon --test s4_daemon --locked`: exit 0; 14 tests passed, preserving daemon import scheduler stale-running recovery, active-import restart recovery, watcher requeue, and snapshot repair behavior.
+- `cargo test -p resume-daemon --test s20_ipc --locked`: exit 0; 18 tests passed, preserving daemon IPC import/status/progress behavior and loopback/auth guards.
+- `./scripts/ci/guard-public-repo.sh`: exit 0.
+- `python3 scripts/ci/check-pr-budget.py`: exit 0.
+- `git diff --check`: exit 0.
+
+Acceptance:
+
+- The direct CLI import path now uses the same per-task owner-liveness contract as the daemon path: a live owner still blocks takeover, while an abandoned stale `Running` import can be recovered and resumed instead of permanently blocking the same root.
+- The public regression is stable in the full CLI suite because the test now initializes its synthetic metadata schema before spawning the child importer, removing a suite-level migration race without changing production behavior.
+
+Scope note:
+
+- S490 covers stale `Running` direct-CLI import recovery and its shared owner-lock contract with the daemon import path only. It does not claim private-corpus benchmark progress, OCR/vector/query-latency acceptance, GUI work, Windows weak-host evidence, or `goal_complete`.
+
 ### S10
 
 TDD red checks:
