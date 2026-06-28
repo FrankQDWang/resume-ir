@@ -342,16 +342,16 @@ required_evidence = ["ci_green", "local_gate_green", "privacy_gate_green", "bran
 allowed_actions = ["enable_auto_merge", "squash_merge"]
 
 [[autonomous_delivery.transitions]]
-name = "close_issue_with_evidence"
+name = "reconcile_issue_lifecycle"
 from = ["pr_merged"]
-to = "issue_closed_with_evidence"
+to = "issue_reconciled_with_evidence"
 required_permissions = ["github_issue_write_allowed"]
-required_evidence = ["main_reachable_commit", "before_after_metrics", "privacy_boundary"]
-allowed_actions = ["comment_issue", "close_issue"]
+required_evidence = ["main_reachable_commit", "issue_lifecycle_outcome", "before_after_metrics", "privacy_boundary"]
+allowed_actions = ["comment_issue", "close_issue", "open_follow_up_issue"]
 
 [[autonomous_delivery.transitions]]
 name = "advance_to_next_issue_or_goal_complete"
-from = ["issue_closed_with_evidence"]
+from = ["issue_reconciled_with_evidence"]
 to = "next_issue_or_goal_complete"
 required_permissions = []
 required_evidence = ["goal_completion_assessment", "next_issue_selection_or_completion_decision"]

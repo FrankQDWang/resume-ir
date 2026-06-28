@@ -50,9 +50,17 @@ goal_authorized
 -> privacy_gate_green
 -> merge_method_selected
 -> pr_merged
--> issue_closed_with_evidence
+-> issue_reconciled_with_evidence
 -> next_issue_or_goal_complete
 ```
+
+Post-merge issue handling is a reconciliation step, not a forced close. The runner must record exactly one truthful issue-lifecycle outcome after each merged slice PR:
+
+1. `closed_here`
+2. `same_lane_continues`
+3. `follow_up_issue_linked`
+
+Same-lane continuation is valid when the linked issue is a broader profile-lane ledger and the merged PR lands only a bounded slice.
 
 ## 5. Non-Negotiable Gates
 

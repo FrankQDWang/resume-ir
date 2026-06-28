@@ -46,7 +46,7 @@
         "privacy_gate_green",
         "merge_method_selected",
         "pr_merged",
-        "issue_closed_with_evidence",
+        "issue_reconciled_with_evidence",
         "next_issue_or_goal_complete",
         "blocked_needs_external_input",
         "blocked_external_retryable",

@@ -94,7 +94,9 @@ assignees: ""
 
 - [ ] Outcome: <!-- won | lost | inconclusive | blocked -->
 - [ ] Closing evidence:
-- [ ] Linked PRs merged or follow-up issue linked:
+- [ ] Issue lifecycle after merge: <!-- closed_here | same_lane_continues | follow_up_issue_linked -->
+- [ ] Linked PRs merged:
+- [ ] Follow-up issue linked, if any:
 - [ ] Success threshold met:
 - [ ] Regression guard passed:
 - [ ] Remaining risk:

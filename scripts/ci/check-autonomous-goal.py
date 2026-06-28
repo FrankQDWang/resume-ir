@@ -58,6 +58,13 @@ def require_non_empty_string(value: object, path: str) -> None:
         fail(f"{path}: expected non-empty string")
 
 
+def require_transition(transitions: list, name: str) -> dict:
+    for index, transition in enumerate(transitions):
+        if isinstance(transition, dict) and transition.get("name") == name:
+            return transition
+    fail(f"autonomous_delivery.transitions: missing {name}")
+
+
 def main() -> int:
     contracts = load_contracts_module()
     active_goal = load_toml(ROOT / "ACTIVE_GOAL.toml")
@@ -330,7 +337,7 @@ def main() -> int:
         "mark_privacy_gate_green",
         "select_merge_method",
         "merge_pr",
-        "close_issue_with_evidence",
+        "reconcile_issue_lifecycle",
         "advance_to_next_issue_or_goal_complete",
     ]:
         if expected not in transition_names:
@@ -344,6 +351,45 @@ def main() -> int:
             values = require_list(transition.get(key), f"autonomous_delivery.transitions[{index}].{key}")
             if key in {"from", "allowed_actions"} and not values:
                 fail(f"autonomous_delivery.transitions[{index}].{key}: expected non-empty list")
+
+    reconcile_issue = require_transition(transitions, "reconcile_issue_lifecycle")
+    if reconcile_issue.get("from") != ["pr_merged"]:
+        fail("autonomous_delivery.transitions.reconcile_issue_lifecycle.from: expected ['pr_merged']")
+    require_string(
+        reconcile_issue.get("to"),
+        "issue_reconciled_with_evidence",
+        "autonomous_delivery.transitions.reconcile_issue_lifecycle.to",
+    )
+    required_evidence = require_list(
+        reconcile_issue.get("required_evidence"),
+        "autonomous_delivery.transitions.reconcile_issue_lifecycle.required_evidence",
+    )
+    for expected in ["main_reachable_commit", "issue_lifecycle_outcome", "before_after_metrics", "privacy_boundary"]:
+        if expected not in required_evidence:
+            fail(
+                "autonomous_delivery.transitions.reconcile_issue_lifecycle.required_evidence: "
+                f"missing {expected}"
+            )
+
+    advance_transition = require_transition(transitions, "advance_to_next_issue_or_goal_complete")
+    if advance_transition.get("from") != ["issue_reconciled_with_evidence"]:
+        fail(
+            "autonomous_delivery.transitions.advance_to_next_issue_or_goal_complete.from: "
+            "expected ['issue_reconciled_with_evidence']"
+        )
+
+    profile_template = (ROOT / ".github" / "ISSUE_TEMPLATE" / "profile_issue.md").read_text(encoding="utf-8")
+    for phrase in [
+        "Issue lifecycle after merge",
+        "closed_here | same_lane_continues | follow_up_issue_linked",
+        "Follow-up issue linked, if any:",
+    ]:
+        if phrase not in profile_template:
+            fail(f".github/ISSUE_TEMPLATE/profile_issue.md: missing {phrase!r}")
+
+    pr_template = (ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
+    if "The linked issue records a reconciled post-merge lifecycle outcome." not in pr_template:
+        fail(".github/PULL_REQUEST_TEMPLATE.md: missing reconciled post-merge lifecycle readiness anchor")
 
     print("check-autonomous-goal.py passed")
     return 0

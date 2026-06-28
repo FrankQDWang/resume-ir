@@ -155,7 +155,7 @@ Rollback notes:
 - [ ] Merge method is selected.
 - [ ] Admin bypass is not used.
 - [ ] Direct main push is not used.
-- [ ] The linked issue has closure evidence or the remaining gap is documented.
+- [ ] The linked issue records a reconciled post-merge lifecycle outcome.
 
 <!-- contract:scope_exception -->
 ## Scope Exception
