@@ -101,6 +101,7 @@ require_reused_import_stdout() {
   file="$1"
   require_text "$file" "import: reused existing data-dir"
   require_text "$file" "searchable documents:"
+  require_text "$file" "import tasks recoverable: 0"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required for reused import stdout validation"
   python3 - "$file" <<'PY' || fail "$file reused import stdout is invalid"
 import re
@@ -540,10 +541,19 @@ case "$cmd:$sub" in
     printf 'import task submitted\nstatus: completed\n'
     ;;
   status:*)
+    recoverable_import_tasks='0'
+    if [ "${FAKE_STATUS_MODE:-ready}" = "recoverable" ]; then
+      recoverable_import_tasks='1'
+    fi
     printf 'indexed documents: 9133\n'
     printf 'searchable documents: 9133\n'
     printf 'ocr queue: 0\n'
     printf 'embedding queue: 0\n'
+    printf 'import tasks recoverable: %s\n' "$recoverable_import_tasks"
+    if [ "$recoverable_import_tasks" = "1" ]; then
+      printf 'latest import files discovered: 8720\n'
+      printf 'latest import searchable documents: 312\n'
+    fi
     printf 'paths: <redacted>\n'
     ;;
   benchmark-corpus-summary:*)
@@ -785,6 +795,11 @@ run_execute_smoke() {
   if [ "$mode" = "reuse-imported-corpus" ]; then
     import_mode="forbid-scan"
   fi
+  status_mode="ready"
+  if [ "$mode" = "reuse-imported-corpus-recoverable" ]; then
+    import_mode="forbid-scan"
+    status_mode="recoverable"
+  fi
   query_set_mode="ready"
   if [ "$mode" = "query-set-draft-failed" ]; then
     query_set_mode="draft-failed"
@@ -796,7 +811,7 @@ run_execute_smoke() {
   if [ "$mode" = "smoke-low-hot" ]; then
     corpus_summary_mode="smoke-low-hot"
   fi
-  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_CORPUS_SUMMARY_MODE="$corpus_summary_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_FAULT_SIMULATION_MODE="$fault_simulation_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR="$embedding_runtime_bin_dir" FAKE_REQUIRED_QUERY_SET_TRACE_ROOT="$execute_query_set_trace_root" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
+  FAKE_BENCHMARK_MODE="$benchmark_mode" FAKE_CORPUS_SUMMARY_MODE="$corpus_summary_mode" FAKE_DIAGNOSTICS_MODE="$diagnostics_mode" FAKE_FAULT_SIMULATION_MODE="$fault_simulation_mode" FAKE_IMPORT_MODE="$import_mode" FAKE_STATUS_MODE="$status_mode" FAKE_QUERY_SET_MODE="$query_set_mode" FAKE_RELEASE_READINESS_MODE="$mode" FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR="$embedding_runtime_bin_dir" FAKE_REQUIRED_QUERY_SET_TRACE_ROOT="$execute_query_set_trace_root" FAKE_RUNTIME_PREFLIGHT_MODE="$mode" "$script" --execute \
     --resume-cli "$fake_resume_cli" \
     --resume-daemon "$fake_resume_daemon" \
     --resume-benchmark "$fake_resume_benchmark" \
@@ -1041,6 +1056,42 @@ reject_text "$tmpdir/execute-reuse-imported-corpus-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-reuse-imported-corpus-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-reuse-imported-corpus-stdout.txt" "PRIVATE-current-stage"
 reject_text "$tmpdir/execute-reuse-imported-corpus-stderr.txt" "PRIVATE-current-stage"
+
+run_execute_smoke reuse-imported-corpus-recoverable \
+  --validation-profile smoke \
+  --reuse-imported-corpus \
+  --reuse-dataset-manifest "$reuse_dataset_manifest" \
+  --max-files 6 \
+  --max-queries 3 \
+  --top-k 5
+reuse_recoverable_status=$(cat "$tmpdir/execute-reuse-imported-corpus-recoverable-status.txt")
+if [ "$reuse_recoverable_status" -eq 0 ]; then
+  fail "current-stage reuse-imported-corpus accepted recoverable import work"
+fi
+reuse_recoverable_summary="$execute_out_dir/current-stage-blocked-summary.json"
+if [ ! -s "$reuse_recoverable_summary" ]; then
+  fail "current-stage reuse-imported-corpus recoverable case did not write blocked summary"
+fi
+if [ -e "$execute_out_dir/current-stage-smoke-summary.json" ]; then
+  fail "current-stage reuse-imported-corpus recoverable case wrote smoke summary"
+fi
+require_text "$reuse_recoverable_summary" '"blocked_step": "import_private_corpus"'
+require_text "$reuse_recoverable_summary" '"blocked_category": "import/parser"'
+require_text "$reuse_recoverable_summary" '"blocked_reason": "reuse_imported_corpus_recoverable_task_present"'
+require_text "$reuse_recoverable_summary" '"private_corpus_read": false'
+require_text "$execute_out_dir/import.stdout.txt" "import tasks recoverable: 1"
+require_current_stage_handoff \
+  "blocked" \
+  "resume-ir.current-stage-blocked-summary.v1"
+require_text "$tmpdir/execute-reuse-imported-corpus-recoverable-stderr.txt" "current-stage validation blocked: reusable data-dir still has recoverable import work"
+reject_text "$reuse_recoverable_summary" "$tmpdir"
+reject_text "$reuse_recoverable_summary" "PRIVATE-current-stage"
+reject_text "$reuse_recoverable_summary" "private fake query"
+reject_text "$execute_out_dir/import.stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-reuse-imported-corpus-recoverable-stdout.txt" "$tmpdir"
+reject_text "$tmpdir/execute-reuse-imported-corpus-recoverable-stderr.txt" "$tmpdir"
+reject_text "$tmpdir/execute-reuse-imported-corpus-recoverable-stdout.txt" "PRIVATE-current-stage"
+reject_text "$tmpdir/execute-reuse-imported-corpus-recoverable-stderr.txt" "PRIVATE-current-stage"
 
 run_execute_smoke external-runtime-smoke \
   --validation-profile smoke \

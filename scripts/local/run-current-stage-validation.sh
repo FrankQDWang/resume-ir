@@ -426,6 +426,12 @@ validate_no_private_markers_in_file() {
   return 0
 }
 
+status_count_or_empty() {
+  path="$1"
+  label="$2"
+  awk -F': ' -v label="$label" '$1 == label { print $2; exit }' "$path"
+}
+
 write_runtime_preflight_blocked_summary() {
   blocked_step="$1"
   blocked_category="$2"
@@ -621,8 +627,12 @@ write_import_parser_blocked_summary() {
   dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
   import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
 
+  private_corpus_read="true"
+  if [ "$reuse_imported_corpus" = "true" ]; then
+    private_corpus_read="false"
+  fi
+
   if [ "$blocked_step" = "dataset_manifest" ]; then
-    private_corpus_read="true"
     steps_json=$(cat <<EOF_STEPS
     {"id": "ocr_preflight", "status": "success"},
     {"id": "ocr_manifest_draft", "status": "success"},
@@ -634,7 +644,6 @@ write_import_parser_blocked_summary() {
 EOF_STEPS
 )
   else
-    private_corpus_read="true"
     steps_json=$(cat <<EOF_STEPS
     {"id": "ocr_preflight", "status": "success"},
     {"id": "ocr_manifest_draft", "status": "success"},
@@ -2580,6 +2589,21 @@ if [ "$reuse_imported_corpus" = "true" ]; then
     printf '%s\n' "private root read: false"
     cat "$status_tmp"
   } > "$out_dir/import.stdout.txt"
+  recoverable_import_tasks=$(status_count_or_empty "$status_tmp" "import tasks recoverable")
+  case "$recoverable_import_tasks" in
+    ''|*[!0-9]*)
+      write_import_parser_blocked_summary \
+        "import_private_corpus" "reuse_imported_corpus_status_missing_recoverable_count" 1
+      rm -f "$status_tmp"
+      fail "current-stage validation blocked: reusable data-dir status is missing import task terminality"
+      ;;
+  esac
+  if [ "$recoverable_import_tasks" -gt 0 ]; then
+    write_import_parser_blocked_summary \
+      "import_private_corpus" "reuse_imported_corpus_recoverable_task_present" 1
+    rm -f "$status_tmp"
+    fail "current-stage validation blocked: reusable data-dir still has recoverable import work"
+  fi
   rm -f "$status_tmp"
 else
   printf '%s\n' "current-stage validation: dataset manifest"
