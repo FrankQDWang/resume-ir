@@ -645,6 +645,8 @@ fn doctor_and_diagnostics_report_metadata_index_health_with_active_snapshot() {
             snapshot_token: Some("fulltext-1800002000-1-0-0".to_string()),
             status: IndexStateStatus::Stale,
             updated_at: UnixTimestamp::from_unix_seconds(1_800_002_000),
+            visible_epoch: 0,
+            manifest_document_count: 0,
         })
         .unwrap();
 

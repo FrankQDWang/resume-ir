@@ -149,7 +149,6 @@ fn run_import(
     let total_files = report.files.len();
     for (index, file) in report.files.into_iter().enumerate() {
         ensure_not_cancelled()?;
-        pending_excluded_doc_ids.insert(file.document_id.as_str().to_string());
         match process_file(
             data_dir,
             store,
@@ -162,18 +161,25 @@ fn run_import(
                 document,
                 index_document,
             } => {
+                pending_excluded_doc_ids.insert(file.document_id.as_str().to_string());
                 pending_index_documents.push((*document, *index_document));
             }
             ProcessedFile::OcrRequired { ocr_job_queued } => {
+                pending_excluded_doc_ids.insert(file.document_id.as_str().to_string());
                 summary.ocr_required_documents += 1;
                 if ocr_job_queued {
                     summary.ocr_jobs_queued += 1;
                 }
             }
             ProcessedFile::Failed { kind } => {
+                pending_excluded_doc_ids.insert(file.document_id.as_str().to_string());
                 summary.failed_documents += 1;
                 summary.failure_counts.increment(kind);
             }
+            ProcessedFile::UnchangedSearchable => {
+                summary.searchable_documents += 1;
+            }
+            ProcessedFile::UnchangedOcrRequired => {}
         }
         let flushed_searchables = if should_flush_searchable_documents(
             index,
@@ -301,7 +307,7 @@ fn flush_pending_searchable_documents(
         .iter()
         .map(|(_, index_document)| index_document.clone())
         .collect::<Vec<_>>();
-    let (snapshot_token, _indexed_document_count) = write_incremental_full_text_index(
+    let (snapshot_token, indexed_document_count) = write_incremental_full_text_index(
         data_dir,
         store,
         now,
@@ -323,7 +329,7 @@ fn flush_pending_searchable_documents(
 
     pending_excluded_doc_ids.clear();
     ensure_not_cancelled()?;
-    update_index_state(store, now, snapshot_token)?;
+    update_index_state(store, now, snapshot_token, indexed_document_count)?;
     Ok(true)
 }
 
@@ -351,7 +357,7 @@ pub fn rebuild_full_text_index(
 ) -> Result<IndexRebuildSummary> {
     let (snapshot_token, indexed_documents) =
         write_rebuilt_full_text_index(data_dir, store, now, &BTreeSet::new(), Vec::new())?;
-    update_index_state(store, now, snapshot_token)?;
+    update_index_state(store, now, snapshot_token, indexed_documents)?;
 
     Ok(IndexRebuildSummary { indexed_documents })
 }
@@ -371,7 +377,7 @@ pub fn remove_documents_from_full_text_index(
         0,
         document_ids.len(),
     )?;
-    update_index_state(store, now, snapshot_token)?;
+    update_index_state(store, now, snapshot_token, indexed_documents)?;
 
     Ok(IndexRebuildSummary { indexed_documents })
 }
@@ -412,7 +418,7 @@ pub fn index_ocr_text(
         store
             .upsert_document(&document)
             .map_err(ImportPipelineError::store)?;
-        update_index_state(store, now, snapshot_token)?;
+        update_index_state(store, now, snapshot_token, indexed_documents)?;
         return Ok(OcrTextIndexSummary {
             searchable: false,
             indexed_documents,
@@ -473,7 +479,7 @@ pub fn index_ocr_text(
     store
         .upsert_document(&document)
         .map_err(ImportPipelineError::store)?;
-    update_index_state(store, now, snapshot_token)?;
+    update_index_state(store, now, snapshot_token, indexed_documents)?;
 
     Ok(OcrTextIndexSummary {
         searchable: true,
@@ -574,13 +580,24 @@ fn write_rebuilt_full_text_index(
     Ok((snapshot_token, indexed_documents))
 }
 
-fn update_index_state(store: &MetaStore, now: UnixTimestamp, snapshot_token: String) -> Result<()> {
+fn update_index_state(
+    store: &MetaStore,
+    now: UnixTimestamp,
+    snapshot_token: String,
+    manifest_document_count: usize,
+) -> Result<()> {
+    let visible_epoch = store
+        .index_state()
+        .map_err(ImportPipelineError::store)?
+        .map_or(1, |state| state.visible_epoch.saturating_add(1));
     store
         .upsert_index_state(&IndexState {
             manifest_version: INDEX_MANIFEST_VERSION.to_string(),
             snapshot_token: Some(snapshot_token),
             status: IndexStateStatus::Ready,
             updated_at: now,
+            visible_epoch,
+            manifest_document_count: manifest_document_count as u64,
         })
         .map_err(ImportPipelineError::store)
 }
@@ -795,6 +812,13 @@ fn process_file(
     ensure_not_cancelled: &dyn Fn() -> Result<()>,
 ) -> Result<ProcessedFile> {
     ensure_not_cancelled()?;
+    if let Some(noop_kind) = exact_rerun_noop_kind(store, file)? {
+        return Ok(match noop_kind {
+            ExactRerunNoopKind::Searchable => ProcessedFile::UnchangedSearchable,
+            ExactRerunNoopKind::OcrRequired => ProcessedFile::UnchangedOcrRequired,
+        });
+    }
+
     let mut document = document_from_discovered_file(file, now, DocumentStatus::Discovered);
     store
         .upsert_document(&document)
@@ -1101,6 +1125,38 @@ fn entity_type_from_field_type(field_type: &FieldType) -> EntityType {
     }
 }
 
+fn exact_rerun_noop_kind(
+    store: &MetaStore,
+    file: &DiscoveredFile,
+) -> Result<Option<ExactRerunNoopKind>> {
+    let Some(document) = store
+        .document_by_id(&file.document_id)
+        .map_err(ImportPipelineError::store)?
+    else {
+        return Ok(None);
+    };
+
+    if document.is_deleted
+        || document.normalized_path != file.normalized_path.as_str()
+        || document.file_name != file.file_name
+        || document.extension != file.extension
+        || document.byte_size != file.byte_size
+        || document.mtime != file.mtime
+        || document.content_hash.as_deref() != Some(file.fingerprint.as_str())
+    {
+        return Ok(None);
+    }
+
+    match document.status {
+        DocumentStatus::Searchable | DocumentStatus::IndexedPartial => store
+            .latest_visible_resume_version_for_document(&document.id)
+            .map_err(ImportPipelineError::store)
+            .map(|version| version.map(|_| ExactRerunNoopKind::Searchable)),
+        DocumentStatus::OcrRequired => Ok(Some(ExactRerunNoopKind::OcrRequired)),
+        _ => Ok(None),
+    }
+}
+
 fn document_from_discovered_file(
     file: &DiscoveredFile,
     now: UnixTimestamp,
@@ -1183,12 +1239,19 @@ enum ProcessedFile {
         document: Box<Document>,
         index_document: Box<IndexDocument>,
     },
+    UnchangedSearchable,
+    UnchangedOcrRequired,
     OcrRequired {
         ocr_job_queued: bool,
     },
     Failed {
         kind: ImportFailureKind,
     },
+}
+
+enum ExactRerunNoopKind {
+    Searchable,
+    OcrRequired,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1729,6 +1792,190 @@ mod tests {
         assert!(!format!("{summary:?}").contains(root.to_str().unwrap()));
     }
 
+    #[test]
+    fn import_root_rerun_with_unchanged_searchable_file_keeps_index_state_stable() {
+        let temp = TestDir::new("import-pipeline-zero-change-rerun");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("synthetic-resume.txt"),
+            b"Synthetic Candidate\nEmail: synthetic@example.test\nSkills: Rust",
+        )
+        .unwrap();
+
+        let store = MetaStore::open_in_memory().unwrap();
+        store.run_migrations().unwrap();
+        let first_now = UnixTimestamp::from_unix_seconds(1_700_000_190);
+        let first_task = import_task(
+            "zero-change-first-import",
+            root.to_str().unwrap(),
+            first_now,
+        );
+        store.insert_import_task(&first_task).unwrap();
+
+        let first_summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &first_task,
+            &root,
+            first_now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+        let first_index_state = store.index_state().unwrap().unwrap();
+        let first_status = store.status_summary().unwrap();
+
+        assert_eq!(first_summary.files_discovered, 1);
+        assert_eq!(first_summary.searchable_documents, 1);
+        assert_eq!(first_status.searchable_documents, 1);
+
+        let second_now = UnixTimestamp::from_unix_seconds(1_700_000_191);
+        let second_task = import_task(
+            "zero-change-second-import",
+            root.to_str().unwrap(),
+            second_now,
+        );
+        store.insert_import_task(&second_task).unwrap();
+
+        let second_summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &second_task,
+            &root,
+            second_now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+        let second_index_state = store.index_state().unwrap().unwrap();
+        let second_status = store.status_summary().unwrap();
+        let documents = store.visible_documents().unwrap();
+
+        assert_eq!(second_summary.files_discovered, 1);
+        assert_eq!(second_summary.searchable_documents, 1);
+        assert_eq!(second_summary.ocr_required_documents, 0);
+        assert_eq!(second_summary.ocr_jobs_queued, 0);
+        assert_eq!(second_summary.failed_documents, 0);
+        assert_eq!(second_summary.deleted_documents, 0);
+        assert_eq!(second_status.searchable_documents, 1);
+        assert_eq!(second_status.ocr_jobs_queued, 0);
+        assert_eq!(documents.len(), 1);
+        assert_eq!(
+            store
+                .resume_versions_for_document(&documents[0].id)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            second_index_state.visible_epoch,
+            first_index_state.visible_epoch
+        );
+        assert_eq!(
+            second_index_state.manifest_document_count,
+            first_index_state.manifest_document_count
+        );
+        assert_eq!(
+            second_index_state.snapshot_token,
+            first_index_state.snapshot_token
+        );
+        assert!(!format!("{second_index_state:?}").contains(root.to_str().unwrap()));
+    }
+
+    #[test]
+    fn import_root_rerun_with_unchanged_ocr_required_file_keeps_ocr_queue_stable() {
+        let temp = TestDir::new("import-pipeline-zero-change-ocr-rerun");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("scanned-resume.pdf"), scanned_pdf_bytes()).unwrap();
+
+        let store = MetaStore::open_in_memory().unwrap();
+        store.run_migrations().unwrap();
+        let first_now = UnixTimestamp::from_unix_seconds(1_700_000_195);
+        let first_task = import_task(
+            "zero-change-ocr-first-import",
+            root.to_str().unwrap(),
+            first_now,
+        );
+        store.insert_import_task(&first_task).unwrap();
+
+        let first_summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &first_task,
+            &root,
+            first_now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+        let first_index_state = store.index_state().unwrap().unwrap();
+        let first_status = store.status_summary().unwrap();
+
+        assert_eq!(first_summary.files_discovered, 1);
+        assert_eq!(first_summary.searchable_documents, 0);
+        assert_eq!(first_summary.ocr_required_documents, 1);
+        assert_eq!(first_summary.ocr_jobs_queued, 1);
+        assert_eq!(first_status.searchable_documents, 0);
+        assert_eq!(first_status.ocr_queue_depth, 1);
+        assert_eq!(first_status.ocr_jobs_queued, 1);
+
+        let second_now = UnixTimestamp::from_unix_seconds(1_700_000_196);
+        let second_task = import_task(
+            "zero-change-ocr-second-import",
+            root.to_str().unwrap(),
+            second_now,
+        );
+        store.insert_import_task(&second_task).unwrap();
+
+        let second_summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &second_task,
+            &root,
+            second_now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+        let second_index_state = store.index_state().unwrap().unwrap();
+        let second_status = store.status_summary().unwrap();
+        let documents = store.visible_documents().unwrap();
+
+        assert_eq!(second_summary.files_discovered, 1);
+        assert_eq!(second_summary.searchable_documents, 0);
+        assert_eq!(second_summary.ocr_required_documents, 0);
+        assert_eq!(second_summary.ocr_jobs_queued, 0);
+        assert_eq!(second_summary.failed_documents, 0);
+        assert_eq!(second_summary.deleted_documents, 0);
+        assert_eq!(second_status.searchable_documents, 0);
+        assert_eq!(second_status.ocr_queue_depth, 1);
+        assert_eq!(second_status.ocr_jobs_queued, 1);
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].status, meta_store::DocumentStatus::OcrRequired);
+        assert_eq!(
+            store
+                .resume_versions_for_document(&documents[0].id)
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(
+            second_index_state.visible_epoch,
+            first_index_state.visible_epoch
+        );
+        assert_eq!(
+            second_index_state.manifest_document_count,
+            first_index_state.manifest_document_count
+        );
+        assert_eq!(
+            second_index_state.snapshot_token,
+            first_index_state.snapshot_token
+        );
+        assert!(!format!("{second_index_state:?}").contains(root.to_str().unwrap()));
+    }
+
     #[cfg(unix)]
     #[test]
     fn import_root_parses_legacy_doc_with_local_converter_without_path_leak() {
@@ -1865,6 +2112,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let status = observed_store.status_summary().unwrap();
+        let index_state_debug = format!("{:?}", observed_store.index_state().unwrap().unwrap());
         let active_snapshot_present =
             index_fulltext::FullTextIndex::open_active(&data_dir.join("search-index"))
                 .unwrap()
@@ -1872,6 +2120,9 @@ mod tests {
 
         fs::write(&release_marker, b"release").unwrap();
         let summary = worker.join().unwrap();
+        let final_store = MetaStore::open_data_dir(&data_dir).unwrap();
+        final_store.run_migrations().unwrap();
+        let final_index_state_debug = format!("{:?}", final_store.index_state().unwrap().unwrap());
 
         assert_eq!(scope.files_discovered, 33);
         assert!(
@@ -1886,7 +2137,11 @@ mod tests {
             active_snapshot_present,
             "expected an active search snapshot before the final file completed"
         );
+        assert!(index_state_debug.contains("visible_epoch: 5"));
+        assert!(index_state_debug.contains("manifest_document_count: 32"));
         assert_eq!(summary.searchable_documents, 33);
+        assert!(final_index_state_debug.contains("visible_epoch: 6"));
+        assert!(final_index_state_debug.contains("manifest_document_count: 33"));
     }
 
     #[cfg(unix)]
@@ -1967,6 +2222,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let status = observed_store.status_summary().unwrap();
+        let index_state_debug = format!("{:?}", observed_store.index_state().unwrap().unwrap());
         let active_snapshot_present =
             index_fulltext::FullTextIndex::open_active(&data_dir.join("search-index"))
                 .unwrap()
@@ -1974,6 +2230,9 @@ mod tests {
 
         fs::write(&release_marker, b"release").unwrap();
         let summary = worker.join().unwrap();
+        let final_store = MetaStore::open_data_dir(&data_dir).unwrap();
+        final_store.run_migrations().unwrap();
+        let final_index_state_debug = format!("{:?}", final_store.index_state().unwrap().unwrap());
 
         assert_eq!(scope.files_discovered, 2);
         assert!(
@@ -1988,7 +2247,11 @@ mod tests {
             active_snapshot_present,
             "expected an active search snapshot before the slow file completed"
         );
+        assert!(index_state_debug.contains("visible_epoch: 1"));
+        assert!(index_state_debug.contains("manifest_document_count: 1"));
         assert_eq!(summary.searchable_documents, 2);
+        assert!(final_index_state_debug.contains("visible_epoch: 2"));
+        assert!(final_index_state_debug.contains("manifest_document_count: 2"));
     }
 
     fn import_task(label: &str, root_path: &str, now: UnixTimestamp) -> ImportTask {
@@ -2070,6 +2333,16 @@ end
             ]
             .concat(),
             b"<< /Type /FontDescriptor /FontName /TestFont /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>".to_vec(),
+        ])
+    }
+
+    fn scanned_pdf_bytes() -> Vec<u8> {
+        build_valid_pdf(vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_vec(),
+            b"<< /Type /XObject /Subtype /Image /Width 100 /Height 100 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 11 >>\nstream\nimage bytes\nendstream".to_vec(),
+            b"<< /Length 24 >>\nstream\nq 100 0 0 100 0 0 cm /Im1 Do Q\nendstream".to_vec(),
         ])
     }
 

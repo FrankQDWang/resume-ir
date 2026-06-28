@@ -24,9 +24,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,]
     );
-    assert_eq!(store.schema_version().unwrap(), 20);
+    assert_eq!(store.schema_version().unwrap(), 21);
 
     for table_name in [
         "candidate",
@@ -50,7 +50,7 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 20);
+    assert_eq!(store.schema_version().unwrap(), 21);
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 20);
+        assert_eq!(store.schema_version().unwrap(), 21);
     }
 
     let encrypted_bytes = fs::read(&db_path).unwrap();
@@ -131,7 +131,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         plaintext.run_migrations().unwrap();
         plaintext.upsert_document(&document).unwrap();
         plaintext.upsert_resume_version(&version).unwrap();
-        assert_eq!(plaintext.schema_version().unwrap(), 20);
+        assert_eq!(plaintext.schema_version().unwrap(), 21);
         assert_eq!(
             plaintext.metadata_encryption_state(),
             MetadataEncryptionState::Plaintext
@@ -146,7 +146,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         migrated.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(migrated.schema_version().unwrap(), 20);
+    assert_eq!(migrated.schema_version().unwrap(), 21);
     assert_eq!(
         migrated.document_by_id(&document.id).unwrap().unwrap().id,
         document.id
@@ -2155,7 +2155,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7, 15]);
-        assert_eq!(reopened.schema_version().unwrap(), 20);
+        assert_eq!(reopened.schema_version().unwrap(), 21);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -2315,12 +2315,16 @@ fn index_state_persists_and_upserts_snapshot_status() {
         snapshot_token: Some("snapshot-token-v1".to_string()),
         status: IndexStateStatus::Ready,
         updated_at: UnixTimestamp::from_unix_seconds(1_800_000_060),
+        visible_epoch: 1,
+        manifest_document_count: 3,
     };
     let stale = IndexState {
         manifest_version: "manifest-v2".to_string(),
         snapshot_token: Some("snapshot-token-v2".to_string()),
         status: IndexStateStatus::Stale,
         updated_at: UnixTimestamp::from_unix_seconds(1_800_000_120),
+        visible_epoch: 2,
+        manifest_document_count: 5,
     };
 
     store.upsert_index_state(&ready).unwrap();
@@ -2328,6 +2332,33 @@ fn index_state_persists_and_upserts_snapshot_status() {
 
     store.upsert_index_state(&stale).unwrap();
     assert_eq!(store.index_state().unwrap(), Some(stale));
+}
+
+#[test]
+fn migrations_add_visible_epoch_and_manifest_document_count_columns_to_index_state() {
+    let db_path = temp_db_path("index-state-visible-epoch-columns");
+
+    {
+        let store = MetaStore::open(&db_path).unwrap();
+        store.run_migrations().unwrap();
+    }
+
+    let connection = Connection::open(&db_path).unwrap();
+    let mut statement = connection
+        .prepare("PRAGMA table_info(index_state)")
+        .unwrap();
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert!(columns.iter().any(|column| column == "visible_epoch"));
+    assert!(columns
+        .iter()
+        .any(|column| column == "manifest_document_count"));
+
+    remove_temp_db(&db_path);
 }
 
 #[test]
@@ -2442,6 +2473,8 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
             snapshot_token: Some("snapshot-v1".to_string()),
             status: IndexStateStatus::Building,
             updated_at: now,
+            visible_epoch: 0,
+            manifest_document_count: 0,
         })
         .unwrap();
 
@@ -2559,7 +2592,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 20);
+        assert_eq!(reopened.schema_version().unwrap(), 21);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -3089,7 +3122,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             report.applied_versions(),
             &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 20);
+        assert_eq!(reopened.schema_version().unwrap(), 21);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -3110,6 +3143,8 @@ fn file_backed_store_reopens_schema_and_index_state() {
         snapshot_token: Some("snapshot-file-token-v1".to_string()),
         status: IndexStateStatus::Ready,
         updated_at: UnixTimestamp::from_unix_seconds(1_800_000_180),
+        visible_epoch: 7,
+        manifest_document_count: 11,
     };
 
     {
@@ -3121,7 +3156,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 20);
+        assert_eq!(reopened.schema_version().unwrap(), 21);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

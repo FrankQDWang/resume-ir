@@ -1231,6 +1231,8 @@ fn seed_snapshot_state(data_dir: &Path) {
             snapshot_token: Some("PRIVATE_SNAPSHOT_TOKEN".to_string()),
             status: IndexStateStatus::Ready,
             updated_at: UnixTimestamp::from_unix_seconds(1_800_000_000),
+            visible_epoch: 0,
+            manifest_document_count: 0,
         })
         .unwrap();
 }
