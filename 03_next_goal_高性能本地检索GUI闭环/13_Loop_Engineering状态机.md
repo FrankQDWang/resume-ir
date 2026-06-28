@@ -27,9 +27,17 @@ goal_authorized
 -> privacy_gate_green
 -> merge_method_selected
 -> pr_merged
--> issue_closed_with_evidence
+-> issue_reconciled_with_evidence
 -> next_issue_or_goal_complete
 ```
+
+`pr_merged` 之后的 issue 生命周期必须先做 machine-reconciled post-merge decision，而不是无条件关闭 linked profile issue。允许且必须二选一或三选一的 truthful outcome 是：
+
+1. `closed_here`
+2. `same_lane_continues`
+3. `follow_up_issue_linked`
+
+若 broader lane ledger 仍未满足 success threshold，则只能记录 `same_lane_continues` 或 `follow_up_issue_linked`，不得用 `issue_closed_with_evidence` 名义强制关闭。
 
 Schema caveat: `perf/loop-state.schema.json` now admits autonomous stages and terminal states, but `perf/current-loop-state.json` remains a derived public snapshot. Runners must observe GitHub issue/PR state, git branch/base sha, CI, artifact manifests, public-safe benchmark_report_hash or benchmark_artifact_id from redacted report, approved opaque manifest, or HMAC-SHA256 opaque manifest first, then reduce those events into the current snapshot. Raw benchmark or profiler artifact hashes remain local-only and must not become git/GitHub evidence.
 
