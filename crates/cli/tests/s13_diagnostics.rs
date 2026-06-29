@@ -3,9 +3,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use import_pipeline::ImportTaskOwnerLock;
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
-use meta_store::{IndexState, IndexStateStatus, MetaStore, UnixTimestamp};
+use meta_store::{
+    ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
+    IndexState, IndexStateStatus, MetaStore, UnixTimestamp,
+};
 use rusqlite::{params, Connection};
 
 #[test]
@@ -952,6 +956,340 @@ fn doctor_pending_import_task_boundary_reports_row_materialization_failure_witho
     remove_dir(&root_dir);
 }
 
+#[test]
+fn doctor_post_pending_import_task_recovery_boundary_reports_recovered_running_task_without_path_or_key_leak(
+) {
+    let data_dir = temp_dir("doctor-post-pending-import-recovery-healthy");
+    let root_dir = temp_dir("doctor-post-pending-import-recovery-root");
+    seed_running_import_task(&data_dir, &root_dir);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--post-pending-import-task-recovery-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor post pending import task recovery boundary");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("resume-ir doctor"));
+    assert!(stdout.contains(
+        "post pending import task recovery boundary: stale_running_task_recovered_before_post_boundary"
+    ));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
+fn doctor_post_pending_import_task_recovery_boundary_reports_post_boundary_without_path_leak() {
+    let data_dir = temp_dir("doctor-post-pending-import-recovery-post-boundary");
+    let root_dir = temp_dir("doctor-post-pending-import-recovery-post-boundary-root");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--post-pending-import-task-recovery-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor post pending import task recovery boundary");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "post pending import task recovery boundary: unexpected_success_then_post_pending_import_task_recovery_boundary"
+    ));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
+fn doctor_post_pending_import_task_recovery_boundary_reports_lock_bound_without_path_or_key_leak() {
+    let data_dir = temp_dir("doctor-post-pending-import-recovery-lock-bound");
+    let root_dir = temp_dir("doctor-post-pending-import-recovery-lock-root");
+    let task_id = seed_running_import_task(&data_dir, &root_dir);
+    let _owner_lock = ImportTaskOwnerLock::acquire(&data_dir, &task_id).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--post-pending-import-task-recovery-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor post pending import task recovery boundary lock bound");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout
+        .contains("post pending import task recovery boundary: stale_running_task_lock_bound"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
+fn doctor_post_pending_import_task_recovery_boundary_reports_status_update_failure_without_path_or_key_leak(
+) {
+    let data_dir = temp_dir("doctor-post-pending-import-recovery-update-failure");
+    let root_dir = temp_dir("doctor-post-pending-import-recovery-update-root");
+    seed_running_import_task(&data_dir, &root_dir);
+    let connection = open_encrypted_metadata_connection(&data_dir);
+    connection
+        .execute_batch(
+            "\
+            CREATE TRIGGER import_task_block_status_update
+            BEFORE UPDATE OF status ON import_task
+            BEGIN
+                SELECT RAISE(FAIL, 'diagnostic update blocked');
+            END;
+            ",
+        )
+        .unwrap();
+    drop(connection);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--post-pending-import-task-recovery-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor post pending import task recovery boundary update failure");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "post pending import task recovery boundary: stale_running_task_status_update_failure"
+    ));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
+fn doctor_post_pending_import_task_recovery_boundary_reports_row_refresh_failure_without_path_or_key_leak(
+) {
+    let data_dir = temp_dir("doctor-post-pending-import-recovery-row-refresh-failure");
+    let root_dir = temp_dir("doctor-post-pending-import-recovery-row-refresh-root");
+    seed_running_import_task(&data_dir, &root_dir);
+    let connection = open_encrypted_metadata_connection(&data_dir);
+    connection
+        .execute_batch(
+            "\
+            CREATE TRIGGER import_task_delete_after_status_update
+            AFTER UPDATE OF status ON import_task
+            BEGIN
+                DELETE FROM import_task WHERE id = NEW.id;
+            END;
+            ",
+        )
+        .unwrap();
+    drop(connection);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--post-pending-import-task-recovery-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect(
+            "run resume-cli doctor post pending import task recovery boundary row refresh failure",
+        );
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "post pending import task recovery boundary: stale_running_task_row_refresh_failure"
+    ));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
+fn doctor_post_recovery_retained_lineage_convergence_boundary_reports_recoverable_nonterminal_without_path_or_key_leak(
+) {
+    let data_dir = temp_dir("doctor-post-recovery-lineage-recoverable");
+    let root_dir = temp_dir("doctor-post-recovery-lineage-recoverable-root");
+    seed_import_task_with_status(&data_dir, &root_dir, ImportTaskStatus::FailedRetryable);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--post-recovery-retained-lineage-convergence-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor post recovery retained lineage convergence boundary");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "post recovery retained lineage convergence boundary: retained_lineage_still_recoverable_after_reentry"
+    ));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
+fn doctor_post_recovery_retained_lineage_convergence_boundary_reports_running_without_visible_progress_without_path_or_key_leak(
+) {
+    let data_dir = temp_dir("doctor-post-recovery-lineage-running-no-progress");
+    let root_dir = temp_dir("doctor-post-recovery-lineage-running-no-progress-root");
+    let task_id = seed_import_task_with_status(&data_dir, &root_dir, ImportTaskStatus::Running);
+    let _owner_lock = ImportTaskOwnerLock::acquire(&data_dir, &task_id).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--post-recovery-retained-lineage-convergence-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor post recovery running without visible progress");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "post recovery retained lineage convergence boundary: retained_lineage_running_without_visible_progress_yet"
+    ));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
+fn doctor_post_recovery_retained_lineage_convergence_boundary_reports_visible_progress_without_path_or_key_leak(
+) {
+    let data_dir = temp_dir("doctor-post-recovery-lineage-visible-progress");
+    let root_dir = temp_dir("doctor-post-recovery-lineage-visible-progress-root");
+    let task_id = seed_import_task_with_status(&data_dir, &root_dir, ImportTaskStatus::Running);
+    seed_import_scan_scope(
+        &data_dir,
+        &root_dir,
+        &task_id,
+        ImportScanScopeCounts {
+            searchable_documents: 1,
+            ..ImportScanScopeCounts::default()
+        },
+    );
+    let _owner_lock = ImportTaskOwnerLock::acquire(&data_dir, &task_id).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--post-recovery-retained-lineage-convergence-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor post recovery visible progress");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "post recovery retained lineage convergence boundary: retained_lineage_converged_to_visible_progress"
+    ));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
+fn doctor_post_recovery_retained_lineage_convergence_boundary_reports_completed_lineage_without_path_or_key_leak(
+) {
+    let data_dir = temp_dir("doctor-post-recovery-lineage-completed");
+    let root_dir = temp_dir("doctor-post-recovery-lineage-completed-root");
+    let task_id = seed_import_task_with_status(&data_dir, &root_dir, ImportTaskStatus::Completed);
+    seed_import_scan_scope(
+        &data_dir,
+        &root_dir,
+        &task_id,
+        ImportScanScopeCounts {
+            searchable_documents: 1,
+            ..ImportScanScopeCounts::default()
+        },
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--post-recovery-retained-lineage-convergence-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor post recovery completed lineage");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "post recovery retained lineage convergence boundary: retained_lineage_converged_past_pending_task_boundary"
+    ));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
 fn temp_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -980,6 +1318,86 @@ fn open_encrypted_metadata_connection(data_dir: &Path) -> Connection {
         })
         .expect("verify metadata SQLCipher key");
     connection
+}
+
+fn seed_running_import_task(data_dir: &Path, root_dir: &Path) -> ImportTaskId {
+    seed_import_task_with_status(data_dir, root_dir, ImportTaskStatus::Running)
+}
+
+fn seed_import_task_with_status(
+    data_dir: &Path,
+    root_dir: &Path,
+    status: ImportTaskStatus,
+) -> ImportTaskId {
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let canonical_root = fs::canonicalize(root_dir).unwrap();
+    let queued_at = UnixTimestamp::from_unix_seconds(1_700_000_000);
+    let started_at = UnixTimestamp::from_unix_seconds(1_700_000_010);
+    let finished_at = matches!(
+        status,
+        ImportTaskStatus::Completed
+            | ImportTaskStatus::FailedRetryable
+            | ImportTaskStatus::FailedPermanent
+    )
+    .then_some(UnixTimestamp::from_unix_seconds(1_700_000_020));
+    let id = ImportTaskId::from_non_secret_parts(&["s13", "running-import-task"]);
+    store
+        .insert_import_task(&ImportTask {
+            id: id.clone(),
+            root_path: path_str(&canonical_root).to_string(),
+            status,
+            queued_at,
+            started_at: Some(started_at),
+            finished_at,
+            updated_at: finished_at.unwrap_or(started_at),
+        })
+        .unwrap();
+    id
+}
+
+#[derive(Default)]
+struct ImportScanScopeCounts {
+    searchable_documents: u64,
+    ocr_required_documents: u64,
+    ocr_jobs_queued: u64,
+    failed_documents: u64,
+    deleted_documents: u64,
+}
+
+fn seed_import_scan_scope(
+    data_dir: &Path,
+    root_dir: &Path,
+    task_id: &ImportTaskId,
+    counts: ImportScanScopeCounts,
+) {
+    let store = MetaStore::open_data_dir(data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let canonical_root = fs::canonicalize(root_dir).unwrap();
+    let root_path = path_str(&canonical_root).to_string();
+    store
+        .upsert_import_scan_scope(&ImportScanScope {
+            import_task_id: task_id.clone(),
+            root_kind: ImportRootKind::Explicit,
+            root_preset: None,
+            scan_profile: ImportScanProfile::Explicit,
+            requested_root_path: root_path.clone(),
+            canonical_root_path: root_path,
+            files_discovered: 32,
+            ignored_entries: 0,
+            scan_errors: 0,
+            searchable_documents: counts.searchable_documents,
+            ocr_required_documents: counts.ocr_required_documents,
+            ocr_jobs_queued: counts.ocr_jobs_queued,
+            failed_documents: counts.failed_documents,
+            deleted_documents: counts.deleted_documents,
+            scan_budget_kind: None,
+            scan_budget_limit: None,
+            scan_budget_observed: None,
+            scan_budget_exhausted: false,
+            updated_at: UnixTimestamp::from_unix_seconds(1_700_000_030),
+        })
+        .unwrap();
 }
 
 fn path_str(path: &Path) -> &str {

@@ -1,7 +1,9 @@
 use std::fs;
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{FullTextIndex, IndexDocument, IndexSection, SearchQuery};
@@ -432,7 +434,8 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
         .expect("start resume-daemon import scheduler");
 
     let stdout = child.stdout.take().expect("daemon stdout");
-    wait_until_metadata_store_ready(&mut child, &data_dir);
+    let mut stdout = spawn_daemon_stdout_collector(stdout);
+    wait_until_foreground_ready(&mut child, &mut stdout);
 
     let task_id = seed_queued_import_task_in_ready_store(
         &data_dir,
@@ -441,7 +444,7 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
         1_700_000_000,
     );
 
-    let output = wait_daemon(child, BufReader::new(stdout));
+    let output = wait_daemon(child, stdout);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
     assert!(
@@ -561,7 +564,8 @@ fn foreground_import_scheduler_backs_off_retryable_failures() {
         .expect("start resume-daemon import scheduler");
 
     let stdout = child.stdout.take().expect("daemon stdout");
-    let output = wait_daemon(child, BufReader::new(stdout));
+    let stdout = spawn_daemon_stdout_collector(stdout);
+    let output = wait_daemon(child, stdout);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
     assert_eq!(output.stdout.matches("import worker failed: 1").count(), 1);
@@ -766,7 +770,9 @@ fn foreground_import_watcher_requeues_completed_root_after_file_change_without_p
         .stderr(Stdio::piped())
         .spawn()
         .expect("start resume-daemon import watcher");
-    wait_until_metadata_store_ready(&mut child, &data_dir);
+    let stdout = child.stdout.take().expect("daemon stdout");
+    let mut stdout = spawn_daemon_stdout_collector(stdout);
+    wait_until_foreground_ready(&mut child, &mut stdout);
     std::thread::sleep(Duration::from_millis(250));
     for attempt in 0..5 {
         fs::write(
@@ -786,8 +792,7 @@ fn foreground_import_watcher_requeues_completed_root_after_file_change_without_p
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let output = wait_daemon(child, BufReader::new(stdout));
+    let output = wait_daemon(child, stdout);
     assert!(
         output.success,
         "stdout:\n{}\nstderr:\n{}",
@@ -975,26 +980,76 @@ fn remove_dir(path: &PathBuf) {
     let _ = fs::remove_dir_all(path);
 }
 
-fn wait_until_metadata_store_ready(child: &mut Child, data_dir: &Path) {
-    let metadata_store = data_dir.join("metadata.sqlite3");
+struct DaemonStdoutCollector {
+    ready: Receiver<()>,
+    join: Option<JoinHandle<String>>,
+}
+
+fn spawn_daemon_stdout_collector(stdout: ChildStdout) -> DaemonStdoutCollector {
+    let (ready_sender, ready_receiver) = mpsc::channel();
+    let join = thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut output = String::new();
+        let mut line = String::new();
+        let mut ready_sent = false;
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => return output,
+                Ok(_) => {
+                    output.push_str(&line);
+                    if !ready_sent && output.contains("resume-daemon foreground ready") {
+                        let _ = ready_sender.send(());
+                        ready_sent = true;
+                    }
+                }
+                Err(error) => panic!("read daemon stdout: {error}"),
+            }
+        }
+    });
+    DaemonStdoutCollector {
+        ready: ready_receiver,
+        join: Some(join),
+    }
+}
+
+impl DaemonStdoutCollector {
+    fn finish(&mut self) -> String {
+        self.join
+            .take()
+            .expect("daemon stdout join handle")
+            .join()
+            .expect("join daemon stdout collector")
+    }
+}
+
+fn wait_until_foreground_ready(child: &mut Child, stdout: &mut DaemonStdoutCollector) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if metadata_store.exists()
-            && MetaStore::open_data_dir(data_dir)
-                .and_then(|store| store.status_summary().map(|_| ()))
-                .is_ok()
-        {
-            return;
+        match stdout.ready.recv_timeout(Duration::from_millis(25)) {
+            Ok(()) => return,
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {}
         }
         if let Some(status) = child.try_wait().expect("poll daemon child") {
-            panic!("daemon exited before metadata store was ready: {status}");
+            let stdout_text = stdout.finish();
+            let mut stderr = String::new();
+            child
+                .stderr
+                .take()
+                .expect("daemon stderr")
+                .read_to_string(&mut stderr)
+                .expect("read daemon stderr");
+            panic!(
+                "daemon exited before foreground ready: {status}\nstdout:\n{stdout_text}\nstderr:\n{stderr}"
+            );
         }
-        std::thread::sleep(Duration::from_millis(25));
     }
 
     let _ = child.kill();
     let _ = child.wait();
-    panic!("daemon did not prepare metadata store before timeout");
+    let stdout_text = stdout.finish();
+    panic!("daemon did not report foreground ready before timeout\nstdout:\n{stdout_text}");
 }
 
 fn wait_until_import_task_running(child: &mut Child, data_dir: &Path, task_id: &ImportTaskId) {
@@ -1047,14 +1102,11 @@ fn wait_killed_daemon(mut child: Child, mut stdout: BufReader<ChildStdout>) -> D
     }
 }
 
-fn wait_daemon(mut child: Child, mut stdout: BufReader<ChildStdout>) -> DaemonOutput {
+fn wait_daemon(mut child: Child, mut stdout: DaemonStdoutCollector) -> DaemonOutput {
     let deadline = Instant::now() + Duration::from_secs(45);
     loop {
         if let Some(status) = child.try_wait().expect("poll daemon child") {
-            let mut stdout_text = String::new();
-            stdout
-                .read_to_string(&mut stdout_text)
-                .expect("read daemon stdout");
+            let stdout_text = stdout.finish();
             let mut stderr = String::new();
             child
                 .stderr

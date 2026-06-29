@@ -15982,6 +15982,18 @@ fn embed_worker_usage() -> CliError {
 
 fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let diagnostic_args = parse_doctor_args(args)?;
+    if let Some(root) = diagnostic_args
+        .post_recovery_retained_lineage_convergence_boundary_root
+        .as_deref()
+    {
+        return print_post_recovery_retained_lineage_convergence_boundary_report(data_dir, root);
+    }
+    if let Some(root) = diagnostic_args
+        .post_pending_import_task_recovery_boundary_root
+        .as_deref()
+    {
+        return print_post_pending_import_task_recovery_boundary_report(data_dir, root);
+    }
     if let Some(root) = diagnostic_args.pending_import_task_boundary_root.as_deref() {
         return print_pending_import_task_boundary_report(data_dir, root);
     }
@@ -16148,6 +16160,242 @@ fn print_pending_import_task_boundary_report(data_dir: &Path, requested_root: &P
     println!("resume-ir doctor");
     println!("diagnostic scope: pending_import_task_boundary");
     println!("pending import task boundary: {}", boundary.label());
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PostPendingImportTaskRecoveryBoundary {
+    StaleRunningTaskLockBound,
+    StaleRunningTaskStatusUpdateFailure,
+    StaleRunningTaskRowRefreshFailure,
+    StaleRunningTaskRecoveredBeforePostBoundary,
+    UnexpectedSuccessAfterPostBoundary,
+}
+
+impl PostPendingImportTaskRecoveryBoundary {
+    fn label(self) -> &'static str {
+        match self {
+            Self::StaleRunningTaskLockBound => "stale_running_task_lock_bound",
+            Self::StaleRunningTaskStatusUpdateFailure => "stale_running_task_status_update_failure",
+            Self::StaleRunningTaskRowRefreshFailure => "stale_running_task_row_refresh_failure",
+            Self::StaleRunningTaskRecoveredBeforePostBoundary => {
+                "stale_running_task_recovered_before_post_boundary"
+            }
+            Self::UnexpectedSuccessAfterPostBoundary => {
+                "unexpected_success_then_post_pending_import_task_recovery_boundary"
+            }
+        }
+    }
+}
+
+fn diagnose_post_pending_import_task_recovery_boundary(
+    data_dir: &Path,
+    requested_root: &Path,
+) -> Result<PostPendingImportTaskRecoveryBoundary> {
+    let roots = canonical_import_roots(&[requested_root.to_path_buf()])?;
+    let root = roots
+        .into_iter()
+        .next()
+        .ok_or_else(|| CliError::user("import root must exist and be a directory"))?;
+    let store = open_store(data_dir)?;
+    let now = current_timestamp()?;
+    let canonical_root_path = path_string(&root.canonical);
+    if let Some(task) = store
+        .pending_import_task_by_root(&canonical_root_path)
+        .map_err(CliError::store)?
+    {
+        return diagnose_post_pending_import_task_recovery_boundary_for_task(
+            data_dir, &store, task, now,
+        );
+    }
+    let requested_root_path = path_string(&root.requested);
+    if requested_root_path != canonical_root_path {
+        if let Some(task) = store
+            .pending_import_task_by_root(&requested_root_path)
+            .map_err(CliError::store)?
+        {
+            return diagnose_post_pending_import_task_recovery_boundary_for_task(
+                data_dir, &store, task, now,
+            );
+        }
+    }
+    Ok(PostPendingImportTaskRecoveryBoundary::UnexpectedSuccessAfterPostBoundary)
+}
+
+fn diagnose_post_pending_import_task_recovery_boundary_for_task(
+    data_dir: &Path,
+    store: &MetaStore,
+    task: ImportTask,
+    now: UnixTimestamp,
+) -> Result<PostPendingImportTaskRecoveryBoundary> {
+    if task.status != ImportTaskStatus::Running {
+        return Ok(PostPendingImportTaskRecoveryBoundary::UnexpectedSuccessAfterPostBoundary);
+    }
+
+    let owner_lock = ImportTaskOwnerLock::try_acquire(data_dir, &task.id)
+        .ok()
+        .flatten();
+    let Some(_owner_lock) = owner_lock else {
+        return Ok(PostPendingImportTaskRecoveryBoundary::StaleRunningTaskLockBound);
+    };
+
+    if store
+        .update_import_task_status(&task.id, ImportTaskStatus::FailedRetryable, now)
+        .is_err()
+    {
+        return Ok(PostPendingImportTaskRecoveryBoundary::StaleRunningTaskStatusUpdateFailure);
+    }
+    let Some(_) = store.import_task_by_id(&task.id).map_err(CliError::store)? else {
+        return Ok(PostPendingImportTaskRecoveryBoundary::StaleRunningTaskRowRefreshFailure);
+    };
+    Ok(PostPendingImportTaskRecoveryBoundary::StaleRunningTaskRecoveredBeforePostBoundary)
+}
+
+fn print_post_pending_import_task_recovery_boundary_report(
+    data_dir: &Path,
+    requested_root: &Path,
+) -> Result<()> {
+    let boundary = diagnose_post_pending_import_task_recovery_boundary(data_dir, requested_root)?;
+    println!("resume-ir doctor");
+    println!("diagnostic scope: post_pending_import_task_recovery_boundary");
+    println!(
+        "post pending import task recovery boundary: {}",
+        boundary.label()
+    );
+    println!("paths: <redacted>");
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PostRecoveryRetainedLineageConvergenceBoundary {
+    RetainedLineageStillRecoverableAfterReentry,
+    RetainedLineageRunningWithoutVisibleProgressYet,
+    RetainedLineageConvergedToVisibleProgress,
+    RetainedLineageConvergedPastPendingTaskBoundary,
+    RetainedLineageTerminalFailedPermanent,
+    UnexpectedSuccessAfterConvergenceBoundary,
+}
+
+impl PostRecoveryRetainedLineageConvergenceBoundary {
+    fn label(self) -> &'static str {
+        match self {
+            Self::RetainedLineageStillRecoverableAfterReentry => {
+                "retained_lineage_still_recoverable_after_reentry"
+            }
+            Self::RetainedLineageRunningWithoutVisibleProgressYet => {
+                "retained_lineage_running_without_visible_progress_yet"
+            }
+            Self::RetainedLineageConvergedToVisibleProgress => {
+                "retained_lineage_converged_to_visible_progress"
+            }
+            Self::RetainedLineageConvergedPastPendingTaskBoundary => {
+                "retained_lineage_converged_past_pending_task_boundary"
+            }
+            Self::RetainedLineageTerminalFailedPermanent => {
+                "retained_lineage_terminal_failed_permanent"
+            }
+            Self::UnexpectedSuccessAfterConvergenceBoundary => {
+                "unexpected_success_then_post_recovery_retained_lineage_convergence_boundary"
+            }
+        }
+    }
+}
+
+fn diagnose_post_recovery_retained_lineage_convergence_boundary(
+    data_dir: &Path,
+    requested_root: &Path,
+) -> Result<PostRecoveryRetainedLineageConvergenceBoundary> {
+    let roots = canonical_import_roots(&[requested_root.to_path_buf()])?;
+    let root = roots
+        .into_iter()
+        .next()
+        .ok_or_else(|| CliError::user("import root must exist and be a directory"))?;
+    let store = open_store(data_dir)?;
+    let Some(task) = latest_import_task_for_requested_root(&store, &root)? else {
+        return Ok(PostRecoveryRetainedLineageConvergenceBoundary::UnexpectedSuccessAfterConvergenceBoundary);
+    };
+    let scope = store
+        .import_scan_scope_by_task_id(&task.id)
+        .map_err(CliError::store)?;
+    classify_post_recovery_retained_lineage_convergence_boundary(data_dir, &task, scope.as_ref())
+}
+
+fn latest_import_task_for_requested_root(
+    store: &MetaStore,
+    root: &CanonicalImportRoot,
+) -> Result<Option<ImportTask>> {
+    let canonical_root_path = path_string(&root.canonical);
+    if let Some(task) = store
+        .latest_import_task_by_root(&canonical_root_path)
+        .map_err(CliError::store)?
+    {
+        return Ok(Some(task));
+    }
+    let requested_root_path = path_string(&root.requested);
+    if requested_root_path == canonical_root_path {
+        return Ok(None);
+    }
+    store
+        .latest_import_task_by_root(&requested_root_path)
+        .map_err(CliError::store)
+}
+
+fn classify_post_recovery_retained_lineage_convergence_boundary(
+    data_dir: &Path,
+    task: &ImportTask,
+    scope: Option<&ImportScanScope>,
+) -> Result<PostRecoveryRetainedLineageConvergenceBoundary> {
+    match task.status {
+        ImportTaskStatus::Queued | ImportTaskStatus::FailedRetryable => Ok(
+            PostRecoveryRetainedLineageConvergenceBoundary::RetainedLineageStillRecoverableAfterReentry,
+        ),
+        ImportTaskStatus::Running => {
+            let owner_lock = ImportTaskOwnerLock::try_acquire(data_dir, &task.id)
+                .map_err(|_| CliError::user("unable to inspect import task owner lock"))?;
+            let Some(_owner_lock) = owner_lock else {
+                return Ok(if scope_has_visible_processed_document_progress(scope) {
+                    PostRecoveryRetainedLineageConvergenceBoundary::RetainedLineageConvergedToVisibleProgress
+                } else {
+                    PostRecoveryRetainedLineageConvergenceBoundary::RetainedLineageRunningWithoutVisibleProgressYet
+                });
+            };
+            Ok(
+                PostRecoveryRetainedLineageConvergenceBoundary::RetainedLineageStillRecoverableAfterReentry,
+            )
+        }
+        ImportTaskStatus::Completed => Ok(
+            PostRecoveryRetainedLineageConvergenceBoundary::RetainedLineageConvergedPastPendingTaskBoundary,
+        ),
+        ImportTaskStatus::FailedPermanent => Ok(
+            PostRecoveryRetainedLineageConvergenceBoundary::RetainedLineageTerminalFailedPermanent,
+        ),
+    }
+}
+
+fn scope_has_visible_processed_document_progress(scope: Option<&ImportScanScope>) -> bool {
+    let Some(scope) = scope else {
+        return false;
+    };
+    scope.searchable_documents > 0
+        || scope.ocr_required_documents > 0
+        || scope.ocr_jobs_queued > 0
+        || scope.failed_documents > 0
+        || scope.deleted_documents > 0
+}
+
+fn print_post_recovery_retained_lineage_convergence_boundary_report(
+    data_dir: &Path,
+    requested_root: &Path,
+) -> Result<()> {
+    let boundary =
+        diagnose_post_recovery_retained_lineage_convergence_boundary(data_dir, requested_root)?;
+    println!("resume-ir doctor");
+    println!("diagnostic scope: post_recovery_retained_lineage_convergence_boundary");
+    println!(
+        "post recovery retained lineage convergence boundary: {}",
+        boundary.label()
+    );
     println!("paths: <redacted>");
     Ok(())
 }
@@ -16371,12 +16619,16 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
 struct DiagnosticArgs {
     ocr_lang: String,
     pending_import_task_boundary_root: Option<PathBuf>,
+    post_pending_import_task_recovery_boundary_root: Option<PathBuf>,
+    post_recovery_retained_lineage_convergence_boundary_root: Option<PathBuf>,
 }
 
 fn parse_doctor_args(args: &[String]) -> Result<DiagnosticArgs> {
     let mut ocr_lang = "eng".to_string();
     let mut pending_import_task_boundary = false;
-    let mut pending_import_task_boundary_root = None;
+    let mut post_pending_import_task_recovery_boundary = false;
+    let mut post_recovery_retained_lineage_convergence_boundary = false;
+    let mut root = None;
     let mut seen_ocr_lang = false;
     let mut index = 0;
     while index < args.len() {
@@ -16396,29 +16648,76 @@ fn parse_doctor_args(args: &[String]) -> Result<DiagnosticArgs> {
                 if pending_import_task_boundary {
                     return Err(CliError::usage(doctor_usage()));
                 }
+                if post_pending_import_task_recovery_boundary {
+                    return Err(CliError::usage(doctor_usage()));
+                }
+                if post_recovery_retained_lineage_convergence_boundary {
+                    return Err(CliError::usage(doctor_usage()));
+                }
                 pending_import_task_boundary = true;
                 index += 1;
             }
+            "--post-pending-import-task-recovery-boundary" => {
+                if post_pending_import_task_recovery_boundary {
+                    return Err(CliError::usage(doctor_usage()));
+                }
+                if pending_import_task_boundary {
+                    return Err(CliError::usage(doctor_usage()));
+                }
+                if post_recovery_retained_lineage_convergence_boundary {
+                    return Err(CliError::usage(doctor_usage()));
+                }
+                post_pending_import_task_recovery_boundary = true;
+                index += 1;
+            }
+            "--post-recovery-retained-lineage-convergence-boundary" => {
+                if post_recovery_retained_lineage_convergence_boundary {
+                    return Err(CliError::usage(doctor_usage()));
+                }
+                if pending_import_task_boundary || post_pending_import_task_recovery_boundary {
+                    return Err(CliError::usage(doctor_usage()));
+                }
+                post_recovery_retained_lineage_convergence_boundary = true;
+                index += 1;
+            }
             "--root" => {
-                if pending_import_task_boundary_root.is_some() {
+                if root.is_some() {
                     return Err(CliError::usage(doctor_usage()));
                 }
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage(doctor_usage()));
                 };
-                pending_import_task_boundary_root = Some(PathBuf::from(value));
+                root = Some(PathBuf::from(value));
                 index += 2;
             }
             _ => return Err(CliError::usage(doctor_usage())),
         }
     }
-    if pending_import_task_boundary != pending_import_task_boundary_root.is_some() {
+    let requires_root = pending_import_task_boundary
+        || post_pending_import_task_recovery_boundary
+        || post_recovery_retained_lineage_convergence_boundary;
+    if requires_root != root.is_some() {
         return Err(CliError::usage(doctor_usage()));
     }
+    let (
+        pending_import_task_boundary_root,
+        post_pending_import_task_recovery_boundary_root,
+        post_recovery_retained_lineage_convergence_boundary_root,
+    ) = if pending_import_task_boundary {
+        (root, None, None)
+    } else if post_pending_import_task_recovery_boundary {
+        (None, root, None)
+    } else if post_recovery_retained_lineage_convergence_boundary {
+        (None, None, root)
+    } else {
+        (None, None, None)
+    };
 
     Ok(DiagnosticArgs {
         ocr_lang,
         pending_import_task_boundary_root,
+        post_pending_import_task_recovery_boundary_root,
+        post_recovery_retained_lineage_convergence_boundary_root,
     })
 }
 
@@ -16430,11 +16729,13 @@ fn parse_export_diagnostics_args(args: &[String]) -> Result<DiagnosticArgs> {
     Ok(DiagnosticArgs {
         ocr_lang,
         pending_import_task_boundary_root: None,
+        post_pending_import_task_recovery_boundary_root: None,
+        post_recovery_retained_lineage_convergence_boundary_root: None,
     })
 }
 
 fn doctor_usage() -> &'static str {
-    "usage: resume-cli doctor [--ocr-lang <lang>] [--pending-import-task-boundary --root <path>]"
+    "usage: resume-cli doctor [--ocr-lang <lang>] [--pending-import-task-boundary --root <path>] [--post-pending-import-task-recovery-boundary --root <path>] [--post-recovery-retained-lineage-convergence-boundary --root <path>]"
 }
 
 fn export_diagnostics_usage() -> &'static str {
