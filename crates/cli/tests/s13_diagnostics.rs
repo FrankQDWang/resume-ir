@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{IndexState, IndexStateStatus, MetaStore, UnixTimestamp};
+use rusqlite::Connection;
 
 #[test]
 fn doctor_uses_sqlcipher_metadata_by_default_without_key_or_path_leak() {
@@ -827,6 +828,77 @@ fn seed_searchable_metadata(data_dir: &Path) -> (String, String) {
     (document_id.to_string(), version_id.to_string())
 }
 
+#[test]
+fn doctor_pending_import_task_boundary_reports_post_boundary_without_path_leak() {
+    let data_dir = temp_dir("doctor-pending-import-boundary-healthy");
+    let root_dir = temp_dir("doctor-pending-import-boundary-root");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--pending-import-task-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor pending import task boundary");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("resume-ir doctor"));
+    assert!(stdout.contains(
+        "pending import task boundary: unexpected_success_then_post_pending_task_boundary"
+    ));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
+fn doctor_pending_import_task_boundary_reports_pending_import_task_by_root_failure_without_path_or_key_leak(
+) {
+    let data_dir = temp_dir("doctor-pending-import-boundary-missing-table");
+    let root_dir = temp_dir("doctor-pending-import-boundary-broken-root");
+    let metadata_key = {
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        fs::read_to_string(meta_store::metadata_encryption_key_path(&data_dir)).unwrap()
+    };
+    let connection = open_encrypted_metadata_connection(&data_dir);
+    connection
+        .execute_batch("ALTER TABLE import_task RENAME TO import_task_missing;")
+        .unwrap();
+    drop(connection);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--pending-import-task-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor pending import task boundary broken import task table");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("pending import task boundary: pending_import_task_by_root_failure"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+    assert!(!stdout.contains(metadata_key.trim()));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
 fn temp_path(label: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -839,6 +911,22 @@ fn temp_dir(label: &str) -> PathBuf {
     let path = temp_path(label);
     fs::create_dir_all(&path).unwrap();
     path
+}
+
+fn open_encrypted_metadata_connection(data_dir: &Path) -> Connection {
+    let metadata_key = fs::read_to_string(meta_store::metadata_encryption_key_path(data_dir))
+        .expect("read metadata SQLCipher key");
+    let connection =
+        Connection::open(meta_store::metadata_store_path(data_dir)).expect("open metadata db");
+    connection
+        .execute_batch(&format!("PRAGMA key = \"x'{}'\";", metadata_key.trim()))
+        .expect("apply metadata SQLCipher key");
+    connection
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .expect("verify metadata SQLCipher key");
+    connection
 }
 
 fn path_str(path: &Path) -> &str {
