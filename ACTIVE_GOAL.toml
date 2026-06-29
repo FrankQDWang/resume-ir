@@ -373,6 +373,21 @@ required_permissions = []
 required_evidence = ["goal_completion_assessment", "next_issue_selection_or_completion_decision"]
 allowed_actions = ["assess_goal_completion", "record_next_issue"]
 
+[[autonomous_delivery.transitions]]
+name = "select_next_issue_slice"
+from = ["next_issue_or_goal_complete"]
+to = "slice_selected"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = [
+  "goal_completion_assessment",
+  "next_issue_selection_or_completion_decision",
+  "linked_issue",
+  "primary_lane",
+  "slice_scope",
+  "acceptance_gate",
+]
+allowed_actions = ["comment_issue", "update_issue", "open_follow_up_issue"]
+
 [autonomous_delivery.private_sources]
 source_kind = "env_var"
 private_resume_root = "$RESUME_IR_PRIVATE_RESUME_ROOT"

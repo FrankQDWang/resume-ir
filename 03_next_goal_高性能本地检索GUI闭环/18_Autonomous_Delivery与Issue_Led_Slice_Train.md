@@ -72,6 +72,13 @@ Post-merge issue handling is a reconciliation step, not a forced close. The runn
 
 Same-lane continuation is valid when the linked issue is a broader profile-lane ledger and the merged PR lands only a bounded slice.
 
+`next_issue_or_goal_complete` is not an implicit stop. When the post-merge decision is `goal_complete = false`, the runner must take the lawful machine continuation:
+
+```text
+next_issue_or_goal_complete
+-> slice_selected
+```
+
 ## 5. Non-Negotiable Gates
 
 - No baseline, no optimization issue.

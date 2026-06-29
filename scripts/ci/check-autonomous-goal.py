@@ -340,6 +340,7 @@ def main() -> int:
         "merge_pr",
         "reconcile_issue_lifecycle",
         "advance_to_next_issue_or_goal_complete",
+        "select_next_issue_slice",
     ]:
         if expected not in transition_names:
             fail(f"autonomous_delivery.transitions: missing {expected}")
@@ -378,6 +379,32 @@ def main() -> int:
             "autonomous_delivery.transitions.advance_to_next_issue_or_goal_complete.from: "
             "expected ['issue_reconciled_with_evidence']"
         )
+
+    select_next_issue_slice = require_transition(transitions, "select_next_issue_slice")
+    if select_next_issue_slice.get("from") != ["next_issue_or_goal_complete"]:
+        fail("autonomous_delivery.transitions.select_next_issue_slice.from: expected ['next_issue_or_goal_complete']")
+    require_string(
+        select_next_issue_slice.get("to"),
+        "slice_selected",
+        "autonomous_delivery.transitions.select_next_issue_slice.to",
+    )
+    next_issue_required_evidence = require_list(
+        select_next_issue_slice.get("required_evidence"),
+        "autonomous_delivery.transitions.select_next_issue_slice.required_evidence",
+    )
+    for expected in [
+        "goal_completion_assessment",
+        "next_issue_selection_or_completion_decision",
+        "linked_issue",
+        "primary_lane",
+        "slice_scope",
+        "acceptance_gate",
+    ]:
+        if expected not in next_issue_required_evidence:
+            fail(
+                "autonomous_delivery.transitions.select_next_issue_slice.required_evidence: "
+                f"missing {expected}"
+            )
 
     review_evidence = require_transition(transitions, "review_evidence")
     if review_evidence.get("from") != ["verification_active"]:
@@ -425,6 +452,7 @@ def main() -> int:
     for phrase in [
         "-> verification_active\n-> evidence_review\n-> pr_opened",
         "evidence_review\n-> slice_selected",
+        "next_issue_or_goal_complete\n-> slice_selected",
         "| `verification_active` | 正在运行验收 | `evidence_review` 或 `blocked` |",
         (
             "| `evidence_review` | 验证输出已收集 | `slice_complete`, `pr_opened`, "
@@ -449,6 +477,25 @@ def main() -> int:
         fail(
             "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
             "missing truthful non-PR evidence_review continuation"
+        )
+    if "next_issue_or_goal_complete\n-> slice_selected" not in entrypoint_doc:
+        fail(
+            "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
+            "missing truthful non-complete next-issue continuation"
+        )
+
+    machine_contract_doc = (
+        ROOT
+        / "03_next_goal_高性能本地检索GUI闭环"
+        / "17_机器可读Goal与Experiment协议.md"
+    ).read_text(encoding="utf-8")
+    if (
+        "when `goal_complete = false`, `next_issue_or_goal_complete -> slice_selected` is lawful"
+        not in machine_contract_doc
+    ):
+        fail(
+            "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md: "
+            "missing post-merge next-issue continuation machine-contract rule"
         )
 
     evidence_review_fixture = load_json(ROOT / "perf" / "fixtures" / "valid" / "loop-evidence-review.json")
@@ -497,6 +544,31 @@ def main() -> int:
         fail(
             "perf/fixtures/valid/loop-slice-selected-after-evidence-review.json.transition_history: "
             "expected evidence_review -> slice_selected"
+        )
+
+    next_issue_slice_fixture = load_json(
+        ROOT / "perf" / "fixtures" / "valid" / "loop-slice-selected-after-next-issue-decision.json"
+    )
+    if not isinstance(next_issue_slice_fixture, dict):
+        fail("perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json: expected object")
+    require_string(
+        next_issue_slice_fixture.get("workflow_state"),
+        "slice_selected",
+        "perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json.workflow_state",
+    )
+    next_issue_history = require_list(
+        next_issue_slice_fixture.get("transition_history"),
+        "perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json.transition_history",
+    )
+    if not any(
+        isinstance(transition, dict)
+        and transition.get("from") == "next_issue_or_goal_complete"
+        and transition.get("to") == "slice_selected"
+        for transition in next_issue_history
+    ):
+        fail(
+            "perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json.transition_history: "
+            "expected next_issue_or_goal_complete -> slice_selected"
         )
 
     profile_template = (ROOT / ".github" / "ISSUE_TEMPLATE" / "profile_issue.md").read_text(encoding="utf-8")
