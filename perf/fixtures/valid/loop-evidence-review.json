@@ -19,7 +19,7 @@
   "blocked_count": 0,
   "transition_history": [
     {
-      "from": "slice_active",
+      "from": "verification_active",
       "to": "evidence_review",
       "evidence_ref": "schema fixture"
     }

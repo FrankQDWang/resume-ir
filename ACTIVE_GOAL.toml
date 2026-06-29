@@ -278,8 +278,16 @@ required_evidence = ["verification_commands", "privacy_boundary"]
 allowed_actions = ["run_tests", "run_benchmark", "write_redacted_evidence"]
 
 [[autonomous_delivery.transitions]]
-name = "open_pr"
+name = "review_evidence"
 from = ["verification_active"]
+to = "evidence_review"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["verification_commands", "verification_summary", "privacy_boundary"]
+allowed_actions = ["comment_issue", "write_redacted_evidence"]
+
+[[autonomous_delivery.transitions]]
+name = "open_pr"
+from = ["evidence_review"]
 to = "pr_opened"
 required_permissions = ["commit_push_allowed", "github_pr_write_allowed"]
 required_evidence = ["local_tests", "privacy_gate", "pr_budget"]
