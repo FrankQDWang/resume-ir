@@ -402,11 +402,35 @@ def main() -> int:
     if open_pr.get("from") != ["evidence_review"]:
         fail("autonomous_delivery.transitions.open_pr.from: expected ['evidence_review']")
 
+    select_follow_up_slice = require_transition(transitions, "select_follow_up_slice")
+    if select_follow_up_slice.get("from") != ["evidence_review"]:
+        fail("autonomous_delivery.transitions.select_follow_up_slice.from: expected ['evidence_review']")
+    require_string(
+        select_follow_up_slice.get("to"),
+        "slice_selected",
+        "autonomous_delivery.transitions.select_follow_up_slice.to",
+    )
+    next_slice_required_evidence = require_list(
+        select_follow_up_slice.get("required_evidence"),
+        "autonomous_delivery.transitions.select_follow_up_slice.required_evidence",
+    )
+    for expected in ["verification_summary", "next_slice_decision", "privacy_boundary"]:
+        if expected not in next_slice_required_evidence:
+            fail(
+                "autonomous_delivery.transitions.select_follow_up_slice.required_evidence: "
+                f"missing {expected}"
+            )
+
     loop_doc = (ROOT / "03_next_goal_高性能本地检索GUI闭环" / "13_Loop_Engineering状态机.md").read_text(encoding="utf-8")
     for phrase in [
         "-> verification_active\n-> evidence_review\n-> pr_opened",
+        "evidence_review\n-> slice_selected",
         "| `verification_active` | 正在运行验收 | `evidence_review` 或 `blocked` |",
-        "| `evidence_review` | 验证输出已收集 | `slice_complete`, `pr_opened`, `goal_complete`, `blocked`, 或 `slice_active` |",
+        (
+            "| `evidence_review` | 验证输出已收集 | `slice_complete`, `pr_opened`, "
+            "`goal_complete`, `blocked`, 或 `slice_active`（autonomous machine state 用 "
+            "`slice_selected` 表示继续下一 bounded slice） |"
+        ),
     ]:
         if phrase not in loop_doc:
             fail(f"03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md: missing {phrase!r}")
@@ -420,6 +444,11 @@ def main() -> int:
         fail(
             "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
             "missing post-verification evidence_review path"
+        )
+    if "evidence_review\n-> slice_selected" not in entrypoint_doc:
+        fail(
+            "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
+            "missing truthful non-PR evidence_review continuation"
         )
 
     evidence_review_fixture = load_json(ROOT / "perf" / "fixtures" / "valid" / "loop-evidence-review.json")
@@ -443,6 +472,31 @@ def main() -> int:
         fail(
             "perf/fixtures/valid/loop-evidence-review.json.transition_history: "
             "expected verification_active -> evidence_review"
+        )
+
+    slice_selected_fixture = load_json(
+        ROOT / "perf" / "fixtures" / "valid" / "loop-slice-selected-after-evidence-review.json"
+    )
+    if not isinstance(slice_selected_fixture, dict):
+        fail("perf/fixtures/valid/loop-slice-selected-after-evidence-review.json: expected object")
+    require_string(
+        slice_selected_fixture.get("workflow_state"),
+        "slice_selected",
+        "perf/fixtures/valid/loop-slice-selected-after-evidence-review.json.workflow_state",
+    )
+    slice_selected_history = require_list(
+        slice_selected_fixture.get("transition_history"),
+        "perf/fixtures/valid/loop-slice-selected-after-evidence-review.json.transition_history",
+    )
+    if not any(
+        isinstance(transition, dict)
+        and transition.get("from") == "evidence_review"
+        and transition.get("to") == "slice_selected"
+        for transition in slice_selected_history
+    ):
+        fail(
+            "perf/fixtures/valid/loop-slice-selected-after-evidence-review.json.transition_history: "
+            "expected evidence_review -> slice_selected"
         )
 
     profile_template = (ROOT / ".github" / "ISSUE_TEMPLATE" / "profile_issue.md").read_text(encoding="utf-8")

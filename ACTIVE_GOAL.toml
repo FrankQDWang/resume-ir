@@ -286,6 +286,14 @@ required_evidence = ["verification_commands", "verification_summary", "privacy_b
 allowed_actions = ["comment_issue", "write_redacted_evidence"]
 
 [[autonomous_delivery.transitions]]
+name = "select_follow_up_slice"
+from = ["evidence_review"]
+to = "slice_selected"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["verification_summary", "next_slice_decision", "privacy_boundary"]
+allowed_actions = ["comment_issue", "update_issue", "open_follow_up_issue"]
+
+[[autonomous_delivery.transitions]]
 name = "open_pr"
 from = ["evidence_review"]
 to = "pr_opened"

@@ -1798,6 +1798,7 @@ guards, local runtime discovery, and PR #9 CI state.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S494 | Issue #37 evidence_review non-PR continuation contract repair complete locally | Read-only issue #37 evidence proved the autonomous contract could reach `evidence_review` with zero code diff and no truthful PR path, while `ACTIVE_GOAL.toml` still allowed only `open_pr` from `evidence_review` and `scripts/ci/check-autonomous-goal.py` still passed. The contract slice adds machine-readable `select_follow_up_slice: evidence_review -> slice_selected`, documents the truthful non-PR branch in docs 13/18 for evidence-only and zero-diff cases, adds a valid loop fixture for the non-PR continuation, syncs `perf/current-loop-state.json` to the new `ACTIVE_GOAL.toml` hash, and updates the checker to enforce both exits. Verification passed `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `python3 scripts/ci/check-performance-contracts.py`. | This repairs the autonomous contract mismatch only. It does not advance any product implementation lane, private benchmark evidence, PR/CI merge lifecycle, Windows weak-host proof, GUI/manual evidence, or `goal_complete`. |
 | S493 | Pending import-task doctor boundary now distinguishes query failure from row materialization corruption | Issue #37 narrowed the import-task doctor witness so `resume-cli doctor --pending-import-task-boundary` no longer collapses SQLite query/setup failures and corrupt queued-task row decoding into the same label. `crates/meta-store/src/lib.rs` now exposes `PendingImportTaskByRootDiagnostic` plus `diagnose_pending_import_task_by_root(...)` so the boundary can separate statement/query failures from `read_import_task(row)` materialization failures, and `crates/cli/src/main.rs` maps those outcomes to distinct public-safe labels: `pending_import_task_query_failure` and `pending_import_task_row_materialization_failure`. `crates/cli/tests/s13_diagnostics.rs` updates the missing-table witness to assert the query-failure label and adds a corrupt-row witness that flips a queued task `id` to `zeroblob(16)` and proves the CLI reports the row-materialization label without leaking the data dir, requested root, canonical root, or metadata key. Fresh verification passed `cargo test -p resume-cli --test s13_diagnostics --locked`, `cargo test -p meta-store --test s3_sqlite --locked`, `cargo test -p resume-cli --test s9_import_search --locked import_reuses_stale_running_task_after_cli_process_kill`, `python3 scripts/ci/check-pr-budget.py`, and `./scripts/ci/guard-public-repo.sh`. | This is still an L1 full-import OCR-backlog diagnostics slice only. It improves the post-import terminal witness for issue #37, but it does not yet open/merge the slice PR, rerun CI on the new head, clear broader OCR-backlog blockers, produce Windows weak-host evidence, prove any of the five required benchmark lanes end to end, or make `goal_complete` true. |
 | S492 | First-searchable import path now publishes searchable documents and a live full-text snapshot during the import loop | Focused RED first pinned the real blocker after the lopdf parser convergence: `crates/import-pipeline/src/lib.rs` buffered every `ProcessedFile::Searchable` until the entire import finished, so `searchable_documents` stayed at 0 and `benchmark-query-set draft --trace-root ...` failed with `local search index is unavailable` during the same bounded private run. Two focused regressions now cover the behavior directly in `crates/import-pipeline/src/lib.rs`: one blocks the last file with a local converter and proves the very first searchable document is published before the batch threshold, and another proves mid-run searchable progress remains visible before a later slow file completes. Implementation keeps the slice inside `import-pipeline`: searchable docs are now flushed immediately for the first visible document and then in small incremental batches, each flush writes a new full-text snapshot, marks the flushed docs `DocumentStatus::Searchable`, updates the index state, and only then clears the pending exclusion set. Public verification passed `cargo test -p import-pipeline --locked`, `cargo test -p resume-cli --test s9_import_search --locked`, `cargo test -p resume-cli --test s304_query_set --locked`, `cargo fmt --all --check`, `git diff --check`, and `./scripts/ci/guard-public-repo.sh`. A fresh local-only bounded private witness on the same 8769-file discovery run now showed `latest import searchable documents: 1` and `search index: available (full-text snapshot)` on the first status poll, later reached a redacted aggregate of `searchable_document_count: 39`, `ocr_required: 2`, `failed_permanent: 1`, and a trace-backed `benchmark-query-set draft --trace-root ...` succeeded with `query source: trace_source_search_v1`, `queries: 5`, `candidate queries sampled: 20`, and `zero-hit queries dropped: 15` instead of blocking on index availability. | This is still an L1 first-searchable slice only. It removes the mid-run `index unavailable` blocker for issue #20, but it does not yet close the full private D10K witness, merge the PR, refresh the public CI/local/privacy/merge-state transitions on the new head, clear Windows weak-host evidence, prove the full `agent_query_replay` lane, or make `goal_complete` true. |
 | S491 | PDF first-searchable parser converged to lopdf-backed page-content extraction | Focused RED first proved the dual-track debt was real: `crates/parser-pdf/tests/s6_pdf.rs` added `unreferenced_bt_et_bytes_do_not_count_as_page_text_layer`, and the existing parser wrongly marked a scanned PDF searchable just because an unreferenced object elsewhere in the file contained `BT ... ET` bytes. Implementation removed the whole-file raw text-layer scan from `crates/parser-pdf/src/lib.rs` and converged extraction onto `lopdf`-parsed page content only: real page operations now provide direct UTF-8 and BOM-prefixed UTF-16 text runs, while `lopdf` remains the page-local fallback for compressed streams and `ToUnicode`/CMap decoding. The parser tests were tightened to use valid synthetic PDFs instead of malformed byte blobs that only the deleted raw scanner could accept, and `crates/import-pipeline/src/lib.rs` now builds its UTF-16 literal PDF regression as a valid synthetic PDF as well. Verification passed `cargo test -p parser-pdf --test s6_pdf -- --nocapture`, `cargo test -p import-pipeline import_root_keeps_ -- --nocapture`, `cargo fmt --all --check`, `git diff --check`, `./scripts/ci/guard-public-repo.sh`, `/opt/homebrew/bin/python3 scripts/ci/check-pr-budget.py`, and `/opt/homebrew/bin/python3 scripts/ci/check-gate-integrity.py`. | This is an L1 PDF text-layer admission correctness slice only. It removes the proved-invalid whole-file PDF text scan and keeps the UTF-16/ToUnicode/compressed-stream regressions green, but it does not yet rerun the full private D10K calibration to completion, freeze the real trace-derived query set, tune import/query latency, add GUI behavior, clear Windows weak-host evidence, or make `goal_complete` true. |
@@ -2292,6 +2293,67 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S494
+
+- Scope: repair the autonomous contract mismatch exposed by issue #37, where a
+  truthful `evidence_review` outcome could require continuing to the next slice
+  without opening a PR.
+- Read-only witness before implementation:
+
+```bash
+python3 scripts/ci/check-autonomous-goal.py
+gh issue view 37 --comments --json comments
+git rev-parse HEAD
+git rev-parse origin/main
+```
+
+Output summary:
+
+- `check-autonomous-goal.py` exited 0 even though the live issue #37 witness
+  had already reached `evidence_review` with zero code diff and no truthful PR
+  path.
+- `ACTIVE_GOAL.toml` allowed only `open_pr` from `evidence_review`, while docs
+  13/18 described a broader truthful state space that included continuing the
+  lane without a PR.
+- `HEAD` matched `origin/main`, so this was a contract defect in current
+  public truth, not stale local drift.
+
+- Implementation:
+  - `ACTIVE_GOAL.toml` now includes `select_follow_up_slice` from
+    `evidence_review` to `slice_selected`.
+  - Docs 13 and 18 now explicitly document the truthful non-PR continuation
+    branch for evidence-only and zero-diff slices.
+  - `scripts/ci/check-autonomous-goal.py` now enforces the non-PR branch and a
+    valid fixture witness instead of only checking the old `evidence_review ->
+    pr_opened` phrase chain.
+  - `perf/fixtures/valid/loop-slice-selected-after-evidence-review.json` fixes
+    the non-PR continuation in machine-checkable public fixtures.
+  - `perf/current-loop-state.json` now carries the new `ACTIVE_GOAL.toml`
+    SHA-256 so the public snapshot remains aligned with the live contract.
+
+Verification:
+
+```bash
+python3 scripts/ci/check-autonomous-goal.py
+python3 scripts/ci/check-loop-state.py
+python3 scripts/ci/check-performance-contracts.py
+```
+
+Output summary:
+
+- `python3 scripts/ci/check-autonomous-goal.py`: exit 0.
+- `python3 scripts/ci/check-loop-state.py`: exit 0.
+- `python3 scripts/ci/check-performance-contracts.py`: exit 0; focused checks
+  all passed, and `check-goal-complete.py` still correctly reported
+  `workflow_state=blocked_permission, not goal_complete`.
+
+Scope note:
+
+- S494 repairs only the autonomous contract and public contract fixtures. It
+  does not claim product behavior changed, does not reopen the finished
+  evidence-only zero-diff branch as a PR, and does not advance any private
+  benchmark or merge-state lane by itself.
 
 ### S364
 
