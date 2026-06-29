@@ -64,6 +64,7 @@ python3 scripts/ci/check-performance-contracts.py
 4. 空 W1、空命令、缺失隐私布尔值、缺失 required cells 的 fixture 必须失败。
 5. D1M goal-shaped synthetic fixture 必须通过。
 6. 隐私字段必须全部为 false，`trace_summary_redacted` 必须为 true。
+7. `check-autonomous-goal.py` 和 positive fixtures 还必须证明：when `goal_complete = false`, `next_issue_or_goal_complete -> slice_selected` is lawful，并在该续行规则漂移时 fail closed。
 
 通过 CI contract gate 只说明公开合同格式和负例约束有效，不代表 W1 私有 benchmark 已经执行。
 

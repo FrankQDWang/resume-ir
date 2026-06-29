@@ -47,6 +47,13 @@ evidence_review
 
 若 broader lane ledger 仍未满足 success threshold，则只能记录 `same_lane_continues` 或 `follow_up_issue_linked`，不得用 `issue_closed_with_evidence` 名义强制关闭。
 
+当 `next_issue_or_goal_complete` 的结论是 `goal_complete = false` 且下一 bounded slice 已选定时，runner 必须使用显式 machine-readable continuation，而不是把该状态当成隐式终点：
+
+```text
+next_issue_or_goal_complete
+-> slice_selected
+```
+
 Schema caveat: `perf/loop-state.schema.json` now admits autonomous stages and terminal states, but `perf/current-loop-state.json` remains a derived public snapshot. Runners must observe GitHub issue/PR state, git branch/base sha, CI, artifact manifests, public-safe benchmark_report_hash or benchmark_artifact_id from redacted report, approved opaque manifest, or HMAC-SHA256 opaque manifest first, then reduce those events into the current snapshot. Raw benchmark or profiler artifact hashes remain local-only and must not become git/GitHub evidence.
 
 Terminology map:
