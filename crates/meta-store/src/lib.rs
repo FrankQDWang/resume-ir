@@ -97,6 +97,12 @@ pub fn crate_name() -> &'static str {
 
 pub type Result<T> = std::result::Result<T, MetaStoreError>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingImportTaskByRootDiagnostic {
+    QueryFailure,
+    RowMaterializationFailure,
+}
+
 pub fn metadata_store_path(data_dir: &Path) -> PathBuf {
     data_dir.join(METADATA_STORE_FILE)
 }
@@ -3065,19 +3071,7 @@ impl MetaStore {
 
     pub fn pending_import_task_by_root(&self, root_path: &str) -> Result<Option<ImportTask>> {
         let connection = self.connection.borrow();
-        let sql = format!(
-            "\
-            SELECT {IMPORT_TASK_COLUMNS}
-            FROM import_task
-            WHERE root_path = ?1 AND status IN (?2, ?3, ?4)
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM import_task_cancellation AS cancellation
-                    WHERE cancellation.import_task_id = import_task.id
-                )
-            ORDER BY CASE WHEN status = ?3 THEN 0 ELSE 1 END, queued_at_seconds, rowid
-            LIMIT 1"
-        );
+        let sql = pending_import_task_by_root_sql();
         let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
         let mut rows = statement
             .query(params![
@@ -3091,6 +3085,35 @@ impl MetaStore {
         match rows.next().map_err(MetaStoreError::storage)? {
             Some(row) => Ok(Some(read_import_task(row)?)),
             None => Ok(None),
+        }
+    }
+
+    pub fn diagnose_pending_import_task_by_root(
+        &self,
+        root_path: &str,
+    ) -> std::result::Result<(), PendingImportTaskByRootDiagnostic> {
+        let connection = self.connection.borrow();
+        let sql = pending_import_task_by_root_sql();
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|_| PendingImportTaskByRootDiagnostic::QueryFailure)?;
+        let mut rows = statement
+            .query(params![
+                root_path,
+                import_task_status_to_storage(ImportTaskStatus::Queued),
+                import_task_status_to_storage(ImportTaskStatus::Running),
+                import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
+            ])
+            .map_err(|_| PendingImportTaskByRootDiagnostic::QueryFailure)?;
+
+        match rows
+            .next()
+            .map_err(|_| PendingImportTaskByRootDiagnostic::QueryFailure)?
+        {
+            Some(row) => read_import_task(row)
+                .map(|_| ())
+                .map_err(|_| PendingImportTaskByRootDiagnostic::RowMaterializationFailure),
+            None => Ok(()),
         }
     }
 
@@ -5601,6 +5624,22 @@ fn read_import_task(row: &Row<'_>) -> Result<ImportTask> {
         finished_at: read_optional_timestamp(row, 5)?,
         updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 6)?),
     })
+}
+
+fn pending_import_task_by_root_sql() -> String {
+    format!(
+        "\
+        SELECT {IMPORT_TASK_COLUMNS}
+        FROM import_task
+        WHERE root_path = ?1 AND status IN (?2, ?3, ?4)
+            AND NOT EXISTS (
+                SELECT 1
+                FROM import_task_cancellation AS cancellation
+                WHERE cancellation.import_task_id = import_task.id
+            )
+        ORDER BY CASE WHEN status = ?3 THEN 0 ELSE 1 END, queued_at_seconds, rowid
+        LIMIT 1"
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

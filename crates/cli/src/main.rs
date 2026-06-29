@@ -44,8 +44,9 @@ use meta_store::{
     ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanErrorSummary,
     ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
     ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
-    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, QueryLatencySummary,
-    ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp, WorkerTaskKind,
+    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey,
+    PendingImportTaskByRootDiagnostic, QueryLatencySummary, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -16087,14 +16088,18 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingImportTaskBoundary {
-    PendingImportTaskByRootFailure,
+    PendingImportTaskQueryFailure,
+    PendingImportTaskRowMaterializationFailure,
     UnexpectedSuccessThenPostPendingTaskBoundary,
 }
 
 impl PendingImportTaskBoundary {
     fn label(self) -> &'static str {
         match self {
-            Self::PendingImportTaskByRootFailure => "pending_import_task_by_root_failure",
+            Self::PendingImportTaskQueryFailure => "pending_import_task_query_failure",
+            Self::PendingImportTaskRowMaterializationFailure => {
+                "pending_import_task_row_materialization_failure"
+            }
             Self::UnexpectedSuccessThenPostPendingTaskBoundary => {
                 "unexpected_success_then_post_pending_task_boundary"
             }
@@ -16113,21 +16118,29 @@ fn diagnose_pending_import_task_boundary(
         .ok_or_else(|| CliError::user("import root must exist and be a directory"))?;
     let store = open_store(data_dir)?;
     let canonical_root_path = path_string(&root.canonical);
-    if store
-        .pending_import_task_by_root(&canonical_root_path)
-        .is_err()
-    {
-        return Ok(PendingImportTaskBoundary::PendingImportTaskByRootFailure);
+    if let Err(boundary) = store.diagnose_pending_import_task_by_root(&canonical_root_path) {
+        return Ok(map_pending_import_task_boundary(boundary));
     }
     let requested_root_path = path_string(&root.requested);
-    if requested_root_path != canonical_root_path
-        && store
-            .pending_import_task_by_root(&requested_root_path)
-            .is_err()
-    {
-        return Ok(PendingImportTaskBoundary::PendingImportTaskByRootFailure);
+    if requested_root_path != canonical_root_path {
+        if let Err(boundary) = store.diagnose_pending_import_task_by_root(&requested_root_path) {
+            return Ok(map_pending_import_task_boundary(boundary));
+        }
     }
     Ok(PendingImportTaskBoundary::UnexpectedSuccessThenPostPendingTaskBoundary)
+}
+
+fn map_pending_import_task_boundary(
+    boundary: PendingImportTaskByRootDiagnostic,
+) -> PendingImportTaskBoundary {
+    match boundary {
+        PendingImportTaskByRootDiagnostic::QueryFailure => {
+            PendingImportTaskBoundary::PendingImportTaskQueryFailure
+        }
+        PendingImportTaskByRootDiagnostic::RowMaterializationFailure => {
+            PendingImportTaskBoundary::PendingImportTaskRowMaterializationFailure
+        }
+    }
 }
 
 fn print_pending_import_task_boundary_report(data_dir: &Path, requested_root: &Path) -> Result<()> {

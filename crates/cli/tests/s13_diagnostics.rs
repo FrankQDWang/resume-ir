@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
 use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{IndexState, IndexStateStatus, MetaStore, UnixTimestamp};
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 #[test]
 fn doctor_uses_sqlcipher_metadata_by_default_without_key_or_path_leak() {
@@ -890,9 +890,62 @@ fn doctor_pending_import_task_boundary_reports_pending_import_task_by_root_failu
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("pending import task boundary: pending_import_task_by_root_failure"));
+    assert!(stdout.contains("pending import task boundary: pending_import_task_query_failure"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&root_dir)));
+    assert!(!stdout.contains(metadata_key.trim()));
+
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
+}
+
+#[test]
+fn doctor_pending_import_task_boundary_reports_row_materialization_failure_without_path_or_key_leak(
+) {
+    let data_dir = temp_dir("doctor-pending-import-boundary-corrupt-row");
+    let root_dir = temp_dir("doctor-pending-import-boundary-corrupt-row-root");
+    let canonical_root = fs::canonicalize(&root_dir).unwrap();
+    let metadata_key = {
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        fs::read_to_string(meta_store::metadata_encryption_key_path(&data_dir)).unwrap()
+    };
+    let connection = open_encrypted_metadata_connection(&data_dir);
+    connection
+        .execute(
+            "\
+            INSERT INTO import_task (
+                id, root_path, status, queued_at_seconds, updated_at_seconds
+            )
+            VALUES (?1, ?2, 'queued', 1, 1)",
+            params!["diagnostic-materialization-task", path_str(&canonical_root)],
+        )
+        .unwrap();
+    connection
+        .execute("UPDATE import_task SET id = zeroblob(16)", [])
+        .unwrap();
+    drop(connection);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "doctor",
+            "--pending-import-task-boundary",
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli doctor pending import task boundary corrupt import task row");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout
+        .contains("pending import task boundary: pending_import_task_row_materialization_failure"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&root_dir)));
+    assert!(!stdout.contains(path_str(&canonical_root)));
     assert!(!stdout.contains(metadata_key.trim()));
 
     remove_dir(&data_dir);
