@@ -55,6 +55,15 @@ goal_authorized
 -> next_issue_or_goal_complete
 ```
 
+上面的 main path 只描述“验证后形成 PR”的分支。`evidence_review` 还必须存在一个 truthful non-PR continuation branch，用于 evidence-only、zero-diff 或需要继续同 lane/新 follow-up issue 的情况：
+
+```text
+evidence_review
+-> slice_selected
+```
+
+这个分支的含义是：证据已经看完，但结论是“继续切下一个 bounded slice”，而不是为了满足状态机去制造一个零 diff PR。
+
 Post-merge issue handling is a reconciliation step, not a forced close. The runner must record exactly one truthful issue-lifecycle outcome after each merged slice PR:
 
 1. `closed_here`
