@@ -16170,7 +16170,7 @@ enum PostPendingImportTaskRecoveryBoundary {
     StaleRunningTaskStatusUpdateFailure,
     StaleRunningTaskRowRefreshFailure,
     StaleRunningTaskRecoveredBeforePostBoundary,
-    UnexpectedSuccessThenPostPendingImportTaskRecoveryBoundary,
+    UnexpectedSuccessAfterPostBoundary,
 }
 
 impl PostPendingImportTaskRecoveryBoundary {
@@ -16182,7 +16182,7 @@ impl PostPendingImportTaskRecoveryBoundary {
             Self::StaleRunningTaskRecoveredBeforePostBoundary => {
                 "stale_running_task_recovered_before_post_boundary"
             }
-            Self::UnexpectedSuccessThenPostPendingImportTaskRecoveryBoundary => {
+            Self::UnexpectedSuccessAfterPostBoundary => {
                 "unexpected_success_then_post_pending_import_task_recovery_boundary"
             }
         }
@@ -16220,9 +16220,7 @@ fn diagnose_post_pending_import_task_recovery_boundary(
             );
         }
     }
-    Ok(
-        PostPendingImportTaskRecoveryBoundary::UnexpectedSuccessThenPostPendingImportTaskRecoveryBoundary,
-    )
+    Ok(PostPendingImportTaskRecoveryBoundary::UnexpectedSuccessAfterPostBoundary)
 }
 
 fn diagnose_post_pending_import_task_recovery_boundary_for_task(
@@ -16232,9 +16230,7 @@ fn diagnose_post_pending_import_task_recovery_boundary_for_task(
     now: UnixTimestamp,
 ) -> Result<PostPendingImportTaskRecoveryBoundary> {
     if task.status != ImportTaskStatus::Running {
-        return Ok(
-            PostPendingImportTaskRecoveryBoundary::UnexpectedSuccessThenPostPendingImportTaskRecoveryBoundary,
-        );
+        return Ok(PostPendingImportTaskRecoveryBoundary::UnexpectedSuccessAfterPostBoundary);
     }
 
     let owner_lock = ImportTaskOwnerLock::try_acquire(data_dir, &task.id)
@@ -16278,7 +16274,7 @@ enum PostRecoveryRetainedLineageConvergenceBoundary {
     RetainedLineageConvergedToVisibleProgress,
     RetainedLineageConvergedPastPendingTaskBoundary,
     RetainedLineageTerminalFailedPermanent,
-    UnexpectedSuccessThenPostRecoveryRetainedLineageConvergenceBoundary,
+    UnexpectedSuccessAfterConvergenceBoundary,
 }
 
 impl PostRecoveryRetainedLineageConvergenceBoundary {
@@ -16299,7 +16295,7 @@ impl PostRecoveryRetainedLineageConvergenceBoundary {
             Self::RetainedLineageTerminalFailedPermanent => {
                 "retained_lineage_terminal_failed_permanent"
             }
-            Self::UnexpectedSuccessThenPostRecoveryRetainedLineageConvergenceBoundary => {
+            Self::UnexpectedSuccessAfterConvergenceBoundary => {
                 "unexpected_success_then_post_recovery_retained_lineage_convergence_boundary"
             }
         }
@@ -16317,9 +16313,7 @@ fn diagnose_post_recovery_retained_lineage_convergence_boundary(
         .ok_or_else(|| CliError::user("import root must exist and be a directory"))?;
     let store = open_store(data_dir)?;
     let Some(task) = latest_import_task_for_requested_root(&store, &root)? else {
-        return Ok(
-            PostRecoveryRetainedLineageConvergenceBoundary::UnexpectedSuccessThenPostRecoveryRetainedLineageConvergenceBoundary,
-        );
+        return Ok(PostRecoveryRetainedLineageConvergenceBoundary::UnexpectedSuccessAfterConvergenceBoundary);
     };
     let scope = store
         .import_scan_scope_by_task_id(&task.id)

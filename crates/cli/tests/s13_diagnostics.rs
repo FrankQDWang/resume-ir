@@ -1213,7 +1213,15 @@ fn doctor_post_recovery_retained_lineage_convergence_boundary_reports_visible_pr
     let data_dir = temp_dir("doctor-post-recovery-lineage-visible-progress");
     let root_dir = temp_dir("doctor-post-recovery-lineage-visible-progress-root");
     let task_id = seed_import_task_with_status(&data_dir, &root_dir, ImportTaskStatus::Running);
-    seed_import_scan_scope(&data_dir, &root_dir, &task_id, 1, 0, 0, 0, 0);
+    seed_import_scan_scope(
+        &data_dir,
+        &root_dir,
+        &task_id,
+        ImportScanScopeCounts {
+            searchable_documents: 1,
+            ..ImportScanScopeCounts::default()
+        },
+    );
     let _owner_lock = ImportTaskOwnerLock::acquire(&data_dir, &task_id).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -1247,7 +1255,15 @@ fn doctor_post_recovery_retained_lineage_convergence_boundary_reports_completed_
     let data_dir = temp_dir("doctor-post-recovery-lineage-completed");
     let root_dir = temp_dir("doctor-post-recovery-lineage-completed-root");
     let task_id = seed_import_task_with_status(&data_dir, &root_dir, ImportTaskStatus::Completed);
-    seed_import_scan_scope(&data_dir, &root_dir, &task_id, 1, 0, 0, 0, 0);
+    seed_import_scan_scope(
+        &data_dir,
+        &root_dir,
+        &task_id,
+        ImportScanScopeCounts {
+            searchable_documents: 1,
+            ..ImportScanScopeCounts::default()
+        },
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -1340,15 +1356,20 @@ fn seed_import_task_with_status(
     id
 }
 
-fn seed_import_scan_scope(
-    data_dir: &Path,
-    root_dir: &Path,
-    task_id: &ImportTaskId,
+#[derive(Default)]
+struct ImportScanScopeCounts {
     searchable_documents: u64,
     ocr_required_documents: u64,
     ocr_jobs_queued: u64,
     failed_documents: u64,
     deleted_documents: u64,
+}
+
+fn seed_import_scan_scope(
+    data_dir: &Path,
+    root_dir: &Path,
+    task_id: &ImportTaskId,
+    counts: ImportScanScopeCounts,
 ) {
     let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
@@ -1365,11 +1386,11 @@ fn seed_import_scan_scope(
             files_discovered: 32,
             ignored_entries: 0,
             scan_errors: 0,
-            searchable_documents,
-            ocr_required_documents,
-            ocr_jobs_queued,
-            failed_documents,
-            deleted_documents,
+            searchable_documents: counts.searchable_documents,
+            ocr_required_documents: counts.ocr_required_documents,
+            ocr_jobs_queued: counts.ocr_jobs_queued,
+            failed_documents: counts.failed_documents,
+            deleted_documents: counts.deleted_documents,
             scan_budget_kind: None,
             scan_budget_limit: None,
             scan_budget_observed: None,
