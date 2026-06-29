@@ -19,6 +19,7 @@ goal_authorized
 -> branch_active
 -> implementation_active
 -> verification_active
+-> evidence_review
 -> pr_opened
 -> base_synced
 -> pr_review_ready
@@ -63,7 +64,7 @@ Terminology map:
 | `red_check_written` | 行为切片已有失败验证 | `implementation_active` | 失败输出、测试名或检查名 | 用无关失败作为 red evidence |
 | `implementation_active` | 正在修改批准范围内文件 | `verification_active` | diff、实现说明 | 修改未批准文件 |
 | `verification_active` | 正在运行验收 | `evidence_review` 或 `blocked` | 命令、退出码、摘要 | 只看部分输出就宣布完成 |
-| `evidence_review` | 验证输出已收集 | `slice_complete`, `goal_complete`, `blocked`, 或 `slice_active` | 证据分类、风险说明 | 把 smoke 当 W1 benchmark |
+| `evidence_review` | 验证输出已收集 | `slice_complete`, `pr_opened`, `goal_complete`, `blocked`, 或 `slice_active` | 证据分类、风险说明 | 把 smoke 当 W1 benchmark |
 | `slice_complete` | 当前切片所有验收通过 | `slice_active` 或 `goal_complete` | 切片 diff、命令、证据 lane、隐私检查 | 把单切片完成说成整个目标完成 |
 | `blocked` | 同一阻塞条件经过 3 次 distinct `evidence_path` 的 effective retry 后仍复现 | `intake` 或 `ceo_reviewed` | 阻塞条件、连续次数、下一步所需外部输入 | 因任务困难、预算紧或验证慢而提前标 blocked |
 | `goal_complete` | W0、W1、soak/fault、GUI/manual evidence cells 和五个 benchmark lanes 均通过且无开放 blocker | none | 完整验收矩阵、benchmark lane coverage、review closure、隐私检查 | 留下未说明的失败检查 |

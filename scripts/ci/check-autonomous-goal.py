@@ -329,6 +329,7 @@ def main() -> int:
         "activate_branch",
         "implement_slice",
         "verify_slice",
+        "review_evidence",
         "open_pr",
         "sync_base",
         "mark_review_ready",
@@ -376,6 +377,72 @@ def main() -> int:
         fail(
             "autonomous_delivery.transitions.advance_to_next_issue_or_goal_complete.from: "
             "expected ['issue_reconciled_with_evidence']"
+        )
+
+    review_evidence = require_transition(transitions, "review_evidence")
+    if review_evidence.get("from") != ["verification_active"]:
+        fail("autonomous_delivery.transitions.review_evidence.from: expected ['verification_active']")
+    require_string(
+        review_evidence.get("to"),
+        "evidence_review",
+        "autonomous_delivery.transitions.review_evidence.to",
+    )
+    review_required_evidence = require_list(
+        review_evidence.get("required_evidence"),
+        "autonomous_delivery.transitions.review_evidence.required_evidence",
+    )
+    for expected in ["verification_commands", "verification_summary", "privacy_boundary"]:
+        if expected not in review_required_evidence:
+            fail(
+                "autonomous_delivery.transitions.review_evidence.required_evidence: "
+                f"missing {expected}"
+            )
+
+    open_pr = require_transition(transitions, "open_pr")
+    if open_pr.get("from") != ["evidence_review"]:
+        fail("autonomous_delivery.transitions.open_pr.from: expected ['evidence_review']")
+
+    loop_doc = (ROOT / "03_next_goal_高性能本地检索GUI闭环" / "13_Loop_Engineering状态机.md").read_text(encoding="utf-8")
+    for phrase in [
+        "-> verification_active\n-> evidence_review\n-> pr_opened",
+        "| `verification_active` | 正在运行验收 | `evidence_review` 或 `blocked` |",
+        "| `evidence_review` | 验证输出已收集 | `slice_complete`, `pr_opened`, `goal_complete`, `blocked`, 或 `slice_active` |",
+    ]:
+        if phrase not in loop_doc:
+            fail(f"03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md: missing {phrase!r}")
+
+    entrypoint_doc = (
+        ROOT
+        / "03_next_goal_高性能本地检索GUI闭环"
+        / "18_Autonomous_Delivery与Issue_Led_Slice_Train.md"
+    ).read_text(encoding="utf-8")
+    if "-> verification_active\n-> evidence_review\n-> pr_opened" not in entrypoint_doc:
+        fail(
+            "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
+            "missing post-verification evidence_review path"
+        )
+
+    evidence_review_fixture = load_json(ROOT / "perf" / "fixtures" / "valid" / "loop-evidence-review.json")
+    if not isinstance(evidence_review_fixture, dict):
+        fail("perf/fixtures/valid/loop-evidence-review.json: expected object")
+    require_string(
+        evidence_review_fixture.get("workflow_state"),
+        "evidence_review",
+        "perf/fixtures/valid/loop-evidence-review.json.workflow_state",
+    )
+    fixture_history = require_list(
+        evidence_review_fixture.get("transition_history"),
+        "perf/fixtures/valid/loop-evidence-review.json.transition_history",
+    )
+    if not any(
+        isinstance(transition, dict)
+        and transition.get("from") == "verification_active"
+        and transition.get("to") == "evidence_review"
+        for transition in fixture_history
+    ):
+        fail(
+            "perf/fixtures/valid/loop-evidence-review.json.transition_history: "
+            "expected verification_active -> evidence_review"
         )
 
     profile_template = (ROOT / ".github" / "ISSUE_TEMPLATE" / "profile_issue.md").read_text(encoding="utf-8")

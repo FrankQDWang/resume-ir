@@ -42,6 +42,7 @@ goal_authorized
 -> branch_active
 -> implementation_active
 -> verification_active
+-> evidence_review
 -> pr_opened
 -> base_synced
 -> pr_review_ready
