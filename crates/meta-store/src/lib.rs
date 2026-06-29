@@ -3069,6 +3069,27 @@ impl MetaStore {
         Ok(exists == 1)
     }
 
+    pub fn latest_import_task_by_root(&self, root_path: &str) -> Result<Option<ImportTask>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "\
+            SELECT {IMPORT_TASK_COLUMNS}
+            FROM import_task
+            WHERE root_path = ?1
+            ORDER BY updated_at_seconds DESC, rowid DESC
+            LIMIT 1"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![root_path])
+            .map_err(MetaStoreError::storage)?;
+
+        match rows.next().map_err(MetaStoreError::storage)? {
+            Some(row) => Ok(Some(read_import_task(row)?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn pending_import_task_by_root(&self, root_path: &str) -> Result<Option<ImportTask>> {
         let connection = self.connection.borrow();
         let sql = pending_import_task_by_root_sql();
