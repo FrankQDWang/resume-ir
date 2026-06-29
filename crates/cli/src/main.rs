@@ -15981,6 +15981,9 @@ fn embed_worker_usage() -> CliError {
 
 fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let diagnostic_args = parse_doctor_args(args)?;
+    if let Some(root) = diagnostic_args.pending_import_task_boundary_root.as_deref() {
+        return print_pending_import_task_boundary_report(data_dir, root);
+    }
     let store = open_store(data_dir)?;
     let summary = store.status_summary().map_err(CliError::store)?;
     let scan_error_breakdown = store
@@ -16079,6 +16082,60 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
     println!("diagnostics redaction: available");
 
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingImportTaskBoundary {
+    PendingImportTaskByRootFailure,
+    UnexpectedSuccessThenPostPendingTaskBoundary,
+}
+
+impl PendingImportTaskBoundary {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PendingImportTaskByRootFailure => "pending_import_task_by_root_failure",
+            Self::UnexpectedSuccessThenPostPendingTaskBoundary => {
+                "unexpected_success_then_post_pending_task_boundary"
+            }
+        }
+    }
+}
+
+fn diagnose_pending_import_task_boundary(
+    data_dir: &Path,
+    requested_root: &Path,
+) -> Result<PendingImportTaskBoundary> {
+    let roots = canonical_import_roots(&[requested_root.to_path_buf()])?;
+    let root = roots
+        .into_iter()
+        .next()
+        .ok_or_else(|| CliError::user("import root must exist and be a directory"))?;
+    let store = open_store(data_dir)?;
+    let canonical_root_path = path_string(&root.canonical);
+    if store
+        .pending_import_task_by_root(&canonical_root_path)
+        .is_err()
+    {
+        return Ok(PendingImportTaskBoundary::PendingImportTaskByRootFailure);
+    }
+    let requested_root_path = path_string(&root.requested);
+    if requested_root_path != canonical_root_path
+        && store
+            .pending_import_task_by_root(&requested_root_path)
+            .is_err()
+    {
+        return Ok(PendingImportTaskBoundary::PendingImportTaskByRootFailure);
+    }
+    Ok(PendingImportTaskBoundary::UnexpectedSuccessThenPostPendingTaskBoundary)
+}
+
+fn print_pending_import_task_boundary_report(data_dir: &Path, requested_root: &Path) -> Result<()> {
+    let boundary = diagnose_pending_import_task_boundary(data_dir, requested_root)?;
+    println!("resume-ir doctor");
+    println!("diagnostic scope: pending_import_task_boundary");
+    println!("pending import task boundary: {}", boundary.label());
+    println!("paths: <redacted>");
     Ok(())
 }
 
@@ -16300,28 +16357,78 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DiagnosticArgs {
     ocr_lang: String,
+    pending_import_task_boundary_root: Option<PathBuf>,
 }
 
 fn parse_doctor_args(args: &[String]) -> Result<DiagnosticArgs> {
-    parse_diagnostic_ocr_args(args, doctor_usage())
+    let mut ocr_lang = "eng".to_string();
+    let mut pending_import_task_boundary = false;
+    let mut pending_import_task_boundary_root = None;
+    let mut seen_ocr_lang = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--ocr-lang" => {
+                if seen_ocr_lang {
+                    return Err(CliError::usage(doctor_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(doctor_usage()));
+                };
+                ocr_lang = parse_ocr_diagnostic_language(value, doctor_usage())?;
+                seen_ocr_lang = true;
+                index += 2;
+            }
+            "--pending-import-task-boundary" => {
+                if pending_import_task_boundary {
+                    return Err(CliError::usage(doctor_usage()));
+                }
+                pending_import_task_boundary = true;
+                index += 1;
+            }
+            "--root" => {
+                if pending_import_task_boundary_root.is_some() {
+                    return Err(CliError::usage(doctor_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(doctor_usage()));
+                };
+                pending_import_task_boundary_root = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => return Err(CliError::usage(doctor_usage())),
+        }
+    }
+    if pending_import_task_boundary != pending_import_task_boundary_root.is_some() {
+        return Err(CliError::usage(doctor_usage()));
+    }
+
+    Ok(DiagnosticArgs {
+        ocr_lang,
+        pending_import_task_boundary_root,
+    })
 }
 
 fn parse_export_diagnostics_args(args: &[String]) -> Result<DiagnosticArgs> {
     if args.first().map(String::as_str) != Some("--redact") {
         return Err(CliError::usage(export_diagnostics_usage()));
     }
-    parse_diagnostic_ocr_args(&args[1..], export_diagnostics_usage())
+    let ocr_lang = parse_diagnostic_ocr_args(&args[1..], export_diagnostics_usage())?;
+    Ok(DiagnosticArgs {
+        ocr_lang,
+        pending_import_task_boundary_root: None,
+    })
 }
 
 fn doctor_usage() -> &'static str {
-    "usage: resume-cli doctor [--ocr-lang <lang>]"
+    "usage: resume-cli doctor [--ocr-lang <lang>] [--pending-import-task-boundary --root <path>]"
 }
 
 fn export_diagnostics_usage() -> &'static str {
     "usage: resume-cli export-diagnostics --redact [--ocr-lang <lang>]"
 }
 
-fn parse_diagnostic_ocr_args(args: &[String], usage: &'static str) -> Result<DiagnosticArgs> {
+fn parse_diagnostic_ocr_args(args: &[String], usage: &'static str) -> Result<String> {
     let mut ocr_lang = "eng".to_string();
     let mut seen_ocr_lang = false;
     let mut index = 0;
@@ -16343,7 +16450,7 @@ fn parse_diagnostic_ocr_args(args: &[String], usage: &'static str) -> Result<Dia
         }
     }
 
-    Ok(DiagnosticArgs { ocr_lang })
+    Ok(ocr_lang)
 }
 
 fn parse_ocr_diagnostic_language(value: &str, usage: &'static str) -> Result<String> {
