@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import hashlib
 import pathlib
+import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from collections.abc import Mapping
 
@@ -70,6 +72,20 @@ CURRENT_LOOP_CONTRACT_FILES = {
     "loop_state_schema_sha256": "perf/loop-state.schema.json",
     "experiment_report_schema_sha256": "perf/experiment-report.schema.json",
 }
+AUTONOMOUS_GOAL_REGRESSION_FILES = [
+    "ACTIVE_GOAL.toml",
+    "scripts/ci/check-autonomous-goal.py",
+    "scripts/ci/check-performance-contracts.py",
+    "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md",
+    "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
+    "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md",
+    ".github/ISSUE_TEMPLATE/profile_issue.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "perf/fixtures/valid/loop-evidence-review.json",
+    "perf/fixtures/valid/loop-slice-selected-after-evidence-review.json",
+    "perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json",
+    "perf/fixtures/valid/loop-merge-method-selected-after-pr-opened.json",
+]
 
 
 def load_json(path: pathlib.Path) -> object:
@@ -697,6 +713,41 @@ def run_focused_checks() -> None:
             fail(f"{rel}: focused check failed with exit code {completed.returncode}")
 
 
+def write_broken_sync_base(active_goal_path: pathlib.Path) -> None:
+    lines = active_goal_path.read_text(encoding="utf-8").splitlines()
+    for index, line in enumerate(lines):
+        if line == 'name = "sync_base"':
+            for candidate in range(index + 1, min(index + 8, len(lines))):
+                if lines[candidate].startswith("from = "):
+                    lines[candidate] = 'from = ["verification_active"]'
+                    active_goal_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                    return
+            fail("temporary ACTIVE_GOAL mutation: could not find sync_base.from")
+    fail("temporary ACTIVE_GOAL mutation: could not find sync_base transition")
+
+
+def run_autonomous_goal_negative_regression() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_root = pathlib.Path(tmp) / "repo"
+        for rel in AUTONOMOUS_GOAL_REGRESSION_FILES:
+            src = ROOT / rel
+            dst = tmp_root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        write_broken_sync_base(tmp_root / "ACTIVE_GOAL.toml")
+        completed = subprocess.run(
+            [sys.executable, str(tmp_root / "scripts/ci/check-autonomous-goal.py")],
+            cwd=tmp_root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if completed.returncode == 0:
+            fail(
+                "scripts/ci/check-autonomous-goal.py: expected broken sync_base.from regression to fail closed"
+            )
+
+
 def main() -> int:
     matrix = load_toml(PERF / "acceptance-matrix.toml")
     validate_matrix(matrix)
@@ -729,6 +780,7 @@ def main() -> int:
         fail("no invalid fixtures found")
 
     run_focused_checks()
+    run_autonomous_goal_negative_regression()
 
     print("performance contract check passed")
     return 0
