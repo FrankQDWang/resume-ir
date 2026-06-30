@@ -65,6 +65,34 @@ def require_transition(transitions: list, name: str) -> dict:
     fail(f"autonomous_delivery.transitions: missing {name}")
 
 
+def require_transition_shape(
+    transitions: list,
+    *,
+    name: str,
+    expected_from: list[str],
+    expected_to: str,
+    required_evidence: list[str],
+) -> None:
+    transition = require_transition(transitions, name)
+    if transition.get("from") != expected_from:
+        fail(f"autonomous_delivery.transitions.{name}.from: expected {expected_from!r}")
+    require_string(
+        transition.get("to"),
+        expected_to,
+        f"autonomous_delivery.transitions.{name}.to",
+    )
+    evidence = require_list(
+        transition.get("required_evidence"),
+        f"autonomous_delivery.transitions.{name}.required_evidence",
+    )
+    for expected in required_evidence:
+        if expected not in evidence:
+            fail(
+                f"autonomous_delivery.transitions.{name}.required_evidence: "
+                f"missing {expected}"
+            )
+
+
 def main() -> int:
     contracts = load_contracts_module()
     active_goal = load_toml(ROOT / "ACTIVE_GOAL.toml")
@@ -448,8 +476,63 @@ def main() -> int:
                 f"missing {expected}"
             )
 
+    require_transition_shape(
+        transitions,
+        name="sync_base",
+        expected_from=["pr_opened"],
+        expected_to="base_synced",
+        required_evidence=["base_sha", "head_sha", "reconciliation_status"],
+    )
+    require_transition_shape(
+        transitions,
+        name="mark_review_ready",
+        expected_from=["base_synced"],
+        expected_to="pr_review_ready",
+        required_evidence=["base_sha", "pr_template_complete"],
+    )
+    require_transition_shape(
+        transitions,
+        name="mark_ci_green",
+        expected_from=["pr_review_ready"],
+        expected_to="ci_green",
+        required_evidence=["ci_head_sha", "ci_check_run", "ci_conclusion"],
+    )
+    require_transition_shape(
+        transitions,
+        name="mark_local_gate_green",
+        expected_from=["ci_green"],
+        expected_to="local_gate_green",
+        required_evidence=["local_gate_commands", "local_gate_result"],
+    )
+    require_transition_shape(
+        transitions,
+        name="mark_privacy_gate_green",
+        expected_from=["local_gate_green"],
+        expected_to="privacy_gate_green",
+        required_evidence=["privacy_gate_command", "privacy_gate_result"],
+    )
+    require_transition_shape(
+        transitions,
+        name="select_merge_method",
+        expected_from=["privacy_gate_green"],
+        expected_to="merge_method_selected",
+        required_evidence=["merge_method", "branch_protection_satisfied", "admin_bypass_absent"],
+    )
+    require_transition_shape(
+        transitions,
+        name="merge_pr",
+        expected_from=["merge_method_selected"],
+        expected_to="pr_merged",
+        required_evidence=["ci_green", "local_gate_green", "privacy_gate_green", "branch_protection_satisfied"],
+    )
+
     loop_doc = (ROOT / "03_next_goal_高性能本地检索GUI闭环" / "13_Loop_Engineering状态机.md").read_text(encoding="utf-8")
     for phrase in [
+        (
+            "pr_opened\n-> base_synced\n-> pr_review_ready\n-> ci_green\n-> local_gate_green\n"
+            "-> privacy_gate_green\n-> merge_method_selected\n-> pr_merged\n"
+            "-> issue_reconciled_with_evidence\n-> next_issue_or_goal_complete"
+        ),
         "-> verification_active\n-> evidence_review\n-> pr_opened",
         "evidence_review\n-> slice_selected",
         "next_issue_or_goal_complete\n-> slice_selected",
@@ -468,6 +551,16 @@ def main() -> int:
         / "03_next_goal_高性能本地检索GUI闭环"
         / "18_Autonomous_Delivery与Issue_Led_Slice_Train.md"
     ).read_text(encoding="utf-8")
+    if (
+        "pr_opened\n-> base_synced\n-> pr_review_ready\n-> ci_green\n-> local_gate_green\n"
+        "-> privacy_gate_green\n-> merge_method_selected\n-> pr_merged\n"
+        "-> issue_reconciled_with_evidence\n-> next_issue_or_goal_complete"
+        not in entrypoint_doc
+    ):
+        fail(
+            "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
+            "missing truthful post-pr_opened continuation chain"
+        )
     if "-> verification_active\n-> evidence_review\n-> pr_opened" not in entrypoint_doc:
         fail(
             "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
@@ -570,6 +663,39 @@ def main() -> int:
             "perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json.transition_history: "
             "expected next_issue_or_goal_complete -> slice_selected"
         )
+
+    post_pr_fixture = load_json(
+        ROOT / "perf" / "fixtures" / "valid" / "loop-merge-method-selected-after-pr-opened.json"
+    )
+    if not isinstance(post_pr_fixture, dict):
+        fail("perf/fixtures/valid/loop-merge-method-selected-after-pr-opened.json: expected object")
+    require_string(
+        post_pr_fixture.get("workflow_state"),
+        "merge_method_selected",
+        "perf/fixtures/valid/loop-merge-method-selected-after-pr-opened.json.workflow_state",
+    )
+    post_pr_history = require_list(
+        post_pr_fixture.get("transition_history"),
+        "perf/fixtures/valid/loop-merge-method-selected-after-pr-opened.json.transition_history",
+    )
+    for expected_from, expected_to in [
+        ("pr_opened", "base_synced"),
+        ("base_synced", "pr_review_ready"),
+        ("pr_review_ready", "ci_green"),
+        ("ci_green", "local_gate_green"),
+        ("local_gate_green", "privacy_gate_green"),
+        ("privacy_gate_green", "merge_method_selected"),
+    ]:
+        if not any(
+            isinstance(transition, dict)
+            and transition.get("from") == expected_from
+            and transition.get("to") == expected_to
+            for transition in post_pr_history
+        ):
+            fail(
+                "perf/fixtures/valid/loop-merge-method-selected-after-pr-opened.json.transition_history: "
+                f"expected {expected_from} -> {expected_to}"
+            )
 
     profile_template = (ROOT / ".github" / "ISSUE_TEMPLATE" / "profile_issue.md").read_text(encoding="utf-8")
     for phrase in [
