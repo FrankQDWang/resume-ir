@@ -212,6 +212,9 @@ fn run_ocr_throughput(args: OcrThroughputArgs) -> Result<(), CliError> {
 }
 
 fn run_private_ocr_throughput(args: PrivateOcrThroughputArgs) -> Result<(), CliError> {
+    if args.command.is_none() && args.local_command_page_segmentation_mode != 6 {
+        return Err(CliError::usage());
+    }
     let ocr_engine = match (args.command, args.tesseract_command) {
         (Some(command), None) => {
             PrivateOcrBenchmarkEngine::local_command(command).map_err(CliError::benchmark)?
@@ -249,6 +252,9 @@ fn run_private_ocr_throughput(args: PrivateOcrThroughputArgs) -> Result<(), CliE
         .and_then(|config| config.with_render_dpi(args.render_dpi))
         .and_then(|config| config.with_ocr_lang(args.ocr_lang))
         .and_then(|config| config.with_engine_profile(args.engine_profile))
+        .and_then(|config| {
+            config.with_page_segmentation_mode(args.local_command_page_segmentation_mode)
+        })
         .map_err(CliError::benchmark)?;
     let report = run_private_ocr_throughput_benchmark(config).map_err(CliError::benchmark)?;
     println!("{}", report.to_redacted_json());
@@ -896,6 +902,7 @@ fn parse_private_ocr_throughput_args(
     let mut render_dpi = 150_u32;
     let mut ocr_lang = "eng".to_string();
     let mut engine_profile = "private-real-corpus".to_string();
+    let mut local_command_page_segmentation_mode = 6_u8;
     let mut dataset_manifest_sha256 = None;
     let mut ocr_runtime_manifest_sha256 = None;
     let mut renderer_manifest_sha256 = None;
@@ -989,6 +996,10 @@ fn parse_private_ocr_throughput_args(
                 engine_profile = value.to_string();
                 index += 2;
             }
+            "--local-command-page-segmentation-mode" => {
+                local_command_page_segmentation_mode = parse_positive_u8(args.get(index + 1))?;
+                index += 2;
+            }
             "--dataset-manifest-sha256" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage());
@@ -1041,6 +1052,7 @@ fn parse_private_ocr_throughput_args(
         render_dpi,
         ocr_lang,
         engine_profile,
+        local_command_page_segmentation_mode,
         dataset_manifest_sha256: dataset_manifest_sha256.ok_or_else(CliError::usage)?,
         ocr_runtime_manifest_sha256: ocr_runtime_manifest_sha256.ok_or_else(CliError::usage)?,
         renderer_manifest_sha256: renderer_manifest_sha256.ok_or_else(CliError::usage)?,
@@ -1294,6 +1306,13 @@ fn parse_positive_u32(value: Option<&String>) -> Result<u32, CliError> {
         .ok_or_else(CliError::usage)
 }
 
+fn parse_positive_u8(value: Option<&String>) -> Result<u8, CliError> {
+    value
+        .and_then(|value| value.parse::<u8>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(CliError::usage)
+}
+
 fn parse_nonnegative_usize(value: Option<&String>) -> Result<usize, CliError> {
     value
         .and_then(|value| value.parse::<usize>().ok())
@@ -1314,7 +1333,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --command <path> [--command-arg <arg> ...] --corpus-summary <json> --dataset-manifest-sha256 <sha256> --query-set-sha256 <sha256> --model-manifest-sha256 <sha256> [--allow-partial-hot-index-for-smoke] [--max-queries <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--allow-smoke-confidence] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--max-run-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--current-stage-baseline] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --command <path> [--command-arg <arg> ...] --corpus-summary <json> --dataset-manifest-sha256 <sha256> --query-set-sha256 <sha256> --model-manifest-sha256 <sha256> [--allow-partial-hot-index-for-smoke] [--max-queries <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--allow-smoke-confidence] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--max-run-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--local-command-page-segmentation-mode <n>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--current-stage-baseline] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -1433,6 +1452,7 @@ struct PrivateOcrThroughputArgs {
     render_dpi: u32,
     ocr_lang: String,
     engine_profile: String,
+    local_command_page_segmentation_mode: u8,
     dataset_manifest_sha256: String,
     ocr_runtime_manifest_sha256: String,
     renderer_manifest_sha256: String,

@@ -639,6 +639,7 @@ pub struct PrivateOcrThroughputConfig {
     render_dpi: u32,
     ocr_lang: String,
     engine_profile: String,
+    page_segmentation_mode: u8,
 }
 
 impl PrivateOcrThroughputConfig {
@@ -665,6 +666,7 @@ impl PrivateOcrThroughputConfig {
             render_dpi: DEFAULT_SYNTHETIC_OCR_RENDER_DPI,
             ocr_lang: DEFAULT_PRIVATE_OCR_LANG.to_string(),
             engine_profile: DEFAULT_PRIVATE_OCR_PROFILE.to_string(),
+            page_segmentation_mode: 6,
         })
     }
 
@@ -733,6 +735,16 @@ impl PrivateOcrThroughputConfig {
         OcrOptions::new(self.ocr_lang.as_str(), engine_profile.as_str())
             .map_err(BenchmarkError::ocr)?;
         self.engine_profile = engine_profile;
+        Ok(self)
+    }
+
+    pub fn with_page_segmentation_mode(mut self, page_segmentation_mode: u8) -> Result<Self> {
+        if page_segmentation_mode == 0 {
+            return Err(BenchmarkError::invalid_config(
+                "private_ocr_page_segmentation_mode",
+            ));
+        }
+        self.page_segmentation_mode = page_segmentation_mode;
         Ok(self)
     }
 }
@@ -1800,6 +1812,9 @@ pub fn run_private_ocr_throughput_benchmark(
         PrivateOcrBenchmarkEngine::LocalCommand { command } => {
             let spec =
                 LocalOcrCommandSpec::new(command, Vec::<String>::new(), &config.engine_profile)
+                    .and_then(|spec| {
+                        spec.with_page_segmentation_mode(config.page_segmentation_mode)
+                    })
                     .map_err(BenchmarkError::ocr)?;
             Box::new(LocalOcrCommandClient::new(spec))
         }

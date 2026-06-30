@@ -1889,6 +1889,68 @@ fn resume_benchmark_private_ocr_throughput_outputs_redacted_diagnostic_report() 
 }
 
 #[test]
+fn resume_benchmark_private_ocr_throughput_passes_local_command_page_segmentation_mode() {
+    let root = temp_dir("private-ocr-throughput-cli-psm-root");
+    fs::write(
+        root.join("private-cli-psm-sample.pdf"),
+        b"%PDF synthetic private cli psm sample",
+    )
+    .unwrap();
+    let renderer = pdf_render_fixture_script("private-ocr-throughput-cli-psm-renderer");
+    let ocr = ocr_fixture_script_with_body(
+        "private-ocr-throughput-cli-psm-ocr",
+        &required_psm_ocr_fixture_script_body(11),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "private-ocr-throughput",
+            "--root",
+            path_str(&root),
+            "--renderer-command",
+            path_str(&renderer),
+            "--command",
+            path_str(&ocr),
+            "--max-documents",
+            "1",
+            "--max-pages",
+            "1",
+            "--pages-per-document",
+            "1",
+            "--page-timeout-ms",
+            "5000",
+            "--local-command-page-segmentation-mode",
+            "11",
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--ocr-runtime-manifest-sha256",
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "--renderer-manifest-sha256",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "--language-pack-manifest-sha256",
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "--json",
+        ])
+        .output()
+        .expect("run private OCR throughput benchmark with local-command psm");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"engine_kind\":\"local-command\""));
+    assert!(stdout.contains("\"page_count\":1"));
+    assert!(stdout.contains("\"ocr_failure_count\":0"));
+
+    remove_dir(&root);
+    remove_dir(renderer.parent().unwrap());
+    remove_dir(ocr.parent().unwrap());
+}
+
+#[test]
 fn resume_benchmark_private_ocr_throughput_budget_exhaustion_is_redacted_and_not_gateable() {
     let root = temp_dir("private-ocr-throughput-cli-budget-root");
     fs::write(
@@ -2651,8 +2713,12 @@ fn resume_benchmark_vector_gate_rejects_private_business_impossible_top_k() {
 }
 
 fn ocr_fixture_script(label: &str) -> PathBuf {
+    ocr_fixture_script_with_body(label, ocr_fixture_script_body())
+}
+
+fn ocr_fixture_script_with_body(label: &str, body: &str) -> PathBuf {
     let path = temp_dir(label).join(ocr_fixture_file_name());
-    fs::write(&path, ocr_fixture_script_body()).unwrap();
+    fs::write(&path, body).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -2929,6 +2995,20 @@ fn ocr_fixture_script_body() -> &'static str {
 }
 
 #[cfg(unix)]
+fn required_psm_ocr_fixture_script_body(required_psm: u8) -> String {
+    format!(
+        concat!(
+            "#!/bin/sh\n",
+            "if [ \"$RESUME_IR_OCR_PAGE_SEGMENTATION_MODE\" != \"{required_psm}\" ]; then\n",
+            "  exit 19\n",
+            "fi\n",
+            "printf 'resume-ir-ocr-v1\\nconfidence=0.97\\ntext:\\nSynthetic OCR Candidate page %s REDACTION_SENTINEL_OCR_TEXT\\n' \"$RESUME_IR_OCR_PAGE_NO\"\n",
+        ),
+        required_psm = required_psm
+    )
+}
+
+#[cfg(unix)]
 fn slow_ocr_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
@@ -2978,6 +3058,22 @@ fn ocr_fixture_script_body() -> &'static str {
         "echo text:\r\n",
         "echo Synthetic OCR Candidate page %RESUME_IR_OCR_PAGE_NO% REDACTION_SENTINEL_OCR_TEXT\r\n",
         "exit /b 0\r\n"
+    )
+}
+
+#[cfg(windows)]
+fn required_psm_ocr_fixture_script_body(required_psm: u8) -> String {
+    format!(
+        concat!(
+            "@echo off\r\n",
+            "if not \"%RESUME_IR_OCR_PAGE_SEGMENTATION_MODE%\"==\"{required_psm}\" exit /b 19\r\n",
+            "echo resume-ir-ocr-v1\r\n",
+            "echo confidence=0.97\r\n",
+            "echo text:\r\n",
+            "echo Synthetic OCR Candidate page %RESUME_IR_OCR_PAGE_NO% REDACTION_SENTINEL_OCR_TEXT\r\n",
+            "exit /b 0\r\n"
+        ),
+        required_psm = required_psm
     )
 }
 

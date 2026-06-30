@@ -128,6 +128,34 @@ printf 'page=%s dpi=%s lang=%s profile=%s bytes=%s\n' \
 
 #[cfg(unix)]
 #[test]
+fn local_command_worker_exposes_default_page_segmentation_mode_to_wrapper() {
+    let _guard = local_process_test_lock();
+    let command = write_fixture_executable(
+        "fixture-ocr-psm",
+        r#"#!/bin/sh
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.82\n'
+printf 'text:\n'
+printf 'psm=%s\n' "$RESUME_IR_OCR_PAGE_SEGMENTATION_MODE"
+"#,
+    );
+    let client = LocalOcrCommandClient::new(
+        LocalOcrCommandSpec::new(command, Vec::<String>::new(), "fixture-engine").unwrap(),
+    );
+
+    let page = client
+        .recognize_page(
+            ocr_request(2, b"SYNTHETIC IMAGE BYTES".to_vec()),
+            OcrWorkerBudget::new(5_000).unwrap(),
+            &CancellationToken::new(),
+        )
+        .unwrap();
+
+    assert_eq!(page.text(), "psm=6\n");
+}
+
+#[cfg(unix)]
+#[test]
 fn local_pdf_render_command_returns_page_bytes_without_payload_debug_leaks() {
     let _guard = local_process_test_lock();
     let command = write_fixture_executable(

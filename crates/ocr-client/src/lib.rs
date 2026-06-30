@@ -59,6 +59,7 @@ pub struct LocalOcrCommandSpec {
     program: PathBuf,
     args: Vec<String>,
     engine_profile: String,
+    page_segmentation_mode: u8,
 }
 
 impl LocalOcrCommandSpec {
@@ -81,11 +82,27 @@ impl LocalOcrCommandSpec {
             program,
             args: args.into_iter().map(Into::into).collect(),
             engine_profile,
+            page_segmentation_mode: 6,
         })
     }
 
     pub fn engine_profile(&self) -> &str {
         &self.engine_profile
+    }
+
+    pub fn page_segmentation_mode(&self) -> u8 {
+        self.page_segmentation_mode
+    }
+
+    pub fn with_page_segmentation_mode(
+        mut self,
+        page_segmentation_mode: u8,
+    ) -> Result<Self, OcrError> {
+        if page_segmentation_mode == 0 {
+            return Err(OcrError::new(OcrErrorKind::InvalidRequest));
+        }
+        self.page_segmentation_mode = page_segmentation_mode;
+        Ok(self)
     }
 }
 
@@ -96,6 +113,7 @@ impl fmt::Debug for LocalOcrCommandSpec {
             .field("program", &"<redacted>")
             .field("args_count", &self.args.len())
             .field("engine_profile", &self.engine_profile)
+            .field("page_segmentation_mode", &self.page_segmentation_mode)
             .finish()
     }
 }
@@ -954,6 +972,10 @@ fn spawn_ocr_command(
         .env("RESUME_IR_OCR_LANG", request.options().lang())
         .env("RESUME_IR_OCR_PROFILE", request.options().profile())
         .env("RESUME_IR_OCR_ENGINE_PROFILE", spec.engine_profile())
+        .env(
+            "RESUME_IR_OCR_PAGE_SEGMENTATION_MODE",
+            spec.page_segmentation_mode().to_string(),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
